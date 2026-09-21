@@ -1,0 +1,4 @@
+ref_filename,site_url,label
+bottle-hero-2023.jpg,https://www.remymartin.com/media/bottle-hero.jpg,match
+bottle-hero-2023.jpg,https://www.remymartin.com/media/other-product.jpg,no_match
+campaign-summer-2024.jpg,https://www.remymartin.com/media/summer-banner.jpg,match

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>RightsWatch - Rapport de detection</title>
+<style>
+  :root {
+    --expire: #b3261e;
+    --urgent: #e08600;
+    --soon: #c9a000;
+    --ok: #2e7d32;
+    --unknown: #6b6b6b;
+    --border: #ddd;
+    --bg: #fafafa;
+  }
+  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 24px; background: #fff; color: #1a1a1a; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .meta { color: #666; font-size: 13px; margin-bottom: 20px; }
+  .stats { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-size: 13px; }
+  .stat strong { display: block; font-size: 18px; }
+  section { margin-bottom: 32px; }
+  h2 { font-size: 16px; border-bottom: 2px solid #222; padding-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { border: 1px solid var(--border); padding: 8px; text-align: left; vertical-align: top; }
+  th { background: var(--bg); position: sticky; top: 0; }
+  img.thumb { max-width: 140px; max-height: 140px; display: block; border: 1px solid var(--border); border-radius: 4px; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; color: #fff; }
+  .badge.expire { background: var(--expire); }
+  .badge.urgent { background: var(--urgent); }
+  .badge.soon { background: var(--soon); }
+  .badge.ok { background: var(--ok); }
+  .badge.unknown { background: var(--unknown); }
+  .pages a { display: block; font-size: 12px; word-break: break-all; }
+  .empty { color: #888; font-style: italic; padding: 16px 0; }
+  .score { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+  <h1>RightsWatch — Rapport de detection</h1>
+  <div class="meta">Genere le {{ generated_at }} — fenetre : expire ou expirant sous {{ within_days }} jours</div>
+
+  <div class="stats">
+    <div class="stat"><strong>{{ stats.get('reference_images', '-') }}</strong>references</div>
+    <div class="stat"><strong>{{ stats.get('pages_crawled', '-') }}</strong>pages crawlees</div>
+    <div class="stat"><strong>{{ stats.get('site_images', '-') }}</strong>images site</div>
+    <div class="stat"><strong>{{ confirmed|length }}</strong>matches confirmes</div>
+    <div class="stat"><strong>{{ to_verify|length }}</strong>a verifier</div>
+  </div>
+
+  <section>
+    <h2>Matches confirmes ({{ confirmed|length }})</h2>
+    {% if confirmed %}
+    <table>
+      <thead>
+        <tr>
+          <th>Reference</th>
+          <th>Trouve sur le site</th>
+          <th>Expiration</th>
+          <th>Statut</th>
+          <th>Page(s)</th>
+          <th>URL image</th>
+          <th>Niveau / score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in confirmed %}
+        <tr>
+          <td>
+            {% if r.ref_thumbnail %}<img class="thumb" src="{{ r.ref_thumbnail }}" alt="ref">{% endif %}
+            <div>{{ r.filename }}</div>
+            {% if r.credit %}<div style="font-size:11px;color:#666;">{{ r.credit }}</div>{% endif %}
+          </td>
+          <td>
+            {% if r.site_thumbnail %}<img class="thumb" src="{{ r.site_thumbnail }}" alt="site">{% endif %}
+          </td>
+          <td>{{ r.expiry_date or "inconnue" }}{% if r.days_left is not none %}<div style="font-size:11px;color:#666;">{{ r.days_left }} j</div>{% endif %}</td>
+          <td><span class="badge {{ {'expire':'expire','<30j':'urgent','<90j':'soon','ok':'ok','inconnue':'unknown'}[r.status] }}">{{ r.status }}</span></td>
+          <td class="pages">{% for p in r.pages %}<a href="{{ p }}" target="_blank" rel="noopener">{{ p }}</a>{% endfor %}</td>
+          <td><a href="{{ r.site_url }}" target="_blank" rel="noopener">{{ r.site_url }}</a></td>
+          <td class="score">{{ r.level }} · {{ "%.2f"|format(r.score) }}<br>{{ r.confidence }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Aucun match confirme dans cette fenetre.</div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>A verifier ({{ to_verify|length }})</h2>
+    {% if to_verify %}
+    <table>
+      <thead>
+        <tr>
+          <th>Reference</th>
+          <th>Trouve sur le site</th>
+          <th>Expiration</th>
+          <th>Statut</th>
+          <th>Page(s)</th>
+          <th>URL image</th>
+          <th>Niveau / score</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in to_verify %}
+        <tr>
+          <td>
+            {% if r.ref_thumbnail %}<img class="thumb" src="{{ r.ref_thumbnail }}" alt="ref">{% endif %}
+            <div>{{ r.filename }}</div>
+            {% if r.credit %}<div style="font-size:11px;color:#666;">{{ r.credit }}</div>{% endif %}
+          </td>
+          <td>
+            {% if r.site_thumbnail %}<img class="thumb" src="{{ r.site_thumbnail }}" alt="site">{% endif %}
+          </td>
+          <td>{{ r.expiry_date or "inconnue" }}{% if r.days_left is not none %}<div style="font-size:11px;color:#666;">{{ r.days_left }} j</div>{% endif %}</td>
+          <td><span class="badge {{ {'expire':'expire','<30j':'urgent','<90j':'soon','ok':'ok','inconnue':'unknown'}[r.status] }}">{{ r.status }}</span></td>
+          <td class="pages">{% for p in r.pages %}<a href="{{ p }}" target="_blank" rel="noopener">{{ p }}</a>{% endfor %}</td>
+          <td><a href="{{ r.site_url }}" target="_blank" rel="noopener">{{ r.site_url }}</a></td>
+          <td class="score">{{ r.level }} · {{ "%.2f"|format(r.score) }}<br>{{ r.confidence }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Rien a verifier.</div>
+    {% endif %}
+  </section>
+</body>
+</html>
