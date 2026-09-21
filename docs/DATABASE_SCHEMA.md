@@ -2,7 +2,7 @@
 
 RightsWatch stores everything in a single SQLite file (default
 `rightswatch.db`, override with `--db`). The full schema lives in
-`rightswatch/db.py::SCHEMA` — this document explains what each table is for
+`backend/rightswatch/db.py::SCHEMA` — this document explains what each table is for
 and how the tables relate.
 
 ## Entity relationship overview

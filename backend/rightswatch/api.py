@@ -22,7 +22,16 @@ from rightswatch import db as db_module
 from rightswatch.config import load_config
 from rightswatch.report import days_until, urgency_status
 
-STATIC_DIR = Path(__file__).resolve().parent / "static"
+def frontend_dir() -> Path:
+    """The interface lives next to the backend, not inside the Python package."""
+    packaged = Path(__file__).resolve().parents[2] / "frontend"
+    if (packaged / "index.html").is_file():
+        return packaged
+    cwd = Path.cwd() / "frontend"
+    return cwd if (cwd / "index.html").is_file() else packaged
+
+
+FRONTEND_DIR = frontend_dir()
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
 
 
@@ -292,12 +301,12 @@ def create_app(
     app.state.workspace = workspace
     app.state.jobs = jobs
 
-    if STATIC_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+    if FRONTEND_DIR.is_dir():
+        app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
     @app.get("/")
     def index() -> FileResponse:
-        page = STATIC_DIR / "index.html"
+        page = FRONTEND_DIR / "index.html"
         if not page.exists():
             return HTMLResponse("<p>Interface introuvable.</p>", status_code=500)
         return FileResponse(page)

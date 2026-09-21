@@ -2,10 +2,10 @@
 
 This is the core of RightsWatch: deciding whether a reference image is
 "the same image" as something found on the crawled site. Everything here
-lives in `rightswatch/match.py`, and the classification functions
+lives in `backend/rightswatch/match.py`, and the classification functions
 (`classify_level1`, `classify_level2`, `classify_pair`) are pure — no
 database, no I/O — so they're the easiest place to reason about the
-algorithm and the easiest to unit test (see `tests/test_match.py`).
+algorithm and the easiest to unit test (see `backend/tests/test_match.py`).
 
 ## Two levels, cheapest first
 

@@ -34,15 +34,15 @@ pytest
 The full suite runs in well under a second with **no network access, no
 Playwright browser, and no CLIP model download** required:
 
-- `tests/test_match.py` — the matching algorithm. Generates its own test
+- `backend/tests/test_match.py` — the matching algorithm. Generates its own test
   images with Pillow (original, recompressed, resized, heavily cropped,
   text-overlaid, and a genuinely different image) rather than using binary
   fixtures, so there's nothing to keep in sync or regenerate. One test
   (`test_clip_embedding_end_to_end`) is skipped automatically via
   `pytest.importorskip` if `torch`/`open_clip` aren't installed.
-- `tests/test_crawl.py` — HTML/sitemap parsing helpers, exercised against
+- `backend/tests/test_crawl.py` — HTML/sitemap parsing helpers, exercised against
   inline HTML strings that mimic what `page.content()` would return.
-- `tests/test_integration.py` — the full ingest → match → report pipeline
+- `backend/tests/test_integration.py` — the full ingest → match → report pipeline
   wired together end to end, with a synthetic "crawl result" inserted
   directly into the database (bypassing Playwright and the network) to
   simulate what `fetch.fetch_and_store` would have written.
@@ -121,7 +121,7 @@ New image-loading patterns (a new lazy-load attribute, a JS framework that
 renders images a different way) go into `extract_images_from_html` for
 anything present in the rendered DOM, or into the `BACKGROUND_IMAGE_JS`
 snippet for anything that needs a live `getComputedStyle` pass. Add a test
-in `tests/test_crawl.py` with a minimal HTML snippet first — since the
+in `backend/tests/test_crawl.py` with a minimal HTML snippet first — since the
 function is pure, you don't need a browser to verify the parsing logic
 before wiring it into the live crawl.
 

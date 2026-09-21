@@ -12,7 +12,7 @@ pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
 from rightswatch import db
-from rightswatch.webapp import create_app
+from rightswatch.api import create_app
 
 
 def _png(path: Path) -> None:

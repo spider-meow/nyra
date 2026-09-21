@@ -195,7 +195,7 @@ def ui_cmd(
     """Open the local interface to run the pipeline without the CLI."""
     import uvicorn
 
-    from rightswatch.webapp import create_app
+    from rightswatch.api import create_app
 
     root = Path.cwd()
     db_path = db if db.is_absolute() else root / db

@@ -12,7 +12,16 @@ from pathlib import Path
 
 import yaml
 
-DEFAULT_CONFIG_PATH = Path(__file__).resolve().parent.parent / "config.yaml"
+def _default_config_path() -> Path:
+    """Repo-root config.yaml when the package lives in backend/rightswatch."""
+    packaged = Path(__file__).resolve().parents[2] / "config.yaml"
+    if packaged.is_file():
+        return packaged
+    cwd = Path.cwd() / "config.yaml"
+    return cwd if cwd.is_file() else packaged
+
+
+DEFAULT_CONFIG_PATH = _default_config_path()
 
 
 @dataclass(frozen=True)

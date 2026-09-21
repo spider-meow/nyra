@@ -105,17 +105,20 @@ hard-coded in the modules:
 ## Project layout
 
 ```
-rightswatch/
-  cli.py     Typer commands (ingest-refs, crawl, match, report, run-all, calibrate)
-  refs.py    Reference ingestion: RefSource interface + CsvRefSource
-  crawl.py   Page discovery (sitemap -> internal links) + image extraction
-  fetch.py   Image download, normalization, size filtering, caching
-  match.py   Two-level matching (pHash/dHash, then CLIP) + calibration sweep
-  report.py  HTML (self-contained, base64 thumbnails) + CSV report
-  db.py      SQLite schema and access helpers
-templates/report.html.j2   Jinja2 report template
-tests/                      pytest suite (pure-function + end-to-end, no network)
-docs/                       architecture, CLI, schema, matching, and dev docs (see above)
+backend/rightswatch/     pipeline and local API
+  cli.py                 Typer commands, including `rightswatch ui`
+  api.py                 FastAPI app: library, crawl, match, report
+  refs.py                Reference ingestion: RefSource + CsvRefSource
+  crawl.py               Page discovery and image extraction
+  fetch.py               Image download, size filter, cache
+  match.py               pHash/dHash, then CLIP
+  report.py              HTML + CSV report
+  db.py                  SQLite schema and access
+  templates/             Jinja2 report template
+backend/tests/           pytest suite, no network
+frontend/                local interface (HTML, CSS, JS), served by the API
+config.yaml              thresholds and crawl limits
+docs/                    architecture, CLI, schema, matching, dev guide
 ```
 
 `refs.py` exposes a `RefSource` abstract base class so the CSV+folder input
@@ -139,7 +142,6 @@ and the conventions to follow when adding more.
 
 ## Out of scope for this MVP
 
-Web UI, multi-tenant, video, open-web search, detecting site images with no
-DAM equivalent, a Brandcenter adapter, scheduled crawls + email alerts, a
-FastAPI web interface, and multi-site support are all phase 2 — see the
-project brief for details.
+The local interface is `frontend/`, served by `rightswatch ui`. Multi-tenant
+accounts, video, open-web search, a Brandcenter adapter, scheduled alerts,
+and multi-site support are still phase 2.

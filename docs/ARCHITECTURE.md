@@ -44,9 +44,10 @@ fully reproducible given the same inputs and `config.yaml`.
  +-----------------------------------------------------+
 ```
 
-`cli.py` is the only thing that wires these together end to end (the
-`run-all` command); every other module can be imported and used on its own,
-which is what the test suite does.
+The Python package lives in `backend/rightswatch`. The interface lives in
+`frontend/` and is served by `api.py`. `cli.py` wires the pipeline end to
+end (`run-all`); every other module can be imported on its own, which is
+what the test suite does.
 
 ## Module responsibilities
 
@@ -59,7 +60,8 @@ which is what the test suite does.
 | `fetch.py` | Downloads a single image URL, filters out anything smaller than `min_image_side_px`, hashes it, caches the bytes on disk, upserts into `site_images`. | `db.py`, `match.py` (for hashing functions) |
 | `match.py` | Pure classification functions (`classify_level1`, `classify_level2`) plus `run_matching` (the DB-integrated pass) and `calibrate` (threshold sweep against hand-labeled ground truth). | `db.py` (only in `run_matching`/`calibrate`) |
 | `report.py` | Reads `matches` + joins, computes expiry urgency, renders `report.html` (Jinja2, base64 thumbnails) and `matches.csv`. | `db.py` |
-| `cli.py` | Typer commands wiring the above into `ingest-refs`, `crawl`, `match`, `report`, `run-all`, `calibrate`, `init-db`. | all of the above |
+| `cli.py` | Typer commands wiring the above into `ingest-refs`, `crawl`, `match`, `report`, `run-all`, `calibrate`, `init-db`, `ui`. | all of the above |
+| `api.py` | Local HTTP API. Reads and writes the same SQLite file as the CLI, and serves `frontend/`. | all of the above |
 
 ## Why it's built this way
 
@@ -136,7 +138,7 @@ external dependencies (see `DEVELOPMENT.md`).
 ## What's deliberately out of the MVP
 
 See the project brief (top of the original issue) for the full list; in
-short: no web UI, no multi-tenant support, no video, no open-web search, no
+short: no accounts, no video, no open-web search, no
 "site images absent from the DAM" detection (needs the full DAM), no
 scheduled crawls/alerts, and no multi-site runs in one invocation. The
 `RefSource` interface and the `config.yaml`-driven thresholds are the two

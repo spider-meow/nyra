@@ -20,7 +20,7 @@ from rightswatch import db
 from rightswatch.config import Config
 from rightswatch.match import CONFIDENCE_TO_VERIFY
 
-TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
+TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
 STATUS_EXPIRED = "expire"
 STATUS_URGENT = "<30j"

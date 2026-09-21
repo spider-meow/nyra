@@ -34,7 +34,11 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
+where = ["backend"]
 include = ["rightswatch*"]
 
 [tool.setuptools.package-data]
-rightswatch = ["static/*"]
+rightswatch = ["templates/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
