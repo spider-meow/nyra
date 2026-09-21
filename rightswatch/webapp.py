@@ -15,6 +15,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import Image
 from pydantic import BaseModel, Field
 
 from rightswatch import db as db_module
@@ -35,11 +36,13 @@ class Workspace:
         self.meta_path = self.library_dir / "meta.json"
         self.csv_path = self.library_dir / "refs.csv"
         self.cache_dir = root / "data" / "site_images"
+        self.thumb_dir = root / "data" / "thumbs"
         self.out_dir = root / "out"
 
     def ensure(self) -> None:
         self.images_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.thumb_dir.mkdir(parents=True, exist_ok=True)
         self.out_dir.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         db_module.init_db(self.db_path)
@@ -103,6 +106,17 @@ class JobRunner:
             if progress:
                 self.current["progress"].update(progress)
 
+    def request_cancel(self) -> bool:
+        with self._lock:
+            if self.current is None or self.current["status"] != "running":
+                return False
+            self.current["cancel"] = True
+            return True
+
+    def cancelled(self) -> bool:
+        with self._lock:
+            return bool(self.current and self.current.get("cancel"))
+
     def start(self, kind: str, work) -> dict:
         with self._lock:
             if self.current and self.current["status"] == "running":
@@ -120,9 +134,16 @@ class JobRunner:
             job_id = job["id"]
 
         def runner() -> None:
+            from rightswatch.match import MatchStopped
+
             try:
                 result = work()
-                self.update(status="done", message="Terminé.", result=result or {})
+                if self.cancelled():
+                    self.update(status="done", message="Arrêté. Ce qui est déjà lu est gardé.", result=result or {})
+                else:
+                    self.update(status="done", message="Terminé.", result=result or {})
+            except MatchStopped:
+                self.update(status="done", message="Arrêté. Le rapport précédent est gardé.", result={})
             except Exception as exc:
                 self.update(status="error", message="La tâche s'est arrêtée.", error=str(exc))
 
@@ -154,6 +175,13 @@ class CrawlBody(BaseModel):
     max_pages: Optional[int] = Field(default=None, ge=1, le=5000)
     fast: bool = False
     fresh: bool = False
+    then_match: bool = True
+
+
+class ReviewBody(BaseModel):
+    reference_id: int
+    site_image_ids: list[int] = Field(default_factory=list)
+    decision: str = ""
 
 
 class MatchBody(BaseModel):
@@ -162,6 +190,90 @@ class MatchBody(BaseModel):
 
 class ReportBody(BaseModel):
     within_days: Optional[int] = Field(default=None, ge=0, le=3650)
+
+
+def _collapse_hits(hits: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for hit in hits:
+        key = hit["content_hash"] or f"id:{hit['site_image_id']}"
+        current = merged.get(key)
+        if current is None:
+            hit["site_image_ids"] = [hit["site_image_id"]]
+            hit["pages"] = list(dict.fromkeys(hit["pages"]))
+            merged[key] = hit
+            continue
+        current["site_image_ids"].append(hit["site_image_id"])
+        for page in hit["pages"]:
+            if page not in current["pages"]:
+                current["pages"].append(page)
+        if hit["score"] > current["score"]:
+            current["score"] = hit["score"]
+            current["level"] = hit["level"]
+            current["confidence"] = hit["confidence"]
+            current["site_image_id"] = hit["site_image_id"]
+            current["site_url"] = hit["site_url"]
+            current["site_image"] = hit["site_image"]
+        if hit["decision"] and not current["decision"]:
+            current["decision"] = hit["decision"]
+    rows = list(merged.values())
+    rows.sort(key=lambda item: item["score"], reverse=True)
+    for row in rows:
+        row["page_count"] = len(row["pages"])
+        row["pages"] = row["pages"][:8]
+    return rows
+
+
+def _group_matches(raw_rows: list[dict], window: int) -> dict:
+    grouped: dict[int, dict] = {}
+    outside = 0
+    for row in raw_rows:
+        left = row["days_left"]
+        in_window = left is None or left <= window
+        if not in_window:
+            outside += 1
+        bucket = grouped.get(row["reference_id"])
+        if bucket is None:
+            bucket = {
+                "reference_id": row["reference_id"],
+                "filename": row["filename"],
+                "expiry_date": row["expiry_date"],
+                "days_left": left,
+                "status": row["status"],
+                "credit": row["credit"],
+                "notes": row["notes"],
+                "ref_image": row["ref_image"],
+                "in_window": in_window,
+                "hits": [],
+            }
+            grouped[row["reference_id"]] = bucket
+        bucket["hits"].append(row)
+    groups = []
+    for bucket in grouped.values():
+        bucket["hits"] = _collapse_hits(bucket["hits"])
+        groups.append(bucket)
+    groups.sort(key=lambda item: (1, 0) if item["days_left"] is None else (0, item["days_left"]))
+    in_groups = [item for item in groups if item["in_window"]]
+    later = [item for item in groups if not item["in_window"]]
+    confirmed = [item for item in in_groups if any(hit["confidence"] != "a_verifier" for hit in item["hits"])]
+    to_verify = [item for item in in_groups if item not in confirmed]
+    return {
+        "within_days": window,
+        "confirmed": confirmed,
+        "to_verify": to_verify,
+        "later": later,
+        "outside_window": outside,
+    }
+
+
+def _thumbnail(source: Path, dest: Path, width: int) -> Path:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_file() and dest.stat().st_mtime >= source.stat().st_mtime:
+        return dest
+    with Image.open(source) as image:
+        image = image.convert("RGB")
+        image.thumbnail((width, width))
+        image.save(dest, "JPEG", quality=70)
+    return dest
 
 
 def create_app(
@@ -253,6 +365,11 @@ def create_app(
 
     @app.get("/api/job")
     def job() -> dict:
+        return {"job": jobs.snapshot()}
+
+    @app.post("/api/jobs/cancel")
+    def cancel_job() -> dict:
+        jobs.request_cancel()
         return {"job": jobs.snapshot()}
 
     @app.post("/api/library/upload")
@@ -398,13 +515,18 @@ def create_app(
         def work() -> dict:
             from rightswatch import crawl as crawl_module
 
+            page_cap = body.max_pages or workspace.config().crawl.max_pages
+
             def progress(stats) -> None:
+                known = max(0, stats.images_stored - stats.images_new)
                 jobs.update(
-                    message=f"{stats.pages_visited} page(s), {stats.images_stored} image(s)",
+                    message=f"Page {stats.pages_visited}/{page_cap} · {stats.images_new} nouvelles, {known} déjà connues",
                     progress={
+                        "done": stats.pages_visited,
+                        "total": page_cap,
                         "pages_visited": stats.pages_visited,
-                        "images_found": stats.images_found,
-                        "images_stored": stats.images_stored,
+                        "images_new": stats.images_new,
+                        "images_known": known,
                         "errors": len(stats.errors),
                     },
                 )
@@ -418,13 +540,29 @@ def create_app(
                 compute_embeddings=not body.fast,
                 resume=not body.fresh,
                 progress=progress,
+                should_stop=jobs.cancelled,
             )
-            return {
+            result = {
                 "pages_visited": stats.pages_visited,
                 "images_found": stats.images_found,
                 "images_stored": stats.images_stored,
+                "images_new": stats.images_new,
                 "errors": stats.errors[:8],
             }
+            if body.then_match and not jobs.cancelled():
+                from rightswatch import match as match_module
+
+                def on_match(done: int, total: int) -> None:
+                    jobs.update(message=f"Comparaison {done}/{total}", progress={"done": done, "total": total})
+
+                result["matches"] = match_module.run_matching(
+                    workspace.db_path,
+                    workspace.config(),
+                    use_clip=not body.fast,
+                    progress=on_match,
+                    should_stop=jobs.cancelled,
+                )
+            return result
 
         return {"job": jobs.start("crawl", work)}
 
@@ -441,6 +579,7 @@ def create_app(
                 workspace.config(),
                 use_clip=not body.fast,
                 progress=progress,
+                should_stop=jobs.cancelled,
             )
             return {"matches": count}
 
@@ -454,33 +593,40 @@ def create_app(
             raise HTTPException(status_code=400, detail="Fenêtre d'échéance invalide.")
         today = datetime.now(timezone.utc).date()
         rows = []
-        outside_window = 0
         with db_module.connect(workspace.db_path) as conn:
             for match in db_module.get_matches(conn):
                 left = days_until(match["expiry_date"], today)
-                if left is not None and left > window:
-                    outside_window += 1
-                    continue
                 pages = db_module.get_pages_for_image(conn, match["site_image_id"])
                 rows.append({
+                    "reference_id": match["reference_id"],
                     "filename": match["filename"],
                     "expiry_date": match["expiry_date"],
                     "days_left": left,
                     "status": urgency_status(left),
-                    "credit": match["credit"],
-                    "notes": match["notes"],
+                    "credit": match["credit"] or "",
+                    "notes": match["notes"] or "",
                     "pages": pages,
                     "site_url": match["site_url"],
                     "level": match["level"],
                     "score": match["score"],
                     "confidence": match["confidence"],
+                    "decision": match["decision"],
+                    "content_hash": match["content_hash"],
+                    "site_image_id": match["site_image_id"],
                     "ref_image": "/api/media/ref/" + quote(match["filename"]),
                     "site_image": f"/api/media/site/{match['site_image_id']}",
                 })
-        rows.sort(key=lambda row: (1, 0) if row["days_left"] is None else (0, row["days_left"]))
-        confirmed = [row for row in rows if row["confidence"] != "a_verifier"]
-        to_verify = [row for row in rows if row["confidence"] == "a_verifier"]
-        return {"within_days": window, "confirmed": confirmed, "to_verify": to_verify, "outside_window": outside_window}
+        return _group_matches(rows, window)
+
+    @app.post("/api/reviews")
+    def review(body: ReviewBody) -> dict:
+        if body.decision not in {"", "retenu", "ecarte", "traite"}:
+            raise HTTPException(status_code=400, detail="Décision inconnue.")
+        if not body.site_image_ids:
+            raise HTTPException(status_code=400, detail="Aucune image à annoter.")
+        with db_module.connect(workspace.db_path) as conn:
+            db_module.set_reviews(conn, body.reference_id, body.site_image_ids, body.decision)
+        return {"ok": True}
 
     @app.get("/api/downloads/{name}")
     def download(name: str, within_days: Optional[int] = None):
@@ -497,16 +643,24 @@ def create_app(
         path = html_path if name == "report.html" else csv_path
         return FileResponse(path, filename=name)
 
+    def send_image(path: Path, width: Optional[int], cache_key: str) -> FileResponse:
+        if width is None:
+            return FileResponse(path)
+        if width < 32 or width > 256:
+            raise HTTPException(status_code=400, detail="Largeur de vignette entre 32 et 256.")
+        dest = workspace.thumb_dir / f"{cache_key}-{width}.jpg"
+        return FileResponse(_thumbnail(path, dest, width), media_type="image/jpeg")
+
     @app.get("/api/media/ref/{filename}")
-    def ref_media(filename: str) -> FileResponse:
+    def ref_media(filename: str, w: Optional[int] = None) -> FileResponse:
         filename = safe_filename(filename)
         path = ref_path(filename)
         if path is None:
             raise HTTPException(status_code=404, detail="Image introuvable.")
-        return FileResponse(path)
+        return send_image(path, w, filename)
 
     @app.get("/api/media/site/{image_id}")
-    def site_media(image_id: int) -> FileResponse:
+    def site_media(image_id: int, w: Optional[int] = None) -> FileResponse:
         with db_module.connect(workspace.db_path) as conn:
             row = conn.execute("SELECT local_path FROM site_images WHERE id = ?", (image_id,)).fetchone()
         if row is None or not row["local_path"]:
@@ -514,7 +668,7 @@ def create_app(
         path = Path(row["local_path"])
         if not path.is_file():
             raise HTTPException(status_code=404, detail="Fichier image absent du cache.")
-        return FileResponse(path)
+        return send_image(path, w, f"site-{image_id}")
 
     return app
 

@@ -64,29 +64,30 @@ def fetch_and_store(
 ) -> Optional[int]:
     """Fetch (or reuse) a site image, filter by size, hash it, and link it to a page.
 
-    Returns the site_images.id, or None if the image was skipped (too small,
-    unreachable, or unreadable).
+    Returns (site_images.id, is_new). is_new is false when the URL was already
+    hashed. The id is None when the image was skipped (too small, unreachable,
+    or unreadable).
     """
     existing = conn.execute("SELECT * FROM site_images WHERE url = ?", (url,)).fetchone()
     if existing is not None and existing["phash"] is not None:
         db.link_image_page(conn, existing["id"], page_id)
-        return existing["id"]
+        return existing["id"], False
 
     fetched = download(url, client, timeout=config.crawl.request_timeout_seconds)
     if fetched is None:
-        return None
+        return None, False
     data, content_type = fetched
 
     try:
         img = Image.open(io.BytesIO(data))
         img.load()
     except UnidentifiedImageError:
-        return None
+        return None, False
     except OSError:
-        return None
+        return None, False
 
     if not meets_min_size(img, config.crawl.min_image_side_px):
-        return None
+        return None, False
 
     digest = content_hash(data)
     local_path = cache_path_for(cache_dir, digest, content_type)
@@ -110,4 +111,4 @@ def fetch_and_store(
         embedding=embedding,
     )
     db.link_image_page(conn, image_id, page_id)
-    return image_id
+    return image_id, True

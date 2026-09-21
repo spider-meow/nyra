@@ -11,6 +11,7 @@ from PIL import Image, ImageDraw
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
+from rightswatch import db
 from rightswatch.webapp import create_app
 
 
@@ -72,8 +73,52 @@ def test_library_upload_ingest_and_page(tmp_path: Path):
     assert media.status_code == 200
     assert media.content.startswith(b"\x89PNG")
 
+    thumb = client.get("/api/media/ref/campagne.png?w=64")
+    assert thumb.status_code == 200
+    assert thumb.content[:2] == b"\xff\xd8"
+    assert len(thumb.content) < len(media.content)
+
     removed = client.delete("/api/library/campagne.png")
     assert removed.status_code == 200
     after = client.get("/api/overview").json()
     assert after["library"] == []
     assert after["stats"]["reference_images"] == 0
+
+
+def test_matches_are_grouped_and_a_review_is_kept(tmp_path: Path):
+    app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
+    client = TestClient(app)
+    with db.connect(tmp_path / "rightswatch.db") as conn:
+        ref_id = db.upsert_reference_image(
+            conn,
+            filename="campagne.png",
+            path=str(tmp_path / "missing.png"),
+            expiry_date="2026-12-21",
+            credit="",
+            notes="",
+            phash="ffff0000ffff0000",
+            dhash="ffff0000ffff0000",
+        )
+        site_id = db.upsert_site_image(
+            conn,
+            url="https://example.test/a.webp",
+            local_path="",
+            content_hash="abc",
+            phash="ffff0000ffff0000",
+            dhash="ffff0000ffff0000",
+        )
+        db.upsert_match(conn, reference_id=ref_id, site_image_id=site_id, level="phash", score=1.0, confidence="haut")
+
+    listed = client.get("/api/matches?within_days=90")
+    assert listed.status_code == 200
+    payload = listed.json()
+    assert payload["later"]
+    assert payload["later"][0]["hits"][0]["page_count"] == 0
+
+    saved = client.post(
+        "/api/reviews",
+        json={"reference_id": ref_id, "site_image_ids": [site_id], "decision": "ecarte"},
+    )
+    assert saved.status_code == 200
+    again = client.get("/api/matches?within_days=400").json()
+    assert again["confirmed"][0]["hits"][0]["decision"] == "ecarte"

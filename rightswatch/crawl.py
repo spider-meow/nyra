@@ -231,6 +231,7 @@ class CrawlStats:
     pages_visited: int = 0
     images_found: int = 0
     images_stored: int = 0
+    images_new: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -244,6 +245,7 @@ def crawl_site(
     compute_embeddings: bool = True,
     resume: bool = True,
     progress=None,
+    should_stop=None,
 ) -> CrawlStats:
     """BFS-crawl a site: sitemap seeds first, then internal links, up to max_pages.
 
@@ -313,7 +315,7 @@ def crawl_site(
 
                     for image_url in image_urls:
                         stats.images_found += 1
-                        image_id = fetch.fetch_and_store(
+                        image_id, is_new = fetch.fetch_and_store(
                             conn,
                             url=image_url,
                             page_id=page_id,
@@ -324,6 +326,8 @@ def crawl_site(
                         )
                         if image_id is not None:
                             stats.images_stored += 1
+                            if is_new:
+                                stats.images_new += 1
 
                     for link in internal_links:
                         if link not in visited and link not in queue:
@@ -335,6 +339,8 @@ def crawl_site(
 
                     if progress:
                         progress(stats)
+                    if should_stop and should_stop():
+                        break
 
                     delay = random.uniform(
                         config.crawl.delay_seconds_min, config.crawl.delay_seconds_max

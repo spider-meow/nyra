@@ -82,6 +82,20 @@ CREATE TABLE IF NOT EXISTS matches (
 CREATE INDEX IF NOT EXISTS idx_matches_reference ON matches(reference_id);
 CREATE INDEX IF NOT EXISTS idx_matches_site_image ON matches(site_image_id);
 CREATE INDEX IF NOT EXISTS idx_image_pages_image ON image_pages(image_id);
+
+CREATE TABLE IF NOT EXISTS reviews (
+    reference_id INTEGER NOT NULL,
+    site_image_id INTEGER NOT NULL,
+    decision TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (reference_id, site_image_id)
+);
+
+CREATE TABLE IF NOT EXISTS match_meta (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    signature TEXT NOT NULL,
+    finished_at TEXT NOT NULL
+);
 """
 
 
@@ -102,9 +116,20 @@ def connect(db_path: Path | str) -> Iterator[sqlite3.Connection]:
         conn.close()
 
 
+def _column_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, name: str, declaration: str) -> None:
+    if name not in _column_names(conn, table):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {declaration}")
+
+
 def init_db(db_path: Path | str) -> None:
     with connect(db_path) as conn:
         conn.executescript(SCHEMA)
+        _ensure_column(conn, "reference_images", "compared_at", "TEXT")
+        _ensure_column(conn, "site_images", "compared_at", "TEXT")
 
 
 def pack_embedding(vector: Optional[np.ndarray]) -> Optional[bytes]:
@@ -152,7 +177,14 @@ def upsert_reference_image(
             embedding=excluded.embedding,
             width=excluded.width,
             height=excluded.height,
-            updated_at=excluded.updated_at
+            updated_at=excluded.updated_at,
+            compared_at=CASE
+                WHEN reference_images.phash IS NOT excluded.phash
+                  OR reference_images.dhash IS NOT excluded.dhash
+                  OR reference_images.embedding IS NOT excluded.embedding
+                THEN NULL
+                ELSE reference_images.compared_at
+            END
         """,
         (
             filename, path, expiry_date, credit, notes, phash, dhash,
@@ -232,7 +264,13 @@ def upsert_site_image(
             phash=COALESCE(excluded.phash, site_images.phash),
             dhash=COALESCE(excluded.dhash, site_images.dhash),
             embedding=COALESCE(excluded.embedding, site_images.embedding),
-            last_seen=excluded.last_seen
+            last_seen=excluded.last_seen,
+            compared_at=CASE
+                WHEN excluded.phash IS NOT NULL AND excluded.phash IS NOT site_images.phash THEN NULL
+                WHEN excluded.dhash IS NOT NULL AND excluded.dhash IS NOT site_images.dhash THEN NULL
+                WHEN excluded.embedding IS NOT NULL AND excluded.embedding IS NOT site_images.embedding THEN NULL
+                ELSE site_images.compared_at
+            END
         """,
         (
             url, local_path, content_hash, width, height, phash, dhash,
@@ -310,6 +348,84 @@ def clear_matches(conn: sqlite3.Connection) -> None:
     conn.execute("DELETE FROM matches")
 
 
+def delete_matches_for(conn: sqlite3.Connection, *, reference_ids: list[int], site_ids: list[int]) -> None:
+    _delete_ids(conn, "reference_id", reference_ids)
+    _delete_ids(conn, "site_image_id", site_ids)
+
+
+def _delete_ids(conn: sqlite3.Connection, column: str, ids: list[int]) -> None:
+    for start in range(0, len(ids), 500):
+        chunk = ids[start : start + 500]
+        marks = ",".join("?" for _ in chunk)
+        conn.execute(f"DELETE FROM matches WHERE {column} IN ({marks})", chunk)
+
+
+def write_matches(conn: sqlite3.Connection, rows: list[tuple]) -> None:
+    conn.executemany(
+        """
+        INSERT INTO matches (reference_id, site_image_id, level, score, confidence, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(reference_id, site_image_id) DO UPDATE SET
+            level=excluded.level,
+            score=excluded.score,
+            confidence=excluded.confidence,
+            created_at=excluded.created_at
+        """,
+        rows,
+    )
+
+
+def stamp_compared(conn: sqlite3.Connection, reference_ids: list[int], site_ids: list[int], signature: str) -> None:
+    ts = now_iso()
+    for start in range(0, len(reference_ids), 500):
+        chunk = reference_ids[start : start + 500]
+        conn.executemany(
+            "UPDATE reference_images SET compared_at = ? WHERE id = ?",
+            [(ts, item) for item in chunk],
+        )
+    for start in range(0, len(site_ids), 500):
+        chunk = site_ids[start : start + 500]
+        conn.executemany(
+            "UPDATE site_images SET compared_at = ? WHERE id = ?",
+            [(ts, item) for item in chunk],
+        )
+    conn.execute(
+        """
+        INSERT INTO match_meta (id, signature, finished_at) VALUES (1, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET signature=excluded.signature, finished_at=excluded.finished_at
+        """,
+        (signature, ts),
+    )
+
+
+def get_match_signature(conn: sqlite3.Connection) -> Optional[str]:
+    row = conn.execute("SELECT signature FROM match_meta WHERE id = 1").fetchone()
+    return None if row is None else row["signature"]
+
+
+def set_reviews(conn: sqlite3.Connection, reference_id: int, site_image_ids: list[int], decision: str) -> None:
+    if not decision:
+        for start in range(0, len(site_image_ids), 500):
+            chunk = site_image_ids[start : start + 500]
+            marks = ",".join("?" for _ in chunk)
+            conn.execute(
+                f"DELETE FROM reviews WHERE reference_id = ? AND site_image_id IN ({marks})",
+                [reference_id, *chunk],
+            )
+        return
+    ts = now_iso()
+    conn.executemany(
+        """
+        INSERT INTO reviews (reference_id, site_image_id, decision, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(reference_id, site_image_id) DO UPDATE SET
+            decision=excluded.decision,
+            updated_at=excluded.updated_at
+        """,
+        [(reference_id, site_id, decision, ts) for site_id in site_image_ids],
+    )
+
+
 def get_matches(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         """
@@ -317,10 +433,14 @@ def get_matches(conn: sqlite3.Connection) -> list[sqlite3.Row]:
             m.id AS match_id, m.level, m.score, m.confidence,
             r.id AS reference_id, r.filename, r.path AS ref_path,
             r.expiry_date, r.credit, r.notes,
-            s.id AS site_image_id, s.url AS site_url, s.local_path AS site_local_path
+            s.id AS site_image_id, s.url AS site_url, s.local_path AS site_local_path,
+            s.content_hash AS content_hash,
+            v.decision AS decision
         FROM matches m
         JOIN reference_images r ON r.id = m.reference_id
         JOIN site_images s ON s.id = m.site_image_id
+        LEFT JOIN reviews v
+            ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
         ORDER BY r.expiry_date IS NULL, r.expiry_date ASC, m.score DESC
         """
     ).fetchall()

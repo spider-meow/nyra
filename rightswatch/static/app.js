@@ -3,11 +3,19 @@ const state = {
   overview: null,
   matches: null,
   withinDays: 90,
-  fast: false,
+  ingestFast: false,
+  crawlFast: false,
+  thenMatch: true,
   fresh: false,
+  hideRejected: true,
   maxPages: 30,
   site: "",
   banner: "",
+  openKey: "",
+  openHit: "",
+  libraryShown: 60,
+  resultsShown: 40,
+  libraryQuery: "",
 };
 
 const panel = document.querySelector("#panel");
@@ -64,6 +72,7 @@ function renderJob() {
     bar = `<div class="bar"><div class="bar-fill" style="width:${width}%"></div></div>`;
   }
   if (job.status !== "running") bar = "";
+  const stop = job.status === "running" ? `<button type="button" class="btn btn-ghost" data-stop>Arrêter</button>` : "";
   const cls = job.status === "error" ? "is-error" : "";
   const detail = job.status === "error" ? (job.error || job.message) : job.message;
   jobEl.innerHTML = `
@@ -71,6 +80,7 @@ function renderJob() {
       <p class="kicker">${esc(jobLabel(job.kind))}</p>
       <p class="job-line">${esc(detail || job.status)}</p>
       ${bar}
+      ${stop}
     </div>`;
 }
 
@@ -85,9 +95,21 @@ function renderStats() {
   libraryMeta.textContent = waiting
     ? `${stats.reference_images || 0} indexée(s), ${waiting} en attente`
     : `${stats.reference_images || 0} image(s) à protéger`;
-  exploreMeta.textContent = stats.pages_crawled
-    ? `${stats.pages_crawled} page(s), ${stats.site_images || 0} image(s)`
-    : "Là où elles pourraient être";
+  const job = state.overview && state.overview.job;
+  if (job && job.kind === "crawl" && job.status === "running") {
+    const progress = job.progress || {};
+    const done = progress.done || 0;
+    const total = progress.total || 0;
+    exploreMeta.textContent = total ? `Lecture en cours · ${done}/${total}` : "Lecture en cours";
+  } else if (job && job.kind === "crawl" && job.status === "done" && String(job.message || "").startsWith("Arrêté")) {
+    exploreMeta.textContent = `Lecture arrêtée · ${stats.pages_crawled || 0} pages en stock`;
+  } else if (job && job.kind === "crawl" && job.status === "done") {
+    exploreMeta.textContent = `Lecture terminée · ${stats.pages_crawled || 0} pages, ${stats.site_images || 0} images`;
+  } else {
+    exploreMeta.textContent = stats.pages_crawled
+      ? `${stats.pages_crawled} pages en stock, ${stats.site_images || 0} images`
+      : "Là où elles pourraient être";
+  }
   resultsMeta.textContent = stats.matches
     ? `${stats.matches} correspondance(s)`
     : "Ce qui dépasse la date";
@@ -118,26 +140,28 @@ function confidenceTag(confidence) {
   return `<span class="tag">${esc(map[confidence] || confidence)}</span>`;
 }
 
+function thumb(url, size) {
+  if (!url) return "";
+  const join = url.includes("?") ? "&" : "?";
+  return `${url}${join}w=${size || 80}`;
+}
+
 function libraryCard(item) {
-  const tag = item.indexed
-    ? `<span class="tag">Indexée</span>`
-    : `<span class="tag">Date pas encore enregistrée</span>`;
+  const tag = item.indexed ? "Indexée" : "Date pas encore enregistrée";
   return `
     <article class="card" data-filename="${esc(item.filename)}">
-      <div class="card-top">
-        <img class="thumb" alt="" src="${esc(item.url)}">
+      <div class="line">
+        <img class="thumb" alt="" loading="lazy" src="${esc(thumb(item.url, 80))}">
         <div>
-          <p class="filename">${esc(item.filename)}</p>
-          ${tag}
+          <p class="filename" title="${esc(item.filename)}">${esc(item.filename)}</p>
+          <p class="meta">${esc(tag)}</p>
         </div>
+        <button type="button" class="btn btn-danger" data-remove="${esc(item.filename)}">Retirer</button>
       </div>
-      <div class="fields">
+      <div class="line-fields">
         <label><span>Expiration</span><input type="date" data-field="expiry_date" value="${esc(item.expiry_date)}"></label>
         <label><span>Crédit</span><input type="text" data-field="credit" value="${esc(item.credit)}" placeholder="Qui a fait cette image"></label>
-        <label><span>Notes</span><textarea data-field="notes" placeholder="Usage, territoire, ce qu'il faut retenir">${esc(item.notes)}</textarea></label>
-      </div>
-      <div class="card-actions">
-        <button type="button" class="btn btn-danger" data-remove="${esc(item.filename)}">Retirer</button>
+        <label><span>Notes</span><input type="text" data-field="notes" value="${esc(item.notes)}" placeholder="Usage, territoire"></label>
       </div>
     </article>`;
 }
@@ -145,8 +169,14 @@ function libraryCard(item) {
 function renderLibrary() {
   const library = (state.overview && state.overview.library) || [];
   const indexed = ((state.overview && state.overview.stats) || {}).reference_images || 0;
+  const query = state.libraryQuery.trim().toLowerCase();
+  const filtered = query ? library.filter((item) => item.filename.toLowerCase().includes(query)) : library;
+  const shown = filtered.slice(0, state.libraryShown);
+  const more = filtered.length > shown.length
+    ? `<button type="button" class="btn btn-ghost" data-more="libraryShown">Afficher la suite · ${shown.length}/${filtered.length}</button>`
+    : "";
   const cards = library.length
-    ? `<div class="grid">${library.map(libraryCard).join("")}</div>`
+    ? `<div class="rows">${shown.map(libraryCard).join("")}</div>${more}`
     : `<div class="empty"><h3>Rien à protéger pour l'instant</h3><p>Dépose les visuels dont les droits ont une date. Sans eux, le site n'a rien à quoi se comparer.</p></div>`;
   const next = indexed
     ? `<div class="callout"><h3>La liste est prête</h3><p>Ensuite, indique le site où ces images n'ont peut-être plus le droit d'être.</p><div class="toolbar"><button type="button" class="btn" data-view="explore">Continuer vers le site</button></div></div>`
@@ -165,7 +195,8 @@ function renderLibrary() {
     </div>
     <div class="toolbar">
       <label class="btn btn-ghost file-btn">Importer un CSV<input id="csv" type="file" accept=".csv,text/csv"></label>
-      <label class="check"><input type="checkbox" id="fast" ${state.fast ? "checked" : ""}> Analyse rapide, sans le modèle visuel</label>
+      <label><span>Filtrer</span><input id="library-filter" type="text" value="${esc(state.libraryQuery)}" placeholder="Nom de fichier"></label>
+      <label class="check"><input type="checkbox" id="ingest-fast" ${state.ingestFast ? "checked" : ""}> Indexation rapide, sans le modèle visuel</label>
       <button type="button" class="btn" id="ingest" ${running() || !library.length ? "disabled" : ""}>Enregistrer les dates</button>
     </div>
     ${cards}
@@ -190,8 +221,9 @@ function renderExplore() {
     <form class="form-card" id="crawl-form">
       <label><span>Adresse du site</span><input id="site" type="url" required placeholder="https://www.exemple.com" value="${esc(state.site)}"></label>
       <label><span>Pages à lire au maximum</span><input id="max-pages" type="number" min="1" max="5000" value="${esc(state.maxPages)}"></label>
-      <label class="check"><input type="checkbox" id="fast" ${state.fast ? "checked" : ""}> Plus rapide, moins sensible aux recadrages</label>
+      <label class="check"><input type="checkbox" id="crawl-fast" ${state.crawlFast ? "checked" : ""}> Sans le modèle visuel : plus rapide, les recadrages passent à côté</label>
       <label class="check"><input type="checkbox" id="fresh" ${state.fresh ? "checked" : ""}> Relire les pages déjà vues</label>
+      <label class="check"><input type="checkbox" id="then-match" ${state.thenMatch ? "checked" : ""}> Comparer dès que la lecture est finie</label>
       <div class="toolbar">
         <button type="submit" class="btn" ${running() || needsLibrary ? "disabled" : ""}>Lire le site</button>
         <button type="button" class="btn btn-ghost" id="match" ${running() || !stats.site_images ? "disabled" : ""}>Comparer aux références</button>
@@ -200,77 +232,107 @@ function renderExplore() {
     </form>`;
   document.querySelector("#crawl-form").addEventListener("submit", onCrawl);
   document.querySelector("#match").addEventListener("click", onMatch);
-  document.querySelector("#fast").addEventListener("change", (event) => { state.fast = event.target.checked; });
+  document.querySelector("#crawl-fast").addEventListener("change", (event) => { state.crawlFast = event.target.checked; });
+  document.querySelector("#then-match").addEventListener("change", (event) => { state.thenMatch = event.target.checked; });
   document.querySelector("#fresh").addEventListener("change", (event) => { state.fresh = event.target.checked; });
   document.querySelector("#site").addEventListener("input", (event) => { state.site = event.target.value; });
   document.querySelector("#max-pages").addEventListener("input", (event) => { state.maxPages = Number(event.target.value) || state.maxPages; });
 }
 
-function matchCard(row) {
-  const late = typeof row.days_left === "number" && row.days_left < 0;
-  const days = row.days_left === null || row.days_left === undefined
-    ? "Date inconnue"
-    : late
-      ? `${Math.abs(row.days_left)} j de trop`
-      : `${row.days_left} j`;
-  const daysNote = row.days_left === null || row.days_left === undefined
-    ? "On ne sait pas quand les droits s'arrêtent."
-    : late
-      ? "Cette image n'a plus le droit d'être là."
-      : "jours avant l'échéance.";
-  const pages = (row.pages || []).map((url) => `<li><a href="${esc(url)}" target="_blank" rel="noreferrer">${esc(url)}</a></li>`).join("");
+function dayText(days) {
+  if (days === null || days === undefined) return "Date inconnue";
+  if (days < 0) return `${Math.abs(days)} j de trop`;
+  return `${days} j`;
+}
+
+function visibleHits(group) {
+  const hits = group.hits || [];
+  if (!state.hideRejected) return hits;
+  return hits.filter((hit) => hit.decision !== "ecarte");
+}
+
+function matchGroup(group) {
+  const hits = visibleHits(group);
+  if (!hits.length) return "";
+  const late = typeof group.days_left === "number" && group.days_left < 0;
+  const key = `ref-${group.reference_id}`;
+  const open = state.openKey === key;
+  const detail = open ? hits.map((hit, index) => {
+    const hitKey = `${key}-${index}`;
+    const shown = state.openHit === hitKey;
+    const ids = (hit.site_image_ids || [hit.site_image_id]).join(",");
+    const decision = hit.decision ? ` · ${hit.decision === "ecarte" ? "écarté" : hit.decision === "retenu" ? "retenu" : "traité"}` : "";
+    const links = shown
+      ? (hit.pages || []).map((url) => `<li><a href="${esc(url)}" target="_blank" rel="noreferrer">${esc(url)}</a></li>`).join("")
+      : "";
+    return `
+      <div class="hit">
+        <button type="button" class="btn btn-ghost" data-hit="${hitKey}">${shown ? "Fermer" : "Voir"}</button>
+        <p class="meta">Score ${Math.round((hit.score || 0) * 100)} % · ${esc(hit.level)}${esc(decision)} · ${hit.page_count || (hit.pages || []).length} page(s)</p>
+        ${confidenceTag(hit.confidence)}
+        <button type="button" class="btn btn-ghost" data-decision="retenu" data-ref="${group.reference_id}" data-sites="${esc(ids)}">Retenir</button>
+        <button type="button" class="btn btn-ghost" data-decision="ecarte" data-ref="${group.reference_id}" data-sites="${esc(ids)}">Écarter</button>
+        <button type="button" class="btn btn-ghost" data-decision="traite" data-ref="${group.reference_id}" data-sites="${esc(ids)}">Traité</button>
+      </div>
+      ${shown ? `<div class="detail"><img alt="" loading="lazy" src="${esc(thumb(group.ref_image, 160))}"><img alt="" loading="lazy" src="${esc(thumb(hit.site_image, 160))}"></div>` : ""}
+      ${links ? `<ul class="pages">${links}</ul>` : ""}`;
+  }).join("") : "";
   return `
     <article class="card">
-      <div class="pair">
-        <figure>
-          <img alt="Référence ${esc(row.filename)}" src="${esc(row.ref_image)}">
-          <figcaption>La tienne</figcaption>
-        </figure>
-        <figure>
-          <img alt="Image trouvée sur le site" src="${esc(row.site_image)}">
-          <figcaption>Sur le site</figcaption>
-        </figure>
-      </div>
-      <p class="days ${late ? "is-late" : ""}">${esc(days)}</p>
-      <p class="meta">${esc(daysNote)}</p>
-      <p class="filename">${esc(row.filename)}</p>
-      <div class="tags">${statusTag(row.status)} ${confidenceTag(row.confidence)}</div>
-      <p class="meta">Score ${Math.round((row.score || 0) * 100)} % · ${esc(row.level)}${row.credit ? ` · ${esc(row.credit)}` : ""}</p>
-      ${row.notes ? `<p class="meta">${esc(row.notes)}</p>` : ""}
-      ${pages ? `<ul class="pages">${pages}</ul>` : ""}
+      <button type="button" class="line" data-open="${key}">
+        <img class="thumb" alt="" loading="lazy" src="${esc(thumb(group.ref_image, 80))}">
+        <div>
+          <p class="filename" title="${esc(group.filename)}">${esc(group.filename)}</p>
+          <p class="days ${late ? "is-late" : ""}">${esc(dayText(group.days_left))} · ${hits.length} occurrence(s)</p>
+        </div>
+        ${statusTag(group.status)}
+      </button>
+      ${detail}
     </article>`;
+}
+
+function renderGroupList(title, groups) {
+  const visible = groups.slice(0, state.resultsShown);
+  const cards = visible.map(matchGroup).filter(Boolean).join("");
+  const more = groups.length > state.resultsShown
+    ? `<button type="button" class="btn btn-ghost" data-more="resultsShown">Afficher la suite · ${state.resultsShown}/${groups.length}</button>`
+    : "";
+  if (!groups.length) return "";
+  return `<h3 class="section-title">${esc(title)}</h3><div class="rows">${cards}</div>${more}`;
 }
 
 function renderResults() {
   const data = state.matches;
   const confirmed = data ? data.confirmed : [];
   const toVerify = data ? data.to_verify : [];
-  const outside = data && data.outside_window
-    ? `<div class="callout"><h3>${data.outside_window} autre(s), plus loin</h3><p>Leur échéance dépasse cette fenêtre. Élargis le nombre de jours pour les faire apparaître.</p></div>`
-    : "";
+  const later = data ? (data.later || []) : [];
   const body = !data
     ? `<div class="empty"><h3>Lecture en cours</h3><p>Les correspondances arrivent.</p></div>`
     : `
-      <h3 class="section-title">${confirmed.length} reconnue(s)</h3>
-      ${confirmed.length ? `<div class="stack">${confirmed.map(matchCard).join("")}</div>` : `<div class="empty"><h3>Rien de net dans cette fenêtre</h3><p>Soit la comparaison n'a pas encore tourné, soit les échéances sont plus lointaines. Élargis les jours, ou reviens comparer.</p><div class="toolbar"><button type="button" class="btn btn-ghost" data-view="explore">Retour au site</button></div></div>`}
-      <h3 class="section-title">${toVerify.length} à regarder de près</h3>
-      ${toVerify.length ? `<div class="stack">${toVerify.map(matchCard).join("")}</div>` : `<p class="hint">Rien d'incertain dans cette fenêtre.</p>`}
-      ${outside}`;
+      ${renderGroupList(`${confirmed.length} dans la fenêtre`, confirmed)}
+      ${confirmed.length ? "" : `<p class="hint">${later.length ? `Rien dans les ${esc(state.withinDays)} jours. Le reste est listé plus bas.` : "Aucune correspondance pour l'instant."}</p>`}
+      ${renderGroupList(`${toVerify.length} à regarder de près`, toVerify)}
+      ${renderGroupList(`${later.length} plus loin`, later)}`;
   panel.innerHTML = `
     <div class="panel-head">
       <div>
         <h2>Ce qui reste en ligne</h2>
-        <p>Les plus proches de l'échéance d'abord. À gauche, ton image. À droite, celle du site.</p>
+        <p>Une ligne par visuel. Ouvre la ligne pour voir les deux images, en petit.</p>
       </div>
     </div>
     <div class="toolbar">
       <label><span>Montrer jusqu'à</span><input id="within" type="number" min="0" max="3650" value="${esc(state.withinDays)}"></label>
+      <label class="check"><input type="checkbox" id="hide-rejected" ${state.hideRejected ? "checked" : ""}> Masquer les écartés</label>
       <button type="button" class="btn btn-ghost" id="reload-matches">Actualiser</button>
       <a class="btn" href="/api/downloads/report.html?within_days=${encodeURIComponent(state.withinDays)}">Rapport</a>
       <a class="btn btn-ghost" href="/api/downloads/matches.csv?within_days=${encodeURIComponent(state.withinDays)}">CSV</a>
     </div>
     ${body}`;
   document.querySelector("#reload-matches").addEventListener("click", () => loadMatches());
+  document.querySelector("#hide-rejected").addEventListener("change", (event) => {
+    state.hideRejected = event.target.checked;
+    render();
+  });
   document.querySelector("#within").addEventListener("change", (event) => {
     state.withinDays = Number(event.target.value);
     loadMatches();
@@ -308,8 +370,10 @@ async function refresh(rebuild) {
   window.clearTimeout(pollTimer);
   if (status === "running") {
     pollTimer = window.setTimeout(() => refresh(false), 1000);
-  } else if (statusChanged && status === "done" && state.view === "results") {
-    loadMatches();
+  } else if (statusChanged && status === "done") {
+    const finished = job && job.result && Object.prototype.hasOwnProperty.call(job.result, "matches");
+    if (finished) state.view = "results";
+    if (finished || state.view === "results") loadMatches();
   }
 }
 
@@ -376,14 +440,28 @@ function bindLibrary() {
       setBanner(error.message);
     }
   });
-  document.querySelector("#fast").addEventListener("change", (event) => { state.fast = event.target.checked; });
+  const filter = document.querySelector("#library-filter");
+  if (filter) {
+    filter.addEventListener("input", (event) => {
+      state.libraryQuery = event.target.value;
+      state.libraryShown = 60;
+      const caret = event.target.selectionStart;
+      render();
+      const again = document.querySelector("#library-filter");
+      if (again) {
+        again.focus();
+        again.setSelectionRange(caret, caret);
+      }
+    });
+  }
+  document.querySelector("#ingest-fast").addEventListener("change", (event) => { state.ingestFast = event.target.checked; });
   document.querySelector("#ingest").addEventListener("click", async () => {
     setBanner("");
     try {
       await api("/api/jobs/ingest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fast: state.fast }),
+        body: JSON.stringify({ fast: state.ingestFast }),
       });
       refresh(true);
     } catch (error) {
@@ -417,8 +495,9 @@ async function onCrawl(event) {
       body: JSON.stringify({
         site: state.site,
         max_pages: Number(state.maxPages),
-        fast: state.fast,
+        fast: state.crawlFast,
         fresh: state.fresh,
+        then_match: state.thenMatch,
       }),
     });
     refresh(true);
@@ -433,7 +512,7 @@ async function onMatch() {
     await api("/api/jobs/match", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ fast: state.fast }),
+      body: JSON.stringify({ fast: state.crawlFast }),
     });
     state.view = "results";
     refresh(true);
@@ -442,7 +521,49 @@ async function onMatch() {
   }
 }
 
-document.body.addEventListener("click", (event) => {
+document.body.addEventListener("click", async (event) => {
+  const stop = event.target.closest("[data-stop]");
+  if (stop) {
+    try { await api("/api/jobs/cancel", { method: "POST" }); } catch (error) { setBanner(error.message); }
+    return;
+  }
+  const decision = event.target.closest("[data-decision]");
+  if (decision) {
+    const ids = String(decision.dataset.sites || "").split(",").map((item) => Number(item)).filter(Boolean);
+    try {
+      await api("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reference_id: Number(decision.dataset.ref),
+          site_image_ids: ids,
+          decision: decision.dataset.decision,
+        }),
+      });
+      await loadMatches();
+    } catch (error) {
+      setBanner(error.message);
+    }
+    return;
+  }
+  const hitToggle = event.target.closest("[data-hit]");
+  if (hitToggle) {
+    state.openHit = state.openHit === hitToggle.dataset.hit ? "" : hitToggle.dataset.hit;
+    render();
+    return;
+  }
+  const opener = event.target.closest("[data-open]");
+  if (opener) {
+    state.openKey = state.openKey === opener.dataset.open ? "" : opener.dataset.open;
+    render();
+    return;
+  }
+  const more = event.target.closest("[data-more]");
+  if (more) {
+    state[more.dataset.more] += more.dataset.more === "libraryShown" ? 60 : 40;
+    render();
+    return;
+  }
   const node = event.target.closest("[data-view]");
   if (!node || node.tagName === "INPUT") return;
   if (node.tagName === "A") event.preventDefault();

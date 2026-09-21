@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 
+import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
@@ -86,6 +87,37 @@ def base_image() -> Image.Image:
 
 def test_hamming_distance_identical_hashes_is_zero():
     assert hamming_distance("ffff0000ffff0000", "ffff0000ffff0000") == 0
+
+
+def test_vectorized_match_finds_identical_hash_and_skips_a_distant_one(config):
+    from rightswatch.match import match_index_pairs
+
+    same = np.array([np.uint64(0xFFFF0000FFFF0000)], dtype=np.uint64)
+    far = np.array([np.uint64(0xFFFFFFFFFFFFFFFF)], dtype=np.uint64)
+    ok = np.array([True])
+    none = np.array([False])
+    hits = match_index_pairs(
+        [7, 8],
+        np.array([np.uint64(0xFFFF0000FFFF0000), np.uint64(1)], dtype=np.uint64),
+        same.repeat(2),
+        np.array([True, True]),
+        np.array([True, True]),
+        None,
+        none.repeat(2),
+        [3, 4],
+        np.concatenate([same, far]),
+        np.concatenate([same, far]),
+        np.array([True, True]),
+        np.array([True, True]),
+        None,
+        none.repeat(2),
+        config,
+        False,
+    )
+    pairs = {(hit[0], hit[1]) for hit in hits}
+    assert (7, 3) in pairs
+    assert (8, 4) not in pairs
+    assert all(hit[3] == 1.0 for hit in hits if hit[1] == 3)
 
 
 def test_hamming_distance_none_when_missing():
