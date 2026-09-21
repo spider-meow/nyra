@@ -185,5 +185,28 @@ def init_db_cmd(db: Path = DbOption) -> None:
     typer.secho(f"Database ready at {db}", fg=typer.colors.GREEN)
 
 
+@app.command("ui")
+def ui_cmd(
+    host: str = typer.Option("127.0.0.1", "--host", help="Address to bind. Defaults to this machine only."),
+    port: int = typer.Option(8000, "--port", help="Port for the local interface."),
+    db: Path = DbOption,
+    config: Optional[Path] = ConfigOption,
+) -> None:
+    """Open the local interface to run the pipeline without the CLI."""
+    import uvicorn
+
+    from rightswatch.webapp import create_app
+
+    root = Path.cwd()
+    db_path = db if db.is_absolute() else root / db
+    typer.secho(f"RightsWatch  →  http://{host}:{port}", fg=typer.colors.GREEN)
+    uvicorn.run(
+        create_app(root=root, db_path=db_path, config_path=config),
+        host=host,
+        port=port,
+        log_level="info",
+    )
+
+
 if __name__ == "__main__":
     app()

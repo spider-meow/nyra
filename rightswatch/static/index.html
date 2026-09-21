@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RightsWatch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="side">
+      <div class="brand">
+        <p class="brand-name">RightsWatch</p>
+        <p class="brand-line">Ce qui est encore en ligne, alors que les droits s'épuisent.</p>
+      </div>
+      <nav class="nav" aria-label="Parcours">
+        <button type="button" class="step is-active" data-view="library">
+          <span class="step-index">01</span>
+          <span class="step-copy">
+            <span class="step-title">Bibliothèque</span>
+            <span class="step-meta" id="meta-library">Les images à protéger</span>
+          </span>
+        </button>
+        <button type="button" class="step" data-view="explore">
+          <span class="step-index">02</span>
+          <span class="step-copy">
+            <span class="step-title">Le site</span>
+            <span class="step-meta" id="meta-explore">Là où elles pourraient être</span>
+          </span>
+        </button>
+        <button type="button" class="step" data-view="results">
+          <span class="step-index">03</span>
+          <span class="step-copy">
+            <span class="step-title">Correspondances</span>
+            <span class="step-meta" id="meta-results">Ce qui dépasse la date</span>
+          </span>
+        </button>
+      </nav>
+      <p class="side-note">Interface locale. Pas de compte. Tout reste sur cette machine.</p>
+    </aside>
+    <div class="workspace">
+      <div id="job"></div>
+      <p class="banner" id="banner" hidden></p>
+      <main id="panel"></main>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
