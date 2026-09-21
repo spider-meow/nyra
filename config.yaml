@@ -1,0 +1,27 @@
+# RightsWatch configuration.
+# All matching thresholds and crawl behavior live here, not hard-coded.
+
+crawl:
+  max_pages: 300
+  delay_seconds_min: 1.0
+  delay_seconds_max: 2.0
+  user_agent: "RightsWatchBot/0.1 (+https://github.com/axel-project/rightswatch; contact: rights-team@example.com)"
+  min_image_side_px: 200
+  respect_robots_txt: true
+  request_timeout_seconds: 20
+  page_load_timeout_ms: 30000
+
+match:
+  # Level 1: perceptual hash (Hamming distance, lower = closer). 64-bit hashes.
+  phash_threshold: 8
+  dhash_threshold: 8
+
+  # Level 2: CLIP cosine similarity, applied only to pairs not resolved at level 1.
+  clip_similarity_high: 0.92
+  clip_similarity_medium: 0.85
+  clip_similarity_floor: 0.75
+  clip_model_name: "ViT-B-32"
+  clip_pretrained: "laion2b_s34b_b79k"
+
+report:
+  default_within_days: 90

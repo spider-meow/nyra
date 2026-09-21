@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+venv/
+
+# RightsWatch data (client images, DAM exports, crawl cache, DB, reports)
+refs/*
+!refs/.gitkeep
+data/
+out/
+*.db
+*.db-journal
+
+# Ground truth files for calibrate may contain client-specific info
+ground_truth*.csv
+!ground_truth.example.csv
+
+# OS
+.DS_Store
