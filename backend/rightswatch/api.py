@@ -23,15 +23,11 @@ from rightswatch.config import load_config
 from rightswatch.report import days_until, urgency_status
 
 def frontend_dir() -> Path:
-    """The interface lives next to the backend, not inside the Python package."""
+    """The TypeScript app lives next to the backend, not inside the Python package."""
     packaged = Path(__file__).resolve().parents[2] / "frontend"
-    if (packaged / "index.html").is_file():
+    if packaged.is_dir():
         return packaged
-    cwd = Path.cwd() / "frontend"
-    return cwd if (cwd / "index.html").is_file() else packaged
-
-
-FRONTEND_DIR = frontend_dir()
+    return Path.cwd() / "frontend"
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff"}
 
 
@@ -301,15 +297,20 @@ def create_app(
     app.state.workspace = workspace
     app.state.jobs = jobs
 
-    if FRONTEND_DIR.is_dir():
-        app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+    dist = frontend_dir() / "dist"
+    assets = dist / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
 
-    @app.get("/")
-    def index() -> FileResponse:
-        page = FRONTEND_DIR / "index.html"
-        if not page.exists():
-            return HTMLResponse("<p>Interface introuvable.</p>", status_code=500)
-        return FileResponse(page)
+    @app.get("/", response_model=None)
+    def index() -> FileResponse | HTMLResponse:
+        page = dist / "index.html"
+        if page.is_file():
+            return FileResponse(page)
+        return HTMLResponse(
+            "<p>RightsWatch. Depuis frontend/, lance <code>npm install</code> puis <code>npm run build</code>.</p>",
+            status_code=200,
+        )
 
     @app.get("/api/overview")
     def overview() -> dict:

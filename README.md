@@ -116,10 +116,12 @@ backend/rightswatch/     pipeline and local API
   db.py                  SQLite schema and access
   templates/             Jinja2 report template
 backend/tests/           pytest suite, no network
-frontend/                local interface (HTML, CSS, JS), served by the API
+frontend/                TypeScript interface (Vite, React, Tailwind)
 config.yaml              thresholds and crawl limits
 docs/                    architecture, CLI, schema, matching, dev guide
 ```
+
+The interface is TypeScript. From `frontend/`, `npm install` then `npm run dev` (the API stays on port 8765 or 8000). `npm run build` writes `frontend/dist`, which `rightswatch ui` serves.
 
 `refs.py` exposes a `RefSource` abstract base class so the CSV+folder input
 used for the demo can later be swapped for a Brandcenter export adapter

@@ -28,7 +28,7 @@ def test_library_upload_ingest_and_page(tmp_path: Path):
 
     page = client.get("/")
     assert page.status_code == 200
-    assert "Bibliothèque" in page.text
+    assert "RightsWatch" in page.text
     assert "login" not in page.text.lower()
 
     src = tmp_path / "ref.png"
