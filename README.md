@@ -8,6 +8,21 @@ autonomous HTML report + a CSV, sorted by expiry urgency.
 Built for the Axel project's MVP demo, targeting `remymartin.com` as the
 test site.
 
+## Documentation
+
+This README is a quickstart. For anything deeper, see `docs/`:
+
+- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — pipeline diagram, module
+  responsibilities, why the codebase is structured the way it is.
+- **[docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md)** — every command, every
+  flag, typical workflows.
+- **[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)** — table-by-table
+  schema reference, idempotency/resumability model.
+- **[docs/MATCHING.md](docs/MATCHING.md)** — how the two-level matcher works,
+  confidence bands, calibrating thresholds against ground truth.
+- **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** — dev setup, running tests,
+  project conventions, how to extend `RefSource`/crawling/matching.
+
 ## How it works
 
 1. **Ingest** a folder of reference images + a CSV (`filename, expiry_date,
@@ -72,7 +87,8 @@ images must already be in the database (via `ingest-refs` and `crawl`).
 The command sweeps pHash/dHash Hamming-distance thresholds and CLIP cosine
 thresholds and prints precision/recall/F1 at each, so `config.yaml`'s
 `match:` thresholds can be tuned to the actual demo dataset rather than
-guessed.
+guessed. See `docs/MATCHING.md` for the full calibration workflow and how
+the two-level matcher works internally.
 
 ## Configuration
 
@@ -99,11 +115,13 @@ rightswatch/
   db.py      SQLite schema and access helpers
 templates/report.html.j2   Jinja2 report template
 tests/                      pytest suite (pure-function + end-to-end, no network)
+docs/                       architecture, CLI, schema, matching, and dev docs (see above)
 ```
 
 `refs.py` exposes a `RefSource` abstract base class so the CSV+folder input
 used for the demo can later be swapped for a Brandcenter export adapter
-without touching ingestion, matching, or reporting.
+without touching ingestion, matching, or reporting — see
+`docs/DEVELOPMENT.md` for how to add one.
 
 ## Testing
 
@@ -116,7 +134,8 @@ The test suite generates its own images with Pillow (original, recompressed,
 resized, cropped, overlaid, and a genuinely different image) so it runs
 without any binary fixtures, network access, or a Playwright browser. The
 one CLIP end-to-end test is skipped automatically if `torch`/`open_clip`
-aren't installed.
+aren't installed. See `docs/DEVELOPMENT.md` for what each test file covers
+and the conventions to follow when adding more.
 
 ## Out of scope for this MVP
 
