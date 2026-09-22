@@ -84,10 +84,56 @@ nyra report --within-days 90
 | `--db` | no | `nyra.db` | |
 | `--out-dir` | no | `out/` | Output folder for `report.html` and `matches.csv`. |
 | `--within-days` | no | `config.yaml`'s `report.default_within_days` (90) | Only include references that are expired or expiring within N days. References with no known `expiry_date` are always included (flagged `inconnue`). |
+| `--status` | no | `pending` | Filter by review status (see `nyra review` below): `pending`, `confirmed`, `rejected`, or `all` to include every match regardless of status. |
 | `--config` | no | repo `config.yaml` | |
 
 Read-only — never modifies the database. Re-run any time to regenerate
-with a different `--within-days` window.
+with a different `--within-days`/`--status` filter. A report defaults to
+`pending` matches because it's meant as a to-do list — once you've
+reviewed a match (`nyra review`), it drops out of the default report on
+its own.
+
+## `review`
+
+Marks a match as confirmed or rejected, with an optional note — the
+traceability layer the report/UI's `--status` filter reads from.
+
+```bash
+nyra review 42 --status confirmed --note "vérifié à la main"
+```
+
+| Option | Required | Default | Notes |
+|---|---|---|---|
+| `match_id` | yes | — | Positional. The `matches.id` (see `matches.csv`'s rows, or the UI's comparison panel). |
+| `--status` | yes | — | `pending`, `confirmed`, or `rejected`. |
+| `--note` | no | *(none)* | Free-text note explaining the decision, shown in the UI's comparison panel. |
+| `--db` | no | `nyra.db` | |
+
+Survives future `match` runs: re-matching only touches `level`/`score`/
+`confidence`/`created_at`, never `status`/`reviewed_at`/`reviewed_note`.
+
+## `exclude`
+
+Permanently excludes a recurring false positive (a generic logo, a stock
+asset the site reuses everywhere) by the hash of the site image behind a
+given match — future crawls never match it again, and any matches it
+already produced are removed immediately.
+
+```bash
+nyra exclude --from-match 42 --reason "logo générique du site"
+```
+
+| Option | Required | Default | Notes |
+|---|---|---|---|
+| `--from-match` | yes | — | The `matches.id` whose site image should be excluded. |
+| `--reason` | no | *(none)* | Free-text note, shown in the UI. |
+| `--db` | no | `nyra.db` | |
+| `--config` | no | repo `config.yaml` | Uses `match.phash_threshold`/`dhash_threshold` to find and purge every existing match within the usual matching distance, not just the exact hash. |
+
+There's no `nyra un-exclude` yet — undo by deleting the row from
+`excluded_hashes` directly (`sqlite3 nyra.db "DELETE FROM excluded_hashes
+WHERE id = ...;"`), then re-run `match --db nyra.db` if you want the
+purged matches back.
 
 ## `run-all`
 

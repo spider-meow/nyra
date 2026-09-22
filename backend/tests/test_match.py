@@ -339,6 +339,115 @@ def test_run_matching_threshold_change_forces_a_full_recompute(tmp_path):
         assert db.get_unmatched_references(conn)[0]["compared_at"] is not None
 
 
+# --- excluded_hashes: recurring false positives -----------------------------
+
+def test_run_matching_skips_site_images_on_the_exclusion_list(tmp_path):
+    from nyra import db
+    from nyra.match import run_matching
+
+    db_path = tmp_path / "rw.db"
+    db.init_db(db_path)
+    config = _config_with_match()
+    same_hash = "ffff0000ffff0000"
+
+    with db.connect(db_path) as conn:
+        db.upsert_reference_image(
+            conn, filename="a.jpg", path="a.jpg", expiry_date=None, credit=None, notes=None,
+            phash=same_hash, dhash=same_hash,
+        )
+        db.upsert_site_image(conn, url="https://example.com/logo.jpg", phash=same_hash, dhash=same_hash)
+        db.add_excluded_hash(conn, hash=same_hash, hash_type="phash", reason="generic logo")
+
+    # The pair would match on level 1, but the site image's hash is excluded.
+    assert run_matching(db_path, config, use_clip=False) == 0
+
+
+def test_exclude_from_match_purges_existing_hits_immediately(tmp_path):
+    from nyra import db
+    from nyra.match import exclude_from_match, run_matching
+
+    db_path = tmp_path / "rw.db"
+    db.init_db(db_path)
+    config = _config_with_match()
+    same_hash = "ffff0000ffff0000"
+
+    with db.connect(db_path) as conn:
+        db.upsert_reference_image(
+            conn, filename="a.jpg", path="a.jpg", expiry_date=None, credit=None, notes=None,
+            phash=same_hash, dhash=same_hash,
+        )
+        db.upsert_site_image(conn, url="https://example.com/logo.jpg", phash=same_hash, dhash=same_hash)
+
+    assert run_matching(db_path, config, use_clip=False) == 1
+
+    with db.connect(db_path) as conn:
+        match_id = db.get_matches(conn)[0]["match_id"]
+
+    purged = exclude_from_match(db_path, config, match_id)
+    assert purged == 1
+
+    with db.connect(db_path) as conn:
+        assert db.get_matches(conn) == []
+        assert [row["hash_type"] for row in db.get_excluded_hashes(conn)] == ["phash"]
+
+
+def test_exclude_from_match_unknown_id_raises(tmp_path):
+    from nyra import db
+    from nyra.match import exclude_from_match
+
+    db_path = tmp_path / "rw.db"
+    db.init_db(db_path)
+    config = _config_with_match()
+    with pytest.raises(ValueError):
+        exclude_from_match(db_path, config, 999)
+
+
+# --- match status (review traceability) -------------------------------------
+
+def test_set_match_status_round_trips(tmp_path):
+    from nyra import db
+
+    db_path = tmp_path / "rw.db"
+    db.init_db(db_path)
+    same_hash = "ffff0000ffff0000"
+    with db.connect(db_path) as conn:
+        ref_id = db.upsert_reference_image(
+            conn, filename="a.jpg", path="a.jpg", expiry_date=None, credit=None, notes=None,
+            phash=same_hash, dhash=same_hash,
+        )
+        site_id = db.upsert_site_image(conn, url="https://example.com/x.jpg", phash=same_hash, dhash=same_hash)
+        db.upsert_match(conn, reference_id=ref_id, site_image_id=site_id, level="phash", score=1.0, confidence="haut")
+        match_id = db.get_matches(conn)[0]["match_id"]
+        assert db.get_matches(conn)[0]["match_status"] == "pending"
+
+        found = db.set_match_status(conn, match_id, "confirmed", "looks legit")
+    assert found is True
+    with db.connect(db_path) as conn:
+        row = db.get_matches(conn)[0]
+        assert row["match_status"] == "confirmed"
+        assert row["reviewed_note"] == "looks legit"
+        assert row["reviewed_at"] is not None
+
+
+def test_set_match_status_unknown_status_raises(tmp_path):
+    from nyra import db
+
+    db_path = tmp_path / "rw.db"
+    db.init_db(db_path)
+    with db.connect(db_path) as conn:
+        with pytest.raises(ValueError):
+            db.set_match_status(conn, 1, "bogus")
+
+
+def test_set_match_status_missing_id_returns_false(tmp_path):
+    from nyra import db
+
+    db_path = tmp_path / "rw.db"
+    db.init_db(db_path)
+    with db.connect(db_path) as conn:
+        assert db.set_match_status(conn, 999, "confirmed") is False
+
+
 # --- CLIP end-to-end (skipped unless open_clip/torch are installed) --------
 
 def test_clip_embedding_end_to_end(base_image, config):

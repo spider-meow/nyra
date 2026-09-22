@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { api, thumb } from "./api";
-import type { Decision, Hit, MatchGroup, Matches, NotFoundItem } from "./types";
+import { CompareModal } from "./CompareModal";
+import type { Decision, Hit, MatchGroup, MatchStatus, Matches, NotFoundItem } from "./types";
 import { btn, btnGhost, card, field, label } from "./ui";
 
 const statusLabel: Record<string, string> = {
@@ -23,7 +24,29 @@ const decisionLabel: Record<string, string> = {
   traite: "traitée",
 };
 
+const matchStatusLabel: Record<MatchStatus, string> = {
+  pending: "En attente",
+  confirmed: "Confirmée",
+  rejected: "Rejetée",
+};
+
+const REPORT_STATUS_OPTIONS: { value: string; label: string }[] = [
+  { value: "pending", label: "En attente (par défaut)" },
+  { value: "confirmed", label: "Confirmées" },
+  { value: "rejected", label: "Rejetées" },
+  { value: "all", label: "Toutes" },
+];
+
 type ConfidenceFilter = "all" | "haut" | "moyen" | "a_verifier";
+
+type UrgencyZone = { key: string; title: string; colorClasses: string; badgeClasses: string; defaultOpen: boolean };
+
+const URGENCY_ZONES: UrgencyZone[] = [
+  { key: "expire", title: "Expiré", colorClasses: "border-red-200 bg-red-50", badgeClasses: "border-red-300 bg-red-100 text-red-700", defaultOpen: true },
+  { key: "<30j", title: "Moins de 30 jours", colorClasses: "border-orange-200 bg-orange-50", badgeClasses: "border-orange-300 bg-orange-100 text-orange-700", defaultOpen: true },
+  { key: "<90j", title: "Moins de 90 jours", colorClasses: "border-amber-200 bg-amber-50", badgeClasses: "border-amber-300 bg-amber-100 text-amber-700", defaultOpen: false },
+];
+const RESIDUAL_ZONE: UrgencyZone = { key: "rest", title: "Dans les délais", colorClasses: "border-line bg-paper", badgeClasses: "border-line", defaultOpen: false };
 
 type Props = {
   matches: Matches | null;
@@ -64,12 +87,21 @@ function allSiteImageIds(hits: Hit[]): number[] {
   return hits.flatMap((hit) => (hit.site_image_ids?.length ? hit.site_image_ids : [hit.site_image_id]));
 }
 
+function zoneFor(group: MatchGroup): UrgencyZone {
+  return URGENCY_ZONES.find((zone) => zone.key === group.status) || RESIDUAL_ZONE;
+}
+
 export function Results(props: Props) {
   const [shown, setShown] = useState(40);
   const [openKey, setOpenKey] = useState("");
   const [openHit, setOpenHit] = useState("");
   const [query, setQuery] = useState("");
   const [confidenceFilter, setConfidenceFilter] = useState<ConfidenceFilter>("all");
+  const [openZones, setOpenZones] = useState<Record<string, boolean>>(
+    Object.fromEntries([...URGENCY_ZONES, RESIDUAL_ZONE].map((zone) => [zone.key, zone.defaultOpen])),
+  );
+  const [modal, setModal] = useState<{ group: MatchGroup; hit: Hit } | null>(null);
+  const [reportStatus, setReportStatus] = useState("pending");
   const data = props.matches;
   const confirmed = data?.confirmed ?? [];
   const toVerify = data?.to_verify ?? [];
@@ -90,82 +122,154 @@ export function Results(props: Props) {
     }
   }
 
-  function list(title: string, allGroups: MatchGroup[]) {
-    const groups = needle ? allGroups.filter((group) => group.filename.toLowerCase().includes(needle)) : allGroups;
+  async function setMatchStatus(matchId: number, status: "confirmed" | "rejected", note?: string) {
+    try {
+      await api(`/api/matches/${matchId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, note }),
+      });
+      setModal(null);
+      props.onReload();
+    } catch (error) {
+      props.onBanner(error instanceof Error ? error.message : "La requête a échoué.");
+    }
+  }
+
+  async function excludeMatch(matchId: number, reason?: string) {
+    try {
+      await api("/api/exclude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ match_id: matchId, reason }),
+      });
+      setModal(null);
+      props.onReload();
+    } catch (error) {
+      props.onBanner(error instanceof Error ? error.message : "La requête a échoué.");
+    }
+  }
+
+  function toggleZone(key: string) {
+    setOpenZones((prev) => ({ ...prev, [key]: !prev[key] }));
+  }
+
+  function renderGroup(group: MatchGroup) {
+    const hits = visibleHits(group, props.hideRejected, confidenceFilter);
+    if (!hits.length) return null;
+    const key = `ref-${group.reference_id}`;
+    const late = typeof group.days_left === "number" && group.days_left < 0;
+    const summary = decisionSummary(group.hits);
+    const ids = allSiteImageIds(hits);
+    return (
+      <article key={key} className={card}>
+        <div className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3">
+          <button type="button" className="contents text-left" onClick={() => setOpenKey(openKey === key ? "" : key)}>
+            <img className="h-10 w-10 rounded-lg object-cover" alt="" loading="lazy" src={thumb(group.ref_image, 80)} />
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium">{group.filename}</span>
+              <span className={`block text-sm font-semibold ${late ? "text-ember" : ""}`}>{dayText(group.days_left)} · {hits.length} occurrence(s)</span>
+              {summary ? <span className="block text-xs text-muted">{summary}</span> : null}
+            </span>
+          </button>
+          <span className={`rounded-full border px-2.5 py-1 text-xs ${group.status === "expire" ? "border-transparent text-ember" : "border-line"}`}>
+            {statusLabel[group.status] || group.status}
+          </span>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-2 pl-12">
+          <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "retenu")}>Tout retenir</button>
+          <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "ecarte")}>Tout écarter</button>
+        </div>
+        {openKey === key ? hits.map((hit, index) => {
+          const hitKey = `${key}-${index}`;
+          const shownHit = openHit === hitKey;
+          const ids = hit.site_image_ids?.length ? hit.site_image_ids : [hit.site_image_id];
+          const decision = hit.decision === "ecarte" ? "écarté" : hit.decision === "retenu" ? "retenu" : hit.decision === "traite" ? "traité" : "";
+          return (
+            <div key={hitKey} className="mt-3 pl-12">
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" className={btnGhost} onClick={() => setOpenHit(shownHit ? "" : hitKey)}>{shownHit ? "Fermer" : "Voir"}</button>
+                <p className="text-xs text-muted">
+                  Score {Math.round((hit.score || 0) * 100)} % · {hit.level}{decision ? ` · ${decision}` : ""} · {hit.page_count || hit.pages.length} page(s)
+                </p>
+                <span className="rounded-full border border-line px-2 py-0.5 text-xs">{confidenceLabel[hit.confidence] || hit.confidence}</span>
+                <span className="rounded-full border border-line px-2 py-0.5 text-xs">{matchStatusLabel[hit.match_status] || hit.match_status}</span>
+                <button type="button" className={btnGhost} onClick={() => setModal({ group, hit })}>Comparer en grand</button>
+                <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "retenu")}>Retenir</button>
+                <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "ecarte")}>Écarter</button>
+                <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "traite")}>Traité</button>
+              </div>
+              {shownHit ? (
+                <div className="mt-3 flex gap-3">
+                  <img className="h-[120px] w-[120px] rounded-lg object-cover" alt="" src={thumb(group.ref_image, 160)} />
+                  <img className="h-[120px] w-[120px] rounded-lg object-cover" alt="" src={thumb(hit.site_image, 160)} />
+                </div>
+              ) : null}
+              {shownHit ? (
+                <ul className="mt-2 grid gap-1">
+                  {hit.pages.map((url) => (
+                    <li key={url}><a className="text-sm underline" href={url} target="_blank" rel="noreferrer">{url}</a></li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          );
+        }) : null}
+      </article>
+    );
+  }
+
+  function filterGroups(allGroups: MatchGroup[]): MatchGroup[] {
+    return needle ? allGroups.filter((group) => group.filename.toLowerCase().includes(needle)) : allGroups;
+  }
+
+  function plainList(title: string, allGroups: MatchGroup[]) {
+    const groups = filterGroups(allGroups);
     if (!groups.length) return null;
     const visible = groups.slice(0, shown);
+    const rendered = visible.map(renderGroup).filter(Boolean);
+    if (!rendered.length) return null;
     return (
       <div className="mt-6">
         <h3 className="text-lg font-semibold">{title}</h3>
-        <div className="mt-2 grid gap-2">
-          {visible.map((group) => {
-            const hits = visibleHits(group, props.hideRejected, confidenceFilter);
-            if (!hits.length) return null;
-            const key = `ref-${group.reference_id}`;
-            const late = typeof group.days_left === "number" && group.days_left < 0;
-            const summary = decisionSummary(group.hits);
-            const ids = allSiteImageIds(hits);
-            return (
-              <article key={key} className={card}>
-                <div className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3">
-                  <button type="button" className="contents text-left" onClick={() => setOpenKey(openKey === key ? "" : key)}>
-                    <img className="h-10 w-10 rounded-lg object-cover" alt="" loading="lazy" src={thumb(group.ref_image, 80)} />
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-medium">{group.filename}</span>
-                      <span className={`block text-sm font-semibold ${late ? "text-ember" : ""}`}>{dayText(group.days_left)} · {hits.length} occurrence(s)</span>
-                      {summary ? <span className="block text-xs text-muted">{summary}</span> : null}
-                    </span>
-                  </button>
-                  <span className={`rounded-full border px-2.5 py-1 text-xs ${group.status === "expire" ? "border-transparent text-ember" : "border-line"}`}>
-                    {statusLabel[group.status] || group.status}
-                  </span>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2 pl-12">
-                  <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "retenu")}>Tout retenir</button>
-                  <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "ecarte")}>Tout écarter</button>
-                </div>
-                {openKey === key ? hits.map((hit, index) => {
-                  const hitKey = `${key}-${index}`;
-                  const shownHit = openHit === hitKey;
-                  const ids = hit.site_image_ids?.length ? hit.site_image_ids : [hit.site_image_id];
-                  const decision = hit.decision === "ecarte" ? "écarté" : hit.decision === "retenu" ? "retenu" : hit.decision === "traite" ? "traité" : "";
-                  return (
-                    <div key={hitKey} className="mt-3 pl-12">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <button type="button" className={btnGhost} onClick={() => setOpenHit(shownHit ? "" : hitKey)}>{shownHit ? "Fermer" : "Voir"}</button>
-                        <p className="text-xs text-muted">
-                          Score {Math.round((hit.score || 0) * 100)} % · {hit.level}{decision ? ` · ${decision}` : ""} · {hit.page_count || hit.pages.length} page(s)
-                        </p>
-                        <span className="rounded-full border border-line px-2 py-0.5 text-xs">{confidenceLabel[hit.confidence] || hit.confidence}</span>
-                        <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "retenu")}>Retenir</button>
-                        <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "ecarte")}>Écarter</button>
-                        <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "traite")}>Traité</button>
-                      </div>
-                      {shownHit ? (
-                        <div className="mt-3 flex gap-3">
-                          <img className="h-[120px] w-[120px] rounded-lg object-cover" alt="" src={thumb(group.ref_image, 160)} />
-                          <img className="h-[120px] w-[120px] rounded-lg object-cover" alt="" src={thumb(hit.site_image, 160)} />
-                        </div>
-                      ) : null}
-                      {shownHit ? (
-                        <ul className="mt-2 grid gap-1">
-                          {hit.pages.map((url) => (
-                            <li key={url}><a className="text-sm underline" href={url} target="_blank" rel="noreferrer">{url}</a></li>
-                          ))}
-                        </ul>
-                      ) : null}
-                    </div>
-                  );
-                }) : null}
-              </article>
-            );
-          })}
-        </div>
+        <div className="mt-2 grid gap-2">{rendered}</div>
         {groups.length > shown ? (
           <button type="button" className={`${btnGhost} mt-3`} onClick={() => setShown((value) => value + 40)}>
             Afficher la suite · {shown}/{groups.length}
           </button>
         ) : null}
+      </div>
+    );
+  }
+
+  function urgencyZones(allGroups: MatchGroup[]) {
+    const groups = filterGroups(allGroups);
+    if (!groups.length) return null;
+    const zones = [...URGENCY_ZONES, RESIDUAL_ZONE];
+    const sections = zones.map((zone) => {
+      const inZone = groups.filter((group) => zoneFor(group).key === zone.key);
+      const rendered = inZone.map(renderGroup).filter(Boolean);
+      if (!rendered.length) return null;
+      const open = openZones[zone.key];
+      return (
+        <div key={zone.key} className={`mt-4 rounded-3xl border p-3 ${zone.colorClasses}`}>
+          <button type="button" className="flex w-full items-center justify-between gap-3 text-left" onClick={() => toggleZone(zone.key)}>
+            <span className="flex items-center gap-2">
+              <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${zone.badgeClasses}`}>
+                {zone.key === "expire" ? "EXPIRÉ" : `${rendered.length} groupe(s)`}
+              </span>
+              <span className="text-sm font-semibold">{zone.title}</span>
+            </span>
+            <span className="text-xs text-muted">{open ? "Replier" : "Déplier"}</span>
+          </button>
+          {open ? <div className="mt-3 grid gap-2">{rendered}</div> : null}
+        </div>
+      );
+    });
+    return (
+      <div className="mt-6">
+        <h3 className="text-lg font-semibold">{groups.length} dans la fenêtre</h3>
+        {sections}
       </div>
     );
   }
@@ -202,7 +306,7 @@ export function Results(props: Props) {
   return (
     <section>
       <h2 className="text-4xl font-semibold tracking-tight">Ce qui reste en ligne</h2>
-      <p className="mt-2 text-muted">Une ligne par visuel. Ouvre la ligne pour voir les deux images, en petit.</p>
+      <p className="mt-2 text-muted">Une ligne par visuel. Ouvre la ligne pour voir les deux images, en petit — ou "Comparer en grand" pour le détail.</p>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label>
           <span className={label}>Montrer jusqu'à</span>
@@ -226,15 +330,25 @@ export function Results(props: Props) {
           Masquer les écartés
         </label>
         <button type="button" className={btnGhost} onClick={props.onReload}>Actualiser</button>
-        <a className={btn} href={`/api/downloads/report.html?within_days=${encodeURIComponent(String(props.withinDays))}`}>Rapport</a>
-        <a className={btnGhost} href={`/api/downloads/matches.csv?within_days=${encodeURIComponent(String(props.withinDays))}`}>CSV</a>
+      </div>
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        <label>
+          <span className={label}>Statut à exporter</span>
+          <select className={field} value={reportStatus} onChange={(event) => setReportStatus(event.target.value)}>
+            {REPORT_STATUS_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <a className={btn} href={`/api/downloads/report.html?within_days=${encodeURIComponent(String(props.withinDays))}&status=${encodeURIComponent(reportStatus)}`}>Exporter HTML</a>
+        <a className={btnGhost} href={`/api/downloads/matches.csv?within_days=${encodeURIComponent(String(props.withinDays))}&status=${encodeURIComponent(reportStatus)}`}>Exporter CSV</a>
         <a className={btnGhost} href={`/api/downloads/not_found.csv?within_days=${encodeURIComponent(String(props.withinDays))}`}>CSV non trouvées</a>
       </div>
       <p className="mt-2 text-xs text-muted">
-        <strong>Confirmé</strong> : hachage identique ou quasi (même image, recadrée ou recompressée). <strong>Probable</strong> : visuellement très proche, à confirmer d'un coup d'œil. <strong>À vérifier</strong> : ressemblance plus faible, mérite une vérification manuelle.
+        <strong>Confirmé</strong> : hachage identique ou quasi (même image, recadrée ou recompressée). <strong>Probable</strong> et <strong>à vérifier</strong> : ressemblance visuelle, groupées dans "à regarder de près", triées par confiance. L'export ne reprend par défaut que les correspondances encore <strong>en attente</strong> de revue.
       </p>
       {!data ? <p className="mt-6 text-sm text-muted">Les correspondances arrivent.</p> : null}
-      {data ? list(`${confirmed.length} dans la fenêtre`, confirmed) : null}
+      {data ? urgencyZones(confirmed) : null}
       {data && confirmed.length === 0 ? (
         <p className="mt-4 text-sm text-muted">
           {later.length ? `Rien dans les ${props.withinDays} jours. Le reste est listé plus bas.` : "Aucune correspondance pour l'instant."}
@@ -243,9 +357,18 @@ export function Results(props: Props) {
       {data && confirmed.length === 0 && later.length === 0 && notFound.length === 0 ? (
         <button type="button" className={`${btnGhost} mt-3`} onClick={props.onExplore}>Retour au site</button>
       ) : null}
-      {data ? list(`${toVerify.length} à regarder de près`, toVerify) : null}
+      {data ? plainList(`${toVerify.length} à regarder de près`, toVerify) : null}
       {data ? notFoundList(`${notFound.length} non trouvées`, notFound) : null}
-      {data ? list(`${later.length} plus loin`, later) : null}
+      {data ? plainList(`${later.length} plus loin`, later) : null}
+      {modal ? (
+        <CompareModal
+          group={modal.group}
+          hit={modal.hit}
+          onClose={() => setModal(null)}
+          onStatusChange={setMatchStatus}
+          onExclude={excludeMatch}
+        />
+      ) : null}
     </section>
   );
 }

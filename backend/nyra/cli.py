@@ -109,19 +109,80 @@ def match_cmd(
     typer.secho(f"Found {count} match(es).", fg=typer.colors.GREEN)
 
 
+STATUS_CHOICES = ("pending", "confirmed", "rejected", "all")
+
+
 @app.command("report")
 def report_cmd(
     db: Path = DbOption,
     out_dir: Path = typer.Option(DEFAULT_OUT_DIR, "--out-dir", help="Output folder for report.html and matches.csv."),
     within_days: Optional[int] = typer.Option(None, "--within-days", help="Only include refs expired or expiring within N days."),
+    status: str = typer.Option(
+        "pending", "--status", help=f"Filter by review status: {', '.join(STATUS_CHOICES)}."
+    ),
     config: Optional[Path] = ConfigOption,
 ) -> None:
-    """Generate report.html + matches.csv, sorted by expiry urgency."""
+    """Generate report.html + matches.csv, sorted by expiry urgency.
+
+    Only pending (unreviewed) matches are included by default — a report is
+    a to-do list, not a permanent log. Pass --status all to include every
+    match regardless of review status, or --status confirmed/rejected for
+    just that bucket.
+    """
+    if status not in STATUS_CHOICES:
+        typer.secho(f"Error: --status must be one of {', '.join(STATUS_CHOICES)}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
     cfg = load_config(config)
-    html_path, csv_path, not_found_csv_path = report_module.generate_report(db, out_dir, cfg, within_days=within_days)
+    html_path, csv_path, not_found_csv_path = report_module.generate_report(
+        db, out_dir, cfg, within_days=within_days, review_status=status
+    )
     typer.secho(
         f"Report written to {html_path}, {csv_path}, and {not_found_csv_path}", fg=typer.colors.GREEN
     )
+
+
+@app.command("review")
+def review_cmd(
+    match_id: int = typer.Argument(..., help="The matches.id to review (see report.html/matches.csv)."),
+    status: str = typer.Option(..., "--status", help="pending | confirmed | rejected"),
+    note: Optional[str] = typer.Option(None, "--note", help="Free-text note explaining the decision."),
+    db: Path = DbOption,
+) -> None:
+    """Mark a match as confirmed or rejected, for traceability in reports."""
+    if status not in db_module.MATCH_STATUSES:
+        typer.secho(
+            f"Error: --status must be one of {', '.join(db_module.MATCH_STATUSES)}", fg=typer.colors.RED, err=True
+        )
+        raise typer.Exit(code=1)
+    db_module.init_db(db)
+    with db_module.connect(db) as conn:
+        found = db_module.set_match_status(conn, match_id, status, note)
+    if not found:
+        typer.secho(f"Error: no match with id {match_id}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    typer.secho(f"Match {match_id} marked {status}.", fg=typer.colors.GREEN)
+
+
+@app.command("exclude")
+def exclude_cmd(
+    from_match: int = typer.Option(..., "--from-match", help="Exclude the site image behind this match id."),
+    reason: Optional[str] = typer.Option(None, "--reason", help="Why this is a recurring false positive."),
+    db: Path = DbOption,
+    config: Optional[Path] = ConfigOption,
+) -> None:
+    """Permanently exclude a recurring false positive (e.g. a generic logo/asset).
+
+    Adds the site image's hash to the exclusion list so future crawls never
+    match it again, and immediately drops any matches it already produced.
+    """
+    cfg = load_config(config)
+    db_module.init_db(db)
+    try:
+        purged = match_module.exclude_from_match(db, cfg, from_match, reason)
+    except ValueError as exc:
+        typer.secho(f"Error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    typer.secho(f"Excluded. {purged} existing match(es) removed.", fg=typer.colors.GREEN)
 
 
 @app.command("run-all")

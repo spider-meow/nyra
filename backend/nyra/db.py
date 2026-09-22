@@ -96,7 +96,18 @@ CREATE TABLE IF NOT EXISTS match_meta (
     signature TEXT NOT NULL,
     finished_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS excluded_hashes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT NOT NULL,
+    hash_type TEXT NOT NULL CHECK (hash_type IN ('phash', 'dhash')),
+    reason TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (hash, hash_type)
+);
 """
+
+MATCH_STATUSES = ("pending", "confirmed", "rejected")
 
 
 def now_iso() -> str:
@@ -130,6 +141,9 @@ def init_db(db_path: Path | str) -> None:
         conn.executescript(SCHEMA)
         _ensure_column(conn, "reference_images", "compared_at", "TEXT")
         _ensure_column(conn, "site_images", "compared_at", "TEXT")
+        _ensure_column(conn, "matches", "status", "TEXT NOT NULL DEFAULT 'pending'")
+        _ensure_column(conn, "matches", "reviewed_at", "TEXT")
+        _ensure_column(conn, "matches", "reviewed_note", "TEXT")
 
 
 def pack_embedding(vector: Optional[np.ndarray]) -> Optional[bytes]:
@@ -431,6 +445,7 @@ def get_matches(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         """
         SELECT
             m.id AS match_id, m.level, m.score, m.confidence,
+            m.status AS match_status, m.reviewed_at, m.reviewed_note,
             r.id AS reference_id, r.filename, r.path AS ref_path,
             r.expiry_date, r.credit, r.notes,
             s.id AS site_image_id, s.url AS site_url, s.local_path AS site_local_path,
@@ -444,6 +459,56 @@ def get_matches(conn: sqlite3.Connection) -> list[sqlite3.Row]:
         ORDER BY r.expiry_date IS NULL, r.expiry_date ASC, m.score DESC
         """
     ).fetchall()
+
+
+# --- match status (review traceability) ------------------------------------
+
+def set_match_status(conn: sqlite3.Connection, match_id: int, status: str, note: Optional[str] = None) -> bool:
+    if status not in MATCH_STATUSES:
+        raise ValueError(f"Unknown status: {status!r}")
+    cur = conn.execute(
+        "UPDATE matches SET status = ?, reviewed_at = ?, reviewed_note = ? WHERE id = ?",
+        (status, now_iso(), note, match_id),
+    )
+    return cur.rowcount > 0
+
+
+def get_match_site_hashes(conn: sqlite3.Connection, match_id: int) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT m.id AS match_id, s.id AS site_image_id, s.phash, s.dhash
+        FROM matches m JOIN site_images s ON s.id = m.site_image_id
+        WHERE m.id = ?
+        """,
+        (match_id,),
+    ).fetchone()
+
+
+# --- excluded_hashes (recurring false positives) ----------------------------
+
+def add_excluded_hash(conn: sqlite3.Connection, *, hash: str, hash_type: str, reason: Optional[str] = None) -> int:
+    if hash_type not in {"phash", "dhash"}:
+        raise ValueError(f"Unknown hash_type: {hash_type!r}")
+    conn.execute(
+        """
+        INSERT INTO excluded_hashes (hash, hash_type, reason, created_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(hash, hash_type) DO UPDATE SET reason=excluded.reason
+        """,
+        (hash, hash_type, reason, now_iso()),
+    )
+    row = conn.execute(
+        "SELECT id FROM excluded_hashes WHERE hash = ? AND hash_type = ?", (hash, hash_type)
+    ).fetchone()
+    return row["id"]
+
+
+def get_excluded_hashes(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute("SELECT * FROM excluded_hashes ORDER BY created_at DESC").fetchall()
+
+
+def delete_excluded_hash(conn: sqlite3.Connection, excluded_id: int) -> None:
+    conn.execute("DELETE FROM excluded_hashes WHERE id = ?", (excluded_id,))
 
 
 def get_unmatched_references(conn: sqlite3.Connection) -> list[sqlite3.Row]:

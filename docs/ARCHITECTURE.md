@@ -122,18 +122,33 @@ external dependencies (see `DEVELOPMENT.md`).
    image to the current page in `image_pages`, even if the image itself was
    already cached from an earlier page (an image can appear on more than
    one page).
-4. **Match.** `match.run_matching()` clears the `matches` table and, for
-   every `(reference, site_image)` pair, calls `classify_pair()`: level 1
-   first (Hamming distance on both hashes, best of the two if either is
-   under threshold), then level 2 only if level 1 found nothing. Any hit is
-   upserted into `matches` with its level, score, and confidence.
-5. **Report.** `report.build_rows()` joins `matches` with `reference_images`
-   and `site_images`, computes `days_left`/`status` (`expire`, `<30j`,
-   `<90j`, `ok`, `inconnue`) from `expiry_date`, drops anything with more
-   than `--within-days` days left, sorts by urgency (expired/soonest first,
-   unknown-expiry last), and renders `report.html` + `matches.csv`.
-   Thumbnails are inlined as base64 JPEG data URIs so `report.html` opens
-   standalone, with no relative file dependencies.
+4. **Match.** `match.run_matching()` recomputes either every
+   `(reference, site_image)` pair (thresholds changed since the last run)
+   or just the delta against already-compared rows (see
+   `DATABASE_SCHEMA.md`'s `match_meta`), calling `classify_pair()` for each:
+   level 1 first (Hamming distance on both hashes, best of the two if
+   either is under threshold), then level 2 only if level 1 found nothing.
+   Before writing, any pair whose site image hash falls within threshold of
+   an `excluded_hashes` row (`nyra exclude`) is dropped — a recurring false
+   positive never reaches `matches` again. A surviving hit is upserted into
+   `matches` with its level, score, and confidence; `status`/`reviewed_at`/
+   `reviewed_note` are left untouched if the row already existed, so a
+   rematch never undoes a review.
+5. **Review.** Each match starts `status = "pending"`. `nyra review
+   <match_id> --status confirmed|rejected [--note ...]` (or the UI's
+   comparison panel, `PATCH /api/matches/{id}`) records a decision with a
+   timestamp — separate from the older per-(reference, site image)
+   `reviews` table the results screen's retain/discard buttons still use
+   (see `DATABASE_SCHEMA.md`'s `reviews` vs. `matches.status`).
+6. **Report.** `report.build_rows()` joins `matches` with `reference_images`
+   and `site_images`, filters by `status` (`--status`, default `pending` —
+   a report is a to-do list of what hasn't been reviewed yet), computes
+   `days_left`/`status` (`expire`, `<30j`, `<90j`, `ok`, `inconnue`) from
+   `expiry_date`, drops anything with more than `--within-days` days left,
+   sorts by urgency (expired/soonest first, unknown-expiry last), and
+   renders `report.html` + `matches.csv`. Thumbnails are inlined as base64
+   JPEG data URIs so `report.html` opens standalone, with no relative file
+   dependencies.
 
 ## What's deliberately out of the MVP
 

@@ -414,6 +414,9 @@ def run_matching(db_path, config: Config, use_clip: bool = True, progress=None, 
     created = db.now_iso()
     payload = [(ref_id, site_id, level, score, confidence, created) for ref_id, site_id, level, score, confidence in hits]
     with db.connect(db_path) as conn:
+        excluded_ids = _excluded_site_ids(conn, sites, config.match)
+        if excluded_ids:
+            payload = [row for row in payload if row[1] not in excluded_ids]
         if full:
             db.clear_matches(conn)
         else:
@@ -422,6 +425,75 @@ def run_matching(db_path, config: Config, use_clip: bool = True, progress=None, 
             db.write_matches(conn, payload)
         db.stamp_compared(conn, stamped_refs, stamped_sites, signature)
         return conn.execute("SELECT COUNT(*) AS c FROM matches").fetchone()["c"]
+
+
+def _excluded_site_ids(conn, sites: list, config: MatchConfig) -> set[int]:
+    """Site images whose hash is within threshold of a known false positive.
+
+    Checked once per `run_matching` pass rather than baked into the
+    threshold-signature cache, so adding an exclusion never requires a full
+    recompute to take effect on the *next* pass — only `exclude_and_purge`
+    below needs to reach back and clean up matches already written.
+    """
+    from nyra import db
+
+    excluded = db.get_excluded_hashes(conn)
+    if not excluded:
+        return set()
+    ids: set[int] = set()
+    for row in sites:
+        for ex in excluded:
+            candidate = row["phash"] if ex["hash_type"] == "phash" else row["dhash"]
+            threshold = config.phash_threshold if ex["hash_type"] == "phash" else config.dhash_threshold
+            distance = hamming_distance(ex["hash"], candidate)
+            if distance is not None and distance <= threshold:
+                ids.add(int(row["id"]))
+                break
+    return ids
+
+
+def exclude_and_purge(db_path, config: Config, *, hash_value: str, hash_type: str, reason: Optional[str] = None) -> int:
+    """Add a hash to the exclusion list and drop any matches it already produced.
+
+    Adding to `excluded_hashes` alone only affects *future* `run_matching`
+    passes (site images already stamped `compared_at` aren't revisited
+    unless the threshold signature changes) — this also purges existing
+    hits immediately, so the report reflects the exclusion right away.
+    """
+    from nyra import db
+
+    with db.connect(db_path) as conn:
+        db.add_excluded_hash(conn, hash=hash_value, hash_type=hash_type, reason=reason)
+        sites = db.get_site_images(conn)
+        matching_ids = []
+        for row in sites:
+            candidate = row["phash"] if hash_type == "phash" else row["dhash"]
+            distance = hamming_distance(hash_value, candidate)
+            if distance is not None and distance <= (
+                config.match.phash_threshold if hash_type == "phash" else config.match.dhash_threshold
+            ):
+                matching_ids.append(int(row["id"]))
+        if matching_ids:
+            db.delete_matches_for(conn, reference_ids=[], site_ids=matching_ids)
+        return len(matching_ids)
+
+
+def exclude_from_match(db_path, config: Config, match_id: int, reason: Optional[str] = None) -> int:
+    """Exclude the site image behind `match_id` by its own hash, then purge."""
+    from nyra import db
+
+    with db.connect(db_path) as conn:
+        row = db.get_match_site_hashes(conn, match_id)
+        if row is None:
+            raise ValueError(f"No such match: {match_id}")
+        if row["phash"]:
+            hash_value, hash_type = row["phash"], "phash"
+        elif row["dhash"]:
+            hash_value, hash_type = row["dhash"], "dhash"
+        else:
+            raise ValueError("This site image has no hash to exclude by.")
+
+    return exclude_and_purge(db_path, config, hash_value=hash_value, hash_type=hash_type, reason=reason)
 
 
 def load_image_bytes(data: bytes) -> Image.Image:

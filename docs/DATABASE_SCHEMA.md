@@ -95,20 +95,76 @@ Composite primary key `(image_id, page_id)` makes re-linking a no-op.
 
 ### `matches`
 
-Written by `match.run_matching()`, which **clears this table first** on
-every run — it's a derived table, always fully recomputed from the current
-`reference_images` and `site_images` rows and the current `config.yaml`
-thresholds. Unique on `(reference_id, site_image_id)`.
+Written by `match.run_matching()`. Rows aren't unconditionally cleared on
+every run any more (see "Idempotency and resumability" below for the
+incremental-matching cache) — a full recompute (threshold change) still
+clears and rebuilds the table, but the point of the cache is that most
+runs only touch the delta. Unique on `(reference_id, site_image_id)`.
 
 | Column | Type | Notes |
 |---|---|---|
-| `id` | INTEGER PK | |
+| `id` | INTEGER PK | Referenced by `nyra review <id>` / `nyra exclude --from-match <id>` and the API's `PATCH /api/matches/{id}`. |
 | `reference_id` | INTEGER, FK -> `reference_images.id` | `ON DELETE CASCADE` |
 | `site_image_id` | INTEGER, FK -> `site_images.id` | `ON DELETE CASCADE` |
 | `level` | TEXT | `"phash"`, `"dhash"`, or `"clip"` — whichever produced the match (see `MATCHING.md`). |
 | `score` | REAL | `1 - distance/64` for hash matches, cosine similarity (0-1) for CLIP matches. Higher is a closer match either way. |
 | `confidence` | TEXT | `"haut"`, `"moyen"`, or `"a_verifier"`. |
+| `status` | TEXT | `"pending"` (default), `"confirmed"`, or `"rejected"` — set via `nyra review`/`PATCH /api/matches/{id}`. `report`/`nyra report --status` filter on this; a re-match never resets it (only `level`/`score`/`confidence`/`created_at` are touched on conflict). |
+| `reviewed_at` | TEXT | ISO 8601 UTC timestamp of the last status change, `NULL` while `pending`. |
+| `reviewed_note` | TEXT | Free-text note attached to the last status change. |
 | `created_at` | TEXT | ISO 8601 UTC timestamp of the match run. |
+
+### `reviews`
+
+A lighter-weight, UI-driven per-(reference, site image) decision —
+"retenu"/"ecarte"/"traite" — separate from `matches.status` above.
+Predates it and is still what the results screen's "Retenir"/"Écarter"/
+"Traité" buttons write to; `matches.status` is the newer, more formal
+traceability layer (with a note and a timestamp) driven by `nyra review`
+and the comparison panel's "Confirmer"/"Rejeter". Both can coexist on the
+same match; neither is derived from the other.
+
+| Column | Type | Notes |
+|---|---|---|
+| `reference_id` | INTEGER | Part of the composite PK, not a declared FK (matches `matches.reference_id`). |
+| `site_image_id` | INTEGER | Part of the composite PK. |
+| `decision` | TEXT | `"retenu"`, `"ecarte"`, or `"traite"`. |
+| `updated_at` | TEXT | ISO 8601 UTC timestamp. |
+
+### `excluded_hashes`
+
+Recurring false positives (a generic logo, a stock asset reused across a
+site) to permanently ignore. Populated by `nyra exclude --from-match` /
+`POST /api/exclude`, which also purges any `matches` rows the hash already
+produced. Checked by `match._excluded_site_ids()` before a site image's
+hits are ever written — the pair never reaches `matches` on future runs
+either, not just the current report.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | |
+| `hash` | TEXT | The excluded pHash or dHash (hex, same format as `reference_images.phash`/`dhash`). |
+| `hash_type` | TEXT | `"phash"` or `"dhash"` — which column on `site_images` this is compared against. |
+| `reason` | TEXT | Free-text, e.g. `"logo générique du site"`. |
+| `created_at` | TEXT | ISO 8601 UTC timestamp. |
+
+Unique on `(hash, hash_type)`. A site image is excluded if its hash is
+within the *usual* matching threshold (`config.yaml`'s
+`phash_threshold`/`dhash_threshold`) of any row here — not just an exact
+hex match — so a slightly re-encoded copy of the same excluded logo is
+still caught.
+
+### `match_meta`
+
+One row (`id = 1`), used by `run_matching()`'s incremental-matching cache
+(see below) to detect when `config.yaml`'s thresholds changed and a full
+recompute is needed instead of comparing only the delta.
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | INTEGER PK | Always `1` — enforced by a `CHECK` constraint, not a real key. |
+| `signature` | TEXT | Derived from the active thresholds + whether CLIP was used (`match._signature()`). |
+| `finished_at` | TEXT | ISO 8601 UTC timestamp of the last completed `run_matching()` call. |
 
 ## Idempotency and resumability
 
@@ -123,10 +179,17 @@ NOTHING` for `pages`), keyed on a natural key rather than the autoincrement
   so an interrupted 300-page crawl can be safely resumed from where it left
   off, or extended with `--max-pages` for pages the previous run didn't
   reach. Pass `--no-resume` to force a full re-crawl.
-- Re-running `match` always fully recomputes `matches` from scratch — this
-  is intentional, since a threshold change in `config.yaml` (or a
-  `calibrate` result you've applied) should be reflected immediately without
-  stale rows from a previous threshold lingering.
+- Re-running `match` only recomputes what's new since the last run
+  (references/site images not yet stamped `compared_at`, tracked via
+  `match_meta`'s signature) — unless `config.yaml`'s thresholds (or the
+  `--no-clip` switch) changed since, in which case it's a full recompute,
+  so a threshold change (or a `calibrate` result you've applied) is always
+  reflected immediately without stale rows lingering. Either way,
+  `matches.status`/`reviewed_at`/`reviewed_note` on a surviving row are
+  never touched — a rematch doesn't undo someone's review.
+- `nyra exclude` immediately removes matches for the newly-excluded hash
+  (it doesn't wait for the next `match` run), and future `match` runs skip
+  that hash before writing anything.
 - Re-running `report` never touches the database; it only reads.
 
 ## Inspecting the database directly

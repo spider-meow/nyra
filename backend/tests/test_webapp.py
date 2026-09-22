@@ -203,3 +203,68 @@ def test_unmatched_reference_is_flagged_not_found(tmp_path: Path):
 
     checked = client.get("/api/matches?within_days=90").json()
     assert checked["not_found"][0]["compared"] is True
+
+
+def test_patch_match_status_updates_and_rejects_unknown_status(tmp_path: Path):
+    app = create_app(root=tmp_path, db_path=tmp_path / "nyra.db")
+    client = TestClient(app)
+    far_expiry = (date.today() + timedelta(days=180)).isoformat()
+    with db.connect(tmp_path / "nyra.db") as conn:
+        ref_id = db.upsert_reference_image(
+            conn, filename="campagne.png", path=str(tmp_path / "missing.png"),
+            expiry_date=far_expiry, credit="", notes="",
+            phash="ffff0000ffff0000", dhash="ffff0000ffff0000",
+        )
+        site_id = db.upsert_site_image(
+            conn, url="https://example.test/a.webp", local_path="", content_hash="abc",
+            phash="ffff0000ffff0000", dhash="ffff0000ffff0000",
+        )
+        db.upsert_match(conn, reference_id=ref_id, site_image_id=site_id, level="phash", score=1.0, confidence="haut")
+        match_id = db.get_matches(conn)[0]["match_id"]
+
+    bad = client.patch(f"/api/matches/{match_id}", json={"status": "bogus"})
+    assert bad.status_code == 400
+
+    ok = client.patch(f"/api/matches/{match_id}", json={"status": "confirmed", "note": "vu et validé"})
+    assert ok.status_code == 200
+
+    matches = client.get("/api/matches?within_days=400").json()
+    hit = matches["confirmed"][0]["hits"][0]
+    assert hit["match_status"] == "confirmed"
+    assert hit["reviewed_note"] == "vu et validé"
+
+    missing = client.patch("/api/matches/999999", json={"status": "confirmed"})
+    assert missing.status_code == 404
+
+
+def test_exclude_purges_matches_and_report_respects_status_filter(tmp_path: Path):
+    app = create_app(root=tmp_path, db_path=tmp_path / "nyra.db")
+    client = TestClient(app)
+    far_expiry = (date.today() + timedelta(days=180)).isoformat()
+    with db.connect(tmp_path / "nyra.db") as conn:
+        ref_id = db.upsert_reference_image(
+            conn, filename="campagne.png", path=str(tmp_path / "missing.png"),
+            expiry_date=far_expiry, credit="", notes="",
+            phash="ffff0000ffff0000", dhash="ffff0000ffff0000",
+        )
+        site_id = db.upsert_site_image(
+            conn, url="https://example.test/a.webp", local_path="", content_hash="abc",
+            phash="ffff0000ffff0000", dhash="ffff0000ffff0000",
+        )
+        db.upsert_match(conn, reference_id=ref_id, site_image_id=site_id, level="phash", score=1.0, confidence="haut")
+        match_id = db.get_matches(conn)[0]["match_id"]
+
+    # Default report (pending) includes the still-unreviewed match.
+    pending_report = client.get("/api/downloads/matches.csv?within_days=400&status=pending")
+    assert "campagne.png" in pending_report.text
+
+    excluded = client.post("/api/exclude", json={"match_id": match_id, "reason": "logo générique"})
+    assert excluded.status_code == 200
+    assert excluded.json()["purged"] == 1
+
+    after = client.get("/api/matches?within_days=400").json()
+    assert after["confirmed"] == []
+    assert after["to_verify"] == []
+
+    missing_match = client.post("/api/exclude", json={"match_id": 999999})
+    assert missing_match.status_code == 404

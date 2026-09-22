@@ -140,12 +140,27 @@ def build_not_found_rows(
     return rows
 
 
-def build_rows(db_path: Path | str, within_days: int, today: Optional[date] = None) -> list[ReportRow]:
+def build_rows(
+    db_path: Path | str,
+    within_days: int,
+    today: Optional[date] = None,
+    *,
+    review_status: str = "pending",
+) -> list[ReportRow]:
+    """`review_status` filters by the match traceability status (see MATCH_STATUSES).
+
+    `"all"` includes every match regardless of status; anything else must be
+    one of `pending`/`confirmed`/`rejected` and keeps only that status. The
+    CLI/API default is `"pending"` — a report is a to-do list of matches not
+    yet reviewed, not a permanent log of everything ever found.
+    """
     today = today or datetime.now(timezone.utc).date()
     rows: list[ReportRow] = []
 
     with db.connect(db_path) as conn:
         for m in db.get_matches(conn):
+            if review_status != "all" and m["match_status"] != review_status:
+                continue
             days_left = days_until(m["expiry_date"], today)
             status = urgency_status(days_left)
             if days_left is not None and days_left > within_days:
@@ -235,12 +250,13 @@ def generate_report(
     config: Config,
     *,
     within_days: Optional[int] = None,
+    review_status: str = "pending",
 ) -> tuple[Path, Path, Path]:
     within_days = within_days if within_days is not None else config.report.default_within_days
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    rows = build_rows(db_path, within_days)
+    rows = build_rows(db_path, within_days, review_status=review_status)
     not_found_rows = build_not_found_rows(db_path, within_days)
 
     with db.connect(db_path) as conn:

@@ -20,6 +20,7 @@ supabase/migrations/
   20260922000004_crawl_runs_and_reports.sql       historique des crawls + rapports générés
   20260922000005_row_level_security.sql           policies RLS sur toutes les tables
   20260922000006_storage_buckets.sql              buckets refs/site-images/reports + policies
+  20260922000007_review_status_and_exclusions.sql matches.status/reviewed_*, excluded_hashes
 ```
 
 Numérotés comme des migrations Supabase CLI (`YYYYMMDDHHMMSS_nom.sql`) —

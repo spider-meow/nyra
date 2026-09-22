@@ -45,9 +45,15 @@ export type Overview = {
 
 export type Decision = "" | "retenu" | "ecarte" | "traite";
 
+export type MatchStatus = "pending" | "confirmed" | "rejected";
+
 export type Hit = {
   site_image_id: number;
   site_image_ids?: number[];
+  match_id: number;
+  match_ids?: number[];
+  match_status: MatchStatus;
+  reviewed_note: string | null;
   site_image: string;
   site_url: string;
   pages: string[];

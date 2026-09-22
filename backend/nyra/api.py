@@ -197,17 +197,36 @@ class ReportBody(BaseModel):
     within_days: Optional[int] = Field(default=None, ge=0, le=3650)
 
 
+class MatchStatusBody(BaseModel):
+    status: str
+    note: Optional[str] = None
+
+
+class ExcludeBody(BaseModel):
+    match_id: int
+    reason: Optional[str] = None
+
+
 def _collapse_hits(hits: list[dict]) -> list[dict]:
+    """`match_id`/`match_status`/`reviewed_note` are only present in the local
+    product's rows today (cloud mode doesn't expose per-match review status
+    yet — see supabase/migrations/20260922000007) — read with `.get()` so
+    this stays a no-op there instead of a KeyError.
+    """
     merged: dict[str, dict] = {}
     for hit in hits:
         key = hit["content_hash"] or f"id:{hit['site_image_id']}"
         current = merged.get(key)
         if current is None:
             hit["site_image_ids"] = [hit["site_image_id"]]
+            hit["match_ids"] = [hit.get("match_id")]
+            hit.setdefault("match_status", "pending")
+            hit.setdefault("reviewed_note", None)
             hit["pages"] = list(dict.fromkeys(hit["pages"]))
             merged[key] = hit
             continue
         current["site_image_ids"].append(hit["site_image_id"])
+        current["match_ids"].append(hit.get("match_id"))
         for page in hit["pages"]:
             if page not in current["pages"]:
                 current["pages"].append(page)
@@ -218,6 +237,9 @@ def _collapse_hits(hits: list[dict]) -> list[dict]:
             current["site_image_id"] = hit["site_image_id"]
             current["site_url"] = hit["site_url"]
             current["site_image"] = hit["site_image"]
+            current["match_id"] = hit.get("match_id")
+            current["match_status"] = hit.get("match_status", "pending")
+            current["reviewed_note"] = hit.get("reviewed_note")
         if hit["decision"] and not current["decision"]:
             current["decision"] = hit["decision"]
     rows = list(merged.values())
@@ -259,8 +281,12 @@ def _group_matches(raw_rows: list[dict], window: int) -> dict:
     groups.sort(key=lambda item: (1, 0) if item["days_left"] is None else (0, item["days_left"]))
     in_groups = [item for item in groups if item["in_window"]]
     later = [item for item in groups if not item["in_window"]]
-    confirmed = [item for item in in_groups if any(hit["confidence"] != "a_verifier" for hit in item["hits"])]
+    # "confirmed" here means level-1/high-confidence evidence (confidence "haut"),
+    # not the review status from point 1 — a group with only "moyen"/"a_verifier"
+    # hits belongs in to_verify regardless of anyone having reviewed it yet.
+    confirmed = [item for item in in_groups if any(hit["confidence"] == "haut" for hit in item["hits"])]
     to_verify = [item for item in in_groups if item not in confirmed]
+    to_verify.sort(key=lambda item: max((hit["score"] for hit in item["hits"]), default=0), reverse=True)
     return {
         "within_days": window,
         "confirmed": confirmed,
@@ -661,6 +687,10 @@ def create_app(
                     "decision": match["decision"],
                     "content_hash": match["content_hash"],
                     "site_image_id": match["site_image_id"],
+                    "match_id": match["match_id"],
+                    "match_status": match["match_status"],
+                    "reviewed_at": match["reviewed_at"],
+                    "reviewed_note": match["reviewed_note"],
                     "ref_image": "/api/media/ref/" + quote(match["filename"]),
                     "site_image": f"/api/media/site/{match['site_image_id']}",
                 })
@@ -691,10 +721,34 @@ def create_app(
             db_module.set_reviews(conn, body.reference_id, body.site_image_ids, body.decision)
         return {"ok": True}
 
+    @app.patch("/api/matches/{match_id}")
+    def patch_match(match_id: int, body: MatchStatusBody) -> dict:
+        if body.status not in db_module.MATCH_STATUSES:
+            raise HTTPException(status_code=400, detail="Statut inconnu.")
+        with db_module.connect(workspace.db_path) as conn:
+            found = db_module.set_match_status(conn, match_id, body.status, body.note)
+        if not found:
+            raise HTTPException(status_code=404, detail="Correspondance introuvable.")
+        return {"ok": True}
+
+    @app.post("/api/exclude")
+    def exclude(body: ExcludeBody) -> dict:
+        from nyra import match as match_module
+
+        try:
+            purged = match_module.exclude_from_match(
+                workspace.db_path, workspace.config(), body.match_id, body.reason
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {"ok": True, "purged": purged}
+
     @app.get("/api/downloads/{name}")
-    def download(name: str, within_days: Optional[int] = None):
+    def download(name: str, within_days: Optional[int] = None, status: str = "pending"):
         if name not in {"report.html", "matches.csv", "not_found.csv"}:
             raise HTTPException(status_code=404, detail="Fichier inconnu.")
+        if status not in {"pending", "confirmed", "rejected", "all"}:
+            raise HTTPException(status_code=400, detail="Statut inconnu.")
         from nyra import report as report_module
 
         html_path, csv_path, not_found_csv_path = report_module.generate_report(
@@ -702,6 +756,7 @@ def create_app(
             workspace.out_dir,
             workspace.config(),
             within_days=within_days,
+            review_status=status,
         )
         paths = {"report.html": html_path, "matches.csv": csv_path, "not_found.csv": not_found_csv_path}
         return FileResponse(paths[name], filename=name)

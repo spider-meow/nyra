@@ -37,9 +37,18 @@ This README is a quickstart. For anything deeper, see `docs/`:
      lightly re-encoded/resized images, cheaply.
    - Level 2 (only for pairs level 1 missed): CLIP cosine similarity —
      catches crops, overlays, and other retouches.
-4. **Report**: a self-contained `report.html` (thumbnails inlined as base64)
+   - A site image whose hash is on the exclusion list (`nyra exclude`,
+     recurring false positives like a generic logo) is skipped before
+     scoring and never written to `matches`.
+4. **Review**: each match starts `pending`; mark it `confirmed`/`rejected`
+   with an optional note (`nyra review`, or the UI's comparison panel) —
+   traceability that survives future crawls, since a rematch never resets
+   a status someone already set.
+5. **Report**: a self-contained `report.html` (thumbnails inlined as base64)
    and a `matches.csv`, both sorted by expiry urgency, with a separate
-   section for lower-confidence "à vérifier" matches.
+   section for lower-confidence "à vérifier" matches. Only `pending`
+   matches are included by default — a report is a to-do list, not a
+   permanent log (`--status all` includes everything).
 
 ## Install
 
@@ -63,11 +72,19 @@ nyra crawl --site https://www.remymartin.com --max-pages 300
 # 3. Match references against everything found on the site
 nyra match
 
-# 4. Generate the report (refs expired or expiring within N days)
+# 4. Generate the report (refs expired or expiring within N days,
+#    only "pending" matches by default — see below)
 nyra report --within-days 90
 
 # Or run all four steps in sequence:
 nyra run-all --site https://www.remymartin.com --dir refs/ --csv refs.csv --within-days 90
+
+# 5. Review a match found in the report (matches.id from matches.csv/report.html)
+nyra review 42 --status confirmed --note "vérifié à la main"
+nyra report --status all   # include confirmed/rejected matches too
+
+# 6. Exclude a recurring false positive (e.g. a generic logo) for good
+nyra exclude --from-match 42 --reason "logo générique du site"
 ```
 
 All commands accept `--db path/to/nyra.db` (default `nyra.db`)

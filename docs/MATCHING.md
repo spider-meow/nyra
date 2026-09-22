@@ -123,3 +123,14 @@ right.
 band. Confirmed matches (`haut`/`moyen`) are the main table; `a_verifier`
 matches get their own section at the bottom so a reviewer can triage the
 uncertain ones separately without them cluttering the confirmed list.
+The live web UI (`Results.tsx`) groups slightly differently: only `haut`
+lands in the urgency-zoned "confirmed" section (expired/<30j/<90j — see
+`ARCHITECTURE.md`), while `moyen` joins `a_verifier` in a single "à
+regarder de près" section sorted by score, not by expiry — `report.html`
+itself is unchanged, this only affects the on-screen grouping.
+
+Independent of both: a match's `status` (`pending`/`confirmed`/`rejected`,
+see `DATABASE_SCHEMA.md`) is a *review* decision, not a confidence band —
+it doesn't move a match between these sections, it just determines
+whether `nyra report`/the export buttons include it by default (see
+`CLI_REFERENCE.md`'s `report --status`).
