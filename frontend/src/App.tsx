@@ -108,7 +108,7 @@ export function App() {
   const library = overview?.library ?? [];
   const waiting = library.filter((item) => !item.indexed).length;
   const running = overview?.job?.status === "running";
-  const job = overview?.job;
+  const job = overview?.job ?? null;
 
   function show(next: View) {
     setBanner("");
@@ -157,8 +157,11 @@ export function App() {
               {job.status === "error" ? job.error || job.message : job.message}
             </p>
             {job.status === "running" ? (
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-canvas">
-                <div className="h-full bg-ink" style={{ width: total > 0 ? `${width}%` : "28%" }} />
+              <div className="mt-3 flex items-center gap-2">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-canvas">
+                  <div className="h-full bg-ink" style={{ width: total > 0 ? `${width}%` : "28%" }} />
+                </div>
+                {total > 0 ? <span className="text-xs tabular-nums text-muted">{width}%</span> : null}
               </div>
             ) : null}
             {job.kind === "crawl" && (job.progress?.errors || job.progress?.blocked_by_robots) ? (
@@ -204,6 +207,8 @@ export function App() {
             running={Boolean(running)}
             referenceImages={stats?.reference_images || 0}
             siteImages={stats?.site_images || 0}
+            waitingCount={waiting}
+            job={job}
             onSite={setSite}
             onMaxPages={setMaxPages}
             onCrawlFast={setCrawlFast}

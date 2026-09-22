@@ -398,27 +398,40 @@ def create_app(
     async def upload(files: list[UploadFile] = File(...)) -> dict:
         if not files:
             raise HTTPException(status_code=400, detail="Aucun fichier.")
-        saved = []
+        saved: list[str] = []
+        failed: list[dict] = []
+        meta = workspace.read_meta()
         for upload_file in files:
-            filename = safe_filename(upload_file.filename or "")
+            raw_name = upload_file.filename or ""
+            try:
+                filename = safe_filename(raw_name)
+            except HTTPException as exc:
+                failed.append({"filename": raw_name or "(sans nom)", "reason": str(exc.detail)})
+                continue
+
             dest = workspace.images_dir / filename
             data = await upload_file.read()
             if not data:
-                raise HTTPException(status_code=400, detail=f"Fichier vide : {filename}")
+                failed.append({"filename": filename, "reason": "Fichier vide."})
+                continue
+
             dest.write_bytes(data)
             try:
                 from PIL import Image
 
                 with Image.open(dest) as img:
                     img.verify()
-            except Exception as exc:
+            except Exception:
                 dest.unlink(missing_ok=True)
-                raise HTTPException(status_code=400, detail=f"{filename} n'est pas une image lisible.") from exc
-            meta = workspace.read_meta()
+                failed.append({"filename": filename, "reason": "Image illisible ou corrompue."})
+                continue
+
             meta.setdefault(filename, {"expiry_date": "", "credit": "", "notes": ""})
-            workspace.write_meta(meta)
             saved.append(filename)
-        return {"saved": saved}
+
+        if saved:
+            workspace.write_meta(meta)
+        return {"saved": saved, "failed": failed}
 
     def ref_path(filename: str) -> Optional[Path]:
         local = workspace.images_dir / filename
@@ -496,6 +509,11 @@ def create_app(
             applied += 1
         workspace.write_meta(meta)
         return {"applied": applied}
+
+    @app.get("/api/library/export-csv")
+    def export_csv() -> FileResponse:
+        workspace.write_csv()
+        return FileResponse(workspace.csv_path, filename="refs.csv", media_type="text/csv")
 
     @app.post("/api/jobs/ingest")
     def start_ingest(body: IngestBody) -> dict:

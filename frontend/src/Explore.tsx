@@ -1,5 +1,6 @@
 import { type FormEvent } from "react";
 import { api } from "./api";
+import type { Job } from "./types";
 import { btn, btnGhost, card, field, label } from "./ui";
 
 type Props = {
@@ -11,6 +12,8 @@ type Props = {
   running: boolean;
   referenceImages: number;
   siteImages: number;
+  waitingCount: number;
+  job: Job | null;
   onSite: (value: string) => void;
   onMaxPages: (value: number) => void;
   onCrawlFast: (value: boolean) => void;
@@ -22,8 +25,31 @@ type Props = {
   onRefresh: () => Promise<unknown>;
 };
 
+function zeroImagesDiagnostic(job: Job | null): string | null {
+  if (!job || job.kind !== "crawl" || job.status !== "done") return null;
+  const result = job.result as { pages_visited?: number; images_stored?: number; blocked_by_robots?: number; errors?: string[] } | null;
+  if (!result) return null;
+  const pagesVisited = result.pages_visited || 0;
+  const imagesStored = result.images_stored || 0;
+  if (imagesStored > 0) return null;
+
+  if (pagesVisited === 0) {
+    return "Aucune page n'a pu être lue : site injoignable, ou tout bloqué dès la première page.";
+  }
+  const blocked = result.blocked_by_robots || 0;
+  const errored = result.errors?.length || 0;
+  if (blocked >= pagesVisited) {
+    return `${pagesVisited} page(s) lue(s), mais toutes bloquées par robots.txt. Rien à comparer.`;
+  }
+  if (errored >= pagesVisited) {
+    return `${pagesVisited} page(s) tentée(s), mais toutes en erreur de chargement.`;
+  }
+  return `${pagesVisited} page(s) lue(s), mais aucune image assez grande n'a été trouvée (icônes et petits visuels sont ignorés).`;
+}
+
 export function Explore(props: Props) {
   const needsLibrary = props.referenceImages === 0;
+  const zeroImagesMessage = zeroImagesDiagnostic(props.job);
 
   async function crawl(event: FormEvent) {
     event.preventDefault();
@@ -70,6 +96,21 @@ export function Explore(props: Props) {
           <h3 className="text-lg font-semibold">D'abord, les images</h3>
           <p className="mt-1 text-sm text-muted">Sans bibliothèque, le site n'a rien à quoi se comparer. Reviens à l'étape 01.</p>
           <button type="button" className={`${btn} mt-3`} onClick={props.onBack}>Retour à la bibliothèque</button>
+        </div>
+      ) : null}
+      {!needsLibrary && props.waitingCount > 0 ? (
+        <div className={`${card} mt-6`}>
+          <h3 className="text-lg font-semibold">{props.waitingCount} image(s) pas encore indexée(s)</h3>
+          <p className="mt-1 text-sm text-muted">
+            Elles ne seront pas comparées tant que leur date n'est pas enregistrée. Retourne à la bibliothèque et clique "Enregistrer les dates".
+          </p>
+          <button type="button" className={`${btnGhost} mt-3`} onClick={props.onBack}>Retour à la bibliothèque</button>
+        </div>
+      ) : null}
+      {zeroImagesMessage ? (
+        <div className={`${card} mt-6`}>
+          <h3 className="text-lg font-semibold">Rien ramené de ce site</h3>
+          <p className="mt-1 text-sm text-muted">{zeroImagesMessage}</p>
         </div>
       ) : null}
       <form className={`${card} mt-6 grid max-w-xl gap-4`} onSubmit={(event) => void crawl(event)}>

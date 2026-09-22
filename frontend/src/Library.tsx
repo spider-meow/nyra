@@ -30,8 +30,18 @@ export function Library(props: Props) {
     for (const file of files) body.append("files", file);
     props.onBanner("");
     try {
-      await api("/api/library/upload", { method: "POST", body });
-      await props.onRefresh();
+      const result = await api<{ saved: string[]; failed: { filename: string; reason: string }[] }>(
+        "/api/library/upload",
+        { method: "POST", body },
+      );
+      if (result.saved.length) await props.onRefresh();
+      if (result.failed.length) {
+        const detail = result.failed.map((f) => `${f.filename} (${f.reason})`).join(", ");
+        const prefix = result.saved.length ? `${result.saved.length} ajoutée(s). ` : "";
+        props.onBanner(`${prefix}Rejeté(s) : ${detail}`);
+      } else {
+        props.onBanner(`${result.saved.length} image(s) ajoutée(s).`, true);
+      }
     } catch (error) {
       props.onBanner(error instanceof Error ? error.message : "La requête a échoué.");
     }
@@ -119,6 +129,7 @@ export function Library(props: Props) {
             if (file) void importCsv(file);
           }} />
         </label>
+        <a className={btnGhost} href="/api/library/export-csv">Exporter en CSV</a>
         <label className="min-w-40">
           <span className={label}>Filtrer</span>
           <input className={field} value={query} placeholder="Nom de fichier" onChange={(event) => { setQuery(event.target.value); setShown(60); }} />

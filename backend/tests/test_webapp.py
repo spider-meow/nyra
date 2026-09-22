@@ -86,6 +86,53 @@ def test_library_upload_ingest_and_page(tmp_path: Path):
     assert after["stats"]["reference_images"] == 0
 
 
+def test_upload_reports_per_file_success_and_failure(tmp_path: Path):
+    app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
+    client = TestClient(app)
+
+    good = tmp_path / "good.png"
+    _png(good)
+
+    with good.open("rb") as good_handle:
+        uploaded = client.post(
+            "/api/library/upload",
+            files=[
+                ("files", ("good.png", good_handle, "image/png")),
+                ("files", ("notes.txt", b"not an image", "text/plain")),
+                ("files", ("empty.png", b"", "image/png")),
+            ],
+        )
+    # One bad file in the batch must not take the good ones down with it.
+    assert uploaded.status_code == 200
+    payload = uploaded.json()
+    assert payload["saved"] == ["good.png"]
+    failed_names = {item["filename"] for item in payload["failed"]}
+    assert failed_names == {"notes.txt", "empty.png"}
+    assert all(item["reason"] for item in payload["failed"])
+
+    overview = client.get("/api/overview").json()
+    assert [item["filename"] for item in overview["library"]] == ["good.png"]
+
+
+def test_library_csv_export_reflects_current_metadata(tmp_path: Path):
+    app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
+    client = TestClient(app)
+
+    good = tmp_path / "good.png"
+    _png(good)
+    with good.open("rb") as handle:
+        client.post("/api/library/upload", files=[("files", ("good.png", handle, "image/png"))])
+    client.put("/api/library/good.png", json={"expiry_date": "2026-05-01", "credit": "Studio", "notes": "Web only"})
+
+    exported = client.get("/api/library/export-csv")
+    assert exported.status_code == 200
+    assert exported.headers["content-type"].startswith("text/csv")
+    body = exported.text
+    assert "good.png" in body
+    assert "2026-05-01" in body
+    assert "Studio" in body
+
+
 def test_matches_are_grouped_and_a_review_is_kept(tmp_path: Path):
     app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
     client = TestClient(app)

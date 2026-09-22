@@ -17,6 +17,14 @@ const confidenceLabel: Record<string, string> = {
   a_verifier: "À vérifier",
 };
 
+const decisionLabel: Record<string, string> = {
+  retenu: "retenue",
+  ecarte: "écartée",
+  traite: "traitée",
+};
+
+type ConfidenceFilter = "all" | "haut" | "moyen" | "a_verifier";
+
 type Props = {
   matches: Matches | null;
   withinDays: number;
@@ -34,20 +42,40 @@ function dayText(days: number | null): string {
   return `${days} j`;
 }
 
-function visibleHits(group: MatchGroup, hideRejected: boolean): Hit[] {
-  if (!hideRejected) return group.hits;
-  return group.hits.filter((hit) => hit.decision !== "ecarte");
+function visibleHits(group: MatchGroup, hideRejected: boolean, confidenceFilter: ConfidenceFilter): Hit[] {
+  return group.hits.filter((hit) => {
+    if (hideRejected && hit.decision === "ecarte") return false;
+    if (confidenceFilter !== "all" && hit.confidence !== confidenceFilter) return false;
+    return true;
+  });
+}
+
+function decisionSummary(hits: Hit[]): string {
+  const counts: Record<string, number> = {};
+  for (const hit of hits) {
+    if (!hit.decision) continue;
+    counts[hit.decision] = (counts[hit.decision] || 0) + 1;
+  }
+  const parts = Object.entries(counts).map(([decision, count]) => `${count} ${decisionLabel[decision] || decision}`);
+  return parts.join(" · ");
+}
+
+function allSiteImageIds(hits: Hit[]): number[] {
+  return hits.flatMap((hit) => (hit.site_image_ids?.length ? hit.site_image_ids : [hit.site_image_id]));
 }
 
 export function Results(props: Props) {
   const [shown, setShown] = useState(40);
   const [openKey, setOpenKey] = useState("");
   const [openHit, setOpenHit] = useState("");
+  const [query, setQuery] = useState("");
+  const [confidenceFilter, setConfidenceFilter] = useState<ConfidenceFilter>("all");
   const data = props.matches;
   const confirmed = data?.confirmed ?? [];
   const toVerify = data?.to_verify ?? [];
   const later = data?.later ?? [];
   const notFound = data?.not_found ?? [];
+  const needle = query.trim().toLowerCase();
 
   async function decide(referenceId: number, ids: number[], decision: Decision) {
     try {
@@ -62,7 +90,8 @@ export function Results(props: Props) {
     }
   }
 
-  function list(title: string, groups: MatchGroup[]) {
+  function list(title: string, allGroups: MatchGroup[]) {
+    const groups = needle ? allGroups.filter((group) => group.filename.toLowerCase().includes(needle)) : allGroups;
     if (!groups.length) return null;
     const visible = groups.slice(0, shown);
     return (
@@ -70,22 +99,31 @@ export function Results(props: Props) {
         <h3 className="text-lg font-semibold">{title}</h3>
         <div className="mt-2 grid gap-2">
           {visible.map((group) => {
-            const hits = visibleHits(group, props.hideRejected);
+            const hits = visibleHits(group, props.hideRejected, confidenceFilter);
             if (!hits.length) return null;
             const key = `ref-${group.reference_id}`;
             const late = typeof group.days_left === "number" && group.days_left < 0;
+            const summary = decisionSummary(group.hits);
+            const ids = allSiteImageIds(hits);
             return (
               <article key={key} className={card}>
-                <button type="button" className="grid w-full grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3 text-left" onClick={() => setOpenKey(openKey === key ? "" : key)}>
-                  <img className="h-10 w-10 rounded-lg object-cover" alt="" loading="lazy" src={thumb(group.ref_image, 80)} />
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-medium">{group.filename}</span>
-                    <span className={`block text-sm font-semibold ${late ? "text-ember" : ""}`}>{dayText(group.days_left)} · {hits.length} occurrence(s)</span>
-                  </span>
+                <div className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3">
+                  <button type="button" className="contents text-left" onClick={() => setOpenKey(openKey === key ? "" : key)}>
+                    <img className="h-10 w-10 rounded-lg object-cover" alt="" loading="lazy" src={thumb(group.ref_image, 80)} />
+                    <span className="min-w-0">
+                      <span className="block truncate text-sm font-medium">{group.filename}</span>
+                      <span className={`block text-sm font-semibold ${late ? "text-ember" : ""}`}>{dayText(group.days_left)} · {hits.length} occurrence(s)</span>
+                      {summary ? <span className="block text-xs text-muted">{summary}</span> : null}
+                    </span>
+                  </button>
                   <span className={`rounded-full border px-2.5 py-1 text-xs ${group.status === "expire" ? "border-transparent text-ember" : "border-line"}`}>
                     {statusLabel[group.status] || group.status}
                   </span>
-                </button>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2 pl-12">
+                  <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "retenu")}>Tout retenir</button>
+                  <button type="button" className={btnGhost} onClick={() => void decide(group.reference_id, ids, "ecarte")}>Tout écarter</button>
+                </div>
                 {openKey === key ? hits.map((hit, index) => {
                   const hitKey = `${key}-${index}`;
                   const shownHit = openHit === hitKey;
@@ -132,7 +170,8 @@ export function Results(props: Props) {
     );
   }
 
-  function notFoundList(title: string, items: NotFoundItem[]) {
+  function notFoundList(title: string, allItems: NotFoundItem[]) {
+    const items = needle ? allItems.filter((item) => item.filename.toLowerCase().includes(needle)) : allItems;
     if (!items.length) return null;
     return (
       <div className="mt-6">
@@ -169,6 +208,19 @@ export function Results(props: Props) {
           <span className={label}>Montrer jusqu'à</span>
           <input className={field} type="number" min={0} max={3650} value={props.withinDays} onChange={(event) => props.onWithinDays(Number(event.target.value))} />
         </label>
+        <label className="min-w-40">
+          <span className={label}>Chercher un fichier</span>
+          <input className={field} value={query} placeholder="Nom de fichier" onChange={(event) => setQuery(event.target.value)} />
+        </label>
+        <label>
+          <span className={label}>Niveau de confiance</span>
+          <select className={field} value={confidenceFilter} onChange={(event) => setConfidenceFilter(event.target.value as ConfidenceFilter)}>
+            <option value="all">Tous</option>
+            <option value="haut">Confirmé</option>
+            <option value="moyen">Probable</option>
+            <option value="a_verifier">À vérifier</option>
+          </select>
+        </label>
         <label className="flex items-center gap-2 text-sm">
           <input type="checkbox" checked={props.hideRejected} onChange={(event) => props.onHideRejected(event.target.checked)} />
           Masquer les écartés
@@ -178,6 +230,9 @@ export function Results(props: Props) {
         <a className={btnGhost} href={`/api/downloads/matches.csv?within_days=${encodeURIComponent(String(props.withinDays))}`}>CSV</a>
         <a className={btnGhost} href={`/api/downloads/not_found.csv?within_days=${encodeURIComponent(String(props.withinDays))}`}>CSV non trouvées</a>
       </div>
+      <p className="mt-2 text-xs text-muted">
+        <strong>Confirmé</strong> : hachage identique ou quasi (même image, recadrée ou recompressée). <strong>Probable</strong> : visuellement très proche, à confirmer d'un coup d'œil. <strong>À vérifier</strong> : ressemblance plus faible, mérite une vérification manuelle.
+      </p>
       {!data ? <p className="mt-6 text-sm text-muted">Les correspondances arrivent.</p> : null}
       {data ? list(`${confirmed.length} dans la fenêtre`, confirmed) : null}
       {data && confirmed.length === 0 ? (
