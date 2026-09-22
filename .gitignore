@@ -23,5 +23,9 @@ out/
 ground_truth*.csv
 !ground_truth.example.csv
 
+.env
+.env.*
+!.env.example
+
 # OS
 .DS_Store
