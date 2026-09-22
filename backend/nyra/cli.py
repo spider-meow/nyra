@@ -267,6 +267,9 @@ def ui_cmd(
 
     import uvicorn
 
+    from nyra.envfile import load_env_files
+
+    load_env_files()
     database_url = os.environ.get("DATABASE_URL")
     if database_url:
         from nyra.cloud.api import CloudSettings, create_app as create_cloud_app
@@ -282,13 +285,21 @@ def ui_cmd(
             )
             raise typer.Exit(code=1)
 
+        anon_key = os.environ.get("SUPABASE_ANON_KEY") or ""
+        if not anon_key:
+            typer.secho(
+                "SUPABASE_ANON_KEY is missing — the interface cannot open a session. "
+                "Copy the anon / publishable key from Project Settings > API. See .env.example.",
+                fg=typer.colors.YELLOW,
+            )
         settings = CloudSettings(
             database_url=database_url,
             supabase_url=supabase_url,
             service_role_key=service_role_key,
             jwt_secret=os.environ.get("SUPABASE_JWT_SECRET"),
+            anon_key=anon_key,
         )
-        typer.secho(f"Nyra (cloud mode)  →  http://{host}:{port}", fg=typer.colors.GREEN)
+        typer.secho(f"Nyra (cloud mode)  ->  http://{host}:{port}", fg=typer.colors.GREEN)
         uvicorn.run(create_cloud_app(settings), host=host, port=port, log_level="info")
         return
 
@@ -296,7 +307,7 @@ def ui_cmd(
 
     root = Path.cwd()
     db_path = db if db.is_absolute() else root / db
-    typer.secho(f"Nyra  →  http://{host}:{port}", fg=typer.colors.GREEN)
+    typer.secho(f"Nyra  ->  http://{host}:{port}", fg=typer.colors.GREEN)
     uvicorn.run(
         create_app(root=root, db_path=db_path, config_path=config),
         host=host,
@@ -308,14 +319,14 @@ def ui_cmd(
 @app.command("cloud-provision-org")
 def cloud_provision_org(
     name: str = typer.Option(..., "--name", help="Organization display name, e.g. 'Remy Martin'."),
-    slug: str = typer.Option(..., "--slug", help="URL-safe unique slug, e.g. 'remy-martin'."),
+    slug: str = typer.Option(..., "--slug", help="Organization slug. Normalized to lowercase ascii and hyphens, e.g. 'Rémy Martin' becomes 'remy-martin'."),
     admin_email: str = typer.Option(..., "--admin-email", help="Email of the Supabase Auth user to make admin."),
 ) -> None:
     """Bootstrap a new client organization (cloud mode only).
 
     A user can't create their own first organization — Row Level Security
     requires an existing admin membership to add one (see
-    supabase/migrations/0005), which is exactly the chicken-and-egg this
+    supabase/migrations/migration_005_row_level_security.sql), which is exactly the chicken-and-egg this
     command exists to break. The admin_email user must already exist in
     Supabase Auth (sign them up first, e.g. via the Supabase dashboard or
     your own invite flow); this only creates the organization and their
@@ -323,12 +334,21 @@ def cloud_provision_org(
     """
     import os
 
+    from nyra.envfile import load_env_files
+
+    load_env_files()
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         typer.secho("DATABASE_URL is not set — see .env.example.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
     from nyra.cloud import db as cloud_db
+
+    try:
+        slug = cloud_db.slugify(slug)
+    except ValueError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
 
     with cloud_db.connect(database_url) as conn:
         user_row = conn.execute("SELECT id FROM auth.users WHERE email = %s", (admin_email,)).fetchone()

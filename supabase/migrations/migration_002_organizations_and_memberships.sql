@@ -1,6 +1,6 @@
 -- Multi-tenancy: one Supabase project shared across every Nyra
 -- client, isolated by organization + Row Level Security (see
--- 20260922000005_row_level_security.sql).
+-- migration_005_row_level_security.sql).
 --
 -- `memberships` is a join table rather than a single org_id on a profile
 -- so an Axel admin can belong to several client organizations (one row

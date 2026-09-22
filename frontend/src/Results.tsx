@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, thumb } from "./api";
+import { api, openReport, thumb } from "./api";
 import { CompareModal } from "./CompareModal";
 import type { Decision, Hit, MatchGroup, MatchStatus, Matches, NotFoundItem } from "./types";
 import { btn, btnGhost, card, field, label } from "./ui";
@@ -305,7 +305,7 @@ export function Results(props: Props) {
 
   return (
     <section>
-      <h2 className="text-4xl font-semibold tracking-tight">Ce qui reste en ligne</h2>
+      <h2 className="text-4xl font-semibold tracking-tight">Correspondances</h2>
       <p className="mt-2 text-muted">Une ligne par visuel. Ouvre la ligne pour voir les deux images, en petit — ou "Comparer en grand" pour le détail.</p>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label>
@@ -340,9 +340,9 @@ export function Results(props: Props) {
             ))}
           </select>
         </label>
-        <a className={btn} href={`/api/downloads/report.html?within_days=${encodeURIComponent(String(props.withinDays))}&status=${encodeURIComponent(reportStatus)}`}>Exporter HTML</a>
-        <a className={btnGhost} href={`/api/downloads/matches.csv?within_days=${encodeURIComponent(String(props.withinDays))}&status=${encodeURIComponent(reportStatus)}`}>Exporter CSV</a>
-        <a className={btnGhost} href={`/api/downloads/not_found.csv?within_days=${encodeURIComponent(String(props.withinDays))}`}>CSV non trouvées</a>
+        <button type="button" className={btn} onClick={() => void openReport("report.html", props.withinDays, reportStatus).catch((error: unknown) => props.onBanner(error instanceof Error ? error.message : "La requête a échoué."))}>Exporter HTML</button>
+        <button type="button" className={btnGhost} onClick={() => void openReport("matches.csv", props.withinDays, reportStatus).catch((error: unknown) => props.onBanner(error instanceof Error ? error.message : "La requête a échoué."))}>Exporter CSV</button>
+        <button type="button" className={btnGhost} onClick={() => void openReport("not_found.csv", props.withinDays).catch((error: unknown) => props.onBanner(error instanceof Error ? error.message : "La requête a échoué."))}>CSV non trouvées</button>
       </div>
       <p className="mt-2 text-xs text-muted">
         <strong>Confirmé</strong> : hachage identique ou quasi (même image, recadrée ou recompressée). <strong>Probable</strong> et <strong>à vérifier</strong> : ressemblance visuelle, groupées dans "à regarder de près", triées par confiance. L'export ne reprend par défaut que les correspondances encore <strong>en attente</strong> de revue.

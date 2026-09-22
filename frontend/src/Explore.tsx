@@ -1,5 +1,6 @@
 import { type FormEvent } from "react";
 import { api } from "./api";
+import { useAuth } from "./auth";
 import type { Job } from "./types";
 import { btn, btnGhost, card, field, label } from "./ui";
 
@@ -48,6 +49,7 @@ function zeroImagesDiagnostic(job: Job | null): string | null {
 }
 
 export function Explore(props: Props) {
+  const admin = useAuth().role === "admin";
   const needsLibrary = props.referenceImages === 0;
   const zeroImagesMessage = zeroImagesDiagnostic(props.job);
 
@@ -89,22 +91,22 @@ export function Explore(props: Props) {
 
   return (
     <section>
-      <h2 className="text-4xl font-semibold tracking-tight">Où chercher</h2>
+      <h2 className="text-4xl font-semibold tracking-tight">Exploration</h2>
       <p className="mt-2 text-muted">On lit le sitemap, puis les liens internes. On ramène les images. On ne tranche pas encore.</p>
       {needsLibrary ? (
         <div className={`${card} mt-6`}>
           <h3 className="text-lg font-semibold">D'abord, les images</h3>
-          <p className="mt-1 text-sm text-muted">Sans bibliothèque, le site n'a rien à quoi se comparer. Reviens à l'étape 01.</p>
-          <button type="button" className={`${btn} mt-3`} onClick={props.onBack}>Retour à la bibliothèque</button>
+          <p className="mt-1 text-sm text-muted">Sans références, le site n'a rien à quoi se comparer. Reviens à l'étape 01.</p>
+          <button type="button" className={`${btn} mt-3`} onClick={props.onBack}>Retour aux références</button>
         </div>
       ) : null}
       {!needsLibrary && props.waitingCount > 0 ? (
         <div className={`${card} mt-6`}>
           <h3 className="text-lg font-semibold">{props.waitingCount} image(s) pas encore indexée(s)</h3>
           <p className="mt-1 text-sm text-muted">
-            Elles ne seront pas comparées tant que leur date n'est pas enregistrée. Retourne à la bibliothèque et clique "Enregistrer les dates".
+            Elles ont été envoyées sans le modèle visuel, donc elles ne seront pas comparées. Renvoie-les depuis les références, sans l'option rapide.
           </p>
-          <button type="button" className={`${btnGhost} mt-3`} onClick={props.onBack}>Retour à la bibliothèque</button>
+          <button type="button" className={`${btnGhost} mt-3`} onClick={props.onBack}>Retour aux références</button>
         </div>
       ) : null}
       {zeroImagesMessage ? (
@@ -135,8 +137,8 @@ export function Explore(props: Props) {
           Comparer dès que la lecture est finie
         </label>
         <div className="flex flex-wrap gap-2">
-          <button type="submit" className={btn} disabled={props.running || needsLibrary}>Lire le site</button>
-          <button type="button" className={btnGhost} disabled={props.running || props.siteImages === 0} onClick={() => void match()}>Comparer aux références</button>
+          <button type="submit" className={btn} disabled={!admin || props.running || needsLibrary}>Lire le site</button>
+          <button type="button" className={btnGhost} disabled={!admin || props.running || props.siteImages === 0} onClick={() => void match()}>Comparer aux références</button>
         </div>
         <p className="text-sm text-muted">
           {props.siteImages

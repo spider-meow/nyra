@@ -19,7 +19,10 @@ values
     ('reports', 'reports', false)
 on conflict (id) do nothing;
 
-alter table storage.objects enable row level security;
+-- storage.objects is owned by supabase_storage_admin and already has row
+-- level security enabled. ALTER TABLE ... ENABLE ROW LEVEL SECURITY fails
+-- in the SQL editor with 42501 (must be owner of table objects). Creating
+-- policies below is still allowed.
 
 -- refs: uploaded and edited by admins through the Library screen; clients
 -- only ever need to view the thumbnails.

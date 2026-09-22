@@ -354,6 +354,12 @@ def create_app(
     def healthz() -> dict:
         return {"status": "ok"}
 
+    @app.get("/api/auth/config")
+    def auth_config() -> dict:
+        # Local SQLite mode has no accounts. The interface stays on the
+        # login gate until `nyra ui` is started with Supabase configured.
+        return {"required": True, "supabaseUrl": "", "anonKey": ""}
+
     @app.get("/api/overview")
     def overview() -> dict:
         config = workspace.config()

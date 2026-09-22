@@ -4,7 +4,7 @@ product.
 
 Every object path is `{org_id}/{rest}` inside one of three buckets
 (`refs`, `site-images`, `reports` — created by
-`supabase/migrations/0006_storage_buckets.sql`), matching the prefix the
+`supabase/migrations/migration_006_storage_buckets.sql`), matching the prefix the
 Storage RLS policies there check. `path_for()` builds that prefix so
 callers never hand-assemble it and risk crossing an org boundary by typo.
 

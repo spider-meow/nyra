@@ -21,6 +21,29 @@ pytest.importorskip("psycopg")
 from nyra.cloud import db as cloud_db
 
 
+def test_normalize_database_url_encodes_reserved_characters_in_password():
+    raw = "postgresql://postgres.abc:p@ss word@aws-0-eu.pooler.supabase.com:5432/postgres"
+    assert cloud_db.normalize_database_url(raw) == (
+        "postgresql://postgres.abc:p%40ss%20word@aws-0-eu.pooler.supabase.com:5432/postgres"
+    )
+
+
+def test_slugify_folds_accents_and_separators():
+    assert cloud_db.slugify("Rémy Martin") == "remy-martin"
+    assert cloud_db.slugify("  remy--martin  ") == "remy-martin"
+    assert cloud_db.slugify("Client_Name") == "client-name"
+
+
+def test_slugify_rejects_a_value_with_no_letters_or_digits():
+    with pytest.raises(ValueError):
+        cloud_db.slugify("---")
+
+
+def test_normalize_database_url_leaves_a_plain_password():
+    raw = "postgresql://postgres.abc:secret@aws-0-eu.pooler.supabase.com:5432/postgres"
+    assert cloud_db.normalize_database_url(raw) == raw
+
+
 def test_reference_image_upsert_and_embedding_roundtrip(cloud_database_url, cloud_org):
     embedding = np.random.rand(512).astype(np.float32)
     with cloud_db.connect(cloud_database_url) as conn:
