@@ -76,7 +76,7 @@ def cloud_database_url() -> str:
 
     Set TEST_DATABASE_URL to a disposable Postgres (with the `vector`
     extension available) to run the cloud test suite, e.g.:
-        postgresql://postgres:devpassword@127.0.0.1:5432/rightswatch_dev
+        postgresql://postgres:devpassword@127.0.0.1:5432/nyra_dev
     """
     url = os.environ.get("TEST_DATABASE_URL")
     if not url:
@@ -99,7 +99,7 @@ def cloud_database_url() -> str:
 @pytest.fixture()
 def cloud_org(cloud_database_url: str):
     """A fresh organization for one test, so tests don't collide."""
-    from rightswatch.cloud import db as cloud_db
+    from nyra.cloud import db as cloud_db
 
     with cloud_db.connect(cloud_database_url) as conn:
         org_id = cloud_db.create_organization(conn, name="Test Org", slug=f"test-{uuid.uuid4().hex[:12]}")

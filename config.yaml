@@ -1,11 +1,11 @@
-# RightsWatch configuration.
+# Nyra configuration.
 # All matching thresholds and crawl behavior live here, not hard-coded.
 
 crawl:
   max_pages: 300
   delay_seconds_min: 1.0
   delay_seconds_max: 2.0
-  user_agent: "RightsWatchBot/0.1 (+https://github.com/axel-project/rightswatch; contact: rights-team@example.com)"
+  user_agent: "NyraBot/0.1 (+https://github.com/axel-project/nyra; contact: rights-team@example.com)"
   min_image_side_px: 200
   respect_robots_txt: true
   request_timeout_seconds: 20

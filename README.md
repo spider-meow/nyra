@@ -1,4 +1,4 @@
-# RightsWatch
+# Nyra
 
 Deterministic CLI (no agent, no LLM in the loop) that takes a library of
 rights-managed reference images with expiry dates, crawls a website, and
@@ -55,22 +55,22 @@ playwright install chromium
 
 ```bash
 # 1. Ingest the reference library (CSV columns: filename, expiry_date, credit, notes)
-rightswatch ingest-refs --dir refs/ --csv refs.csv
+nyra ingest-refs --dir refs/ --csv refs.csv
 
 # 2. Crawl the target site
-rightswatch crawl --site https://www.remymartin.com --max-pages 300
+nyra crawl --site https://www.remymartin.com --max-pages 300
 
 # 3. Match references against everything found on the site
-rightswatch match
+nyra match
 
 # 4. Generate the report (refs expired or expiring within N days)
-rightswatch report --within-days 90
+nyra report --within-days 90
 
 # Or run all four steps in sequence:
-rightswatch run-all --site https://www.remymartin.com --dir refs/ --csv refs.csv --within-days 90
+nyra run-all --site https://www.remymartin.com --dir refs/ --csv refs.csv --within-days 90
 ```
 
-All commands accept `--db path/to/rightswatch.db` (default `rightswatch.db`)
+All commands accept `--db path/to/nyra.db` (default `nyra.db`)
 and `--config path/to/config.yaml` (default: the repo's `config.yaml`).
 Crawling is resumable: pages already marked "done" in the database are
 skipped on the next `crawl` run (`--no-resume` forces a full re-crawl).
@@ -78,7 +78,7 @@ skipped on the next `crawl` run (`--no-resume` forces a full re-crawl).
 ### Calibrating match thresholds
 
 ```bash
-rightswatch calibrate --ground-truth ground_truth.csv
+nyra calibrate --ground-truth ground_truth.csv
 ```
 
 `ground_truth.csv` (see `ground_truth.example.csv`) is a small hand-confirmed
@@ -105,8 +105,8 @@ hard-coded in the modules:
 ## Project layout
 
 ```
-backend/rightswatch/     pipeline and local API
-  cli.py                 Typer commands, including `rightswatch ui`
+backend/nyra/     pipeline and local API
+  cli.py                 Typer commands, including `nyra ui`
   api.py                 FastAPI app: library, crawl, match, report
   refs.py                Reference ingestion: RefSource + CsvRefSource
   crawl.py               Page discovery and image extraction
@@ -121,7 +121,7 @@ config.yaml              thresholds and crawl limits
 docs/                    architecture, CLI, schema, matching, dev guide
 ```
 
-The interface is TypeScript. From `frontend/`, `npm install` then `npm run dev` (the API stays on port 8765 or 8000). `npm run build` writes `frontend/dist`, which `rightswatch ui` serves.
+The interface is TypeScript. From `frontend/`, `npm install` then `npm run dev` (the API stays on port 8765 or 8000). `npm run build` writes `frontend/dist`, which `nyra ui` serves.
 
 `refs.py` exposes a `RefSource` abstract base class so the CSV+folder input
 used for the demo can later be swapped for a Brandcenter export adapter
@@ -144,6 +144,6 @@ and the conventions to follow when adding more.
 
 ## Out of scope for this MVP
 
-The local interface is `frontend/`, served by `rightswatch ui`. Multi-tenant
+The local interface is `frontend/`, served by `nyra ui`. Multi-tenant
 accounts, video, open-web search, a Brandcenter adapter, scheduled alerts,
 and multi-site support are still phase 2.

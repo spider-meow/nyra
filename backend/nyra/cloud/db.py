@@ -1,13 +1,13 @@
 """Postgres persistence for the multi-tenant (Supabase) product.
 
-Mirrors `rightswatch.db`'s shape (same kind of upsert-on-natural-key
+Mirrors `nyra.db`'s shape (same kind of upsert-on-natural-key
 functions, same tables) but targets the schema in `supabase/migrations/`:
 uuid ids, an `org_id` on every row, and a few tables the local SQLite
 product doesn't have (`organizations`, `memberships`, `sites`,
 `crawl_runs`, `reports`) because they only make sense once there's more
 than one tenant and job state needs to survive a server restart.
 
-Every function here takes a connection (like `rightswatch.db`) rather
+Every function here takes a connection (like `nyra.db`) rather
 than opening its own — callers use `connect()` as a context manager.
 The backend always connects with a privileged Postgres role (the
 `DATABASE_URL` in `.env.example`), which bypasses Row Level Security by
@@ -288,7 +288,7 @@ def get_pages_for_image(conn: psycopg.Connection, image_id: uuid.UUID) -> list[s
     return [r["url"] for r in rows]
 
 
-# --- matches (see rightswatch.match for the incremental-cache logic that
+# --- matches (see nyra.match for the incremental-cache logic that
 # calls these) -----------------------------------------------------------
 
 def clear_matches(conn: psycopg.Connection, org_id: uuid.UUID) -> None:

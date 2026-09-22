@@ -1,8 +1,8 @@
 # Database schema
 
-RightsWatch stores everything in a single SQLite file (default
-`rightswatch.db`, override with `--db`). The full schema lives in
-`backend/rightswatch/db.py::SCHEMA` — this document explains what each table is for
+Nyra stores everything in a single SQLite file (default
+`nyra.db`, override with `--db`). The full schema lives in
+`backend/nyra/db.py::SCHEMA` — this document explains what each table is for
 and how the tables relate.
 
 ## Entity relationship overview
@@ -132,7 +132,7 @@ NOTHING` for `pages`), keyed on a natural key rather than the autoincrement
 ## Inspecting the database directly
 
 ```bash
-sqlite3 rightswatch.db
+sqlite3 nyra.db
 .tables
 .schema matches
 SELECT r.filename, r.expiry_date, COUNT(*) FROM matches m

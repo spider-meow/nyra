@@ -3,7 +3,7 @@
 -- not shared across instances) and reports were only ever "the current
 -- state, regenerated on demand".
 --
--- crawl_runs persists what CrawlStats (backend/rightswatch/crawl.py)
+-- crawl_runs persists what CrawlStats (backend/nyra/crawl.py)
 -- already tracks in memory, so a job survives a server restart and its
 -- history is queryable. reports snapshots each generated report so a
 -- client can look back at a past run rather than only ever seeing live

@@ -1,4 +1,4 @@
-"""Unit tests for rightswatch.match.
+"""Unit tests for nyra.match.
 
 Images are generated on the fly with Pillow (gradient + shapes) so tests
 don't depend on binary fixtures. Level 2 (CLIP) tests are skipped when
@@ -14,8 +14,8 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from rightswatch.config import MatchConfig
-from rightswatch.match import (
+from nyra.config import MatchConfig
+from nyra.match import (
     classify_level1,
     classify_level2,
     classify_pair,
@@ -90,7 +90,7 @@ def test_hamming_distance_identical_hashes_is_zero():
 
 
 def test_vectorized_match_finds_identical_hash_and_skips_a_distant_one(config):
-    from rightswatch.match import match_index_pairs
+    from nyra.match import match_index_pairs
 
     same = np.array([np.uint64(0xFFFF0000FFFF0000)], dtype=np.uint64)
     far = np.array([np.uint64(0xFFFFFFFFFFFFFFFF)], dtype=np.uint64)
@@ -264,15 +264,15 @@ def test_classify_pair_prefers_level1_result(base_image, config):
 def _config_with_match(**overrides):
     from dataclasses import replace
 
-    from rightswatch.config import load_config
+    from nyra.config import load_config
 
     base = load_config()
     return replace(base, match=replace(base.match, **overrides))
 
 
 def test_run_matching_incremental_picks_up_new_images_without_losing_old_matches(tmp_path):
-    from rightswatch import db
-    from rightswatch.match import run_matching
+    from nyra import db
+    from nyra.match import run_matching
 
     db_path = tmp_path / "rw.db"
     db.init_db(db_path)
@@ -311,8 +311,8 @@ def test_run_matching_incremental_picks_up_new_images_without_losing_old_matches
 
 
 def test_run_matching_threshold_change_forces_a_full_recompute(tmp_path):
-    from rightswatch import db
-    from rightswatch.match import run_matching
+    from nyra import db
+    from nyra.match import run_matching
 
     db_path = tmp_path / "rw.db"
     db.init_db(db_path)
@@ -344,7 +344,7 @@ def test_run_matching_threshold_change_forces_a_full_recompute(tmp_path):
 def test_clip_embedding_end_to_end(base_image, config):
     pytest.importorskip("torch")
     pytest.importorskip("open_clip")
-    from rightswatch.match import compute_clip_embedding
+    from nyra.match import compute_clip_embedding
 
     emb_a = compute_clip_embedding(base_image, config)
     emb_b = compute_clip_embedding(base_image, config)

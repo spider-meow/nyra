@@ -23,7 +23,7 @@ import imagehash
 import numpy as np
 from PIL import Image
 
-from rightswatch.config import Config, MatchConfig
+from nyra.config import Config, MatchConfig
 
 CONFIDENCE_HIGH = "haut"
 CONFIDENCE_MEDIUM = "moyen"
@@ -293,7 +293,7 @@ def _pack_rows(rows: list, use_clip: bool):
 
 
 def db_unpack(blob):
-    from rightswatch import db
+    from nyra import db
 
     return db.unpack_embedding(blob)
 
@@ -323,7 +323,7 @@ def run_matching(db_path, config: Config, use_clip: bool = True, progress=None, 
     Hits are written after the comparison, so a stop or a crash keeps the
     previous report.
     """
-    from rightswatch import db
+    from nyra import db
 
     signature = _signature(config.match, use_clip)
     with db.connect(db_path) as conn:
@@ -404,7 +404,7 @@ def run_matching(db_path, config: Config, use_clip: bool = True, progress=None, 
     if should_stop and should_stop():
         raise MatchStopped()
 
-    from rightswatch import db
+    from nyra import db
 
     stamped_refs = sorted({int(row["id"]) for part, _site in rectangles for row in part}) if not full else clear_ref_ids
     stamped_sites = clear_site_ids if not full else [int(row["id"]) for row in sites]
@@ -519,7 +519,7 @@ def calibrate(db_path, ground_truth_path, config: Config) -> dict[str, list[Thre
     Requires refs and site images already ingested/crawled (their hashes and
     embeddings must already be in the database).
     """
-    from rightswatch import db
+    from nyra import db
 
     ground_truth = load_ground_truth_csv(ground_truth_path)
 

@@ -13,9 +13,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-from rightswatch import db, refs, report
-from rightswatch.config import load_config
-from rightswatch.match import compute_hashes, run_matching
+from nyra import db, refs, report
+from nyra.config import load_config
+from nyra.match import compute_hashes, run_matching
 
 
 def make_image(path: Path, seed: int) -> None:

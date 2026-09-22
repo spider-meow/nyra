@@ -1,4 +1,4 @@
--- Multi-tenancy: one Supabase project shared across every RightsWatch
+-- Multi-tenancy: one Supabase project shared across every Nyra
 -- client, isolated by organization + Row Level Security (see
 -- 20260922000005_row_level_security.sql).
 --

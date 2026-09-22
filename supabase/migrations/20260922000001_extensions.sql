@@ -1,4 +1,4 @@
--- Extensions RightsWatch relies on.
+-- Extensions Nyra relies on.
 --
 -- pgcrypto: gen_random_uuid() for primary keys (Postgres has a core
 --   gen_random_uuid() since v13, but Supabase images ship pgcrypto anyway

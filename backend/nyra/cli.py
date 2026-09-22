@@ -1,4 +1,4 @@
-"""RightsWatch CLI (Typer)."""
+"""Nyra CLI (Typer)."""
 
 from __future__ import annotations
 
@@ -8,20 +8,20 @@ from typing import Optional
 import typer
 from tqdm import tqdm
 
-from rightswatch.config import load_config
-from rightswatch import db as db_module
-from rightswatch import refs as refs_module
-from rightswatch import crawl as crawl_module
-from rightswatch import match as match_module
-from rightswatch import report as report_module
+from nyra.config import load_config
+from nyra import db as db_module
+from nyra import refs as refs_module
+from nyra import crawl as crawl_module
+from nyra import match as match_module
+from nyra import report as report_module
 
 app = typer.Typer(
-    name="rightswatch",
+    name="nyra",
     help="Detect rights-managed reference images on a crawled website, ranked by expiry urgency.",
     no_args_is_help=True,
 )
 
-DEFAULT_DB = Path("rightswatch.db")
+DEFAULT_DB = Path("nyra.db")
 DEFAULT_CACHE_DIR = Path("data/site_images")
 DEFAULT_OUT_DIR = Path("out")
 
@@ -208,7 +208,7 @@ def ui_cmd(
 
     database_url = os.environ.get("DATABASE_URL")
     if database_url:
-        from rightswatch.cloud.api import CloudSettings, create_app as create_cloud_app
+        from nyra.cloud.api import CloudSettings, create_app as create_cloud_app
 
         supabase_url = os.environ.get("SUPABASE_URL")
         service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
@@ -227,15 +227,15 @@ def ui_cmd(
             service_role_key=service_role_key,
             jwt_secret=os.environ.get("SUPABASE_JWT_SECRET"),
         )
-        typer.secho(f"RightsWatch (cloud mode)  →  http://{host}:{port}", fg=typer.colors.GREEN)
+        typer.secho(f"Nyra (cloud mode)  →  http://{host}:{port}", fg=typer.colors.GREEN)
         uvicorn.run(create_cloud_app(settings), host=host, port=port, log_level="info")
         return
 
-    from rightswatch.api import create_app
+    from nyra.api import create_app
 
     root = Path.cwd()
     db_path = db if db.is_absolute() else root / db
-    typer.secho(f"RightsWatch  →  http://{host}:{port}", fg=typer.colors.GREEN)
+    typer.secho(f"Nyra  →  http://{host}:{port}", fg=typer.colors.GREEN)
     uvicorn.run(
         create_app(root=root, db_path=db_path, config_path=config),
         host=host,
@@ -267,7 +267,7 @@ def cloud_provision_org(
         typer.secho("DATABASE_URL is not set — see .env.example.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
 
-    from rightswatch.cloud import db as cloud_db
+    from nyra.cloud import db as cloud_db
 
     with cloud_db.connect(database_url) as conn:
         user_row = conn.execute("SELECT id FROM auth.users WHERE email = %s", (admin_email,)).fetchone()

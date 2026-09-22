@@ -17,9 +17,9 @@ from typing import Optional
 import httpx
 from PIL import Image, UnidentifiedImageError
 
-from rightswatch import db
-from rightswatch.config import Config
-from rightswatch.match import compute_hashes, compute_clip_embedding
+from nyra import db
+from nyra.config import Config
+from nyra.match import compute_hashes, compute_clip_embedding
 
 
 def content_hash(data: bytes) -> str:

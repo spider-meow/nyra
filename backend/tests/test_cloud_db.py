@@ -1,12 +1,12 @@
-"""backend/rightswatch/cloud/db.py against a real Postgres.
+"""backend/nyra/cloud/db.py against a real Postgres.
 
 Skips entirely unless TEST_DATABASE_URL is set (see conftest.py) — the
 rest of the suite stays hermetic by default. Point it at a disposable
 local Postgres with the `vector` extension available, e.g.:
 
-    createdb rightswatch_test
-    psql rightswatch_test -c "create extension vector;"
-    TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/rightswatch_test pytest backend/tests/test_cloud_db.py
+    createdb nyra_test
+    psql nyra_test -c "create extension vector;"
+    TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:5432/nyra_test pytest backend/tests/test_cloud_db.py
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import pytest
 
 pytest.importorskip("psycopg")
 
-from rightswatch.cloud import db as cloud_db
+from nyra.cloud import db as cloud_db
 
 
 def test_reference_image_upsert_and_embedding_roundtrip(cloud_database_url, cloud_org):

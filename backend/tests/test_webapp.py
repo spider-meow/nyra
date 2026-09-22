@@ -12,8 +12,8 @@ from PIL import Image, ImageDraw
 pytest.importorskip("fastapi")
 from fastapi.testclient import TestClient
 
-from rightswatch import db
-from rightswatch.api import create_app
+from nyra import db
+from nyra.api import create_app
 
 
 def _png(path: Path) -> None:
@@ -24,12 +24,12 @@ def _png(path: Path) -> None:
 
 
 def test_library_upload_ingest_and_page(tmp_path: Path):
-    app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
+    app = create_app(root=tmp_path, db_path=tmp_path / "nyra.db")
     client = TestClient(app)
 
     page = client.get("/")
     assert page.status_code == 200
-    assert "RightsWatch" in page.text
+    assert "Nyra" in page.text
     assert "login" not in page.text.lower()
 
     assert client.get("/api/healthz").json() == {"status": "ok"}
@@ -89,7 +89,7 @@ def test_library_upload_ingest_and_page(tmp_path: Path):
 
 
 def test_upload_reports_per_file_success_and_failure(tmp_path: Path):
-    app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
+    app = create_app(root=tmp_path, db_path=tmp_path / "nyra.db")
     client = TestClient(app)
 
     good = tmp_path / "good.png"
@@ -117,7 +117,7 @@ def test_upload_reports_per_file_success_and_failure(tmp_path: Path):
 
 
 def test_library_csv_export_reflects_current_metadata(tmp_path: Path):
-    app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
+    app = create_app(root=tmp_path, db_path=tmp_path / "nyra.db")
     client = TestClient(app)
 
     good = tmp_path / "good.png"
@@ -136,10 +136,10 @@ def test_library_csv_export_reflects_current_metadata(tmp_path: Path):
 
 
 def test_matches_are_grouped_and_a_review_is_kept(tmp_path: Path):
-    app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
+    app = create_app(root=tmp_path, db_path=tmp_path / "nyra.db")
     client = TestClient(app)
     far_expiry = (date.today() + timedelta(days=180)).isoformat()
-    with db.connect(tmp_path / "rightswatch.db") as conn:
+    with db.connect(tmp_path / "nyra.db") as conn:
         ref_id = db.upsert_reference_image(
             conn,
             filename="campagne.png",
@@ -176,10 +176,10 @@ def test_matches_are_grouped_and_a_review_is_kept(tmp_path: Path):
 
 
 def test_unmatched_reference_is_flagged_not_found(tmp_path: Path):
-    app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
+    app = create_app(root=tmp_path, db_path=tmp_path / "nyra.db")
     client = TestClient(app)
     soon = (date.today() + timedelta(days=10)).isoformat()
-    with db.connect(tmp_path / "rightswatch.db") as conn:
+    with db.connect(tmp_path / "nyra.db") as conn:
         db.upsert_reference_image(
             conn,
             filename="jamais-vue.png",
@@ -197,7 +197,7 @@ def test_unmatched_reference_is_flagged_not_found(tmp_path: Path):
     assert listed["not_found"][0]["filename"] == "jamais-vue.png"
     assert listed["not_found"][0]["compared"] is False
 
-    with db.connect(tmp_path / "rightswatch.db") as conn:
+    with db.connect(tmp_path / "nyra.db") as conn:
         # Simulate a match pass that ran and found nothing: compared_at gets stamped.
         db.stamp_compared(conn, [1], [], "sig")
 

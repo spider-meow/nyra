@@ -1,5 +1,5 @@
 [project]
-name = "rightswatch"
+name = "nyra"
 version = "0.1.0"
 description = "Deterministic CLI tool to detect reference/licensed images on a crawled website, ranked by rights-expiry urgency."
 requires-python = ">=3.11"
@@ -31,7 +31,7 @@ dev = [
 ]
 
 [project.scripts]
-rightswatch = "rightswatch.cli:app"
+nyra = "nyra.cli:app"
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]
@@ -39,10 +39,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["backend"]
-include = ["rightswatch*"]
+include = ["nyra*"]
 
 [tool.setuptools.package-data]
-rightswatch = ["templates/*"]
+nyra = ["templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

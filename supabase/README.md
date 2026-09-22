@@ -1,6 +1,6 @@
-# RightsWatch — schéma Supabase
+# Nyra — schéma Supabase
 
-Migrations SQL pour faire tourner RightsWatch sur Supabase (Postgres +
+Migrations SQL pour faire tourner Nyra sur Supabase (Postgres +
 Auth + Storage) au lieu du SQLite local actuel. **Rien n'a été touché sur
 un projet Supabase réel** — ces fichiers sont prêts à être appliqués quand
 le projet sera créé.
@@ -94,7 +94,7 @@ fois le vrai projet créé, au moins une fois.
 
 - **La connexion réelle à un projet Supabase** — personne n'a créé de
   projet, ces migrations n'ont jamais touché une instance Supabase.
-- **Le code applicatif** (`backend/rightswatch/db.py`, `fetch.py`,
+- **Le code applicatif** (`backend/nyra/db.py`, `fetch.py`,
   `refs.py`, `report.py`, `api.py`) parle encore à SQLite + au disque
   local. Faire tourner le produit sur ce schéma demande de réécrire la
   couche `db.py` (connexion Postgres, ids en `uuid`, `org_id` sur les
@@ -102,7 +102,7 @@ fois le vrai projet créé, au moins une fois.
   l'API Storage au lieu de `Path.write_bytes`/`open()`. C'est le chantier
   suivant une fois le projet Supabase créé.
 - **L'intégration Brandcenter** — explicitement mise de côté pour plus
-  tard ; le connecteur `RefSource` (`backend/rightswatch/refs.py`) reste
+  tard ; le connecteur `RefSource` (`backend/nyra/refs.py`) reste
   le point d'extension prévu pour ça, indépendant de ce schéma.
 - **La première organisation/le premier admin** — se créent via la clé
   service-role au moment de l'onboarding d'un client (voir le commentaire

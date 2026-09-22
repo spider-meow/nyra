@@ -138,7 +138,7 @@ export function App() {
   return (
     <div className="grid min-h-screen grid-cols-1 md:grid-cols-[280px_minmax(0,1fr)]">
       <aside className="flex flex-col border-b border-line bg-side p-6 md:border-r md:border-b-0">
-        <p className="text-sm font-medium">RightsWatch</p>
+        <p className="text-sm font-medium">Nyra</p>
         <p className="mt-2 text-sm text-muted">Ce qui est encore en ligne, alors que les droits s'épuisent.</p>
         <nav className="mt-8 grid gap-2" aria-label="Parcours">
           <Step index="01" title="Bibliothèque" active={view === "library"} onClick={() => show("library")}

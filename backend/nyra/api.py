@@ -1,4 +1,4 @@
-"""Local interface for RightsWatch. No accounts — it drives the existing pipeline."""
+"""Local interface for Nyra. No accounts — it drives the existing pipeline."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from rightswatch import db as db_module
-from rightswatch.config import load_config
-from rightswatch.report import days_until, urgency_status
+from nyra import db as db_module
+from nyra.config import load_config
+from nyra.report import days_until, urgency_status
 
 def frontend_dir() -> Path:
     """The TypeScript app lives next to the backend, not inside the Python package."""
@@ -139,7 +139,7 @@ class JobRunner:
             job_id = job["id"]
 
         def runner() -> None:
-            from rightswatch.match import MatchStopped
+            from nyra.match import MatchStopped
 
             try:
                 result = work()
@@ -152,7 +152,7 @@ class JobRunner:
             except Exception as exc:
                 self.update(status="error", message="La tâche s'est arrêtée.", error=str(exc))
 
-        threading.Thread(target=runner, name=f"rightswatch-{job_id}", daemon=True).start()
+        threading.Thread(target=runner, name=f"nyra-{job_id}", daemon=True).start()
         return self.snapshot() or job
 
 
@@ -300,12 +300,12 @@ def create_app(
     config_path: Path | None = None,
 ) -> FastAPI:
     root = (root or Path.cwd()).resolve()
-    db_path = (db_path or (root / "rightswatch.db")).resolve()
+    db_path = (db_path or (root / "nyra.db")).resolve()
     workspace = Workspace(root, db_path, config_path)
     workspace.ensure()
     jobs = JobRunner()
 
-    app = FastAPI(title="RightsWatch", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Nyra", docs_url=None, redoc_url=None)
     app.state.workspace = workspace
     app.state.jobs = jobs
 
@@ -320,7 +320,7 @@ def create_app(
         if page.is_file():
             return FileResponse(page)
         return HTMLResponse(
-            "<p>RightsWatch. Depuis frontend/, lance <code>npm install</code> puis <code>npm run build</code>.</p>",
+            "<p>Nyra. Depuis frontend/, lance <code>npm install</code> puis <code>npm run build</code>.</p>",
             status_code=200,
         )
 
@@ -526,7 +526,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Dépose d'abord au moins une image.")
 
         def work() -> dict:
-            from rightswatch import refs as refs_module
+            from nyra import refs as refs_module
 
             source = refs_module.CsvRefSource(workspace.images_dir, workspace.csv_path)
 
@@ -557,7 +557,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Indique une URL qui commence par http:// ou https://.")
 
         def work() -> dict:
-            from rightswatch import crawl as crawl_module
+            from nyra import crawl as crawl_module
 
             page_cap = body.max_pages or workspace.config().crawl.max_pages
 
@@ -597,7 +597,7 @@ def create_app(
                 "errors": stats.errors[:8],
             }
             if body.then_match and not jobs.cancelled():
-                from rightswatch import match as match_module
+                from nyra import match as match_module
 
                 def on_match(done: int, total: int) -> None:
                     jobs.update(message=f"Comparaison {done}/{total}", progress={"done": done, "total": total})
@@ -616,7 +616,7 @@ def create_app(
     @app.post("/api/jobs/match")
     def start_match(body: MatchBody) -> dict:
         def work() -> dict:
-            from rightswatch import match as match_module
+            from nyra import match as match_module
 
             def progress(done: int, total: int) -> None:
                 jobs.update(message=f"Comparaison {done}/{total}", progress={"done": done, "total": total})
@@ -695,7 +695,7 @@ def create_app(
     def download(name: str, within_days: Optional[int] = None):
         if name not in {"report.html", "matches.csv", "not_found.csv"}:
             raise HTTPException(status_code=404, detail="Fichier inconnu.")
-        from rightswatch import report as report_module
+        from nyra import report as report_module
 
         html_path, csv_path, not_found_csv_path = report_module.generate_report(
             workspace.db_path,

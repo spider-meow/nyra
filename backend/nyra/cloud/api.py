@@ -1,10 +1,10 @@
 """FastAPI app for the multi-tenant, Supabase-backed product.
 
-Same product surface as `rightswatch.api` (library, crawl/match jobs,
+Same product surface as `nyra.api` (library, crawl/match jobs,
 matches + review, reports) but every route is scoped under
 `/api/orgs/{org_id}/...`, gated by `cloud.auth`, and backed by
 `cloud.db`/`cloud.storage` instead of SQLite/local disk. Reuses
-`rightswatch.api`'s `JobRunner` (a plain in-process job tracker with no
+`nyra.api`'s `JobRunner` (a plain in-process job tracker with no
 SQLite coupling) and its match-grouping helpers (`_group_matches`,
 `_not_found_groups`) rather than re-deriving that logic — one `JobRunner`
 per organization, so two orgs can run jobs at the same time (the local
@@ -29,10 +29,10 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
-from rightswatch.api import JobRunner, _group_matches, _not_found_groups, safe_filename
-from rightswatch.config import Config, load_config
-from rightswatch.match import compute_clip_embedding, compute_hashes
-from rightswatch.report import days_until, urgency_status
+from nyra.api import JobRunner, _group_matches, _not_found_groups, safe_filename
+from nyra.config import Config, load_config
+from nyra.match import compute_clip_embedding, compute_hashes
+from nyra.report import days_until, urgency_status
 
 from . import auth as cloud_auth
 from . import db as cloud_db
@@ -83,7 +83,7 @@ class ReviewBody(BaseModel):
 
 
 def create_app(settings: CloudSettings) -> FastAPI:
-    app = FastAPI(title="RightsWatch Cloud", docs_url=None, redoc_url=None)
+    app = FastAPI(title="Nyra Cloud", docs_url=None, redoc_url=None)
     jobs: dict[uuid.UUID, JobRunner] = {}
 
     def jobs_for(org_id: uuid.UUID) -> JobRunner:
@@ -101,7 +101,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
     @app.get("/", response_model=None)
     def index() -> HTMLResponse:
         return HTMLResponse(
-            "<p>RightsWatch — mode cloud actif. L'API multi-organisations est en ligne sous "
+            "<p>Nyra — mode cloud actif. L'API multi-organisations est en ligne sous "
             "<code>/api/orgs/&lt;org_id&gt;/...</code>. Le frontend actuel (<code>frontend/</code>) "
             "cible encore l'API locale mono-poste ; l'adapter à ce mode (connexion, org_id dans "
             "les appels) reste à faire.</p>"

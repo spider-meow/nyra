@@ -1,4 +1,4 @@
-"""Unit tests for the pure HTML/sitemap parsing helpers in rightswatch.crawl.
+"""Unit tests for the pure HTML/sitemap parsing helpers in nyra.crawl.
 
 These don't touch a browser or the network: they operate on HTML strings,
 exactly what Playwright would hand back from page.content().
@@ -6,7 +6,7 @@ exactly what Playwright would hand back from page.content().
 
 from __future__ import annotations
 
-from rightswatch.crawl import (
+from nyra.crawl import (
     click_load_more,
     extract_images_from_html,
     extract_internal_links,

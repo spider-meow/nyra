@@ -1,6 +1,6 @@
 # Architecture
 
-RightsWatch is a deterministic pipeline, not an agent: every step is a plain
+Nyra is a deterministic pipeline, not an agent: every step is a plain
 function or CLI command that reads inputs, does one job, and writes outputs
 to a shared SQLite database. There is no LLM anywhere in the runtime path —
 matching decisions come from perceptual hashing and CLIP embeddings, both
@@ -44,7 +44,7 @@ fully reproducible given the same inputs and `config.yaml`.
  +-----------------------------------------------------+
 ```
 
-The Python package lives in `backend/rightswatch`. The interface lives in
+The Python package lives in `backend/nyra`. The interface lives in
 `frontend/` and is served by `api.py`. `cli.py` wires the pipeline end to
 end (`run-all`); every other module can be imported on its own, which is
 what the test suite does.

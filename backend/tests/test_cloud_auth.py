@@ -1,4 +1,4 @@
-"""backend/rightswatch/cloud/auth.py.
+"""backend/nyra/cloud/auth.py.
 
 `verify_jwt`'s HS256 path (legacy Supabase JWT secret) and its JWKS/RS256
 path (newer Supabase signing keys) need no live Supabase project — a
@@ -20,7 +20,7 @@ pytest.importorskip("jwt")
 
 import jwt as pyjwt
 
-from rightswatch.cloud import auth
+from nyra.cloud import auth
 
 SECRET = "test-secret-at-least-32-bytes-long!!"
 SUPABASE_URL = "https://example.supabase.co"
@@ -94,7 +94,7 @@ def test_verify_jwt_rs256_via_jwks():
         def get_signing_key_from_jwt(self, token):
             return FakeSigningKey()
 
-    with patch("rightswatch.cloud.auth.PyJWKClient", FakeJWKClient):
+    with patch("nyra.cloud.auth.PyJWKClient", FakeJWKClient):
         claims = auth.verify_jwt(token, supabase_url=SUPABASE_URL, jwt_secret=None)
     assert claims.user_id == user_id
 
@@ -106,7 +106,7 @@ def test_require_member_and_admin_dependencies(cloud_database_url, cloud_org):
     from fastapi import FastAPI, Depends
     from fastapi.testclient import TestClient
 
-    from rightswatch.cloud import db as cloud_db
+    from nyra.cloud import db as cloud_db
 
     admin_id, client_id, outsider_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     with cloud_db.connect(cloud_database_url) as conn:

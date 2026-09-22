@@ -72,10 +72,10 @@ empty/absent `.env` is fine for local mode.
 docker compose up -d --build
 
 # Or without compose
-docker build -t rightswatch .
+docker build -t nyra .
 docker run -d -p 8000:8000 --env-file .env \
   -v $(pwd)/data:/app/data -v $(pwd)/out:/app/out \
-  rightswatch
+  nyra
 
 # Health check
 curl http://localhost:8000/api/healthz
@@ -90,12 +90,12 @@ Row Level Security means nobody can create their own first organization
 one). Once a client's user has signed up through Supabase Auth:
 
 ```bash
-docker compose exec backend rightswatch cloud-provision-org \
+docker compose exec backend nyra cloud-provision-org \
   --name "Client Name" --slug client-slug --admin-email admin@client.com
 ```
 
 (Or run the same command directly on a host with `DATABASE_URL` set and
-`rightswatch` installed, without going through the container at all —
+`nyra` installed, without going through the container at all —
 see `docs/CLI_REFERENCE.md`.)
 
 ## Logs and process supervision
@@ -114,7 +114,7 @@ to a log file inside the container.
   automatically, etc. Out of scope for now; add a workflow when there's
   an actual deploy target to push to.
 - **Horizontal scaling** — the crawl/match job tracker
-  (`JobRunner` in `rightswatch.api`/`rightswatch.cloud.api`) is
+  (`JobRunner` in `nyra.api`/`nyra.cloud.api`) is
   in-process and per-instance (one `JobRunner` per organization in cloud
   mode, one globally in local mode). Running more than one backend
   instance behind a load balancer would give each instance its own,

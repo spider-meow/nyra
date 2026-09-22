@@ -35,6 +35,6 @@ RUN mkdir -p /app/data /app/out
 
 EXPOSE 8000
 
-# rightswatch ui picks local vs. cloud mode from the environment (see
+# nyra ui picks local vs. cloud mode from the environment (see
 # cli.py's ui_cmd) — nothing here needs to know which one is active.
-CMD ["rightswatch", "ui", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["nyra", "ui", "--host", "0.0.0.0", "--port", "8000"]

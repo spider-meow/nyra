@@ -1,8 +1,8 @@
 # Matching algorithm
 
-This is the core of RightsWatch: deciding whether a reference image is
+This is the core of Nyra: deciding whether a reference image is
 "the same image" as something found on the crawled site. Everything here
-lives in `backend/rightswatch/match.py`, and the classification functions
+lives in `backend/nyra/match.py`, and the classification functions
 (`classify_level1`, `classify_level2`, `classify_pair`) are pure — no
 database, no I/O — so they're the easiest place to reason about the
 algorithm and the easiest to unit test (see `backend/tests/test_match.py`).
@@ -65,8 +65,8 @@ separate instead of blending them into one score.
 ## Running match with/without CLIP
 
 ```bash
-rightswatch match                # level 1 + level 2 (default)
-rightswatch match --no-clip      # level 1 only, much faster, no torch/open_clip needed
+nyra match                # level 1 + level 2 (default)
+nyra match --no-clip      # level 1 only, much faster, no torch/open_clip needed
 ```
 
 `--no-clip` is also useful for the "commencer par... match niveau 1 seul"
@@ -79,7 +79,7 @@ without embeddings in the database, level 2 has nothing to compare and
 ## Calibrating thresholds
 
 The three CLIP thresholds (and, less commonly, the two hash thresholds)
-are guesses until validated against real data. `rightswatch calibrate` does
+are guesses until validated against real data. `nyra calibrate` does
 that validation:
 
 1. Ingest refs and crawl the site as usual, so both `reference_images` and
@@ -98,7 +98,7 @@ that validation:
 3. Run the sweep:
 
    ```bash
-   rightswatch calibrate --ground-truth ground_truth.csv --out-csv sweep.csv
+   nyra calibrate --ground-truth ground_truth.csv --out-csv sweep.csv
    ```
 
    This computes, for every threshold in a reasonable range (Hamming

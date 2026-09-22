@@ -1,4 +1,4 @@
-"""backend/rightswatch/cloud/api.py end to end: auth, role gating, library
+"""backend/nyra/cloud/api.py end to end: auth, role gating, library
 upload, matches (with the "not found" flag), reviews, and report
 generation/download — against a real Postgres (TEST_DATABASE_URL) and a
 fake in-memory Supabase Storage (`fake_storage_client`), no live Supabase
@@ -20,8 +20,8 @@ pytest.importorskip("psycopg")
 import jwt as pyjwt
 from fastapi.testclient import TestClient
 
-from rightswatch.cloud import db as cloud_db
-from rightswatch.cloud.api import CloudSettings, create_app
+from nyra.cloud import db as cloud_db
+from nyra.cloud.api import CloudSettings, create_app
 
 SECRET = "test-secret-at-least-32-bytes-long-enough!!"
 

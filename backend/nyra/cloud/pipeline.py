@@ -1,6 +1,6 @@
 """Org-aware ingest/crawl/match/report — the cloud equivalents of
-`rightswatch.refs.ingest`, `rightswatch.crawl.crawl_site`,
-`rightswatch.match.run_matching`, and `rightswatch.report.generate_report`.
+`nyra.refs.ingest`, `nyra.crawl.crawl_site`,
+`nyra.match.run_matching`, and `nyra.report.generate_report`.
 
 Same algorithms, different persistence: these write to `cloud.db`
 (Postgres, org-scoped) and `cloud.storage` (Supabase Storage) instead of
@@ -31,10 +31,10 @@ import httpx
 from PIL import Image, UnidentifiedImageError
 from supabase import Client
 
-from rightswatch import fetch as fetch_module
-from rightswatch import report as report_module
-from rightswatch.config import Config
-from rightswatch.crawl import (
+from nyra import fetch as fetch_module
+from nyra import report as report_module
+from nyra.config import Config
+from nyra.crawl import (
     BACKGROUND_IMAGE_JS,
     autoscroll,
     click_load_more,
@@ -46,8 +46,8 @@ from rightswatch.crawl import (
     normalize_url,
     same_site,
 )
-from rightswatch.crawl import CrawlStats
-from rightswatch.match import (
+from nyra.crawl import CrawlStats
+from nyra.match import (
     CONFIDENCE_TO_VERIFY,
     LEVEL_CLIP,
     LEVEL_DHASH,
@@ -59,7 +59,7 @@ from rightswatch.match import (
     compute_hashes,
     match_index_pairs,
 )
-from rightswatch.refs import RefSource
+from nyra.refs import RefSource
 
 from . import db as cloud_db
 from . import storage as cloud_storage
@@ -126,7 +126,7 @@ def _fetch_and_store_cloud(
     config: Config,
     compute_embeddings: bool,
 ) -> tuple[Optional[uuid.UUID], bool]:
-    """Cloud counterpart of `rightswatch.fetch.fetch_and_store`: same
+    """Cloud counterpart of `nyra.fetch.fetch_and_store`: same
     download/filter/hash logic (reused from `fetch_module`), Supabase
     Storage instead of a local cache directory."""
     existing = conn.execute(
@@ -192,7 +192,7 @@ def crawl_site(
     progress=None,
     should_stop=None,
 ) -> tuple[uuid.UUID, CrawlStats]:
-    """Same BFS/sitemap/robots.txt logic as `rightswatch.crawl.crawl_site`
+    """Same BFS/sitemap/robots.txt logic as `nyra.crawl.crawl_site`
     (all imported, unchanged) — persists to Postgres + Storage instead of
     SQLite + local disk, and records progress in `crawl_runs` so it
     survives a server restart, not just the in-memory job state the local
@@ -359,7 +359,7 @@ def _pack_rows_cloud(rows: list[dict], use_clip: bool):
 def run_matching(
     org_id: uuid.UUID, database_url: str, config: Config, use_clip: bool = True, progress=None, should_stop=None
 ) -> int:
-    """Same incremental-cache algorithm as `rightswatch.match.run_matching`
+    """Same incremental-cache algorithm as `nyra.match.run_matching`
     (full recompute when the threshold signature changed, delta-only
     otherwise) — ported rather than imported because it's inseparable from
     how rows are loaded (`cloud.db` vs. SQLite), but the actual comparison

@@ -1,5 +1,5 @@
 -- Core pipeline tables: same shape as the SQLite schema in
--- backend/rightswatch/db.py, translated to Postgres:
+-- backend/nyra/db.py, translated to Postgres:
 --   - autoincrement int ids -> uuid (standard for multi-tenant Supabase)
 --   - every table gets org_id (see 0002 for the multi-tenancy model)
 --   - a new `sites` table: the SQLite version inferred "the site" from

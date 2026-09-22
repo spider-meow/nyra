@@ -1,8 +1,8 @@
-"""backend/rightswatch/cloud/pipeline.py: ingest, run_matching, generate_report
+"""backend/nyra/cloud/pipeline.py: ingest, run_matching, generate_report
 against a real Postgres (via TEST_DATABASE_URL) and a fake in-memory
 Supabase Storage (via the `fake_storage_client` fixture) — no live
 Supabase project needed, no network. `crawl_site` isn't covered here for
-the same reason the local `rightswatch.crawl.crawl_site` isn't unit-tested
+the same reason the local `nyra.crawl.crawl_site` isn't unit-tested
 either: it needs a real browser and a live site (see DEVELOPMENT.md).
 """
 
@@ -15,11 +15,11 @@ from PIL import Image, ImageDraw
 
 pytest.importorskip("psycopg")
 
-from rightswatch.cloud import db as cloud_db
-from rightswatch.cloud import pipeline
-from rightswatch.config import load_config
-from rightswatch.match import compute_hashes
-from rightswatch.refs import CsvRefSource
+from nyra.cloud import db as cloud_db
+from nyra.cloud import pipeline
+from nyra.config import load_config
+from nyra.match import compute_hashes
+from nyra.refs import CsvRefSource
 
 
 def _make_image(path: Path, seed: int) -> None:

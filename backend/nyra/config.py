@@ -13,7 +13,7 @@ from pathlib import Path
 import yaml
 
 def _default_config_path() -> Path:
-    """Repo-root config.yaml when the package lives in backend/rightswatch."""
+    """Repo-root config.yaml when the package lives in backend/nyra."""
     packaged = Path(__file__).resolve().parents[2] / "config.yaml"
     if packaged.is_file():
         return packaged
@@ -29,7 +29,7 @@ class CrawlConfig:
     max_pages: int = 300
     delay_seconds_min: float = 1.0
     delay_seconds_max: float = 2.0
-    user_agent: str = "RightsWatchBot/0.1"
+    user_agent: str = "NyraBot/0.1"
     min_image_side_px: int = 200
     respect_robots_txt: bool = True
     request_timeout_seconds: int = 20

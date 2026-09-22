@@ -14,14 +14,14 @@ install.
 
 Heavy, optional-at-dev-time dependencies:
 
-- **Playwright's Chromium binary** — only needed to run `rightswatch crawl`
+- **Playwright's Chromium binary** — only needed to run `nyra crawl`
   for real. All the HTML-parsing logic it depends on
   (`crawl.extract_images_from_html`, `extract_internal_links`, `parse_srcset`)
   is unit-tested without a browser.
 - **`torch` + `open_clip`** — only needed for CLIP embeddings (level 2
   matching). Every module that touches them does so with a function-local
   import (`match._load_clip`, `match.compute_clip_embedding`), so importing
-  `rightswatch.cli`, `rightswatch.crawl`, `rightswatch.match`, etc. never
+  `nyra.cli`, `nyra.crawl`, `nyra.match`, etc. never
   requires them. Level-1-only workflows (`--no-clip`, `--no-embeddings`)
   don't need them installed at all.
 
@@ -69,7 +69,7 @@ extend the codebase:
 - **Thresholds and behavior live in `config.yaml`, not in code.** If
   you're tempted to hard-code a number that affects crawl behavior or
   match sensitivity, add it to `config.py`'s dataclasses and `config.yaml`
-  instead — that's what makes `rightswatch calibrate` (see `MATCHING.md`)
+  instead — that's what makes `nyra calibrate` (see `MATCHING.md`)
   meaningful, and what lets someone tune the tool for a new site without a
   code change.
 - **Every DB write is an upsert on a natural key.** `filename` for
@@ -92,7 +92,7 @@ extend the codebase:
 plug in a new source:
 
 ```python
-from rightswatch.refs import RefSource, RefEntry
+from nyra.refs import RefSource, RefEntry
 
 class BrandcenterRefSource(RefSource):
     def __init__(self, export_path):

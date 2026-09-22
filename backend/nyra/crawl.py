@@ -22,8 +22,8 @@ from urllib.parse import urljoin, urlparse, urlunparse
 import httpx
 from bs4 import BeautifulSoup
 
-from rightswatch import db, fetch
-from rightswatch.config import Config
+from nyra import db, fetch
+from nyra.config import Config
 
 IMAGE_TAG_ATTRS = ("src", "data-src", "data-lazy-src", "data-original")
 

@@ -16,9 +16,9 @@ from typing import Optional
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from rightswatch import db
-from rightswatch.config import Config
-from rightswatch.match import CONFIDENCE_TO_VERIFY
+from nyra import db
+from nyra.config import Config
+from nyra.match import CONFIDENCE_TO_VERIFY
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 

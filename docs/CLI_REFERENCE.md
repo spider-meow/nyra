@@ -1,11 +1,11 @@
 # CLI reference
 
-All commands are subcommands of `rightswatch` (installed via `pip install -e .`,
-or run as `python -m rightswatch.cli <command>` without installing). Every
-command accepts `--db` (default `rightswatch.db`) and `--config` (default:
+All commands are subcommands of `nyra` (installed via `pip install -e .`,
+or run as `python -m nyra.cli <command>` without installing). Every
+command accepts `--db` (default `nyra.db`) and `--config` (default:
 the repo's `config.yaml`) unless noted otherwise.
 
-Run `rightswatch --help` or `rightswatch <command> --help` at any time —
+Run `nyra --help` or `nyra <command> --help` at any time —
 this document mirrors that output with added context.
 
 ## `ingest-refs`
@@ -13,14 +13,14 @@ this document mirrors that output with added context.
 Reads the reference image library into the database.
 
 ```bash
-rightswatch ingest-refs --dir refs/ --csv refs.csv
+nyra ingest-refs --dir refs/ --csv refs.csv
 ```
 
 | Option | Required | Default | Notes |
 |---|---|---|---|
 | `--dir` | yes | — | Folder containing the reference images. Must exist. |
 | `--csv` | yes | — | `refs.csv` with columns `filename, expiry_date, credit, notes` (see `refs.csv.example`). `expiry_date` accepts `YYYY-MM-DD` or `DD/MM/YYYY`/`MM/DD/YYYY`/`DD-MM-YYYY`; leave it blank for "unknown". |
-| `--db` | no | `rightswatch.db` | |
+| `--db` | no | `nyra.db` | |
 | `--config` | no | repo `config.yaml` | |
 | `--no-embeddings` | no | off | Skip CLIP embeddings — ingest is faster and doesn't need `torch`/`open_clip` installed, but level 2 matching will find nothing for these refs until you re-ingest with embeddings. |
 
@@ -33,14 +33,14 @@ Fails fast with a clear message if a row's image file is missing from
 Crawls a site and extracts every image it finds.
 
 ```bash
-rightswatch crawl --site https://www.remymartin.com --max-pages 300
+nyra crawl --site https://www.remymartin.com --max-pages 300
 ```
 
 | Option | Required | Default | Notes |
 |---|---|---|---|
 | `--site` | yes | — | Site root, e.g. `https://www.remymartin.com`. |
 | `--max-pages` | no | `config.yaml`'s `crawl.max_pages` (300) | Caps how many pages this run visits. |
-| `--db` | no | `rightswatch.db` | |
+| `--db` | no | `nyra.db` | |
 | `--cache-dir` | no | `data/site_images` | Where downloaded image bytes are cached on disk. |
 | `--config` | no | repo `config.yaml` | |
 | `--no-resume` | no | off | Re-crawl pages already marked `done` instead of skipping them. |
@@ -58,12 +58,12 @@ section.
 Matches every reference image against every image found on the site.
 
 ```bash
-rightswatch match
+nyra match
 ```
 
 | Option | Required | Default | Notes |
 |---|---|---|---|
-| `--db` | no | `rightswatch.db` | |
+| `--db` | no | `nyra.db` | |
 | `--config` | no | repo `config.yaml` | |
 | `--no-clip` | no | off | Level 1 (pHash/dHash) only — skip CLIP entirely, no `torch`/`open_clip` needed. |
 
@@ -76,12 +76,12 @@ re-run this after changing `config.yaml` thresholds or after any new
 Generates the deliverables: `report.html` + `matches.csv`.
 
 ```bash
-rightswatch report --within-days 90
+nyra report --within-days 90
 ```
 
 | Option | Required | Default | Notes |
 |---|---|---|---|
-| `--db` | no | `rightswatch.db` | |
+| `--db` | no | `nyra.db` | |
 | `--out-dir` | no | `out/` | Output folder for `report.html` and `matches.csv`. |
 | `--within-days` | no | `config.yaml`'s `report.default_within_days` (90) | Only include references that are expired or expiring within N days. References with no known `expiry_date` are always included (flagged `inconnue`). |
 | `--config` | no | repo `config.yaml` | |
@@ -95,7 +95,7 @@ Runs `ingest-refs` → `crawl` → `match` → `report` in sequence, for the
 common case of a full pipeline run from a clean database.
 
 ```bash
-rightswatch run-all \
+nyra run-all \
   --site https://www.remymartin.com \
   --dir refs/ --csv refs.csv \
   --within-days 90
@@ -115,13 +115,13 @@ precision/recall/F1. See `MATCHING.md`'s "Calibrating thresholds" section
 for the full workflow.
 
 ```bash
-rightswatch calibrate --ground-truth ground_truth.csv --out-csv sweep.csv
+nyra calibrate --ground-truth ground_truth.csv --out-csv sweep.csv
 ```
 
 | Option | Required | Default | Notes |
 |---|---|---|---|
 | `--ground-truth` | yes | — | CSV: `ref_filename, site_url, label` (`match`/`no_match`, or `1`/`0`/`true`/`false`/`yes`). Both filenames/URLs must already exist in the database. |
-| `--db` | no | `rightswatch.db` | |
+| `--db` | no | `nyra.db` | |
 | `--config` | no | repo `config.yaml` | |
 | `--out-csv` | no | *(none)* | Optionally write the full threshold sweep to a CSV, in addition to the printed table. |
 
@@ -135,32 +135,32 @@ ingesting or crawling anything. Mostly useful for scripting/tooling that
 wants a database to inspect before running the real pipeline.
 
 ```bash
-rightswatch init-db --db rightswatch.db
+nyra init-db --db nyra.db
 ```
 
 ## Typical workflows
 
 **First run on a new site:**
 ```bash
-rightswatch run-all --site https://www.example.com --dir refs/ --csv refs.csv
+nyra run-all --site https://www.example.com --dir refs/ --csv refs.csv
 ```
 
 **Iterating on match thresholds without re-crawling:**
 ```bash
 # edit config.yaml's match: thresholds
-rightswatch match
-rightswatch report --within-days 90
+nyra match
+nyra report --within-days 90
 ```
 
 **Extending an interrupted crawl:**
 ```bash
-rightswatch crawl --site https://www.example.com --max-pages 300   # picks up where it left off
+nyra crawl --site https://www.example.com --max-pages 300   # picks up where it left off
 ```
 
 **Fast smoke test with no heavy dependencies:**
 ```bash
-rightswatch ingest-refs --dir refs/ --csv refs.csv --no-embeddings
-rightswatch crawl --site https://www.example.com --max-pages 5 --no-embeddings
-rightswatch match --no-clip
-rightswatch report
+nyra ingest-refs --dir refs/ --csv refs.csv --no-embeddings
+nyra crawl --site https://www.example.com --max-pages 5 --no-embeddings
+nyra match --no-clip
+nyra report
 ```

@@ -16,9 +16,9 @@ from typing import Iterator, Optional
 
 from PIL import Image
 
-from rightswatch import db
-from rightswatch.config import Config
-from rightswatch.match import compute_hashes, compute_clip_embedding
+from nyra import db
+from nyra.config import Config
+from nyra.match import compute_hashes, compute_clip_embedding
 
 REQUIRED_CSV_COLUMNS = {"filename", "expiry_date"}
 
