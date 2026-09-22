@@ -16,17 +16,20 @@ Supabase's `anon`/`authenticated` API roles — so every write here is
 implicitly trusted. Authorization (does this caller have the right role
 in this org?) is `cloud.auth`'s job, checked before these functions are
 ever called, not something RLS enforces for this connection. RLS (see
-`supabase/migrations/0005`) is the safety net for anything that ever
+`supabase/migrations/migration_005_row_level_security.sql`) is the safety net for anything that ever
 queries Postgres a different way.
 """
 
 from __future__ import annotations
 
+import re
+import unicodedata
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Iterator, Optional
+from urllib.parse import quote
 
 import psycopg
 from pgvector.psycopg import register_vector
@@ -39,9 +42,37 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# user:password@host — the password may itself contain "@". The first "@"
+# would otherwise be read as the end of the user info, and the rest of the
+# password would be treated as the hostname.
+_DATABASE_URL = re.compile(
+    r"^(?P<scheme>postgres(?:ql)?://)"
+    r"(?P<user>[^:@/]+):"
+    r"(?P<password>.*)"
+    r"@"
+    r"(?P<host>(?:[a-zA-Z0-9.-]+))"
+    r"(?P<rest>:\d+(?:/.*)?)$"
+)
+
+
+def normalize_database_url(database_url: str) -> str:
+    url = database_url.strip()
+    match = _DATABASE_URL.match(url)
+    if match is None:
+        return url
+    password = match.group("password")
+    if not any(char in password for char in "@/?# "):
+        return url
+    return (
+        f"{match.group('scheme')}{quote(match.group('user'), safe='.')}:"
+        f"{quote(password, safe='')}@"
+        f"{match.group('host')}{match.group('rest')}"
+    )
+
+
 @contextmanager
 def connect(database_url: str) -> Iterator[psycopg.Connection]:
-    conn = psycopg.connect(database_url, row_factory=dict_row)
+    conn = psycopg.connect(normalize_database_url(database_url), row_factory=dict_row)
     register_vector(conn)
     try:
         yield conn
@@ -62,7 +93,24 @@ def ping(database_url: str) -> bool:
 
 # --- organizations / memberships -------------------------------------
 
+# Lowercase ASCII, digits, single hyphens. No leading or trailing hyphen.
+_SLUG_UNSAFE = re.compile(r"[^a-z0-9]+")
+SLUG_MAX_LENGTH = 63
+
+
+def slugify(value: str) -> str:
+    """Canonical organization slug: `Rémy Martin` and `remy--martin` both become `remy-martin`."""
+    text = unicodedata.normalize("NFKD", value.strip().lower())
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = _SLUG_UNSAFE.sub("-", text).strip("-")
+    text = text[:SLUG_MAX_LENGTH].strip("-")
+    if not text:
+        raise ValueError("Slug is empty after normalization. Use letters or digits, for example remy-martin.")
+    return text
+
+
 def create_organization(conn: psycopg.Connection, *, name: str, slug: str) -> uuid.UUID:
+    slug = slugify(slug)
     row = conn.execute(
         "INSERT INTO organizations (name, slug) VALUES (%s, %s) RETURNING id",
         (name, slug),
@@ -71,6 +119,10 @@ def create_organization(conn: psycopg.Connection, *, name: str, slug: str) -> uu
 
 
 def get_organization_by_slug(conn: psycopg.Connection, slug: str) -> Optional[Row]:
+    try:
+        slug = slugify(slug)
+    except ValueError:
+        return None
     return conn.execute("SELECT * FROM organizations WHERE slug = %s", (slug,)).fetchone()
 
 

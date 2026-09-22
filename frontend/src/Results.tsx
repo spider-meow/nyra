@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, thumb } from "./api";
+import { api, openReport, thumb } from "./api";
 import type { Decision, Hit, MatchGroup, Matches, NotFoundItem } from "./types";
 import { btn, btnGhost, card, field, label } from "./ui";
 
@@ -201,7 +201,7 @@ export function Results(props: Props) {
 
   return (
     <section>
-      <h2 className="text-4xl font-semibold tracking-tight">Ce qui reste en ligne</h2>
+      <h2 className="text-4xl font-semibold tracking-tight">Correspondances</h2>
       <p className="mt-2 text-muted">Une ligne par visuel. Ouvre la ligne pour voir les deux images, en petit.</p>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <label>
@@ -226,9 +226,9 @@ export function Results(props: Props) {
           Masquer les écartés
         </label>
         <button type="button" className={btnGhost} onClick={props.onReload}>Actualiser</button>
-        <a className={btn} href={`/api/downloads/report.html?within_days=${encodeURIComponent(String(props.withinDays))}`}>Rapport</a>
-        <a className={btnGhost} href={`/api/downloads/matches.csv?within_days=${encodeURIComponent(String(props.withinDays))}`}>CSV</a>
-        <a className={btnGhost} href={`/api/downloads/not_found.csv?within_days=${encodeURIComponent(String(props.withinDays))}`}>CSV non trouvées</a>
+        <button type="button" className={btn} onClick={() => void openReport("report.html", props.withinDays).catch((error: unknown) => props.onBanner(error instanceof Error ? error.message : "La requête a échoué."))}>Rapport</button>
+        <button type="button" className={btnGhost} onClick={() => void openReport("matches.csv", props.withinDays).catch((error: unknown) => props.onBanner(error instanceof Error ? error.message : "La requête a échoué."))}>CSV</button>
+        <button type="button" className={btnGhost} onClick={() => void openReport("not_found.csv", props.withinDays).catch((error: unknown) => props.onBanner(error instanceof Error ? error.message : "La requête a échoué."))}>CSV non trouvées</button>
       </div>
       <p className="mt-2 text-xs text-muted">
         <strong>Confirmé</strong> : hachage identique ou quasi (même image, recadrée ou recompressée). <strong>Probable</strong> : visuellement très proche, à confirmer d'un coup d'œil. <strong>À vérifier</strong> : ressemblance plus faible, mérite une vérification manuelle.

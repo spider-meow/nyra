@@ -13,30 +13,19 @@ tables, triggers, policies RLS avec de vrais scénarios multi-org/multi-rôle
 
 ```
 supabase/migrations/
-  20260922000001_extensions.sql                  pgcrypto, vector (pgvector)
-  20260922000002_organizations_and_memberships.sql   organizations, memberships, RLS helpers
-  20260922000003_pipeline_core.sql                sites, reference_images, pages, site_images,
+  migration_001_extensions.sql                  pgcrypto, vector (pgvector)
+  migration_002_organizations_and_memberships.sql   organizations, memberships, RLS helpers
+  migration_003_pipeline_core.sql                sites, reference_images, pages, site_images,
                                                     image_pages, matches, reviews, match_meta
-  20260922000004_crawl_runs_and_reports.sql       historique des crawls + rapports générés
-  20260922000005_row_level_security.sql           policies RLS sur toutes les tables
-  20260922000006_storage_buckets.sql              buckets refs/site-images/reports + policies
+  migration_004_crawl_runs_and_reports.sql       historique des crawls + rapports générés
+  migration_005_row_level_security.sql           policies RLS sur toutes les tables
+  migration_006_storage_buckets.sql              buckets refs/site-images/reports + policies
+  migration_007_organization_slug.sql            slug en minuscules, chiffres et tirets
 ```
 
-Numérotés comme des migrations Supabase CLI (`YYYYMMDDHHMMSS_nom.sql`) —
-appliqués dans l'ordre du nom de fichier, un seul sens de lecture possible.
-
-## Comment les appliquer
-
-**Option A — Supabase CLI** (recommandé une fois le projet créé) :
-
-```bash
-supabase link --project-ref <ref-du-projet>
-supabase db push
-```
-
-**Option B — SQL Editor du dashboard Supabase** : coller chaque fichier
-dans l'ordre (0001 → 0006) et exécuter. Fonctionne tout aussi bien, plus
-manuel.
+À coller dans le SQL Editor du dashboard, dans l'ordre `001` → `007`.
+Le CLI Supabase (`supabase db push`) ignore ces noms : il n'accepte que
+des fichiers préfixés par un timestamp `YYYYMMDDHHMMSS_`.
 
 Les deux extensions (`pgcrypto`, `vector`) sont sur la liste blanche de
 Supabase et s'activent directement depuis le SQL, pas besoin de passer par
@@ -106,5 +95,5 @@ fois le vrai projet créé, au moins une fois.
   le point d'extension prévu pour ça, indépendant de ce schéma.
 - **La première organisation/le premier admin** — se créent via la clé
   service-role au moment de l'onboarding d'un client (voir le commentaire
-  dans `0005_row_level_security.sql` sur pourquoi ça ne peut pas se faire
+  dans `migration_005_row_level_security.sql` sur pourquoi ça ne peut pas se faire
   depuis une session utilisateur classique).

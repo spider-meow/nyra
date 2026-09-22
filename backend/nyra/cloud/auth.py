@@ -11,12 +11,12 @@ project uses isn't something this code can assume:
   (`{SUPABASE_URL}/auth/v1/.well-known/jwks.json`), fetched once and
   cached by `PyJWKClient` rather than on every request.
 
-`verify_jwt` picks whichever `SUPABASE_JWT_SECRET` being set (or not)
-implies, so this works against either kind of project without the
-caller needing to know which one it is. Either way, verification never
-calls Supabase's Auth API per request — a network round trip on every
-authenticated call would be a real latency and availability cost for no
-benefit once the signing key is known.
+`verify_jwt` reads the token's `alg` header and verifies HS256 with
+`SUPABASE_JWT_SECRET`, or RS256/ES256 against the project JWKS. A
+project can have the legacy secret set and still issue asymmetric
+tokens; choosing the algorithm from the secret's presence rejects those
+tokens ("The specified alg value is not allowed"). Either way,
+verification never calls Supabase's Auth API per request.
 """
 
 from __future__ import annotations
@@ -63,13 +63,16 @@ def _jwks_client(supabase_url: str) -> PyJWKClient:
 
 def verify_jwt(token: str, *, supabase_url: str, jwt_secret: Optional[str] = None) -> Claims:
     try:
-        if jwt_secret:
+        alg = jwt.get_unverified_header(token).get("alg")
+        if alg == "HS256":
+            if not jwt_secret:
+                raise AuthError("HS256 token but SUPABASE_JWT_SECRET is not set")
             payload = jwt.decode(token, jwt_secret, algorithms=["HS256"], audience=EXPECTED_AUDIENCE)
-        else:
+        elif alg in {"RS256", "ES256"}:
             signing_key = _jwks_client(supabase_url).get_signing_key_from_jwt(token)
-            payload = jwt.decode(
-                token, signing_key.key, algorithms=["RS256", "ES256"], audience=EXPECTED_AUDIENCE
-            )
+            payload = jwt.decode(token, signing_key.key, algorithms=[alg], audience=EXPECTED_AUDIENCE)
+        else:
+            raise AuthError(f"Unsupported token algorithm: {alg}")
     except jwt.PyJWTError as exc:
         raise AuthError(f"Invalid or expired token: {exc}") from exc
 

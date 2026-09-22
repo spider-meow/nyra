@@ -85,7 +85,7 @@ curl http://localhost:8000/api/healthz
 ## Bootstrapping the first organization (cloud mode)
 
 Row Level Security means nobody can create their own first organization
-(see `supabase/migrations/0005_row_level_security.sql`'s comment on
+(see `supabase/migrations/migration_005_row_level_security.sql`'s comment on
 `memberships` — an admin membership has to already exist to add another
 one). Once a client's user has signed up through Supabase Auth:
 

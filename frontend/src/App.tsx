@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "./api";
+import { useAuth } from "./auth";
 import { Explore } from "./Explore";
 import { Library } from "./Library";
 import { Results } from "./Results";
@@ -104,7 +105,13 @@ export function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overview?.job?.status, overview?.job?.message, overview?.job?.progress?.done]);
 
+  const auth = useAuth();
   const stats = overview?.stats;
+
+  useEffect(() => {
+    const names = { library: "Références", explore: "Exploration", results: "Correspondances" };
+    document.title = `${names[view]} — Nyra`;
+  }, [view]);
   const library = overview?.library ?? [];
   const waiting = library.filter((item) => !item.indexed).length;
   const running = overview?.job?.status === "running";
@@ -141,13 +148,16 @@ export function App() {
         <p className="text-sm font-medium">Nyra</p>
         <p className="mt-2 text-sm text-muted">Ce qui est encore en ligne, alors que les droits s'épuisent.</p>
         <nav className="mt-8 grid gap-2" aria-label="Parcours">
-          <Step index="01" title="Bibliothèque" active={view === "library"} onClick={() => show("library")}
+          <Step index="01" title="Références" active={view === "library"} onClick={() => show("library")}
             meta={waiting ? `${stats?.reference_images || 0} indexée(s), ${waiting} en attente` : `${stats?.reference_images || 0} image(s) à protéger`} />
-          <Step index="02" title="Le site" active={view === "explore"} onClick={() => show("explore")} meta={exploreMeta(overview)} />
+          <Step index="02" title="Exploration" active={view === "explore"} onClick={() => show("explore")} meta={exploreMeta(overview)} />
           <Step index="03" title="Correspondances" active={view === "results"} onClick={() => show("results")}
             meta={stats?.matches ? `${stats.matches} correspondance(s)` : "Ce qui dépasse la date"} />
         </nav>
-        <p className="mt-auto pt-8 text-xs text-muted">Interface locale. Pas de compte. Tout reste sur cette machine.</p>
+        <div className="mt-auto pt-8">
+          <p className="text-xs text-muted">{auth.email}</p>
+          <button type="button" className="mt-2 text-xs text-muted" onClick={() => void auth.signOut()}>Se déconnecter</button>
+        </div>
       </aside>
       <main className="px-4 py-8 md:px-10">
         {job ? (

@@ -95,7 +95,7 @@ def test_verify_jwt_rs256_via_jwks():
             return FakeSigningKey()
 
     with patch("nyra.cloud.auth.PyJWKClient", FakeJWKClient):
-        claims = auth.verify_jwt(token, supabase_url=SUPABASE_URL, jwt_secret=None)
+        claims = auth.verify_jwt(token, supabase_url=SUPABASE_URL, jwt_secret=SECRET)
     assert claims.user_id == user_id
 
 

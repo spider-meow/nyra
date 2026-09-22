@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { api } from "./api";
-import { thumb } from "./api";
+import { api, thumb } from "./api";
+import { useAuth } from "./auth";
 import type { LibraryItem } from "./types";
 import { btn, btnDanger, btnGhost, card, field, label } from "./ui";
 
@@ -16,6 +16,8 @@ type Props = {
 };
 
 export function Library(props: Props) {
+  const auth = useAuth();
+  const admin = auth.role === "admin";
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(60);
   const [over, setOver] = useState(false);
@@ -26,8 +28,10 @@ export function Library(props: Props) {
   const visible = filtered.slice(0, shown);
 
   async function upload(files: FileList | File[]) {
+    if (!admin) return;
     const body = new FormData();
     for (const file of files) body.append("files", file);
+    body.append("fast", props.ingestFast ? "true" : "false");
     props.onBanner("");
     try {
       const result = await api<{ saved: string[]; failed: { filename: string; reason: string }[] }>(
@@ -47,19 +51,8 @@ export function Library(props: Props) {
     }
   }
 
-  async function importCsv(file: File) {
-    const body = new FormData();
-    body.append("file", file);
-    try {
-      const result = await api<{ applied: number }>("/api/library/import-csv", { method: "POST", body });
-      await props.onRefresh();
-      props.onBanner(`${result.applied} ligne(s) de métadonnées importées.`, true);
-    } catch (error) {
-      props.onBanner(error instanceof Error ? error.message : "La requête a échoué.");
-    }
-  }
-
   async function save(item: LibraryItem, patch: Partial<LibraryItem>) {
+    if (!admin) return;
     try {
       await api(`/api/library/${encodeURIComponent(item.filename)}`, {
         method: "PUT",
@@ -84,23 +77,9 @@ export function Library(props: Props) {
     }
   }
 
-  async function ingest() {
-    props.onBanner("");
-    try {
-      await api("/api/jobs/ingest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fast: props.ingestFast }),
-      });
-      await props.onRefresh();
-    } catch (error) {
-      props.onBanner(error instanceof Error ? error.message : "La requête a échoué.");
-    }
-  }
-
   return (
     <section>
-      <h2 className="text-4xl font-semibold tracking-tight">Les images que tu défends</h2>
+      <h2 className="text-4xl font-semibold tracking-tight">Références</h2>
       <p className="mt-2 text-muted">Chaque date est une promesse. Quand elle passe, l'image ne devrait plus être là.</p>
       <div
         className={`${card} mt-6 ${over ? "border-ink" : ""}`}
@@ -114,33 +93,28 @@ export function Library(props: Props) {
       >
         <h3 className="text-lg font-semibold">Dépose les visuels</h3>
         <p className="mt-1 text-sm text-muted">JPG, PNG, WEBP. La date d'expiration se renseigne juste en dessous.</p>
-        <label className={`${btn} mt-4 cursor-pointer`}>
-          Choisir des fichiers
-          <input className="hidden" type="file" accept="image/*" multiple onChange={(event) => {
-            if (event.target.files?.length) void upload(event.target.files);
-          }} />
-        </label>
+        {admin ? (
+          <label className={`${btn} mt-4 cursor-pointer`}>
+            Choisir des fichiers
+            <input className="hidden" type="file" accept="image/*" multiple onChange={(event) => {
+              if (event.target.files?.length) void upload(event.target.files);
+            }} />
+          </label>
+        ) : (
+          <p className="mt-4 text-sm text-muted">Ce compte peut consulter les références. L'ajout est réservé aux admins.</p>
+        )}
       </div>
       <div className="mt-4 flex flex-wrap items-end gap-3">
-        <label className={`${btnGhost} cursor-pointer`}>
-          Importer un CSV
-          <input className="hidden" type="file" accept=".csv,text/csv" onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) void importCsv(file);
-          }} />
-        </label>
-        <a className={btnGhost} href="/api/library/export-csv">Exporter en CSV</a>
         <label className="min-w-40">
           <span className={label}>Filtrer</span>
           <input className={field} value={query} placeholder="Nom de fichier" onChange={(event) => { setQuery(event.target.value); setShown(60); }} />
         </label>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={props.ingestFast} onChange={(event) => props.onIngestFast(event.target.checked)} />
-          Indexation rapide, sans le modèle visuel
-        </label>
-        <button type="button" className={btn} disabled={props.running || props.items.length === 0} onClick={() => void ingest()}>
-          Enregistrer les dates
-        </button>
+        {admin ? (
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={props.ingestFast} onChange={(event) => props.onIngestFast(event.target.checked)} />
+            Envoi rapide, sans le modèle visuel
+          </label>
+        ) : null}
       </div>
       {props.items.length === 0 ? (
         <div className={`${card} mt-4`}>
@@ -157,20 +131,20 @@ export function Library(props: Props) {
                   <p className="truncate text-sm font-medium" title={item.filename}>{item.filename}</p>
                   <p className="text-xs text-muted">{item.indexed ? "Indexée" : "Date pas encore enregistrée"}</p>
                 </div>
-                <button type="button" className={btnDanger} onClick={() => void remove(item.filename)}>Retirer</button>
+                {admin ? <button type="button" className={btnDanger} onClick={() => void remove(item.filename)}>Retirer</button> : null}
               </div>
               <div className="mt-3 grid gap-2 md:grid-cols-3">
                 <label>
                   <span className={label}>Expiration</span>
-                  <input className={field} type="date" defaultValue={item.expiry_date} onChange={(event) => void save(item, { expiry_date: event.target.value })} />
+                  <input className={field} type="date" disabled={!admin} defaultValue={item.expiry_date} onChange={(event) => void save(item, { expiry_date: event.target.value })} />
                 </label>
                 <label>
                   <span className={label}>Crédit</span>
-                  <input className={field} defaultValue={item.credit} placeholder="Qui a fait cette image" onBlur={(event) => void save(item, { credit: event.target.value })} />
+                  <input className={field} disabled={!admin} defaultValue={item.credit} placeholder="Qui a fait cette image" onBlur={(event) => void save(item, { credit: event.target.value })} />
                 </label>
                 <label>
                   <span className={label}>Notes</span>
-                  <input className={field} defaultValue={item.notes} placeholder="Usage, territoire" onBlur={(event) => void save(item, { notes: event.target.value })} />
+                  <input className={field} disabled={!admin} defaultValue={item.notes} placeholder="Usage, territoire" onBlur={(event) => void save(item, { notes: event.target.value })} />
                 </label>
               </div>
             </article>
@@ -186,7 +160,7 @@ export function Library(props: Props) {
         <div className={`${card} mt-4`}>
           <h3 className="text-lg font-semibold">La liste est prête</h3>
           <p className="mt-1 text-sm text-muted">Ensuite, indique le site où ces images n'ont peut-être plus le droit d'être.</p>
-          <button type="button" className={`${btn} mt-3`} onClick={props.onContinue}>Continuer vers le site</button>
+          <button type="button" className={`${btn} mt-3`} onClick={props.onContinue}>Continuer vers l'exploration</button>
         </div>
       ) : null}
     </section>

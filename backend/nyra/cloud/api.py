@@ -25,11 +25,13 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+import psycopg
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
-from nyra.api import JobRunner, _group_matches, _not_found_groups, safe_filename
+from nyra.api import JobRunner, _group_matches, _not_found_groups, frontend_dir, safe_filename
 from nyra.config import Config, load_config
 from nyra.match import compute_clip_embedding, compute_hashes
 from nyra.report import days_until, urgency_status
@@ -41,11 +43,20 @@ from . import storage as cloud_storage
 
 
 class CloudSettings:
-    def __init__(self, *, database_url: str, supabase_url: str, service_role_key: str, jwt_secret: Optional[str]):
+    def __init__(
+        self,
+        *,
+        database_url: str,
+        supabase_url: str,
+        service_role_key: str,
+        jwt_secret: Optional[str],
+        anon_key: str = "",
+    ):
         self.database_url = database_url
         self.supabase_url = supabase_url
         self.service_role_key = service_role_key
         self.jwt_secret = jwt_secret
+        self.anon_key = anon_key
 
     def config(self) -> Config:
         return load_config()
@@ -76,6 +87,13 @@ class ReportBody(BaseModel):
     within_days: Optional[int] = Field(default=None, ge=0, le=3650)
 
 
+class SignupBody(BaseModel):
+    email: str
+    password: str = Field(min_length=8, max_length=200)
+    organization_name: str = Field(min_length=1, max_length=80)
+    slug: str = ""
+
+
 class ReviewBody(BaseModel):
     reference_id: uuid.UUID
     site_image_ids: list[uuid.UUID] = Field(default_factory=list)
@@ -84,6 +102,17 @@ class ReviewBody(BaseModel):
 
 def create_app(settings: CloudSettings) -> FastAPI:
     app = FastAPI(title="Nyra Cloud", docs_url=None, redoc_url=None)
+
+    @app.exception_handler(psycopg.OperationalError)
+    async def postgres_unavailable(request, exc: psycopg.OperationalError) -> JSONResponse:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Impossible de joindre Postgres. Vérifie l'hôte dans DATABASE_URL : c'est celui du mode Session, port 5432, copié depuis Connect."},
+        )
+    dist = frontend_dir() / "dist"
+    assets = dist / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="assets")
     jobs: dict[uuid.UUID, JobRunner] = {}
 
     def jobs_for(org_id: uuid.UUID) -> JobRunner:
@@ -99,18 +128,69 @@ def create_app(settings: CloudSettings) -> FastAPI:
     )
 
     @app.get("/", response_model=None)
-    def index() -> HTMLResponse:
+    def index() -> FileResponse | HTMLResponse:
+        page = dist / "index.html"
+        if page.is_file():
+            return FileResponse(page)
         return HTMLResponse(
-            "<p>Nyra — mode cloud actif. L'API multi-organisations est en ligne sous "
-            "<code>/api/orgs/&lt;org_id&gt;/...</code>. Le frontend actuel (<code>frontend/</code>) "
-            "cible encore l'API locale mono-poste ; l'adapter à ce mode (connexion, org_id dans "
-            "les appels) reste à faire.</p>"
+            "<p>Nyra. Depuis frontend/, lance <code>npm install</code> puis <code>npm run build</code>.</p>",
+            status_code=200,
         )
 
     @app.get("/api/healthz")
     def healthz() -> dict:
         cloud_db.ping(settings.database_url)
         return {"status": "ok"}
+
+    @app.get("/api/auth/config")
+    def auth_config() -> dict:
+        return {
+            "required": True,
+            "supabaseUrl": settings.supabase_url,
+            "anonKey": settings.anon_key,
+        }
+
+    @app.post("/api/signup")
+    def signup(body: SignupBody) -> dict:
+        email = body.email.strip().lower()
+        if "@" not in email or email.startswith("@") or email.endswith("@"):
+            raise HTTPException(status_code=400, detail="Email invalide.")
+        try:
+            slug = cloud_db.slugify(body.slug or body.organization_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        client = settings.storage_client()
+        try:
+            created = client.auth.admin.create_user(
+                {"email": email, "password": body.password, "email_confirm": True}
+            )
+        except Exception as exc:
+            message = str(exc).lower()
+            if "already" in message or "registered" in message or "exists" in message:
+                raise HTTPException(status_code=409, detail="Un compte existe déjà avec cet email.") from exc
+            raise HTTPException(status_code=400, detail="La création du compte a échoué.") from exc
+
+        user = getattr(created, "user", None)
+        user_id = getattr(user, "id", None)
+        if user_id is None:
+            raise HTTPException(status_code=502, detail="Le compte n'a pas été créé.")
+        user_uuid = uuid.UUID(str(user_id))
+
+        try:
+            with cloud_db.connect(settings.database_url) as conn:
+                org_id = cloud_db.create_organization(
+                    conn, name=body.organization_name.strip(), slug=slug
+                )
+                cloud_db.add_membership(conn, user_id=user_uuid, org_id=org_id, role="admin")
+        except psycopg.errors.UniqueViolation as exc:
+            try:
+                client.auth.admin.delete_user(str(user_uuid))
+            except Exception:
+                pass
+            raise HTTPException(status_code=409, detail="Cette adresse d'organisation est déjà utilisée.") from exc
+
+        return {"slug": slug, "org_id": str(org_id)}
 
     @app.get("/api/orgs")
     def list_orgs(token: str = Depends(cloud_auth._bearer_token)) -> dict:
@@ -127,9 +207,19 @@ def create_app(settings: CloudSettings) -> FastAPI:
     @app.get("/api/orgs/{org_id}/overview")
     def overview(org_id: uuid.UUID, member=Depends(member_dep)) -> dict:
         config = settings.config()
+        client = settings.storage_client()
         with cloud_db.connect(settings.database_url) as conn:
             stats = cloud_db.get_stats(conn, org_id)
             refs = cloud_db.get_reference_images(conn, org_id)
+
+        def media_url(storage_path: str | None) -> str:
+            if not storage_path:
+                return ""
+            try:
+                return cloud_storage.signed_url(client, cloud_storage.BUCKET_REFS, storage_path)
+            except Exception:
+                return ""
+
         library = [
             {
                 "filename": r["filename"],
@@ -139,6 +229,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
                 "indexed": r["phash"] is not None,
                 "width": r["width"],
                 "height": r["height"],
+                "url": media_url(r["storage_path"]),
             }
             for r in refs
         ]
@@ -146,6 +237,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
             "stats": {
                 "reference_images": stats.reference_images,
                 "pages_crawled": stats.pages_crawled,
+                "pages_pending": 0,
                 "site_images": stats.site_images,
                 "matches": stats.matches,
             },
@@ -391,7 +483,18 @@ def create_app(settings: CloudSettings) -> FastAPI:
             org_id, settings.database_url, client, config,
             within_days=body.within_days, generated_by=member.user_id,
         )
-        return {"report_id": str(report_id)}
+        with cloud_db.connect(settings.database_url) as conn:
+            report = cloud_db.get_report(conn, org_id, report_id)
+        if report is None:
+            raise HTTPException(status_code=500, detail="Rapport introuvable après génération.")
+        files = {
+            "report.html": cloud_storage.signed_url(client, cloud_storage.BUCKET_REPORTS, report["storage_path_html"]),
+            "matches.csv": cloud_storage.signed_url(client, cloud_storage.BUCKET_REPORTS, report["storage_path_csv"]),
+            "not_found.csv": cloud_storage.signed_url(
+                client, cloud_storage.BUCKET_REPORTS, report["storage_path_not_found_csv"]
+            ),
+        }
+        return {"report_id": str(report_id), "files": files}
 
     @app.get("/api/orgs/{org_id}/reports")
     def list_reports(org_id: uuid.UUID, member=Depends(member_dep)) -> dict:
@@ -427,5 +530,25 @@ def create_app(settings: CloudSettings) -> FastAPI:
         if not cloud_storage.exists(client, cloud_storage.BUCKET_REFS, storage_path):
             raise HTTPException(status_code=404, detail="Image introuvable.")
         return RedirectResponse(cloud_storage.signed_url(client, cloud_storage.BUCKET_REFS, storage_path))
+
+    @app.get("/signup", response_model=None)
+    def signup_page() -> FileResponse | HTMLResponse:
+        page = dist / "index.html"
+        if page.is_file():
+            return FileResponse(page)
+        return HTMLResponse(
+            "<p>Nyra. Depuis frontend/, lance <code>npm install</code> puis <code>npm run build</code>.</p>",
+            status_code=200,
+        )
+
+    not_found_page = dist / "404.html"
+
+    @app.get("/{full_path:path}", response_model=None)
+    def not_found(full_path: str) -> HTMLResponse:
+        if full_path.startswith("api/") or full_path.startswith("assets/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        if not_found_page.is_file():
+            return HTMLResponse(not_found_page.read_text(encoding="utf-8"), status_code=404)
+        return HTMLResponse("<p>404 — page introuvable.</p>", status_code=404)
 
     return app
