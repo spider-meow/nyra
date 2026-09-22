@@ -85,6 +85,7 @@ class MatchBody(BaseModel):
 
 class ReportBody(BaseModel):
     within_days: Optional[int] = Field(default=None, ge=0, le=3650)
+    status: Optional[str] = "pending"
 
 
 class SignupBody(BaseModel):
@@ -477,11 +478,14 @@ def create_app(settings: CloudSettings) -> FastAPI:
 
     @app.post("/api/orgs/{org_id}/reports")
     def create_report(org_id: uuid.UUID, body: ReportBody, member=Depends(admin_dep)) -> dict:
+        status = body.status or "pending"
+        if status not in {"pending", "confirmed", "rejected", "all"}:
+            raise HTTPException(status_code=400, detail="Statut inconnu.")
         config = settings.config()
         client = settings.storage_client()
         report_id = cloud_pipeline.generate_report(
             org_id, settings.database_url, client, config,
-            within_days=body.within_days, generated_by=member.user_id,
+            within_days=body.within_days, generated_by=member.user_id, review_status=status,
         )
         with cloud_db.connect(settings.database_url) as conn:
             report = cloud_db.get_report(conn, org_id, report_id)

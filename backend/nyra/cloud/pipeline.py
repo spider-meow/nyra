@@ -485,6 +485,7 @@ def generate_report(
     *,
     within_days: Optional[int] = None,
     generated_by: Optional[uuid.UUID] = None,
+    review_status: str = "pending",
 ) -> uuid.UUID:
     """Builds the same `ReportRow`/`NotFoundRow` shapes and reuses
     `report.render_html`/`write_csv`/`write_not_found_csv` unchanged —
@@ -492,7 +493,11 @@ def generate_report(
     (Storage + Postgres instead of local disk + SQLite). Uploads the
     three files to the `reports` bucket and records the run in the
     `reports` table so a client can look back at a past report, not just
-    the live state."""
+    the live state.
+
+    `review_status` mirrors the local product's `report --status`
+    (supabase/migrations/migration_008_review_status_and_exclusions.sql):
+    `"all"` includes every match, anything else keeps only that status."""
     from datetime import datetime, timezone
 
     within_days = within_days if within_days is not None else config.report.default_within_days
@@ -509,6 +514,8 @@ def generate_report(
 
     rows: list[report_module.ReportRow] = []
     for m in match_rows:
+        if review_status != "all" and m["match_status"] != review_status:
+            continue
         days_left = report_module.days_until(m["expiry_date"].isoformat() if m["expiry_date"] else None, today)
         if days_left is not None and days_left > within_days:
             continue

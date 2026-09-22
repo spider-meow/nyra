@@ -44,11 +44,15 @@ export function thumb(url: string, size = 80): string {
   return `${url}${join}w=${size}`;
 }
 
-export async function openReport(name: "report.html" | "matches.csv" | "not_found.csv", withinDays: number): Promise<void> {
+export async function openReport(
+  name: "report.html" | "matches.csv" | "not_found.csv",
+  withinDays: number,
+  status?: string,
+): Promise<void> {
   const data = await api<{ files: Record<string, string> }>("/api/reports", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ within_days: withinDays }),
+    body: JSON.stringify({ within_days: withinDays, status }),
   });
   const url = data.files[name];
   if (!url) throw new ApiError("Fichier de rapport absent.");

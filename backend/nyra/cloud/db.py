@@ -440,6 +440,7 @@ def get_matches(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
         """
         SELECT
             m.id AS match_id, m.level, m.score, m.confidence,
+            m.status AS match_status, m.reviewed_at, m.reviewed_note,
             r.id AS reference_id, r.filename, r.storage_path AS ref_storage_path,
             r.expiry_date, r.credit, r.notes,
             s.id AS site_image_id, s.url AS site_url, s.storage_path AS site_storage_path,
