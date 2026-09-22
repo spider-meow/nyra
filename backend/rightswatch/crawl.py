@@ -226,12 +226,51 @@ def autoscroll(page, steps: int = 8, pause_ms: int = 250) -> None:
         page.wait_for_timeout(pause_ms)
 
 
+CLICK_LOAD_MORE_JS = r"""
+() => {
+    const pattern = /(voir plus|afficher plus|en voir plus|charger plus|load more|show more|see more)/i;
+    const candidates = document.querySelectorAll('button, a, [role="button"]');
+    for (const el of candidates) {
+        const text = (el.textContent || '').trim();
+        if (!text || !pattern.test(text)) continue;
+        const rect = el.getBoundingClientRect();
+        const visible = rect.width > 0 && rect.height > 0 && el.offsetParent !== null;
+        if (!visible) continue;
+        el.click();
+        return true;
+    }
+    return false;
+}
+"""
+
+
+def click_load_more(page, max_clicks: int = 5, pause_ms: int = 400) -> int:
+    """Best-effort: click paginated "load more" controls a bounded number of times.
+
+    Catalog/grid pages often load additional products via a button rather
+    than infinite scroll, so `autoscroll` alone misses them. This never
+    raises and never blocks the crawl if no such button exists.
+    """
+    clicked = 0
+    for _ in range(max_clicks):
+        try:
+            found = page.evaluate(CLICK_LOAD_MORE_JS)
+        except Exception:
+            break
+        if not found:
+            break
+        clicked += 1
+        page.wait_for_timeout(pause_ms)
+    return clicked
+
+
 @dataclass
 class CrawlStats:
     pages_visited: int = 0
     images_found: int = 0
     images_stored: int = 0
     images_new: int = 0
+    blocked_by_robots: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -287,6 +326,7 @@ def crawl_site(
                     visited.add(url)
 
                     if robots is not None and not is_allowed(robots, url, config.crawl.user_agent):
+                        stats.blocked_by_robots += 1
                         continue
 
                     page_id = db.upsert_page(conn, url, status="pending")
@@ -296,6 +336,8 @@ def crawl_site(
                         response = page.goto(
                             url, timeout=config.crawl.page_load_timeout_ms, wait_until="load"
                         )
+                        autoscroll(page)
+                        click_load_more(page)
                         autoscroll(page)
                         html = page.content()
                         try:

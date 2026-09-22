@@ -252,6 +252,93 @@ def test_classify_pair_prefers_level1_result(base_image, config):
     assert result.level in {"phash", "dhash"}
 
 
+# --- run_matching: DB-integrated incremental matching -----------------------
+#
+# match_index_pairs (tested above) is the pure comparison kernel. run_matching
+# wraps it with a cache: a reference/site pair already compared under the
+# current threshold signature isn't recompared on the next call, only the
+# delta (new refs x all sites, all old refs x new sites). These tests exercise
+# that caching layer end to end against a real (temp-file) database, since
+# it's the most complex and least-tested code path in the product.
+
+def _config_with_match(**overrides):
+    from dataclasses import replace
+
+    from rightswatch.config import load_config
+
+    base = load_config()
+    return replace(base, match=replace(base.match, **overrides))
+
+
+def test_run_matching_incremental_picks_up_new_images_without_losing_old_matches(tmp_path):
+    from rightswatch import db
+    from rightswatch.match import run_matching
+
+    db_path = tmp_path / "rw.db"
+    db.init_db(db_path)
+    config = _config_with_match()
+    same_hash = "ffff0000ffff0000"
+
+    with db.connect(db_path) as conn:
+        ref_a = db.upsert_reference_image(
+            conn, filename="a.jpg", path="a.jpg", expiry_date=None, credit=None, notes=None,
+            phash=same_hash, dhash=same_hash,
+        )
+        site_x = db.upsert_site_image(conn, url="https://example.com/x.jpg", phash=same_hash, dhash=same_hash)
+
+    assert run_matching(db_path, config, use_clip=False) == 1
+    # Calling again with nothing new must be a stable no-op, not a crash or a duplicate.
+    assert run_matching(db_path, config, use_clip=False) == 1
+
+    # A re-crawl finds the same reference re-served at a second URL.
+    with db.connect(db_path) as conn:
+        site_y = db.upsert_site_image(conn, url="https://example.com/y.jpg", phash=same_hash, dhash=same_hash)
+    assert run_matching(db_path, config, use_clip=False) == 2
+
+    # A newly-ingested reference happens to match both already-known site images.
+    with db.connect(db_path) as conn:
+        ref_b = db.upsert_reference_image(
+            conn, filename="b.jpg", path="b.jpg", expiry_date=None, credit=None, notes=None,
+            phash=same_hash, dhash=same_hash,
+        )
+    assert run_matching(db_path, config, use_clip=False) == 4
+
+    with db.connect(db_path) as conn:
+        pairs = {(m["reference_id"], m["site_image_id"]) for m in db.get_matches(conn)}
+        coverage = {row["filename"] for row in db.get_unmatched_references(conn)}
+    assert pairs == {(ref_a, site_x), (ref_a, site_y), (ref_b, site_x), (ref_b, site_y)}
+    assert coverage == set()  # every reference has at least one hit
+
+
+def test_run_matching_threshold_change_forces_a_full_recompute(tmp_path):
+    from rightswatch import db
+    from rightswatch.match import run_matching
+
+    db_path = tmp_path / "rw.db"
+    db.init_db(db_path)
+    ref_hash = "ffff0000ffff0000"
+    site_hash = "ffff0000ffff000f"  # Hamming distance 4 from ref_hash
+
+    with db.connect(db_path) as conn:
+        db.upsert_reference_image(
+            conn, filename="a.jpg", path="a.jpg", expiry_date=None, credit=None, notes=None,
+            phash=ref_hash, dhash=ref_hash,
+        )
+        db.upsert_site_image(conn, url="https://example.com/x.jpg", phash=site_hash, dhash=site_hash)
+
+    loose = _config_with_match(phash_threshold=8, dhash_threshold=8)
+    assert run_matching(db_path, loose, use_clip=False) == 1
+
+    # Nothing new was added; only the threshold changed. If run_matching only
+    # ever compared the delta (nothing, here), this stale match would survive
+    # a tightened threshold — that's the bug this test guards against.
+    strict = _config_with_match(phash_threshold=0, dhash_threshold=0)
+    assert run_matching(db_path, strict, use_clip=False) == 0
+
+    with db.connect(db_path) as conn:
+        assert db.get_unmatched_references(conn)[0]["compared_at"] is not None
+
+
 # --- CLIP end-to-end (skipped unless open_clip/torch are installed) --------
 
 def test_clip_embedding_end_to_end(base_image, config):

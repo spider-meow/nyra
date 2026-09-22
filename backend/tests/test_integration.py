@@ -42,7 +42,7 @@ def test_pipeline_end_to_end(tmp_path: Path):
     refs_dir = tmp_path / "refs"
     refs_dir.mkdir()
     expiring_soon = date.today() + timedelta(days=10)
-    far_future = date.today() + timedelta(days=400)
+    also_expiring_soon = date.today() + timedelta(days=20)
 
     make_image(refs_dir / "bottle.jpg", seed=1)
     make_unrelated_image(refs_dir / "unrelated.jpg")
@@ -51,7 +51,7 @@ def test_pipeline_end_to_end(tmp_path: Path):
     csv_path.write_text(
         "filename,expiry_date,credit,notes\n"
         f"bottle.jpg,{expiring_soon.isoformat()},Photographer A,hero shot\n"
-        f"unrelated.jpg,{far_future.isoformat()},Photographer B,not on site\n",
+        f"unrelated.jpg,{also_expiring_soon.isoformat()},Photographer B,not on site\n",
         encoding="utf-8",
     )
 
@@ -87,16 +87,30 @@ def test_pipeline_end_to_end(tmp_path: Path):
     assert matches[0]["filename"] == "bottle.jpg"
     assert matches[0]["site_url"] == "https://example.com/media/bottle-hero.jpg"
 
+    with db.connect(db_path) as conn:
+        unmatched = db.get_unmatched_references(conn)
+    assert [row["filename"] for row in unmatched] == ["unrelated.jpg"]
+    assert unmatched[0]["compared_at"] is not None  # it went through run_matching, just found nothing
+
     out_dir = tmp_path / "out"
-    html_path, csv_out_path = report.generate_report(db_path, out_dir, config, within_days=90)
+    html_path, csv_out_path, not_found_csv_path = report.generate_report(
+        db_path, out_dir, config, within_days=90
+    )
     assert html_path.exists()
     assert csv_out_path.exists()
+    assert not_found_csv_path.exists()
 
     html_content = html_path.read_text(encoding="utf-8")
     assert "bottle.jpg" in html_content
     assert "https://example.com/products/bottle" in html_content
+    # unrelated.jpg was checked and found nowhere on the site -> flagged, not silently dropped
+    assert "unrelated.jpg" in html_content
 
     csv_content = csv_out_path.read_text(encoding="utf-8")
     assert "bottle.jpg" in csv_content
-    # unrelated.jpg has no match and expires far in the future -> excluded either way
+    # unrelated.jpg has no match -> it belongs in not_found.csv, not matches.csv
     assert "unrelated.jpg" not in csv_content
+
+    not_found_content = not_found_csv_path.read_text(encoding="utf-8")
+    assert "unrelated.jpg" in not_found_content
+    assert "bottle.jpg" not in not_found_content

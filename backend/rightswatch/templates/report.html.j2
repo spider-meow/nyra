@@ -34,6 +34,7 @@
   .pages a { display: block; font-size: 12px; word-break: break-all; }
   .empty { color: #888; font-style: italic; padding: 16px 0; }
   .score { font-variant-numeric: tabular-nums; }
+  .not-checked { color: #888; font-style: italic; }
 </style>
 </head>
 <body>
@@ -46,6 +47,7 @@
     <div class="stat"><strong>{{ stats.get('site_images', '-') }}</strong>images site</div>
     <div class="stat"><strong>{{ confirmed|length }}</strong>matches confirmes</div>
     <div class="stat"><strong>{{ to_verify|length }}</strong>a verifier</div>
+    <div class="stat"><strong>{{ not_found|length }}</strong>non trouvees</div>
   </div>
 
   <section>
@@ -125,6 +127,45 @@
     </table>
     {% else %}
     <div class="empty">Rien a verifier.</div>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Non trouvees sur le site ({{ not_found|length }})</h2>
+    <p class="meta" style="margin-bottom:12px;">
+      References comparees a toutes les images du site sans resultat. Une
+      ligne en italique n'a pas encore ete comparee (pas de crawl/match
+      depuis son ajout) — ce n'est pas une confirmation d'absence.
+    </p>
+    {% if not_found %}
+    <table>
+      <thead>
+        <tr>
+          <th>Reference</th>
+          <th>Expiration</th>
+          <th>Statut</th>
+          <th>Verification</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in not_found %}
+        <tr>
+          <td>
+            {% if r.ref_thumbnail %}<img class="thumb" src="{{ r.ref_thumbnail }}" alt="ref">{% endif %}
+            <div>{{ r.filename }}</div>
+            {% if r.credit %}<div style="font-size:11px;color:#666;">{{ r.credit }}</div>{% endif %}
+          </td>
+          <td>{{ r.expiry_date or "inconnue" }}{% if r.days_left is not none %}<div style="font-size:11px;color:#666;">{{ r.days_left }} j</div>{% endif %}</td>
+          <td><span class="badge {{ {'expire':'expire','<30j':'urgent','<90j':'soon','ok':'ok','inconnue':'unknown'}[r.status] }}">{{ r.status }}</span></td>
+          <td>
+            {% if r.compared %}Comparee a tout le site, aucune correspondance{% else %}<span class="not-checked">Pas encore comparee</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Toutes les references dans cette fenetre ont au moins un resultat.</div>
     {% endif %}
   </section>
 </body>

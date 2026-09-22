@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api, thumb } from "./api";
-import type { Decision, Hit, MatchGroup, Matches } from "./types";
+import type { Decision, Hit, MatchGroup, Matches, NotFoundItem } from "./types";
 import { btn, btnGhost, card, field, label } from "./ui";
 
 const statusLabel: Record<string, string> = {
@@ -47,6 +47,7 @@ export function Results(props: Props) {
   const confirmed = data?.confirmed ?? [];
   const toVerify = data?.to_verify ?? [];
   const later = data?.later ?? [];
+  const notFound = data?.not_found ?? [];
 
   async function decide(referenceId: number, ids: number[], decision: Decision) {
     try {
@@ -131,6 +132,34 @@ export function Results(props: Props) {
     );
   }
 
+  function notFoundList(title: string, items: NotFoundItem[]) {
+    if (!items.length) return null;
+    return (
+      <div className="mt-6">
+        <h3 className="text-lg font-semibold">{title}</h3>
+        <p className="mt-1 text-sm text-muted">
+          Comparées à tout le site, sans résultat. Une ligne "pas encore comparée" n'a pas été vérifiée — ce n'est pas une confirmation d'absence.
+        </p>
+        <div className="mt-2 grid gap-2">
+          {items.map((item) => (
+            <article key={`nf-${item.reference_id}`} className={card}>
+              <div className="grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-3">
+                <img className="h-10 w-10 rounded-lg object-cover" alt="" loading="lazy" src={thumb(item.ref_image, 80)} />
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium">{item.filename}</span>
+                  <span className="block text-sm text-muted">{dayText(item.days_left)}</span>
+                </span>
+                <span className={`rounded-full border px-2.5 py-1 text-xs ${item.compared ? "border-line" : "border-line text-muted italic"}`}>
+                  {item.compared ? "Rien trouvé" : "Pas encore comparée"}
+                </span>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <section>
       <h2 className="text-4xl font-semibold tracking-tight">Ce qui reste en ligne</h2>
@@ -147,6 +176,7 @@ export function Results(props: Props) {
         <button type="button" className={btnGhost} onClick={props.onReload}>Actualiser</button>
         <a className={btn} href={`/api/downloads/report.html?within_days=${encodeURIComponent(String(props.withinDays))}`}>Rapport</a>
         <a className={btnGhost} href={`/api/downloads/matches.csv?within_days=${encodeURIComponent(String(props.withinDays))}`}>CSV</a>
+        <a className={btnGhost} href={`/api/downloads/not_found.csv?within_days=${encodeURIComponent(String(props.withinDays))}`}>CSV non trouvées</a>
       </div>
       {!data ? <p className="mt-6 text-sm text-muted">Les correspondances arrivent.</p> : null}
       {data ? list(`${confirmed.length} dans la fenêtre`, confirmed) : null}
@@ -155,10 +185,11 @@ export function Results(props: Props) {
           {later.length ? `Rien dans les ${props.withinDays} jours. Le reste est listé plus bas.` : "Aucune correspondance pour l'instant."}
         </p>
       ) : null}
-      {data && confirmed.length === 0 && later.length === 0 ? (
+      {data && confirmed.length === 0 && later.length === 0 && notFound.length === 0 ? (
         <button type="button" className={`${btnGhost} mt-3`} onClick={props.onExplore}>Retour au site</button>
       ) : null}
       {data ? list(`${toVerify.length} à regarder de près`, toVerify) : null}
+      {data ? notFoundList(`${notFound.length} non trouvées`, notFound) : null}
       {data ? list(`${later.length} plus loin`, later) : null}
     </section>
   );

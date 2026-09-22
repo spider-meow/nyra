@@ -92,6 +92,54 @@ class ReportRow:
     site_thumbnail: Optional[str]
 
 
+@dataclass
+class NotFoundRow:
+    filename: str
+    expiry_date: Optional[str]
+    days_left: Optional[int]
+    status: str
+    credit: Optional[str]
+    notes: Optional[str]
+    compared: bool
+    ref_thumbnail: Optional[str]
+
+
+def build_not_found_rows(
+    db_path: Path | str, within_days: int, today: Optional[date] = None
+) -> list[NotFoundRow]:
+    """References with zero matches — checked and not seen, or not checked yet.
+
+    Filtered by the same `within_days` window as `build_rows` (unknown
+    expiry always included) so a client reading the report gets a
+    consistent picture: everything urgent, found or not.
+    """
+    today = today or datetime.now(timezone.utc).date()
+    rows: list[NotFoundRow] = []
+
+    with db.connect(db_path) as conn:
+        for r in db.get_unmatched_references(conn):
+            days_left = days_until(r["expiry_date"], today)
+            status = urgency_status(days_left)
+            if days_left is not None and days_left > within_days:
+                continue
+
+            rows.append(
+                NotFoundRow(
+                    filename=r["filename"],
+                    expiry_date=r["expiry_date"],
+                    days_left=days_left,
+                    status=status,
+                    credit=r["credit"],
+                    notes=r["notes"],
+                    compared=r["compared_at"] is not None,
+                    ref_thumbnail=image_to_data_uri(r["ref_path"]),
+                )
+            )
+
+    rows.sort(key=lambda r: _sort_key(r.days_left))
+    return rows
+
+
 def build_rows(db_path: Path | str, within_days: int, today: Optional[date] = None) -> list[ReportRow]:
     today = today or datetime.now(timezone.utc).date()
     rows: list[ReportRow] = []
@@ -126,7 +174,14 @@ def build_rows(db_path: Path | str, within_days: int, today: Optional[date] = No
     return rows
 
 
-def render_html(rows: list[ReportRow], out_path: Path | str, *, within_days: int, site_stats: Optional[dict] = None) -> None:
+def render_html(
+    rows: list[ReportRow],
+    out_path: Path | str,
+    *,
+    within_days: int,
+    site_stats: Optional[dict] = None,
+    not_found: Optional[list[NotFoundRow]] = None,
+) -> None:
     env = Environment(
         loader=FileSystemLoader(str(TEMPLATE_DIR)),
         autoescape=select_autoescape(["html"]),
@@ -139,6 +194,7 @@ def render_html(rows: list[ReportRow], out_path: Path | str, *, within_days: int
     html = template.render(
         confirmed=confirmed,
         to_verify=to_verify,
+        not_found=not_found or [],
         within_days=within_days,
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
         stats=site_stats or {},
@@ -162,24 +218,38 @@ def write_csv(rows: list[ReportRow], out_path: Path | str) -> None:
             writer.writerow(d)
 
 
+def write_not_found_csv(rows: list[NotFoundRow], out_path: Path | str) -> None:
+    fieldnames = ["filename", "expiry_date", "days_left", "status", "credit", "notes", "compared"]
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in rows:
+            d = asdict(r)
+            del d["ref_thumbnail"]
+            writer.writerow(d)
+
+
 def generate_report(
     db_path: Path | str,
     out_dir: Path | str,
     config: Config,
     *,
     within_days: Optional[int] = None,
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path]:
     within_days = within_days if within_days is not None else config.report.default_within_days
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     rows = build_rows(db_path, within_days)
+    not_found_rows = build_not_found_rows(db_path, within_days)
 
     with db.connect(db_path) as conn:
         stats = asdict(db.get_stats(conn))
 
     html_path = out_dir / "report.html"
     csv_path = out_dir / "matches.csv"
-    render_html(rows, html_path, within_days=within_days, site_stats=stats)
+    not_found_csv_path = out_dir / "not_found.csv"
+    render_html(rows, html_path, within_days=within_days, site_stats=stats, not_found=not_found_rows)
     write_csv(rows, csv_path)
-    return html_path, csv_path
+    write_not_found_csv(not_found_rows, not_found_csv_path)
+    return html_path, csv_path, not_found_csv_path

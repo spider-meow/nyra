@@ -446,6 +446,25 @@ def get_matches(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def get_unmatched_references(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """References with zero rows in `matches` — the library items a crawl found nowhere.
+
+    `compared_at IS NOT NULL` tells the caller this is a real "compared, no
+    hit" result rather than a reference that just hasn't been through a
+    match pass yet (e.g. added after the last `run_matching`).
+    """
+    return conn.execute(
+        """
+        SELECT r.id AS reference_id, r.filename, r.path AS ref_path,
+               r.expiry_date, r.credit, r.notes, r.compared_at
+        FROM reference_images r
+        LEFT JOIN matches m ON m.reference_id = r.id
+        WHERE m.id IS NULL
+        ORDER BY r.expiry_date IS NULL, r.expiry_date ASC
+        """
+    ).fetchall()
+
+
 @dataclass(frozen=True)
 class Stats:
     reference_images: int

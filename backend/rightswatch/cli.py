@@ -118,8 +118,10 @@ def report_cmd(
 ) -> None:
     """Generate report.html + matches.csv, sorted by expiry urgency."""
     cfg = load_config(config)
-    html_path, csv_path = report_module.generate_report(db, out_dir, cfg, within_days=within_days)
-    typer.secho(f"Report written to {html_path} and {csv_path}", fg=typer.colors.GREEN)
+    html_path, csv_path, not_found_csv_path = report_module.generate_report(db, out_dir, cfg, within_days=within_days)
+    typer.secho(
+        f"Report written to {html_path}, {csv_path}, and {not_found_csv_path}", fg=typer.colors.GREEN
+    )
 
 
 @app.command("run-all")

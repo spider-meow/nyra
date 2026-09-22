@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -88,12 +89,13 @@ def test_library_upload_ingest_and_page(tmp_path: Path):
 def test_matches_are_grouped_and_a_review_is_kept(tmp_path: Path):
     app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
     client = TestClient(app)
+    far_expiry = (date.today() + timedelta(days=180)).isoformat()
     with db.connect(tmp_path / "rightswatch.db") as conn:
         ref_id = db.upsert_reference_image(
             conn,
             filename="campagne.png",
             path=str(tmp_path / "missing.png"),
-            expiry_date="2026-12-21",
+            expiry_date=far_expiry,
             credit="",
             notes="",
             phash="ffff0000ffff0000",
@@ -122,3 +124,33 @@ def test_matches_are_grouped_and_a_review_is_kept(tmp_path: Path):
     assert saved.status_code == 200
     again = client.get("/api/matches?within_days=400").json()
     assert again["confirmed"][0]["hits"][0]["decision"] == "ecarte"
+
+
+def test_unmatched_reference_is_flagged_not_found(tmp_path: Path):
+    app = create_app(root=tmp_path, db_path=tmp_path / "rightswatch.db")
+    client = TestClient(app)
+    soon = (date.today() + timedelta(days=10)).isoformat()
+    with db.connect(tmp_path / "rightswatch.db") as conn:
+        db.upsert_reference_image(
+            conn,
+            filename="jamais-vue.png",
+            path=str(tmp_path / "missing.png"),
+            expiry_date=soon,
+            credit="",
+            notes="",
+            phash="0000ffff0000ffff",
+            dhash="0000ffff0000ffff",
+        )
+        # No site_images, no matches: this reference has never been compared.
+
+    listed = client.get("/api/matches?within_days=90").json()
+    assert len(listed["not_found"]) == 1
+    assert listed["not_found"][0]["filename"] == "jamais-vue.png"
+    assert listed["not_found"][0]["compared"] is False
+
+    with db.connect(tmp_path / "rightswatch.db") as conn:
+        # Simulate a match pass that ran and found nothing: compared_at gets stamped.
+        db.stamp_compared(conn, [1], [], "sig")
+
+    checked = client.get("/api/matches?within_days=90").json()
+    assert checked["not_found"][0]["compared"] is True

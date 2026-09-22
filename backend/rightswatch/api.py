@@ -270,6 +270,18 @@ def _group_matches(raw_rows: list[dict], window: int) -> dict:
     }
 
 
+def _not_found_groups(rows: list[dict], window: int) -> list[dict]:
+    """References with zero matches, same window rule as `_group_matches`.
+
+    `compared` distinguishes "checked, nothing found" from "not compared
+    yet" (added after the last match run, or no crawl/match has run at
+    all) — the report/UI must never present the latter as a clean result.
+    """
+    in_window = [row for row in rows if row["days_left"] is None or row["days_left"] <= window]
+    in_window.sort(key=lambda item: (1, 0) if item["days_left"] is None else (0, item["days_left"]))
+    return in_window
+
+
 def _thumbnail(source: Path, dest: Path, width: int) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.is_file() and dest.stat().st_mtime >= source.stat().st_mtime:
@@ -529,8 +541,9 @@ def create_app(
 
             def progress(stats) -> None:
                 known = max(0, stats.images_stored - stats.images_new)
+                blocked_note = f" · {stats.blocked_by_robots} bloquées (robots.txt)" if stats.blocked_by_robots else ""
                 jobs.update(
-                    message=f"Page {stats.pages_visited}/{page_cap} · {stats.images_new} nouvelles, {known} déjà connues",
+                    message=f"Page {stats.pages_visited}/{page_cap} · {stats.images_new} nouvelles, {known} déjà connues{blocked_note}",
                     progress={
                         "done": stats.pages_visited,
                         "total": page_cap,
@@ -538,6 +551,7 @@ def create_app(
                         "images_new": stats.images_new,
                         "images_known": known,
                         "errors": len(stats.errors),
+                        "blocked_by_robots": stats.blocked_by_robots,
                     },
                 )
 
@@ -557,6 +571,7 @@ def create_app(
                 "images_found": stats.images_found,
                 "images_stored": stats.images_stored,
                 "images_new": stats.images_new,
+                "blocked_by_robots": stats.blocked_by_robots,
                 "errors": stats.errors[:8],
             }
             if body.then_match and not jobs.cancelled():
@@ -603,6 +618,7 @@ def create_app(
             raise HTTPException(status_code=400, detail="Fenêtre d'échéance invalide.")
         today = datetime.now(timezone.utc).date()
         rows = []
+        not_found_rows = []
         with db_module.connect(workspace.db_path) as conn:
             for match in db_module.get_matches(conn):
                 left = days_until(match["expiry_date"], today)
@@ -626,7 +642,22 @@ def create_app(
                     "ref_image": "/api/media/ref/" + quote(match["filename"]),
                     "site_image": f"/api/media/site/{match['site_image_id']}",
                 })
-        return _group_matches(rows, window)
+            for ref in db_module.get_unmatched_references(conn):
+                left = days_until(ref["expiry_date"], today)
+                not_found_rows.append({
+                    "reference_id": ref["reference_id"],
+                    "filename": ref["filename"],
+                    "expiry_date": ref["expiry_date"],
+                    "days_left": left,
+                    "status": urgency_status(left),
+                    "credit": ref["credit"] or "",
+                    "notes": ref["notes"] or "",
+                    "compared": ref["compared_at"] is not None,
+                    "ref_image": "/api/media/ref/" + quote(ref["filename"]),
+                })
+        result = _group_matches(rows, window)
+        result["not_found"] = _not_found_groups(not_found_rows, window)
+        return result
 
     @app.post("/api/reviews")
     def review(body: ReviewBody) -> dict:
@@ -640,18 +671,18 @@ def create_app(
 
     @app.get("/api/downloads/{name}")
     def download(name: str, within_days: Optional[int] = None):
-        if name not in {"report.html", "matches.csv"}:
+        if name not in {"report.html", "matches.csv", "not_found.csv"}:
             raise HTTPException(status_code=404, detail="Fichier inconnu.")
         from rightswatch import report as report_module
 
-        html_path, csv_path = report_module.generate_report(
+        html_path, csv_path, not_found_csv_path = report_module.generate_report(
             workspace.db_path,
             workspace.out_dir,
             workspace.config(),
             within_days=within_days,
         )
-        path = html_path if name == "report.html" else csv_path
-        return FileResponse(path, filename=name)
+        paths = {"report.html": html_path, "matches.csv": csv_path, "not_found.csv": not_found_csv_path}
+        return FileResponse(paths[name], filename=name)
 
     def send_image(path: Path, width: Optional[int], cache_key: str) -> FileResponse:
         if width is None:

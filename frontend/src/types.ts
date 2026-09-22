@@ -11,9 +11,11 @@ export type Job = {
     done?: number;
     total?: number;
     pages_visited?: number;
+    errors?: number;
+    blocked_by_robots?: number;
   };
   error: string | null;
-  result: { matches?: number } | null;
+  result: { matches?: number; errors?: string[]; blocked_by_robots?: number } | null;
 };
 
 export type LibraryItem = {
@@ -65,10 +67,20 @@ export type MatchGroup = {
   hits: Hit[];
 };
 
+export type NotFoundItem = {
+  reference_id: number;
+  filename: string;
+  days_left: number | null;
+  status: string;
+  ref_image: string;
+  compared: boolean;
+};
+
 export type Matches = {
   within_days: number;
   confirmed: MatchGroup[];
   to_verify: MatchGroup[];
   later: MatchGroup[];
+  not_found: NotFoundItem[];
   outside_window: number;
 };

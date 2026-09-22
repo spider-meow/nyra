@@ -161,6 +161,21 @@ export function App() {
                 <div className="h-full bg-ink" style={{ width: total > 0 ? `${width}%` : "28%" }} />
               </div>
             ) : null}
+            {job.kind === "crawl" && (job.progress?.errors || job.progress?.blocked_by_robots) ? (
+              <p className="mt-2 text-xs text-muted">
+                {job.progress.errors ? `${job.progress.errors} page(s) en erreur` : ""}
+                {job.progress.errors && job.progress.blocked_by_robots ? " · " : ""}
+                {job.progress.blocked_by_robots ? `${job.progress.blocked_by_robots} bloquée(s) par robots.txt` : ""}
+              </p>
+            ) : null}
+            {job.status === "done" && job.result?.errors?.length ? (
+              <details className="mt-2 text-xs text-muted">
+                <summary className="cursor-pointer">{job.result.errors.length} page(s) en erreur — détail</summary>
+                <ul className="mt-1 grid gap-1">
+                  {job.result.errors.map((line) => <li key={line} className="break-all">{line}</li>)}
+                </ul>
+              </details>
+            ) : null}
             {job.status === "running" ? (
               <button type="button" className={`${btnGhost} mt-3`} onClick={() => void stopJob()}>Arrêter</button>
             ) : null}

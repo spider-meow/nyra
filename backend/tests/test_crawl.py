@@ -7,6 +7,7 @@ exactly what Playwright would hand back from page.content().
 from __future__ import annotations
 
 from rightswatch.crawl import (
+    click_load_more,
     extract_images_from_html,
     extract_internal_links,
     normalize_url,
@@ -101,3 +102,45 @@ def test_extract_internal_links_filters_external_and_anchors():
     assert not any("facebook" in l for l in links)
     assert not any(l.startswith("mailto:") for l in links)
     assert not any(l.startswith("javascript:") for l in links)
+
+
+class _FakePage:
+    """Duck-types just enough of Playwright's Page for click_load_more's control flow."""
+
+    def __init__(self, click_results: list[bool]):
+        self._results = list(click_results)
+        self.evaluate_calls = 0
+        self.waited = 0
+
+    def evaluate(self, _script: str) -> bool:
+        self.evaluate_calls += 1
+        return self._results.pop(0) if self._results else False
+
+    def wait_for_timeout(self, _ms: int) -> None:
+        self.waited += 1
+
+
+def test_click_load_more_stops_when_button_disappears():
+    page = _FakePage([True, True, False])
+    clicked = click_load_more(page, max_clicks=5)
+    assert clicked == 2
+    assert page.evaluate_calls == 3
+    assert page.waited == 2
+
+
+def test_click_load_more_respects_max_clicks():
+    page = _FakePage([True, True, True, True, True, True])
+    clicked = click_load_more(page, max_clicks=3)
+    assert clicked == 3
+    assert page.evaluate_calls == 3
+
+
+def test_click_load_more_never_raises_on_evaluate_failure():
+    class ExplodingPage:
+        def evaluate(self, _script: str):
+            raise RuntimeError("page closed")
+
+        def wait_for_timeout(self, _ms: int) -> None:
+            pass
+
+    assert click_load_more(ExplodingPage(), max_clicks=3) == 0
