@@ -32,6 +32,8 @@ def test_library_upload_ingest_and_page(tmp_path: Path):
     assert "RightsWatch" in page.text
     assert "login" not in page.text.lower()
 
+    assert client.get("/api/healthz").json() == {"status": "ok"}
+
     src = tmp_path / "ref.png"
     _png(src)
     with src.open("rb") as handle:

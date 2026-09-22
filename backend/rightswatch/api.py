@@ -324,6 +324,10 @@ def create_app(
             status_code=200,
         )
 
+    @app.get("/api/healthz")
+    def healthz() -> dict:
+        return {"status": "ok"}
+
     @app.get("/api/overview")
     def overview() -> dict:
         config = workspace.config()

@@ -1,0 +1,30 @@
+.git
+.github
+**/__pycache__
+**/*.pyc
+**/*.egg-info
+.pytest_cache
+.venv
+venv
+
+# Client data and local-mode state — never bake into an image layer
+refs/
+data/
+out/
+*.db
+*.db-journal
+.env
+.env.*
+!.env.example
+
+# Built at image-build time by the frontend-builder stage; a stale host
+# build would otherwise shadow it
+frontend/dist
+frontend/node_modules
+
+# Not needed at runtime (README.md stays — pyproject.toml's readme field
+# needs it present at `pip install .` time)
+supabase/
+docs/
+tests/
+backend/tests/

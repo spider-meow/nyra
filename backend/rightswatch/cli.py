@@ -190,12 +190,46 @@ def init_db_cmd(db: Path = DbOption) -> None:
 @app.command("ui")
 def ui_cmd(
     host: str = typer.Option("127.0.0.1", "--host", help="Address to bind. Defaults to this machine only."),
-    port: int = typer.Option(8000, "--port", help="Port for the local interface."),
+    port: int = typer.Option(8000, "--port", help="Port for the interface."),
     db: Path = DbOption,
     config: Optional[Path] = ConfigOption,
 ) -> None:
-    """Open the local interface to run the pipeline without the CLI."""
+    """Open the interface to run the pipeline without the CLI.
+
+    Local mode (default): SQLite + local disk, no accounts — unchanged.
+    Cloud mode: automatic the moment DATABASE_URL is set in the
+    environment (see .env.example) — Postgres/Supabase Storage/Supabase
+    Auth instead, multi-organization. Nothing else about this command
+    changes; the switch is entirely env-var driven.
+    """
+    import os
+
     import uvicorn
+
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url:
+        from rightswatch.cloud.api import CloudSettings, create_app as create_cloud_app
+
+        supabase_url = os.environ.get("SUPABASE_URL")
+        service_role_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
+        if not supabase_url or not service_role_key:
+            typer.secho(
+                "DATABASE_URL is set but SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are missing — "
+                "see .env.example.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        settings = CloudSettings(
+            database_url=database_url,
+            supabase_url=supabase_url,
+            service_role_key=service_role_key,
+            jwt_secret=os.environ.get("SUPABASE_JWT_SECRET"),
+        )
+        typer.secho(f"RightsWatch (cloud mode)  →  http://{host}:{port}", fg=typer.colors.GREEN)
+        uvicorn.run(create_cloud_app(settings), host=host, port=port, log_level="info")
+        return
 
     from rightswatch.api import create_app
 
@@ -208,6 +242,47 @@ def ui_cmd(
         port=port,
         log_level="info",
     )
+
+
+@app.command("cloud-provision-org")
+def cloud_provision_org(
+    name: str = typer.Option(..., "--name", help="Organization display name, e.g. 'Remy Martin'."),
+    slug: str = typer.Option(..., "--slug", help="URL-safe unique slug, e.g. 'remy-martin'."),
+    admin_email: str = typer.Option(..., "--admin-email", help="Email of the Supabase Auth user to make admin."),
+) -> None:
+    """Bootstrap a new client organization (cloud mode only).
+
+    A user can't create their own first organization — Row Level Security
+    requires an existing admin membership to add one (see
+    supabase/migrations/0005), which is exactly the chicken-and-egg this
+    command exists to break. The admin_email user must already exist in
+    Supabase Auth (sign them up first, e.g. via the Supabase dashboard or
+    your own invite flow); this only creates the organization and their
+    first membership.
+    """
+    import os
+
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        typer.secho("DATABASE_URL is not set — see .env.example.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+
+    from rightswatch.cloud import db as cloud_db
+
+    with cloud_db.connect(database_url) as conn:
+        user_row = conn.execute("SELECT id FROM auth.users WHERE email = %s", (admin_email,)).fetchone()
+        if user_row is None:
+            typer.secho(
+                f"No Supabase Auth user with email {admin_email!r} — they need to sign up first.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
+        org_id = cloud_db.create_organization(conn, name=name, slug=slug)
+        cloud_db.add_membership(conn, user_id=user_row["id"], org_id=org_id, role="admin")
+
+    typer.secho(f"Organization {name!r} ({slug}) created, {admin_email} is admin.", fg=typer.colors.GREEN)
 
 
 if __name__ == "__main__":

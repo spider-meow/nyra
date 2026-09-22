@@ -1,0 +1,28 @@
+# Single service — Postgres/Auth/Storage live on Supabase, not here, so
+# there's no database container to run alongside the app.
+#
+#   docker compose up -d --build
+#
+# Local mode (no .env, or one without DATABASE_URL): state persists in
+# ./data and ./out on the host via the volumes below.
+# Cloud mode (.env has DATABASE_URL + SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY):
+# everything lives in Supabase — the volumes below just go unused.
+
+services:
+  backend:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./data:/app/data
+      - ./out:/app/out
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
