@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Page introuvable — RightsWatch</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0a0a0a;
+      --muted: #737373;
+      --line: #e5e5e5;
+      --canvas: #f5f5f5;
+      --paper: #ffffff;
+      --ember: #e7000b;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      min-height: 100%;
+    }
+    body {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: var(--canvas);
+      color: var(--ink);
+      font-family: "Geist", "Segoe UI", sans-serif;
+      letter-spacing: -0.011em;
+      padding: 24px;
+    }
+    main {
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+      padding: 6px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--muted);
+      margin-bottom: 28px;
+    }
+    .badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 999px;
+      background: var(--ember);
+      animation: pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.7); }
+    }
+    .code {
+      font-size: 108px;
+      font-weight: 700;
+      line-height: 1;
+      letter-spacing: -0.04em;
+      margin: 0;
+      background: linear-gradient(135deg, var(--ink) 0%, var(--muted) 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+    }
+    .frame {
+      position: relative;
+      display: inline-block;
+      margin-bottom: 8px;
+    }
+    .frame svg {
+      position: absolute;
+      top: -6px;
+      right: -34px;
+      animation: float 3s ease-in-out infinite;
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0) rotate(-8deg); }
+      50% { transform: translateY(-8px) rotate(4deg); }
+    }
+    h1 {
+      font-size: 22px;
+      font-weight: 600;
+      margin: 4px 0 10px;
+      letter-spacing: -0.02em;
+    }
+    p {
+      font-size: 15px;
+      line-height: 1.5;
+      color: var(--muted);
+      margin: 0 0 28px;
+    }
+    .actions {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    a.btn {
+      display: inline-flex;
+      align-items: center;
+      height: 38px;
+      border-radius: 18px;
+      background: var(--ink);
+      color: var(--paper);
+      padding: 0 18px;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      transition: transform 0.15s ease, opacity 0.15s ease;
+    }
+    a.btn:hover { transform: translateY(-1px); opacity: 0.9; }
+    a.btn.ghost {
+      background: var(--paper);
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    footer {
+      margin-top: 36px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <span class="badge"><span class="dot"></span>Statut : introuvable</span>
+
+    <div class="frame">
+      <p class="code">404</p>
+      <svg width="46" height="46" viewBox="0 0 46 46" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="4" y="4" width="30" height="30" rx="6" stroke="#0a0a0a" stroke-width="2.5" fill="#ffffff"/>
+        <circle cx="17" cy="17" r="4" stroke="#0a0a0a" stroke-width="2.5"/>
+        <path d="M4 27L14 19L22 26L34 14" stroke="#0a0a0a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <line x1="30" y1="30" x2="42" y2="42" stroke="#e7000b" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+    </div>
+
+    <h1>Cette page a expiré.</h1>
+    <p>
+      On a passé cette adresse au crible, comme on le fait pour vos visuels —
+      et elle n'est nulle part. Pas de match, pas de page : elle n'a jamais
+      été là, ou elle a été retirée.
+    </p>
+
+    <div class="actions">
+      <a class="btn" href="/">Retour à RightsWatch</a>
+      <a class="btn ghost" href="https://github.com/spider-meow/visual-tracker-rc" target="_blank" rel="noreferrer">Voir le dépôt</a>
+    </div>
+
+    <footer>Erreur 404 — rien à afficher à cette adresse.</footer>
+  </main>
+</body>
+</html>

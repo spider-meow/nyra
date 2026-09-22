@@ -729,6 +729,20 @@ def create_app(
             raise HTTPException(status_code=404, detail="Fichier image absent du cache.")
         return send_image(path, w, f"site-{image_id}")
 
+    # Catch-all for anything that isn't an API route, a built asset, or "/".
+    # Registered last so every route above still wins when it matches.
+    # /api/* keeps FastAPI's normal JSON 404 (API clients expect that);
+    # everything else gets the static page instead of a bare error.
+    not_found_page = dist / "404.html"
+
+    @app.get("/{full_path:path}", response_model=None)
+    def not_found(full_path: str) -> HTMLResponse:
+        if full_path.startswith("api/") or full_path.startswith("assets/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        if not_found_page.is_file():
+            return HTMLResponse(not_found_page.read_text(encoding="utf-8"), status_code=404)
+        return HTMLResponse("<p>404 — page introuvable.</p>", status_code=404)
+
     return app
 
 
