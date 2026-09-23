@@ -1,15 +1,27 @@
 # Nyra configuration.
 # All matching thresholds and crawl behavior live here, not hard-coded.
+# An organization can override part of this from the Settings page
+# (see ORG_OVERRIDABLE in backend/nyra/config.py).
 
 crawl:
   max_pages: 300
+  # Ceiling applied to every crawl, whatever the request or the org asks for.
+  max_pages_limit: 2000
+  # Pages rendered in parallel; each one still waits the delay below.
+  concurrency: 3
   delay_seconds_min: 1.0
   delay_seconds_max: 2.0
   user_agent: "NyraBot/0.1 (+https://github.com/spider-meow/nyra; contact: rights-team@example.com)"
   min_image_side_px: 200
+  max_image_bytes: 25000000
+  max_image_pixels: 60000000
   respect_robots_txt: true
   request_timeout_seconds: 20
   page_load_timeout_ms: 30000
+  # Click through cookie banners and age gates before reading the page.
+  dismiss_overlays: true
+  # Extra CSS selectors to click on every page, e.g. a site-specific age gate.
+  pre_actions: []
 
 match:
   # Level 1: perceptual hash (Hamming distance, lower = closer). 64-bit hashes.
@@ -22,6 +34,7 @@ match:
   clip_similarity_floor: 0.75
   clip_model_name: "ViT-B-32"
   clip_pretrained: "laion2b_s34b_b79k"
+  embedding_batch_size: 16
 
 report:
   default_within_days: 90

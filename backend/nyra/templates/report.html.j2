@@ -1,172 +1,143 @@
+{%- macro badge(status) -%}
+<span class="badge s-{{ {'expire':'expired','<30j':'urgent','<90j':'soon','ok':'ok','inconnue':'unknown'}[status] }}">{{ status_labels[status] }}</span>
+{%- endmacro -%}
+{%- macro days(group) -%}
+{%- if group.days_left is none -%}Date inconnue
+{%- elif group.days_left < 0 -%}Expiré depuis {{ -group.days_left }} j
+{%- elif group.days_left == 0 -%}Expire aujourd'hui
+{%- else -%}Expire dans {{ group.days_left }} j{%- endif -%}
+{%- endmacro -%}
+{%- macro reference(group) -%}
+<article class="ref">
+  <header class="ref-head">
+    {% if thumbs.get(group.ref_thumb) %}<img class="thumb" src="{{ thumbs[group.ref_thumb] }}" alt="">{% else %}<div class="thumb empty"></div>{% endif %}
+    <div class="ref-meta">
+      <h3>{{ group.filename }}</h3>
+      <p>{{ badge(group.status) }} <span class="muted">{{ days(group) }}{% if group.expiry_date %} · {{ group.expiry_date }}{% endif %}</span></p>
+      {% if group.credit or group.notes %}<p class="muted small">{{ group.credit }}{% if group.credit and group.notes %} · {% endif %}{{ group.notes }}</p>{% endif %}
+    </div>
+    <p class="count">{{ group.hits|length }} occurrence{{ 's' if group.hits|length > 1 }}</p>
+  </header>
+  <table>
+    <thead><tr><th class="c-img">Image</th><th>Adresse de l'image et pages</th><th class="c-conf">Confiance</th><th class="c-dec">Décision</th></tr></thead>
+    <tbody>
+    {% for hit in group.hits %}
+      <tr>
+        <td class="c-img">{% if thumbs.get(hit.site_thumb) %}<img class="thumb sm" src="{{ thumbs[hit.site_thumb] }}" alt="">{% endif %}</td>
+        <td>
+          <a class="url" href="{{ hit.site_url }}">{{ hit.site_url }}</a>
+          {% for p in hit.pages[:6] %}<a class="page" href="{{ p }}">{{ p }}</a>{% endfor %}
+          {% if hit.pages|length > 6 %}<span class="muted small">et {{ hit.pages|length - 6 }} autre{{ 's' if hit.pages|length - 6 > 1 }} page{{ 's' if hit.pages|length - 6 > 1 }}</span>{% endif %}
+        </td>
+        <td class="c-conf">{{ confidence_labels.get(hit.confidence, hit.confidence) }}<span class="muted small"> · {{ (hit.score * 100)|round|int }} %</span></td>
+        <td class="c-dec">{{ decision_labels.get(hit.decision or '', '—') }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</article>
+{%- endmacro -%}
 <!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Nyra - Rapport de detection</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rapport Nyra{% if organization %} — {{ organization }}{% endif %}</title>
 <style>
   :root {
-    --expire: #b3261e;
-    --urgent: #e08600;
-    --soon: #c9a000;
-    --ok: #2e7d32;
-    --unknown: #6b6b6b;
-    --border: #ddd;
-    --bg: #fafafa;
+    --ink: #111; --muted: #5f5f5f; --line: #e3e3e3; --soft: #f6f6f5;
+    --expired: #b42318; --urgent: #c4460a; --soon: #8a6a00; --ok: #1f7a3a; --unknown: #5f5f5f;
   }
-  body { font-family: -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 0; padding: 24px; background: #fff; color: #1a1a1a; }
-  h1 { font-size: 22px; margin-bottom: 4px; }
-  .meta { color: #666; font-size: 13px; margin-bottom: 20px; }
-  .stats { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
-  .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 16px; font-size: 13px; }
-  .stat strong { display: block; font-size: 18px; }
-  section { margin-bottom: 32px; }
-  h2 { font-size: 16px; border-bottom: 2px solid #222; padding-bottom: 6px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { border: 1px solid var(--border); padding: 8px; text-align: left; vertical-align: top; }
-  th { background: var(--bg); position: sticky; top: 0; }
-  img.thumb { max-width: 140px; max-height: 140px; display: block; border: 1px solid var(--border); border-radius: 4px; }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; color: #fff; }
-  .badge.expire { background: var(--expire); }
-  .badge.urgent { background: var(--urgent); }
-  .badge.soon { background: var(--soon); }
-  .badge.ok { background: var(--ok); }
-  .badge.unknown { background: var(--unknown); }
-  .pages a { display: block; font-size: 12px; word-break: break-all; }
-  .empty { color: #888; font-style: italic; padding: 16px 0; }
-  .score { font-variant-numeric: tabular-nums; }
-  .not-checked { color: #888; font-style: italic; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 40px 48px; font: 14px/1.45 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; color: var(--ink); background: #fff; }
+  .top { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid var(--ink); padding-bottom: 16px; }
+  .brand { font-size: 13px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+  h1 { font-size: 28px; margin: 6px 0 0; letter-spacing: -.02em; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 24px 0 8px; }
+  .tile { border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; }
+  .tile strong { display: block; font-size: 26px; letter-spacing: -.02em; }
+  .tile.alert strong { color: var(--expired); }
+  h2 { font-size: 18px; margin: 36px 0 4px; }
+  h2 + p { margin: 0 0 14px; }
+  .ref { border: 1px solid var(--line); border-radius: 12px; margin: 0 0 14px; overflow: hidden; break-inside: avoid; }
+  .ref-head { display: grid; grid-template-columns: 72px 1fr auto; gap: 14px; align-items: center; padding: 14px; background: var(--soft); }
+  .ref-head h3 { margin: 0 0 4px; font-size: 15px; word-break: break-all; }
+  .ref-head p { margin: 0; }
+  .count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+  .thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; background: #fff; }
+  .thumb.sm { width: 56px; height: 56px; }
+  .thumb.empty { background: var(--line); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-top: 1px solid var(--line); }
+  th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+  .c-img { width: 84px; } .c-conf { width: 150px; } .c-dec { width: 110px; }
+  a { color: inherit; }
+  a.url { display: block; font-size: 12px; word-break: break-all; }
+  a.page { display: block; font-size: 12px; color: var(--muted); word-break: break-all; margin-top: 2px; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid currentColor; }
+  .s-expired { color: var(--expired); } .s-urgent { color: var(--urgent); } .s-soon { color: var(--soon); }
+  .s-ok { color: var(--ok); } .s-unknown { color: var(--unknown); }
+  .nf { width: 100%; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .nf td { vertical-align: middle; }
+  .empty-note { color: var(--muted); font-style: italic; padding: 8px 0; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
+  @media (max-width: 720px) { body { padding: 20px 16px; } .tiles { grid-template-columns: repeat(2, 1fr); } .c-conf, .c-dec { width: auto; } }
+  @media print {
+    body { padding: 0; font-size: 12px; }
+    @page { margin: 14mm; }
+    a { text-decoration: none; }
+    .ref, .tile { break-inside: avoid; }
+  }
 </style>
 </head>
 <body>
-  <h1>Nyra — Rapport de detection</h1>
-  <div class="meta">Genere le {{ generated_at }} — fenetre : expire ou expirant sous {{ within_days }} jours</div>
-
-  <div class="stats">
-    <div class="stat"><strong>{{ stats.get('reference_images', '-') }}</strong>references</div>
-    <div class="stat"><strong>{{ stats.get('pages_crawled', '-') }}</strong>pages crawlees</div>
-    <div class="stat"><strong>{{ stats.get('site_images', '-') }}</strong>images site</div>
-    <div class="stat"><strong>{{ confirmed|length }}</strong>matches confirmes</div>
-    <div class="stat"><strong>{{ to_verify|length }}</strong>a verifier</div>
-    <div class="stat"><strong>{{ not_found|length }}</strong>non trouvees</div>
+  <div class="top">
+    <div>
+      <div class="brand">Nyra{% if organization %} · {{ organization }}{% endif %}</div>
+      <h1>Visuels sous droits trouvés en ligne</h1>
+    </div>
+    <div class="muted small" style="text-align:right">
+      Généré le {{ generated_at }}<br>
+      Fenêtre : expirés ou expirant sous {{ within_days }} jours
+    </div>
   </div>
 
-  <section>
-    <h2>Matches confirmes ({{ confirmed|length }})</h2>
-    {% if confirmed %}
-    <table>
-      <thead>
-        <tr>
-          <th>Reference</th>
-          <th>Trouve sur le site</th>
-          <th>Expiration</th>
-          <th>Statut</th>
-          <th>Page(s)</th>
-          <th>URL image</th>
-          <th>Niveau / score</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in confirmed %}
-        <tr>
-          <td>
-            {% if r.ref_thumbnail %}<img class="thumb" src="{{ r.ref_thumbnail }}" alt="ref">{% endif %}
-            <div>{{ r.filename }}</div>
-            {% if r.credit %}<div style="font-size:11px;color:#666;">{{ r.credit }}</div>{% endif %}
-          </td>
-          <td>
-            {% if r.site_thumbnail %}<img class="thumb" src="{{ r.site_thumbnail }}" alt="site">{% endif %}
-          </td>
-          <td>{{ r.expiry_date or "inconnue" }}{% if r.days_left is not none %}<div style="font-size:11px;color:#666;">{{ r.days_left }} j</div>{% endif %}</td>
-          <td><span class="badge {{ {'expire':'expire','<30j':'urgent','<90j':'soon','ok':'ok','inconnue':'unknown'}[r.status] }}">{{ r.status }}</span></td>
-          <td class="pages">{% for p in r.pages %}<a href="{{ p }}" target="_blank" rel="noopener">{{ p }}</a>{% endfor %}</td>
-          <td><a href="{{ r.site_url }}" target="_blank" rel="noopener">{{ r.site_url }}</a></td>
-          <td class="score">{{ r.level }} · {{ "%.2f"|format(r.score) }}<br>{{ r.confidence }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <div class="empty">Aucun match confirme dans cette fenetre.</div>
-    {% endif %}
-  </section>
+  <div class="tiles">
+    <div class="tile{{ ' alert' if summary.expired_online }}"><strong>{{ summary.expired_online }}</strong>visuel{{ 's' if summary.expired_online != 1 }} expiré{{ 's' if summary.expired_online != 1 }} encore en ligne</div>
+    <div class="tile"><strong>{{ summary.urgent_online }}</strong>expire{{ 'nt' if summary.urgent_online != 1 }} sous 30 jours</div>
+    <div class="tile"><strong>{{ summary.to_verify }}</strong>à vérifier</div>
+    <div class="tile"><strong>{{ summary.not_found }}</strong>non trouvé{{ 's' if summary.not_found != 1 }}</div>
+  </div>
+  <p class="muted small">{{ stats.get('reference_images', 0) }} références comparées à {{ stats.get('site_images', 0) }} images lues sur {{ stats.get('pages_crawled', 0) }} pages. Les occurrences marquées « faux positif » ne figurent pas dans ce rapport.</p>
 
-  <section>
-    <h2>A verifier ({{ to_verify|length }})</h2>
-    {% if to_verify %}
-    <table>
-      <thead>
-        <tr>
-          <th>Reference</th>
-          <th>Trouve sur le site</th>
-          <th>Expiration</th>
-          <th>Statut</th>
-          <th>Page(s)</th>
-          <th>URL image</th>
-          <th>Niveau / score</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in to_verify %}
-        <tr>
-          <td>
-            {% if r.ref_thumbnail %}<img class="thumb" src="{{ r.ref_thumbnail }}" alt="ref">{% endif %}
-            <div>{{ r.filename }}</div>
-            {% if r.credit %}<div style="font-size:11px;color:#666;">{{ r.credit }}</div>{% endif %}
-          </td>
-          <td>
-            {% if r.site_thumbnail %}<img class="thumb" src="{{ r.site_thumbnail }}" alt="site">{% endif %}
-          </td>
-          <td>{{ r.expiry_date or "inconnue" }}{% if r.days_left is not none %}<div style="font-size:11px;color:#666;">{{ r.days_left }} j</div>{% endif %}</td>
-          <td><span class="badge {{ {'expire':'expire','<30j':'urgent','<90j':'soon','ok':'ok','inconnue':'unknown'}[r.status] }}">{{ r.status }}</span></td>
-          <td class="pages">{% for p in r.pages %}<a href="{{ p }}" target="_blank" rel="noopener">{{ p }}</a>{% endfor %}</td>
-          <td><a href="{{ r.site_url }}" target="_blank" rel="noopener">{{ r.site_url }}</a></td>
-          <td class="score">{{ r.level }} · {{ "%.2f"|format(r.score) }}<br>{{ r.confidence }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <div class="empty">Rien a verifier.</div>
-    {% endif %}
-  </section>
+  <h2>Trouvés sur le site</h2>
+  <p class="muted">Correspondance confirmée ou probable, du plus urgent au moins urgent.</p>
+  {% for group in confirmed %}{{ reference(group) }}{% else %}<p class="empty-note">Aucun visuel trouvé dans cette fenêtre.</p>{% endfor %}
 
-  <section>
-    <h2>Non trouvees sur le site ({{ not_found|length }})</h2>
-    <p class="meta" style="margin-bottom:12px;">
-      References comparees a toutes les images du site sans resultat. Une
-      ligne en italique n'a pas encore ete comparee (pas de crawl/match
-      depuis son ajout) — ce n'est pas une confirmation d'absence.
-    </p>
-    {% if not_found %}
-    <table>
-      <thead>
-        <tr>
-          <th>Reference</th>
-          <th>Expiration</th>
-          <th>Statut</th>
-          <th>Verification</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for r in not_found %}
-        <tr>
-          <td>
-            {% if r.ref_thumbnail %}<img class="thumb" src="{{ r.ref_thumbnail }}" alt="ref">{% endif %}
-            <div>{{ r.filename }}</div>
-            {% if r.credit %}<div style="font-size:11px;color:#666;">{{ r.credit }}</div>{% endif %}
-          </td>
-          <td>{{ r.expiry_date or "inconnue" }}{% if r.days_left is not none %}<div style="font-size:11px;color:#666;">{{ r.days_left }} j</div>{% endif %}</td>
-          <td><span class="badge {{ {'expire':'expire','<30j':'urgent','<90j':'soon','ok':'ok','inconnue':'unknown'}[r.status] }}">{{ r.status }}</span></td>
-          <td>
-            {% if r.compared %}Comparee a tout le site, aucune correspondance{% else %}<span class="not-checked">Pas encore comparee</span>{% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-    {% else %}
-    <div class="empty">Toutes les references dans cette fenetre ont au moins un resultat.</div>
-    {% endif %}
-  </section>
+  <h2>À vérifier</h2>
+  <p class="muted">Ressemblance plus faible : un contrôle visuel s'impose avant toute action.</p>
+  {% for group in to_verify %}{{ reference(group) }}{% else %}<p class="empty-note">Rien à vérifier.</p>{% endfor %}
+
+  <h2>Non trouvés</h2>
+  <p class="muted">« Pas encore comparée » signifie que la référence a été ajoutée après la dernière comparaison : ce n'est pas une preuve d'absence.</p>
+  {% if not_found %}
+  <table class="nf">
+    <thead><tr><th class="c-img"></th><th>Référence</th><th>Échéance</th><th>Vérification</th></tr></thead>
+    <tbody>
+    {% for item in not_found %}
+      <tr>
+        <td class="c-img">{% if thumbs.get(item.ref_thumb) %}<img class="thumb sm" src="{{ thumbs[item.ref_thumb] }}" alt="">{% endif %}</td>
+        <td>{{ item.filename }}{% if item.credit %}<div class="muted small">{{ item.credit }}</div>{% endif %}</td>
+        <td>{{ badge(item.status) }} <span class="muted small">{{ days(item) }}</span></td>
+        <td>{% if item.compared %}Comparée, rien trouvé{% else %}<span class="muted">Pas encore comparée</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="empty-note">Toutes les références de cette fenêtre ont au moins une occurrence.</p>{% endif %}
+
+  <footer>Rapport produit par Nyra. Détection automatique par empreinte perceptuelle et similarité visuelle ; les correspondances « à vérifier » demandent une confirmation humaine.</footer>
 </body>
 </html>

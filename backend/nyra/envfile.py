@@ -1,8 +1,9 @@
 """Load a repo-root `.env` into the process environment.
 
-`nyra ui` switches to Supabase when `DATABASE_URL` is set. A file on disk
-does nothing until something reads it: this does that, without overriding
-variables already present in the environment.
+`nyra serve`, `nyra worker` and the `nyra cloud-*` commands read their
+Supabase settings from the environment. A file on disk does nothing until
+something reads it: this does that, without overriding variables already
+present in the environment.
 """
 
 from __future__ import annotations

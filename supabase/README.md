@@ -1,99 +1,69 @@
 # Nyra — schéma Supabase
 
-Migrations SQL pour faire tourner Nyra sur Supabase (Postgres +
-Auth + Storage) au lieu du SQLite local actuel. **Rien n'a été touché sur
-un projet Supabase réel** — ces fichiers sont prêts à être appliqués quand
-le projet sera créé.
-
-Testées de bout en bout sur un Postgres 16 + pgvector local (extensions,
-tables, triggers, policies RLS avec de vrais scénarios multi-org/multi-rôle
-— voir plus bas) avant d'être livrées ici.
-
-## Contenu
+Migrations SQL du produit hébergé (Postgres + Auth + Storage). Le détail
+des tables est dans `docs/DATABASE_SCHEMA.md`.
 
 ```
 supabase/migrations/
-  migration_001_extensions.sql                  pgcrypto, vector (pgvector)
-  migration_002_organizations_and_memberships.sql   organizations, memberships, RLS helpers
-  migration_003_pipeline_core.sql                sites, reference_images, pages, site_images,
-                                                    image_pages, matches, reviews, match_meta
-  migration_004_crawl_runs_and_reports.sql       historique des crawls + rapports générés
-  migration_005_row_level_security.sql           policies RLS sur toutes les tables
-  migration_006_storage_buckets.sql              buckets refs/site-images/reports + policies
-  migration_007_organization_slug.sql            slug en minuscules, chiffres et tirets
+  20260920000001_extensions.sql                  pgcrypto, vector (pgvector)
+  20260920000002_organizations_and_memberships.sql
+  20260920000003_pipeline_core.sql               sites, références, pages, images, matches, reviews
+  20260920000004_crawl_runs_and_reports.sql
+  20260920000005_row_level_security.sql
+  20260920000006_storage_buckets.sql             buckets refs / site-images / reports + policies
+  20260920000007_organization_slug.sql
+  20260923000008_thumbnails_and_flip_hashes.sql  vignettes, hash miroir, index content_hash
+  20260923000009_jobs.sql                        file de tâches (web → worker)
+  20260923000010_org_settings.sql                réglages par organisation
 ```
 
-À coller dans le SQL Editor du dashboard, dans l'ordre `001` → `007`.
-Le CLI Supabase (`supabase db push`) ignore ces noms : il n'accepte que
-des fichiers préfixés par un timestamp `YYYYMMDDHHMMSS_`.
+Les noms suivent le format attendu par le CLI Supabase
+(`YYYYMMDDHHMMSS_nom.sql`).
 
-Les deux extensions (`pgcrypto`, `vector`) sont sur la liste blanche de
-Supabase et s'activent directement depuis le SQL, pas besoin de passer par
-l'onglet Database > Extensions du dashboard avant.
+## Appliquer les migrations
 
-## Comment j'ai validé ces fichiers
+**Projet neuf** : `supabase link --project-ref <ref>` puis
+`supabase db push`, ou coller les fichiers dans l'ordre dans le SQL Editor.
 
-Sans accès à un vrai projet Supabase dans cette session, j'ai monté un
-Postgres 16 + pgvector local, recréé des stubs minimaux de `auth.users`,
-`auth.uid()` (lu depuis `request.jwt.claims`, comme le fait réellement
-Supabase) et `storage.buckets`/`storage.objects`, puis :
+**Projet où 001 à 007 ont déjà été collées à la main** (avant le passage
+au format horodaté) : le CLI ne sait pas qu'elles sont appliquées.
+Marquez-les comme telles, puis poussez les suivantes :
 
-1. Appliqué les 6 fichiers dans l'ordre — aucune erreur SQL.
-2. Créé 2 organisations, 1 admin et 1 client dans l'organisation A, des
-   lignes dans `reference_images`/`site_images`/`matches`/`reviews`, et
-   vérifié en changeant de rôle Postgres (`set local role authenticated`
-   + `set local request.jwt.claims`) que :
-   - un membre ne voit que les lignes de sa propre organisation (testé sur
-     `reference_images` et sur `storage.objects`),
-   - un `client` peut écrire dans `reviews` mais pas dans
-     `reference_images`/`site_images` (réservé aux `admin`),
-   - un `client` ne peut pas écrire une review pointant vers une autre
-     organisation,
-   - un utilisateur sans session (`auth.uid()` null) ne voit rien,
-   - un `admin` peut uploader dans le bucket `refs` de son organisation,
-     un `client` non.
+```bash
+supabase migration repair --status applied 20260920000001 20260920000002 20260920000003 \
+  20260920000004 20260920000005 20260920000006 20260920000007
+supabase db push
+```
 
-Ce n'est pas un test automatisé qui tourne en CI (pas de projet Supabase
-disponible pour ça) — si vous voulez le rejouer, le script est dans
-l'historique de cette conversation ; il vaut le coup de le refaire une
-fois le vrai projet créé, au moins une fois.
+Ou collez simplement 008, 009 et 010 dans le SQL Editor.
 
-## Modèle retenu (voir la conversation pour le détail des arbitrages)
+Après 008, les références et images existantes n'ont ni vignette ni hash
+miroir : le worker les complète via une tâche `index` (voir
+`docs/DEPLOYMENT.md`).
 
-- **Un seul projet Supabase partagé**, isolation par organisation via
-  `org_id` + Row Level Security — pas un projet par client.
-- **Deux rôles** : `admin` (équipe Axel — bibliothèque, crawl, seuils,
-  gestion des membres) et `client` (lecture + revue des matches
-  uniquement).
-- **Le pipeline (Playwright + CLIP) reste un serveur dédié**, pas des
-  Edge Functions — il se connecte à Postgres avec la clé service-role
-  (qui bypasse RLS ; l'autorisation pour les actions du pipeline est
-  vérifiée côté backend Python, pas par les policies). Les policies RLS
-  sont le filet de sécurité pour tout accès direct à Postgres/Storage en
-  dehors du backend.
-- **pgvector** pour les embeddings CLIP (`vector(512)`, dimension de
-  ViT-B-32) au lieu des bytes bruts stockés en SQLite — pas d'index ANN
-  pour l'instant, le matching compare exhaustivement (voir
-  `0003_pipeline_core.sql` pour le détail).
-- **Tout dans Supabase Storage** : `refs/{org_id}/...`,
-  `site-images/{org_id}/...`, `reports/{org_id}/{report_id}/...`.
-- **On part propre** : pas de reprise des données locales existantes.
+## À régler dans le dashboard
 
-## Ce qui n'est PAS dans ces fichiers
+- **Authentication > Providers > Email** : désactiver *Allow new users to
+  sign up*. L'accès se fait sur invitation (`nyra cloud-invite`).
+- **Authentication > URL Configuration** : *Site URL* et redirections
+  `<site>/connexion`, `<site>/mot-de-passe`.
 
-- **La connexion réelle à un projet Supabase** — personne n'a créé de
-  projet, ces migrations n'ont jamais touché une instance Supabase.
-- **Le code applicatif** (`backend/nyra/db.py`, `fetch.py`,
-  `refs.py`, `report.py`, `api.py`) parle encore à SQLite + au disque
-  local. Faire tourner le produit sur ce schéma demande de réécrire la
-  couche `db.py` (connexion Postgres, ids en `uuid`, `org_id` sur les
-  fonctions), et de faire passer `fetch.py`/`refs.py`/`report.py` par
-  l'API Storage au lieu de `Path.write_bytes`/`open()`. C'est le chantier
-  suivant une fois le projet Supabase créé.
-- **L'intégration Brandcenter** — explicitement mise de côté pour plus
-  tard ; le connecteur `RefSource` (`backend/nyra/refs.py`) reste
-  le point d'extension prévu pour ça, indépendant de ce schéma.
-- **La première organisation/le premier admin** — se créent via la clé
-  service-role au moment de l'onboarding d'un client (voir le commentaire
-  dans `migration_005_row_level_security.sql` sur pourquoi ça ne peut pas se faire
-  depuis une session utilisateur classique).
+## Modèle
+
+- Un seul projet Supabase, isolation par `org_id` + Row Level Security.
+- Deux rôles : `admin` (bibliothèque, lectures, rapports, réglages) et
+  `client` (lecture et décisions).
+- Le backend se connecte avec un rôle privilégié (bypass RLS) et filtre
+  lui-même sur `org_id` ; les policies RLS sont le filet de sécurité pour
+  tout autre accès.
+- pgvector pour les embeddings CLIP (`vector(512)`).
+- Tout le binaire dans Storage : `refs/{org_id}/...`,
+  `site-images/{org_id}/...`, `reports/{org_id}/{report_id}/...`,
+  vignettes dans `{org_id}/thumbs/`.
+
+## Tests
+
+`backend/tests/conftest.py` applique ces migrations sur un Postgres
+jetable (avec des bouchons minimaux pour `auth` et `storage`) : voir
+`docs/DEVELOPMENT.md`. Ne jamais pointer `TEST_DATABASE_URL` vers un vrai
+projet.

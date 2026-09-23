@@ -1,50 +1,67 @@
-"""Downloading, normalizing, and caching images discovered while crawling.
+"""Downloading and normalizing images found while crawling.
 
-One function, `fetch_and_store`, is the whole public surface used by
-crawl.py: given an image URL it downloads (unless already cached), filters
-out anything too small to be a real content image, computes hashes (and
-optionally a CLIP embedding), stores the bytes on disk, and upserts the row
-in `site_images`. It's idempotent on URL so re-crawls don't re-download.
+Everything that turns raw bytes into what the pipeline stores lives here:
+a size-capped download (through `netguard`, so it can't reach private
+addresses), a decoder that refuses decompression bombs, the size filter
+that drops icons and tracking pixels, the perceptual hashes, and a small
+JPEG thumbnail that the interface and reports show instead of the
+original. Persistence is the caller's job (see `crawl.CrawlStore`).
 """
 
 from __future__ import annotations
 
 import hashlib
 import io
-from pathlib import Path
+import warnings
+from dataclasses import dataclass
 from typing import Optional
 
 import httpx
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
-from nyra import db
-from nyra.config import Config
-from nyra.match import compute_hashes, compute_clip_embedding
+from nyra import netguard
+from nyra.match import compute_hashes
+
+THUMB_SIZE = 320
+
+_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+    "image/gif": ".gif",
+    "image/avif": ".avif",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tif",
+}
 
 
 def content_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def cache_path_for(cache_dir: Path, digest: str, content_type: Optional[str]) -> Path:
-    ext = {
-        "image/jpeg": ".jpg",
-        "image/png": ".png",
-        "image/webp": ".webp",
-        "image/gif": ".gif",
-        "image/svg+xml": ".svg",
-        "image/avif": ".avif",
-    }.get((content_type or "").split(";")[0].strip().lower(), ".bin")
-    return cache_dir / digest[:2] / f"{digest}{ext}"
+def extension_for(content_type: Optional[str], image: Optional[Image.Image] = None) -> str:
+    ext = _EXTENSIONS.get((content_type or "").split(";")[0].strip().lower())
+    if ext:
+        return ext
+    if image is not None and image.format:
+        return {"JPEG": ".jpg", "PNG": ".png", "WEBP": ".webp", "GIF": ".gif"}.get(image.format, ".bin")
+    return ".bin"
 
 
-def download(url: str, client: httpx.Client, timeout: float) -> Optional[tuple[bytes, Optional[str]]]:
+def decode(data: bytes, max_pixels: int) -> Optional[Image.Image]:
+    """Open and fully load an image, or None if it's unreadable or too large."""
+    previous = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = max_pixels
     try:
-        resp = client.get(url, timeout=timeout, follow_redirects=True)
-        resp.raise_for_status()
-    except httpx.HTTPError:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            img = Image.open(io.BytesIO(data))
+            img.load()
+        return img
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
         return None
-    return resp.content, resp.headers.get("content-type")
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous
 
 
 def meets_min_size(img: Image.Image, min_side_px: int) -> bool:
@@ -52,63 +69,77 @@ def meets_min_size(img: Image.Image, min_side_px: int) -> bool:
     return min(width, height) >= min_side_px
 
 
-def fetch_and_store(
-    conn,
+def make_thumbnail(img: Image.Image, size: int = THUMB_SIZE) -> bytes:
+    rgb = ImageOps.exif_transpose(img).convert("RGB")
+    rgb.thumbnail((size, size))
+    buf = io.BytesIO()
+    rgb.save(buf, format="JPEG", quality=78, optimize=True)
+    return buf.getvalue()
+
+
+@dataclass
+class ProcessedImage:
+    content_hash: str
+    width: int
+    height: int
+    phash: str
+    dhash: str
+    thumbnail: bytes
+    extension: str
+    rgb: Image.Image  # kept in memory only, for the embedding step
+
+
+def process_image(
+    data: bytes,
+    content_type: Optional[str],
     *,
-    url: str,
-    page_id: int,
-    cache_dir: Path,
-    client: httpx.Client,
-    config: Config,
-    compute_embeddings: bool = True,
-) -> Optional[int]:
-    """Fetch (or reuse) a site image, filter by size, hash it, and link it to a page.
-
-    Returns (site_images.id, is_new). is_new is false when the URL was already
-    hashed. The id is None when the image was skipped (too small, unreachable,
-    or unreadable).
-    """
-    existing = conn.execute("SELECT * FROM site_images WHERE url = ?", (url,)).fetchone()
-    if existing is not None and existing["phash"] is not None:
-        db.link_image_page(conn, existing["id"], page_id)
-        return existing["id"], False
-
-    fetched = download(url, client, timeout=config.crawl.request_timeout_seconds)
-    if fetched is None:
-        return None, False
-    data, content_type = fetched
-
-    try:
-        img = Image.open(io.BytesIO(data))
-        img.load()
-    except UnidentifiedImageError:
-        return None, False
-    except OSError:
-        return None, False
-
-    if not meets_min_size(img, config.crawl.min_image_side_px):
-        return None, False
-
-    digest = content_hash(data)
-    local_path = cache_path_for(cache_dir, digest, content_type)
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-    if not local_path.exists():
-        local_path.write_bytes(data)
-
+    min_side_px: int,
+    max_pixels: int,
+) -> Optional[ProcessedImage]:
+    """Decode, filter and hash one downloaded image. None means "skip it"."""
+    img = decode(data, max_pixels)
+    if img is None or not meets_min_size(img, min_side_px):
+        return None
     rgb = img.convert("RGB")
     phash, dhash = compute_hashes(rgb)
-    embedding = compute_clip_embedding(rgb, config.match) if compute_embeddings else None
-
-    image_id = db.upsert_site_image(
-        conn,
-        url=url,
-        local_path=str(local_path),
-        content_hash=digest,
+    return ProcessedImage(
+        content_hash=content_hash(data),
         width=img.size[0],
         height=img.size[1],
         phash=phash,
         dhash=dhash,
-        embedding=embedding,
+        thumbnail=make_thumbnail(img),
+        extension=extension_for(content_type, img),
+        rgb=rgb,
     )
-    db.link_image_page(conn, image_id, page_id)
-    return image_id, True
+
+
+def download(url: str, client: httpx.Client, *, timeout: float, max_bytes: int) -> Optional[tuple[bytes, Optional[str]]]:
+    """Body and content type, or None on any HTTP error, refusal, or oversize body."""
+    try:
+        with client.stream("GET", url, timeout=timeout, follow_redirects=True) as resp:
+            if resp.status_code >= 400:
+                return None
+            data = netguard.read_capped(resp, max_bytes)
+            content_type = resp.headers.get("content-type")
+    except httpx.HTTPError:
+        return None
+    if not data:
+        return None
+    return data, content_type
+
+
+async def adownload(
+    url: str, client: httpx.AsyncClient, *, timeout: float, max_bytes: int
+) -> Optional[tuple[bytes, Optional[str]]]:
+    try:
+        async with client.stream("GET", url, timeout=timeout, follow_redirects=True) as resp:
+            if resp.status_code >= 400:
+                return None
+            data = await netguard.aread_capped(resp, max_bytes)
+            content_type = resp.headers.get("content-type")
+    except httpx.HTTPError:
+        return None
+    if not data:
+        return None
+    return data, content_type

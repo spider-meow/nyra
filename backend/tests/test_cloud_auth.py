@@ -103,7 +103,7 @@ def test_verify_jwt_rs256_via_jwks():
 
 def test_require_member_and_admin_dependencies(cloud_database_url, cloud_org):
     fastapi = pytest.importorskip("fastapi")
-    from fastapi import FastAPI, Depends
+    from fastapi import Depends, FastAPI
     from fastapi.testclient import TestClient
 
     from nyra.cloud import db as cloud_db

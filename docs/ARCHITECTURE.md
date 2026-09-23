@@ -1,145 +1,127 @@
 # Architecture
 
-Nyra is a deterministic pipeline, not an agent: every step is a plain
-function or CLI command that reads inputs, does one job, and writes outputs
-to a shared SQLite database. There is no LLM anywhere in the runtime path —
-matching decisions come from perceptual hashing and CLIP embeddings, both
-fully reproducible given the same inputs and `config.yaml`.
+Nyra is a deterministic pipeline, not an agent: every step reads inputs,
+does one job, and writes outputs. There is no LLM anywhere in the runtime
+path — matching decisions come from perceptual hashes and CLIP embeddings,
+reproducible given the same inputs and thresholds.
 
-## Pipeline overview
+## Processes
 
 ```
- refs/ + refs.csv                 https://target-site.com
-        |                                   |
-        v                                   v
- +--------------+                  +------------------+
- |   refs.py    |                  |    crawl.py      |
- |  (ingest)    |                  |  (Playwright)     |
- +------+-------+                  +---------+--------+
-        |                                    |
-        | phash/dhash/CLIP                   | page discovery
-        | per reference image                | (sitemap -> links)
-        v                                    v
- +-----------------------------------------------------+
- |                     db.py (SQLite)                   |
- |  reference_images  pages  site_images  image_pages    |
- +------------------------+------------------------------+
-                           |
-                           | fetch.py downloads each
-                           | discovered image URL,
-                           | filters by size, hashes it
-                           v
- +-----------------------------------------------------+
- |                     match.py                          |
- |  level 1: pHash/dHash Hamming distance                |
- |  level 2: CLIP cosine similarity (unresolved pairs)   |
- |  writes rows into matches                             |
- +------------------------+------------------------------+
-                           |
-                           v
- +-----------------------------------------------------+
- |                     report.py                         |
- |  report.html (self-contained, base64 thumbnails)      |
- |  matches.csv                                           |
- +-----------------------------------------------------+
+ browser ──HTTPS──▶  web  (nyra serve)            worker  (nyra worker) × N
+                     FastAPI + built interface     Chromium, CLIP
+                     validates, stores, enqueues   claims jobs, runs them
+                          │        │                    │        │
+                          ▼        ▼                    ▼        ▼
+                     ┌──────────────────────────────────────────────┐
+                     │ Supabase: Postgres (+ jobs table), Storage,  │
+                     │ Auth (JWTs verified locally by the backend)  │
+                     └──────────────────────────────────────────────┘
 ```
 
-The Python package lives in `backend/nyra`. The interface lives in
-`frontend/` and is served by `api.py`. `cli.py` wires the pipeline end to
-end (`run-all`); every other module can be imported on its own, which is
-what the test suite does.
+- **web** answers every HTTP request quickly. Uploading a reference hashes
+  it and stores it (seconds); anything slower — reading a site,
+  comparing, computing embeddings, building a report — becomes a row in
+  `jobs`. The web image has neither Chromium nor torch.
+- **worker** claims queued jobs (`FOR UPDATE SKIP LOCKED`), at most one
+  running job per organization, several organizations in parallel across
+  workers. It heartbeats every 30 s and while it reports progress; a job
+  whose heartbeat stops (crash, redeploy) is marked failed by the next
+  worker instead of staying "running" forever. Cancellation is a flag the
+  worker checks between steps.
+- The interface polls one cheap endpoint (`jobs/current`) — every 2 s
+  while something runs, every 20 s otherwise — and refreshes the lists a
+  finished job changed.
 
-## Module responsibilities
+Job kinds: `crawl` (then compare), `match`, `index` (fill in embeddings,
+mirror hashes and thumbnails — queued after every upload, also backfills
+older rows), `report`.
 
-| Module | Responsibility | Depends on |
+## Pipeline
+
+```
+ reference upload ──▶ hashes + mirror hashes + thumbnail ──▶ index job: CLIP embedding
+                                                                   │
+ site URL ──▶ crawl: sitemaps (robots.txt Sitemap:, gzip) + internal links
+              Chromium pages in parallel, cookie banners / age gates dismissed,
+              images blocked in the browser (the DOM already lists them)
+              ──▶ images downloaded through netguard, size-capped
+              ──▶ same bytes seen before? reuse · too small? skip and remember
+              ──▶ hashes + thumbnail + CLIP (batched) ──▶ stored
+                                                                   │
+                                                          match (incremental)
+                                                                   │
+                                  review in the interface ──▶ report (without false positives)
+```
+
+## One pipeline, two stores
+
+`crawl.crawl_site` and `match.run_matching` don't know where data lives.
+They talk to a store:
+
+| Interface | CLI (SQLite + local disk) | Hosted (Postgres + Supabase Storage) |
 |---|---|---|
-| `config.py` | Load `config.yaml` into typed dataclasses (`CrawlConfig`, `MatchConfig`, `ReportConfig`). Nothing else reads the YAML file directly. | — |
-| `db.py` | SQLite schema + all reads/writes. Every write is an upsert keyed on a natural key (`filename` for refs, `url` for pages/images), so re-running any step is idempotent. | `config.py` (implicitly, via callers) |
-| `refs.py` | `RefSource` abstract interface + `CsvRefSource`. Reads `refs.csv` + an image folder, computes hashes/embeddings, upserts into `reference_images`. | `db.py`, `match.py` (for hashing functions) |
-| `crawl.py` | Discovers pages (sitemap.xml, falling back to internal-link BFS) and extracts image URLs from each page's rendered HTML. Drives a headless Playwright browser. | `db.py`, `fetch.py` |
-| `fetch.py` | Downloads a single image URL, filters out anything smaller than `min_image_side_px`, hashes it, caches the bytes on disk, upserts into `site_images`. | `db.py`, `match.py` (for hashing functions) |
-| `match.py` | Pure classification functions (`classify_level1`, `classify_level2`) plus `run_matching` (the DB-integrated pass) and `calibrate` (threshold sweep against hand-labeled ground truth). | `db.py` (only in `run_matching`/`calibrate`) |
-| `report.py` | Reads `matches` + joins, computes expiry urgency, renders `report.html` (Jinja2, base64 thumbnails) and `matches.csv`. | `db.py` |
-| `cli.py` | Typer commands wiring the above into `ingest-refs`, `crawl`, `match`, `report`, `run-all`, `calibrate`, `init-db`, `ui`. | all of the above |
-| `api.py` | Local HTTP API. Reads and writes the same SQLite file as the CLI, and serves `frontend/`. | all of the above |
+| `crawl.CrawlStore` | `db.LocalStore` | `cloud.store.CloudCrawlStore` |
+| `match.MatchStore` | `db.LocalStore` | `cloud.store.CloudMatchStore` |
+
+Grouping matches by reference, collapsing CDN variants, the dashboard
+numbers and the report itself are pure functions over plain dicts in
+`report.py`, used by the API, the worker and the CLI alike.
+
+## Module map
+
+| Module | Responsibility |
+|---|---|
+| `config.py` | `config.yaml` into typed dataclasses; per-organization overrides (whitelisted, validated, capped). |
+| `netguard.py` | Refuses any outbound request to a non-public address (private ranges, loopback, link-local/metadata, CGNAT), per redirect hop, in httpx and in the browser. Size-capped reads. |
+| `fetch.py` | Download (through netguard), decompression-bomb-safe decoding, size filter, hashes, thumbnail. |
+| `crawl.py` | URL canonicalization, HTML/sitemap parsing (pure), overlay dismissal, the async crawler. |
+| `match.py` | Hashes, CLIP (batched), pure classification, the vectorized comparison kernel, incremental orchestration, calibration sweeps. |
+| `refs.py` | `RefSource` (CSV + folder today, a DAM export later), strict expiry-date parsing, reference features. |
+| `report.py` | Grouping, dashboard numbers, report HTML/CSV. |
+| `db.py` | SQLite schema and `LocalStore` for the CLI. |
+| `cloud/api.py` | The web process. |
+| `cloud/worker.py` | The job runner. |
+| `cloud/jobs.py` | The queue (enqueue, claim, heartbeat, cancel, reap). |
+| `cloud/store.py` | Postgres + Storage behind the store interfaces. |
+| `cloud/db.py` | Pooled Postgres access, one query per screen (no N+1). |
+| `cloud/storage.py` | Supabase Storage; signs URLs in batches. |
+| `cloud/auth.py` | JWT verification (HS256 or JWKS) and membership/role checks. |
+
+## Security model
+
+- **No public sign-up.** Organizations are provisioned with the CLI;
+  people join by invitation. Disable "Allow new users to sign up" in the
+  Supabase dashboard too, or anyone holding the public anon key can still
+  create an (organization-less, powerless) account.
+- **Every route** under `/api/orgs/{org_id}` verifies the JWT locally and
+  the caller's membership; admin-only routes (library, crawls, settings,
+  reports) check the role. Reviews are open to every member and are
+  checked against the organization's own matches.
+- **The backend uses the service role**, which bypasses RLS; every query
+  filters on `org_id` itself. RLS policies are the safety net for any
+  other access path.
+- **Crawling is SSRF-guarded** (`netguard`), page counts are capped
+  (`crawl.max_pages_limit`), downloads and uploads are size- and
+  pixel-capped.
+- **Headers:** CSP (no inline scripts, only the Supabase origin for
+  connect/img), `X-Frame-Options: DENY`, `nosniff`, strict referrer.
 
 ## Why it's built this way
 
-**Two-level matching (pHash/dHash then CLIP).** Perceptual hashing is cheap
-(microseconds, no GPU) and catches the common case — the same image
-re-encoded, resized, or lightly compressed by a CDN. It produces a lot of
-false negatives on crops and text overlays, though, since those move the
-low-frequency image structure that pHash/dHash are built on. CLIP embeddings
-catch those cases but cost more to compute, so level 2 only ever runs on
-pairs level 1 already rejected — see `match.classify_pair`.
+**Two-level matching.** Perceptual hashes are microseconds per pair and
+catch the common case (same image re-encoded, resized, flipped). CLIP
+catches crops and overlays but is costlier and softer, so it only
+decides pairs the hashes didn't. See `MATCHING.md`.
 
-**Confidence bands, not a single yes/no.** A match is `haut` (high),
-`moyen` (medium), or `a_verifier` (needs manual review), driven by
-`config.yaml`'s `clip_similarity_high` / `_medium` / `_floor` thresholds
-(pHash/dHash hits are always `haut` — see `MATCHING.md` for why). The report
-puts `a_verifier` matches in their own section so a reviewer isn't stuck
-re-checking obvious hits.
+**Jobs in Postgres, not in memory.** A restart loses nothing, several web
+instances can sit behind a load balancer, the worker scales on its own,
+and history (`jobs`, `crawl_runs`) is queryable.
 
-**SQLite instead of an in-memory pipeline.** Every step reads/writes the
-same file, so `crawl` can be interrupted and resumed (`pages.status`),
-`match` can be re-run after tuning `config.yaml` without re-crawling, and
-`report` can be regenerated with a different `--within-days` window without
-recomputing anything upstream.
+**Thumbnails stored next to originals.** Lists and reports never load a
+full-size image; the browser gets short-lived signed URLs, signed in one
+request per list.
 
-**`RefSource` as an abstract interface.** The MVP's input is a hand-filled
-CSV + folder (`CsvRefSource`), but the brief for phase 2 is a Brandcenter
-DAM export. Anything that can yield `RefEntry` objects works as a drop-in
-replacement — `refs.ingest()` and everything downstream never see the CSV
-directly.
-
-**Pure functions where it matters for testing.** HTML/sitemap parsing
-(`crawl.extract_images_from_html`, `extract_internal_links`,
-`parse_srcset`) and match classification (`match.classify_level1/2`) take
-plain data in and return plain data out — no database, no browser, no
-network. That's what lets the test suite run in under half a second with no
-external dependencies (see `DEVELOPMENT.md`).
-
-## Data flow in detail
-
-1. **Ingest.** For each row in `refs.csv`, `refs.ingest()` opens the image,
-   computes `phash`/`dhash` (`imagehash`) and a normalized CLIP embedding
-   (`open_clip`), and upserts a row into `reference_images` keyed on
-   `filename`.
-2. **Crawl.** `crawl.crawl_site()` fetches `robots.txt` and `sitemap.xml`
-   with `httpx`, seeds a BFS queue from the sitemap (or the homepage if
-   there isn't one), then for each page: launches a Playwright page,
-   auto-scrolls to trigger lazy-loaded images, reads `page.content()`,
-   extracts image URLs (`<img>`, `<picture><source>`, CSS
-   `background-image` via a JS `getComputedStyle` pass, `og:image`,
-   `twitter:image`) and internal links, and hands each image URL to
-   `fetch.fetch_and_store()`. Every visited page is marked `done` in
-   `pages` so a second `crawl` run skips it (`--no-resume` disables this).
-3. **Fetch.** For each image URL not already in `site_images` with hashes
-   set, `fetch.fetch_and_store()` downloads the bytes, decodes with
-   Pillow, drops anything smaller than `min_image_side_px` on its shortest
-   side, writes the bytes to `data/site_images/<sha256 prefix>/<sha256>.<ext>`,
-   computes hashes/embedding, and upserts the row. It always links the
-   image to the current page in `image_pages`, even if the image itself was
-   already cached from an earlier page (an image can appear on more than
-   one page).
-4. **Match.** `match.run_matching()` clears the `matches` table and, for
-   every `(reference, site_image)` pair, calls `classify_pair()`: level 1
-   first (Hamming distance on both hashes, best of the two if either is
-   under threshold), then level 2 only if level 1 found nothing. Any hit is
-   upserted into `matches` with its level, score, and confidence.
-5. **Report.** `report.build_rows()` joins `matches` with `reference_images`
-   and `site_images`, computes `days_left`/`status` (`expire`, `<30j`,
-   `<90j`, `ok`, `inconnue`) from `expiry_date`, drops anything with more
-   than `--within-days` days left, sorts by urgency (expired/soonest first,
-   unknown-expiry last), and renders `report.html` + `matches.csv`.
-   Thumbnails are inlined as base64 JPEG data URIs so `report.html` opens
-   standalone, with no relative file dependencies.
-
-## What's deliberately out of the MVP
-
-See the project brief (top of the original issue) for the full list; in
-short: no accounts, no video, no open-web search, no
-"site images absent from the DAM" detection (needs the full DAM), no
-scheduled crawls/alerts, and no multi-site runs in one invocation. The
-`RefSource` interface and the `config.yaml`-driven thresholds are the two
-seams meant to make phase 2 additive rather than a rewrite.
+**Incremental matching.** A finished pass is remembered with a signature
+of the thresholds and model; the next pass only compares what's new,
+unless the signature changed.

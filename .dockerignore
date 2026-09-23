@@ -7,7 +7,7 @@
 .venv
 venv
 
-# Client data and local-mode state — never bake into an image layer
+# Client data and CLI state — never bake into an image layer
 refs/
 data/
 out/

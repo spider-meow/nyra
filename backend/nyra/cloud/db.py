@@ -1,28 +1,24 @@
-"""Postgres persistence for the multi-tenant (Supabase) product.
+"""Postgres persistence for the hosted (Supabase) product.
 
-Mirrors `nyra.db`'s shape (same kind of upsert-on-natural-key
-functions, same tables) but targets the schema in `supabase/migrations/`:
-uuid ids, an `org_id` on every row, and a few tables the local SQLite
-product doesn't have (`organizations`, `memberships`, `sites`,
-`crawl_runs`, `reports`) because they only make sense once there's more
-than one tenant and job state needs to survive a server restart.
+Targets the schema in `supabase/migrations/`: uuid ids and an `org_id` on
+every row. Every function takes a connection; callers get one from
+`connect()`, which hands out connections from a per-URL pool instead of
+opening a new TCP + TLS session to Supabase for every request.
 
-Every function here takes a connection (like `nyra.db`) rather
-than opening its own — callers use `connect()` as a context manager.
-The backend always connects with a privileged Postgres role (the
-`DATABASE_URL` in `.env.example`), which bypasses Row Level Security by
-virtue of being a normal table owner/superuser-ish role, not one of
-Supabase's `anon`/`authenticated` API roles — so every write here is
-implicitly trusted. Authorization (does this caller have the right role
-in this org?) is `cloud.auth`'s job, checked before these functions are
-ever called, not something RLS enforces for this connection. RLS (see
-`supabase/migrations/migration_005_row_level_security.sql`) is the safety net for anything that ever
-queries Postgres a different way.
+The backend connects with a privileged Postgres role (the `DATABASE_URL`
+in `.env.example`), which bypasses Row Level Security. Authorization
+(does this caller have the right role in this org?) is `cloud.auth`'s job,
+checked before these functions are called, and every query here filters
+on `org_id` itself. RLS (see the row_level_security migration) is the
+safety net for anything that queries Postgres a different way.
 """
 
 from __future__ import annotations
 
+import atexit
+import json
 import re
+import threading
 import unicodedata
 import uuid
 from contextlib import contextmanager
@@ -34,6 +30,7 @@ from urllib.parse import quote
 import psycopg
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 Row = dict[str, Any]
 
@@ -70,22 +67,51 @@ def normalize_database_url(database_url: str) -> str:
     )
 
 
+_pools: dict[str, ConnectionPool] = {}
+_pools_lock = threading.Lock()
+
+
+def _configure(conn: psycopg.Connection) -> None:
+    register_vector(conn)
+    conn.commit()
+
+
+def pool(database_url: str) -> ConnectionPool:
+    url = normalize_database_url(database_url)
+    with _pools_lock:
+        existing = _pools.get(url)
+        if existing is None:
+            existing = ConnectionPool(
+                url,
+                min_size=1,
+                max_size=10,
+                kwargs={"row_factory": dict_row},
+                configure=_configure,
+                open=True,
+                name="nyra",
+            )
+            _pools[url] = existing
+        return existing
+
+
+def close_pools() -> None:
+    with _pools_lock:
+        for existing in _pools.values():
+            existing.close()
+        _pools.clear()
+
+
+atexit.register(close_pools)
+
+
 @contextmanager
 def connect(database_url: str) -> Iterator[psycopg.Connection]:
-    conn = psycopg.connect(normalize_database_url(database_url), row_factory=dict_row)
-    register_vector(conn)
-    try:
+    """A pooled connection, committed on success and rolled back on error."""
+    with pool(database_url).connection() as conn:
         yield conn
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
 
 
 def ping(database_url: str) -> bool:
-    """Cheap connectivity check for /api/healthz."""
     with connect(database_url) as conn:
         conn.execute("SELECT 1")
     return True
@@ -110,12 +136,14 @@ def slugify(value: str) -> str:
 
 
 def create_organization(conn: psycopg.Connection, *, name: str, slug: str) -> uuid.UUID:
-    slug = slugify(slug)
     row = conn.execute(
-        "INSERT INTO organizations (name, slug) VALUES (%s, %s) RETURNING id",
-        (name, slug),
+        "INSERT INTO organizations (name, slug) VALUES (%s, %s) RETURNING id", (name, slugify(slug))
     ).fetchone()
     return row["id"]
+
+
+def get_organization(conn: psycopg.Connection, org_id: uuid.UUID) -> Optional[Row]:
+    return conn.execute("SELECT * FROM organizations WHERE id = %s", (org_id,)).fetchone()
 
 
 def get_organization_by_slug(conn: psycopg.Connection, slug: str) -> Optional[Row]:
@@ -129,8 +157,7 @@ def get_organization_by_slug(conn: psycopg.Connection, slug: str) -> Optional[Ro
 def add_membership(conn: psycopg.Connection, *, user_id: uuid.UUID, org_id: uuid.UUID, role: str) -> uuid.UUID:
     row = conn.execute(
         """
-        INSERT INTO memberships (user_id, org_id, role)
-        VALUES (%s, %s, %s)
+        INSERT INTO memberships (user_id, org_id, role) VALUES (%s, %s, %s)
         ON CONFLICT (user_id, org_id) DO UPDATE SET role = excluded.role
         RETURNING id
         """,
@@ -141,8 +168,7 @@ def add_membership(conn: psycopg.Connection, *, user_id: uuid.UUID, org_id: uuid
 
 def get_membership(conn: psycopg.Connection, *, user_id: uuid.UUID, org_id: uuid.UUID) -> Optional[Row]:
     return conn.execute(
-        "SELECT * FROM memberships WHERE user_id = %s AND org_id = %s",
-        (user_id, org_id),
+        "SELECT * FROM memberships WHERE user_id = %s AND org_id = %s", (user_id, org_id)
     ).fetchone()
 
 
@@ -150,13 +176,29 @@ def list_memberships_for_user(conn: psycopg.Connection, user_id: uuid.UUID) -> l
     return conn.execute(
         """
         SELECT m.org_id, m.role, o.name AS org_name, o.slug AS org_slug
-        FROM memberships m
-        JOIN organizations o ON o.id = m.org_id
-        WHERE m.user_id = %s
-        ORDER BY o.name
+        FROM memberships m JOIN organizations o ON o.id = m.org_id
+        WHERE m.user_id = %s ORDER BY o.name
         """,
         (user_id,),
     ).fetchall()
+
+
+# --- settings -------------------------------------------------------------
+
+def get_overrides(conn: psycopg.Connection, org_id: uuid.UUID) -> dict:
+    row = conn.execute("SELECT overrides FROM org_settings WHERE org_id = %s", (org_id,)).fetchone()
+    return dict(row["overrides"]) if row else {}
+
+
+def set_overrides(conn: psycopg.Connection, org_id: uuid.UUID, overrides: dict, updated_by: Optional[uuid.UUID]) -> None:
+    conn.execute(
+        """
+        INSERT INTO org_settings (org_id, overrides, updated_by) VALUES (%s, %s, %s)
+        ON CONFLICT (org_id) DO UPDATE SET overrides = excluded.overrides,
+            updated_by = excluded.updated_by, updated_at = now()
+        """,
+        (org_id, json.dumps(overrides), updated_by),
+    )
 
 
 # --- sites --------------------------------------------------------------
@@ -164,8 +206,7 @@ def list_memberships_for_user(conn: psycopg.Connection, user_id: uuid.UUID) -> l
 def upsert_site(conn: psycopg.Connection, *, org_id: uuid.UUID, url: str, label: Optional[str] = None) -> uuid.UUID:
     row = conn.execute(
         """
-        INSERT INTO sites (org_id, url, label)
-        VALUES (%s, %s, %s)
+        INSERT INTO sites (org_id, url, label) VALUES (%s, %s, %s)
         ON CONFLICT (org_id, url) DO UPDATE SET label = COALESCE(excluded.label, sites.label)
         RETURNING id
         """,
@@ -174,16 +215,8 @@ def upsert_site(conn: psycopg.Connection, *, org_id: uuid.UUID, url: str, label:
     return row["id"]
 
 
-def get_site(conn: psycopg.Connection, *, org_id: uuid.UUID, site_id: uuid.UUID) -> Optional[Row]:
-    return conn.execute(
-        "SELECT * FROM sites WHERE id = %s AND org_id = %s", (site_id, org_id)
-    ).fetchone()
-
-
 def list_sites(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
-    return conn.execute(
-        "SELECT * FROM sites WHERE org_id = %s ORDER BY created_at DESC", (org_id,)
-    ).fetchall()
+    return conn.execute("SELECT * FROM sites WHERE org_id = %s ORDER BY created_at DESC", (org_id,)).fetchall()
 
 
 # --- reference_images ------------------------------------------------
@@ -199,16 +232,19 @@ def upsert_reference_image(
     notes: Optional[str],
     phash: Optional[str] = None,
     dhash: Optional[str] = None,
+    phash_flip: Optional[str] = None,
+    dhash_flip: Optional[str] = None,
     embedding=None,
     width: Optional[int] = None,
     height: Optional[int] = None,
+    thumb_path: Optional[str] = None,
 ) -> uuid.UUID:
     row = conn.execute(
         """
         INSERT INTO reference_images
             (org_id, filename, storage_path, expiry_date, credit, notes,
-             phash, dhash, embedding, width, height)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             phash, dhash, phash_flip, dhash_flip, embedding, width, height, thumb_path)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (org_id, filename) DO UPDATE SET
             storage_path=excluded.storage_path,
             expiry_date=excluded.expiry_date,
@@ -216,105 +252,88 @@ def upsert_reference_image(
             notes=excluded.notes,
             phash=excluded.phash,
             dhash=excluded.dhash,
+            phash_flip=excluded.phash_flip,
+            dhash_flip=excluded.dhash_flip,
             embedding=excluded.embedding,
             width=excluded.width,
             height=excluded.height,
+            thumb_path=excluded.thumb_path,
             compared_at=CASE
                 WHEN reference_images.phash IS DISTINCT FROM excluded.phash
                   OR reference_images.dhash IS DISTINCT FROM excluded.dhash
+                  OR reference_images.phash_flip IS DISTINCT FROM excluded.phash_flip
                   OR reference_images.embedding IS DISTINCT FROM excluded.embedding
                 THEN NULL
                 ELSE reference_images.compared_at
             END
         RETURNING id
         """,
-        (org_id, filename, storage_path, expiry_date, credit, notes, phash, dhash, embedding, width, height),
+        (org_id, filename, storage_path, expiry_date, credit, notes, phash, dhash, phash_flip, dhash_flip,
+         embedding, width, height, thumb_path),
     ).fetchone()
     return row["id"]
+
+
+_REF_LIST_COLUMNS = """id, filename, storage_path, thumb_path, expiry_date, credit, notes, width, height,
+    phash IS NOT NULL AS hashed, embedding IS NOT NULL AS embedded, compared_at, created_at, updated_at"""
+
+
+def list_references(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
+    """Library listing: no embeddings, no hashes."""
+    return conn.execute(
+        f"SELECT {_REF_LIST_COLUMNS} FROM reference_images WHERE org_id = %s ORDER BY lower(filename)", (org_id,)
+    ).fetchall()
 
 
 def get_reference_images(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
     return conn.execute(
-        "SELECT * FROM reference_images WHERE org_id = %s ORDER BY expiry_date NULLS LAST",
-        (org_id,),
+        "SELECT * FROM reference_images WHERE org_id = %s ORDER BY expiry_date NULLS LAST", (org_id,)
     ).fetchall()
 
 
-def delete_reference_image(conn: psycopg.Connection, *, org_id: uuid.UUID, filename: str) -> None:
-    conn.execute(
-        "DELETE FROM reference_images WHERE org_id = %s AND filename = %s", (org_id, filename)
-    )
-
-
-# --- pages ----------------------------------------------------------------
-
-def upsert_page(
-    conn: psycopg.Connection, *, org_id: uuid.UUID, site_id: uuid.UUID, url: str, status: str = "pending"
-) -> uuid.UUID:
-    row = conn.execute(
-        """
-        INSERT INTO pages (org_id, site_id, url, status)
-        VALUES (%s, %s, %s, %s)
-        ON CONFLICT (site_id, url) DO UPDATE SET url = excluded.url
-        RETURNING id
-        """,
-        (org_id, site_id, url, status),
+def get_reference_by_filename(conn: psycopg.Connection, org_id: uuid.UUID, filename: str) -> Optional[Row]:
+    return conn.execute(
+        "SELECT * FROM reference_images WHERE org_id = %s AND filename = %s", (org_id, filename)
     ).fetchone()
-    return row["id"]
 
 
-def mark_page_crawled(conn: psycopg.Connection, page_id: uuid.UUID, *, http_status: int) -> None:
-    conn.execute(
-        "UPDATE pages SET status = 'done', http_status = %s, crawled_at = now() WHERE id = %s",
-        (http_status, page_id),
-    )
-
-
-def get_crawled_urls(conn: psycopg.Connection, site_id: uuid.UUID) -> set[str]:
+def existing_filenames(conn: psycopg.Connection, org_id: uuid.UUID, filenames: list[str]) -> set[str]:
     rows = conn.execute(
-        "SELECT url FROM pages WHERE site_id = %s AND status = 'done'", (site_id,)
+        "SELECT filename FROM reference_images WHERE org_id = %s AND filename = ANY(%s)", (org_id, filenames)
     ).fetchall()
-    return {r["url"] for r in rows}
+    return {row["filename"] for row in rows}
 
 
-# --- site_images ------------------------------------------------------
+def update_reference_meta(
+    conn: psycopg.Connection, org_id: uuid.UUID, filename: str, *,
+    expiry_date: Optional[str], credit: Optional[str], notes: Optional[str],
+) -> bool:
+    result = conn.execute(
+        """UPDATE reference_images SET expiry_date = %s, credit = %s, notes = %s
+           WHERE org_id = %s AND filename = %s""",
+        (expiry_date, credit, notes, org_id, filename),
+    )
+    return result.rowcount > 0
 
-def upsert_site_image(
-    conn: psycopg.Connection,
-    *,
-    org_id: uuid.UUID,
-    site_id: uuid.UUID,
-    url: str,
-    storage_path: Optional[str] = None,
-    content_hash: Optional[str] = None,
-    width: Optional[int] = None,
-    height: Optional[int] = None,
-    phash: Optional[str] = None,
-    dhash: Optional[str] = None,
-    embedding=None,
-) -> tuple[uuid.UUID, bool]:
-    """Returns (id, is_new) — `is_new` mirrors the local fetch.py's tracking
-    of freshly-discovered vs. already-cached images for crawl stats."""
-    row = conn.execute(
-        """
-        INSERT INTO site_images
-            (org_id, site_id, url, storage_path, content_hash, width, height, phash, dhash, embedding)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (site_id, url) DO UPDATE SET
-            storage_path=COALESCE(excluded.storage_path, site_images.storage_path),
-            content_hash=COALESCE(excluded.content_hash, site_images.content_hash),
-            width=COALESCE(excluded.width, site_images.width),
-            height=COALESCE(excluded.height, site_images.height),
-            phash=COALESCE(excluded.phash, site_images.phash),
-            dhash=COALESCE(excluded.dhash, site_images.dhash),
-            embedding=COALESCE(excluded.embedding, site_images.embedding),
-            last_seen=now()
-        RETURNING id, (xmax = 0) AS is_new
-        """,
-        (org_id, site_id, url, storage_path, content_hash, width, height, phash, dhash, embedding),
-    ).fetchone()
-    return row["id"], row["is_new"]
 
+def set_expiry_for(conn: psycopg.Connection, org_id: uuid.UUID, filenames: list[str], expiry_date: Optional[str]) -> int:
+    result = conn.execute(
+        "UPDATE reference_images SET expiry_date = %s WHERE org_id = %s AND filename = ANY(%s)",
+        (expiry_date, org_id, filenames),
+    )
+    return result.rowcount
+
+
+def delete_references(conn: psycopg.Connection, org_id: uuid.UUID, filenames: list[str]) -> list[Row]:
+    """Delete and return the deleted rows' storage paths, for cleanup in Storage."""
+    return conn.execute(
+        """DELETE FROM reference_images WHERE org_id = %s AND filename = ANY(%s)
+           RETURNING filename, storage_path, thumb_path""",
+        (org_id, filenames),
+    ).fetchall()
+
+
+# --- site images (see cloud.store for the crawler-facing writes) --------
 
 def get_site_images(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
     return conn.execute("SELECT * FROM site_images WHERE org_id = %s", (org_id,)).fetchall()
@@ -322,26 +341,20 @@ def get_site_images(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
 
 def link_image_page(conn: psycopg.Connection, image_id: uuid.UUID, page_id: uuid.UUID) -> None:
     conn.execute(
-        "INSERT INTO image_pages (image_id, page_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-        (image_id, page_id),
+        "INSERT INTO image_pages (image_id, page_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (image_id, page_id)
     )
 
 
 def get_pages_for_image(conn: psycopg.Connection, image_id: uuid.UUID) -> list[str]:
     rows = conn.execute(
-        """
-        SELECT p.url FROM pages p
-        JOIN image_pages ip ON ip.page_id = p.id
-        WHERE ip.image_id = %s
-        ORDER BY p.url
-        """,
+        """SELECT p.url FROM pages p JOIN image_pages ip ON ip.page_id = p.id
+           WHERE ip.image_id = %s ORDER BY p.url""",
         (image_id,),
     ).fetchall()
     return [r["url"] for r in rows]
 
 
-# --- matches (see nyra.match for the incremental-cache logic that
-# calls these) -----------------------------------------------------------
+# --- matches ---------------------------------------------------------------
 
 def clear_matches(conn: psycopg.Connection, org_id: uuid.UUID) -> None:
     conn.execute("DELETE FROM matches WHERE org_id = %s", (org_id,))
@@ -351,15 +364,9 @@ def delete_matches_for(
     conn: psycopg.Connection, *, org_id: uuid.UUID, reference_ids: list[uuid.UUID], site_ids: list[uuid.UUID]
 ) -> None:
     if reference_ids:
-        conn.execute(
-            "DELETE FROM matches WHERE org_id = %s AND reference_id = ANY(%s)",
-            (org_id, reference_ids),
-        )
+        conn.execute("DELETE FROM matches WHERE org_id = %s AND reference_id = ANY(%s)", (org_id, reference_ids))
     if site_ids:
-        conn.execute(
-            "DELETE FROM matches WHERE org_id = %s AND site_image_id = ANY(%s)",
-            (org_id, site_ids),
-        )
+        conn.execute("DELETE FROM matches WHERE org_id = %s AND site_image_id = ANY(%s)", (org_id, site_ids))
 
 
 def write_matches(conn: psycopg.Connection, org_id: uuid.UUID, rows: list[tuple]) -> None:
@@ -372,20 +379,15 @@ def write_matches(conn: psycopg.Connection, org_id: uuid.UUID, rows: list[tuple]
             INSERT INTO matches (org_id, reference_id, site_image_id, level, score, confidence)
             VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (reference_id, site_image_id) DO UPDATE SET
-                level=excluded.level, score=excluded.score, confidence=excluded.confidence,
-                created_at=now()
+                level=excluded.level, score=excluded.score, confidence=excluded.confidence, created_at=now()
             """,
             [(org_id, *row) for row in rows],
         )
 
 
-def stamp_compared(
-    conn: psycopg.Connection, reference_ids: list[uuid.UUID], site_ids: list[uuid.UUID]
-) -> None:
+def stamp_compared(conn: psycopg.Connection, reference_ids: list[uuid.UUID], site_ids: list[uuid.UUID]) -> None:
     if reference_ids:
-        conn.execute(
-            "UPDATE reference_images SET compared_at = now() WHERE id = ANY(%s)", (reference_ids,)
-        )
+        conn.execute("UPDATE reference_images SET compared_at = now() WHERE id = ANY(%s)", (reference_ids,))
     if site_ids:
         conn.execute("UPDATE site_images SET compared_at = now() WHERE id = ANY(%s)", (site_ids,))
 
@@ -398,8 +400,7 @@ def get_match_signature(conn: psycopg.Connection, org_id: uuid.UUID) -> Optional
 def set_match_signature(conn: psycopg.Connection, org_id: uuid.UUID, signature: str) -> None:
     conn.execute(
         """
-        INSERT INTO match_meta (org_id, signature, finished_at)
-        VALUES (%s, %s, now())
+        INSERT INTO match_meta (org_id, signature, finished_at) VALUES (%s, %s, now())
         ON CONFLICT (org_id) DO UPDATE SET signature = excluded.signature, finished_at = excluded.finished_at
         """,
         (org_id, signature),
@@ -414,122 +415,122 @@ def set_reviews(
     site_image_ids: list[uuid.UUID],
     decision: str,
     reviewed_by: Optional[uuid.UUID],
-) -> None:
+) -> int:
+    """Record a decision on matches of this organization. Returns rows touched.
+
+    Pairs are checked against `matches` for this org, so a caller can't
+    attach a review to another organization's images.
+    """
     if not site_image_ids:
-        return
+        return 0
     if not decision:
-        conn.execute(
-            "DELETE FROM reviews WHERE reference_id = %s AND site_image_id = ANY(%s)",
-            (reference_id, site_image_ids),
+        result = conn.execute(
+            "DELETE FROM reviews WHERE org_id = %s AND reference_id = %s AND site_image_id = ANY(%s)",
+            (org_id, reference_id, site_image_ids),
         )
-        return
-    with conn.cursor() as cur:
-        cur.executemany(
-            """
-            INSERT INTO reviews (reference_id, site_image_id, org_id, decision, reviewed_by, updated_at)
-            VALUES (%s, %s, %s, %s, %s, now())
-            ON CONFLICT (reference_id, site_image_id) DO UPDATE SET
-                decision=excluded.decision, reviewed_by=excluded.reviewed_by, updated_at=excluded.updated_at
-            """,
-            [(reference_id, site_id, org_id, decision, reviewed_by) for site_id in site_image_ids],
-        )
+        return result.rowcount
+    result = conn.execute(
+        """
+        INSERT INTO reviews (reference_id, site_image_id, org_id, decision, reviewed_by, updated_at)
+        SELECT m.reference_id, m.site_image_id, m.org_id, %s, %s, now()
+        FROM matches m
+        WHERE m.org_id = %s AND m.reference_id = %s AND m.site_image_id = ANY(%s)
+        ON CONFLICT (reference_id, site_image_id) DO UPDATE SET
+            decision=excluded.decision, reviewed_by=excluded.reviewed_by, updated_at=excluded.updated_at
+        """,
+        (decision, reviewed_by, org_id, reference_id, site_image_ids),
+    )
+    return result.rowcount
 
 
-def get_matches(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
-    return conn.execute(
+def match_rows(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
+    """Every match with its reference, image, decision and pages, in one query."""
+    rows = conn.execute(
         """
         SELECT
-            m.id AS match_id, m.level, m.score, m.confidence,
-            r.id AS reference_id, r.filename, r.storage_path AS ref_storage_path,
-            r.expiry_date, r.credit, r.notes,
-            s.id AS site_image_id, s.url AS site_url, s.storage_path AS site_storage_path,
-            s.content_hash AS content_hash,
-            v.decision AS decision
+            m.level, m.score, m.confidence,
+            r.id AS reference_id, r.filename, r.expiry_date, r.credit, r.notes,
+            r.storage_path AS ref_storage_path, r.thumb_path AS ref_thumb_path,
+            s.id AS site_image_id, s.url AS site_url, s.content_hash,
+            s.storage_path AS site_storage_path, s.thumb_path AS site_thumb_path,
+            v.decision,
+            COALESCE(pg.urls, ARRAY[]::text[]) AS pages
         FROM matches m
         JOIN reference_images r ON r.id = m.reference_id
         JOIN site_images s ON s.id = m.site_image_id
         LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
+        LEFT JOIN LATERAL (
+            SELECT array_agg(p.url ORDER BY p.url) AS urls
+            FROM image_pages ip JOIN pages p ON p.id = ip.page_id
+            WHERE ip.image_id = s.id
+        ) pg ON true
         WHERE m.org_id = %s
         ORDER BY r.expiry_date NULLS LAST, m.score DESC
         """,
         (org_id,),
     ).fetchall()
+    for row in rows:
+        row["expiry_date"] = row["expiry_date"].isoformat() if row["expiry_date"] else None
+        row["pages"] = list(row["pages"])
+    return rows
 
 
-def get_unmatched_references(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
-    return conn.execute(
+def unmatched_rows(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
+    rows = conn.execute(
         """
-        SELECT r.id AS reference_id, r.filename, r.storage_path AS ref_storage_path,
-               r.expiry_date, r.credit, r.notes, r.compared_at
+        SELECT r.id AS reference_id, r.filename, r.expiry_date, r.credit, r.notes,
+               r.storage_path AS ref_storage_path, r.thumb_path AS ref_thumb_path,
+               r.compared_at IS NOT NULL AS compared
         FROM reference_images r
-        LEFT JOIN matches m ON m.reference_id = r.id
-        WHERE r.org_id = %s AND m.id IS NULL
+        WHERE r.org_id = %s AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.reference_id = r.id)
         ORDER BY r.expiry_date NULLS LAST
         """,
         (org_id,),
     ).fetchall()
+    for row in rows:
+        row["expiry_date"] = row["expiry_date"].isoformat() if row["expiry_date"] else None
+    return rows
 
 
-# --- crawl_runs (persisted job state — survives a server restart, unlike
-# the local product's in-memory JobRunner) -------------------------------
+# --- crawl_runs -------------------------------------------------------------
 
 def start_crawl_run(
-    conn: psycopg.Connection, *, org_id: uuid.UUID, site_id: uuid.UUID, triggered_by: Optional[uuid.UUID]
+    conn: psycopg.Connection, *, org_id: uuid.UUID, site_id: uuid.UUID,
+    triggered_by: Optional[uuid.UUID], job_id: Optional[uuid.UUID] = None,
 ) -> uuid.UUID:
     row = conn.execute(
-        """
-        INSERT INTO crawl_runs (org_id, site_id, status, triggered_by)
-        VALUES (%s, %s, 'running', %s)
-        RETURNING id
-        """,
-        (org_id, site_id, triggered_by),
+        """INSERT INTO crawl_runs (org_id, site_id, status, triggered_by, job_id)
+           VALUES (%s, %s, 'running', %s, %s) RETURNING id""",
+        (org_id, site_id, triggered_by, job_id),
     ).fetchone()
     return row["id"]
 
 
-def update_crawl_run_progress(
-    conn: psycopg.Connection,
-    run_id: uuid.UUID,
-    *,
-    pages_visited: int,
-    images_found: int,
-    images_stored: int,
-    images_new: int,
-    blocked_by_robots: int,
-) -> None:
+def update_crawl_run_progress(conn: psycopg.Connection, run_id: uuid.UUID, stats) -> None:
     conn.execute(
-        """
-        UPDATE crawl_runs SET
-            pages_visited = %s, images_found = %s, images_stored = %s,
-            images_new = %s, blocked_by_robots = %s
-        WHERE id = %s
-        """,
-        (pages_visited, images_found, images_stored, images_new, blocked_by_robots, run_id),
+        """UPDATE crawl_runs SET pages_visited = %s, images_found = %s, images_stored = %s,
+               images_new = %s, blocked_by_robots = %s WHERE id = %s""",
+        (stats.pages_visited, stats.images_found, stats.images_stored, stats.images_new,
+         stats.blocked_by_robots, run_id),
     )
 
 
 def finish_crawl_run(conn: psycopg.Connection, run_id: uuid.UUID, *, status: str, errors: list[str]) -> None:
-    import json
-
     conn.execute(
         "UPDATE crawl_runs SET status = %s, finished_at = now(), errors = %s WHERE id = %s",
-        (status, json.dumps(errors), run_id),
+        (status, json.dumps(errors[:50]), run_id),
     )
 
 
-def get_crawl_run(conn: psycopg.Connection, org_id: uuid.UUID, run_id: uuid.UUID) -> Optional[Row]:
+def list_crawl_runs(conn: psycopg.Connection, org_id: uuid.UUID, limit: int = 20) -> list[Row]:
     return conn.execute(
-        "SELECT * FROM crawl_runs WHERE id = %s AND org_id = %s", (run_id, org_id)
-    ).fetchone()
+        """SELECT c.*, s.url AS site_url FROM crawl_runs c JOIN sites s ON s.id = c.site_id
+           WHERE c.org_id = %s ORDER BY c.started_at DESC LIMIT %s""",
+        (org_id, limit),
+    ).fetchall()
 
 
-def get_latest_crawl_run(conn: psycopg.Connection, org_id: uuid.UUID) -> Optional[Row]:
-    return conn.execute(
-        "SELECT * FROM crawl_runs WHERE org_id = %s ORDER BY started_at DESC LIMIT 1", (org_id,)
-    ).fetchone()
-
-
-# --- reports ---------------------------------------------------------
+# --- reports ---------------------------------------------------------------
 
 def create_report(
     conn: psycopg.Connection,
@@ -542,32 +543,26 @@ def create_report(
     stats: dict,
     generated_by: Optional[uuid.UUID],
 ) -> uuid.UUID:
-    import json
-
     row = conn.execute(
         """
-        INSERT INTO reports
-            (org_id, within_days, storage_path_html, storage_path_csv,
-             storage_path_not_found_csv, stats, generated_by)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        RETURNING id
+        INSERT INTO reports (org_id, within_days, storage_path_html, storage_path_csv,
+                             storage_path_not_found_csv, stats, generated_by)
+        VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
         """,
         (org_id, within_days, storage_path_html, storage_path_csv, storage_path_not_found_csv,
-         json.dumps(stats), generated_by),
+         json.dumps(stats, default=str), generated_by),
     ).fetchone()
     return row["id"]
 
 
-def list_reports(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
+def list_reports(conn: psycopg.Connection, org_id: uuid.UUID, limit: int = 50) -> list[Row]:
     return conn.execute(
-        "SELECT * FROM reports WHERE org_id = %s ORDER BY generated_at DESC", (org_id,)
+        "SELECT * FROM reports WHERE org_id = %s ORDER BY generated_at DESC LIMIT %s", (org_id, limit)
     ).fetchall()
 
 
 def get_report(conn: psycopg.Connection, org_id: uuid.UUID, report_id: uuid.UUID) -> Optional[Row]:
-    return conn.execute(
-        "SELECT * FROM reports WHERE id = %s AND org_id = %s", (report_id, org_id)
-    ).fetchone()
+    return conn.execute("SELECT * FROM reports WHERE id = %s AND org_id = %s", (report_id, org_id)).fetchone()
 
 
 # --- stats -------------------------------------------------------------
@@ -581,13 +576,14 @@ class Stats:
 
 
 def get_stats(conn: psycopg.Connection, org_id: uuid.UUID) -> Stats:
-    def count(table: str, extra: str = "") -> int:
-        row = conn.execute(f"SELECT COUNT(*) AS c FROM {table} WHERE org_id = %s {extra}", (org_id,)).fetchone()
-        return row["c"]
-
-    return Stats(
-        reference_images=count("reference_images"),
-        pages_crawled=count("pages", "AND status = 'done'"),
-        site_images=count("site_images"),
-        matches=count("matches"),
-    )
+    row = conn.execute(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM reference_images WHERE org_id = %(org)s) AS reference_images,
+            (SELECT COUNT(*) FROM pages WHERE org_id = %(org)s AND status = 'done') AS pages_crawled,
+            (SELECT COUNT(*) FROM site_images WHERE org_id = %(org)s) AS site_images,
+            (SELECT COUNT(*) FROM matches WHERE org_id = %(org)s) AS matches
+        """,
+        {"org": org_id},
+    ).fetchone()
+    return Stats(**row)

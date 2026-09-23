@@ -1,79 +1,118 @@
-export type View = "library" | "explore" | "results";
+export type Role = "admin" | "client";
 
-export type JobStatus = "running" | "done" | "error";
+export type Organization = { org_id: string; name: string; slug: string; role: Role };
+
+export type Status = "expire" | "<30j" | "<90j" | "ok" | "inconnue";
+
+export type Confidence = "haut" | "moyen" | "a_verifier";
+
+export type Decision = "retenu" | "ecarte" | "traite";
+
+export type JobKind = "crawl" | "match" | "index" | "report";
+
+export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
 export type Job = {
   id: string;
-  kind: string;
+  kind: JobKind;
   status: JobStatus;
   message: string;
-  progress: {
-    done?: number;
-    total?: number;
-    pages_visited?: number;
-    errors?: number;
-    blocked_by_robots?: number;
-  };
+  params: Record<string, unknown>;
+  progress: { phase?: string; done?: number; total?: number; errors?: number; blocked_by_robots?: number; images_new?: number };
+  result: Record<string, unknown> | null;
   error: string | null;
-  result: { matches?: number; errors?: string[]; blocked_by_robots?: number } | null;
+  cancel_requested: boolean;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
 };
 
-export type LibraryItem = {
-  filename: string;
-  expiry_date: string;
-  credit: string;
-  notes: string;
-  indexed: boolean;
-  url: string;
-};
+export type CurrentJobs = { active: Job[]; last: Job | null };
+
+export type Upcoming = { reference_id: string; filename: string; expiry_date: string; days_left: number; online: boolean };
 
 export type Overview = {
+  organization: { id: string; name: string; slug: string };
+  role: Role;
   stats: {
     reference_images: number;
     pages_crawled: number;
-    pages_pending: number;
     site_images: number;
     matches: number;
+    references_pending_index: number;
   };
-  library: LibraryItem[];
-  job: Job | null;
-  defaults: {
-    max_pages: number;
-    within_days: number;
+  dashboard: {
+    expired_online: number;
+    urgent_online: number;
+    pending_review: number;
+    references_online: number;
+    upcoming: Upcoming[];
   };
+  jobs: CurrentJobs;
+  last_crawl: null | {
+    site_url: string;
+    status: string;
+    started_at: string;
+    finished_at: string | null;
+    pages_visited: number;
+    images_new: number;
+  };
+  sites: string[];
+  defaults: { max_pages: number; max_pages_limit: number; within_days: number };
 };
 
-export type Decision = "" | "retenu" | "ecarte" | "traite";
+export type LibraryItem = {
+  id: string;
+  filename: string;
+  expiry_date: string;
+  days_left: number | null;
+  status: Status;
+  credit: string;
+  notes: string;
+  width: number | null;
+  height: number | null;
+  indexed: boolean;
+  compared: boolean;
+  thumb_url: string;
+  url: string;
+};
 
 export type Hit = {
-  site_image_id: number;
-  site_image_ids?: number[];
-  site_image: string;
+  site_image_id: string;
+  site_image_ids: string[];
   site_url: string;
+  site_image: string;
+  site_thumb: string;
   pages: string[];
-  page_count?: number;
+  page_count: number;
   level: string;
   score: number;
-  confidence: string;
+  confidence: Confidence;
   decision: Decision | null;
 };
 
 export type MatchGroup = {
-  reference_id: number;
+  reference_id: string;
   filename: string;
+  expiry_date: string | null;
   days_left: number | null;
-  status: string;
+  status: Status;
+  credit: string;
+  notes: string;
   ref_image: string;
+  ref_thumb: string;
   hits: Hit[];
 };
 
 export type NotFoundItem = {
-  reference_id: number;
+  reference_id: string;
   filename: string;
+  expiry_date: string | null;
   days_left: number | null;
-  status: string;
-  ref_image: string;
+  status: Status;
+  credit: string;
   compared: boolean;
+  ref_thumb: string;
 };
 
 export type Matches = {
@@ -83,4 +122,44 @@ export type Matches = {
   later: MatchGroup[];
   not_found: NotFoundItem[];
   outside_window: number;
+};
+
+export type Scan = {
+  id: string;
+  site_url: string;
+  status: "running" | "done" | "error" | "cancelled";
+  started_at: string;
+  finished_at: string | null;
+  pages_visited: number;
+  images_found: number;
+  images_new: number;
+  blocked_by_robots: number;
+  errors: string[];
+  error_count: number;
+};
+
+export type Report = {
+  id: string;
+  within_days: number;
+  generated_at: string;
+  stats: Record<string, number>;
+  files: { "report.html": string; "matches.csv": string; "not_found.csv": string };
+};
+
+export type SettingsSection = Record<string, number | boolean | string | string[]>;
+
+export type Settings = {
+  overrides: { crawl?: SettingsSection; match?: SettingsSection; report?: SettingsSection };
+  defaults: { crawl: SettingsSection; match: SettingsSection; report: SettingsSection };
+  effective: { crawl: SettingsSection; match: SettingsSection; report: SettingsSection };
+};
+
+export type ImportRow = {
+  line: number;
+  filename: string;
+  expiry_date: string;
+  credit: string;
+  notes: string;
+  status: "ok" | "unknown_file" | "bad_date";
+  message: string;
 };

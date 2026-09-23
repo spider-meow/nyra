@@ -1,28 +1,26 @@
-# Single service — Postgres/Auth/Storage live on Supabase, not here, so
-# there's no database container to run alongside the app.
+# Postgres, Auth and Storage live on Supabase; this runs the two processes.
 #
 #   docker compose up -d --build
+#   docker compose up -d --scale worker=3     more jobs in parallel (one per organization at a time)
 #
-# Local mode (no .env, or one without DATABASE_URL): state persists in
-# ./data and ./out on the host via the volumes below.
-# Cloud mode (.env has DATABASE_URL + SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY):
-# everything lives in Supabase — the volumes below just go unused.
+# Both read the same .env (see .env.example).
 
 services:
-  backend:
-    build: .
+  web:
+    build:
+      context: .
+      target: web
     ports:
       - "8000:8000"
-    env_file:
-      - path: .env
-        required: false
-    volumes:
-      - ./data:/app/data
-      - ./out:/app/out
+    env_file: .env
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/healthz')"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
+
+  worker:
+    build:
+      context: .
+      target: worker
+    env_file: .env
+    restart: unless-stopped
+    # Chromium needs room for shared memory; CLIP needs ~1 GB of RAM.
+    shm_size: "1gb"
+    stop_grace_period: 30s

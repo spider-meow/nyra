@@ -1,26 +1,31 @@
 """Reference image ingestion.
 
 `RefSource` is the seam for swapping the hand-maintained CSV+folder input
-(the demo path) for a Brandcenter export later, without touching the rest
-of the pipeline: anything that can yield `RefEntry` objects works.
+(the CLI path) for a DAM export later, without touching the rest of the
+pipeline: anything that can yield `RefEntry` objects works.
+
+Expiry dates are the one field where a silent misreading is a legal risk,
+so parsing is strict: ISO `YYYY-MM-DD`, or day-first `DD/MM/YYYY`
+(also with `-` or `.`). Month-first dates are never guessed.
 """
 
 from __future__ import annotations
 
 import csv
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 from typing import Iterator, Optional
 
 from PIL import Image
 
-from nyra import db
 from nyra.config import Config
-from nyra.match import compute_hashes, compute_clip_embedding
+from nyra.match import compute_clip_embeddings, compute_flip_hashes, compute_hashes
 
 REQUIRED_CSV_COLUMNS = {"filename", "expiry_date"}
+_DAY_FIRST = re.compile(r"^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})$")
 
 
 @dataclass(frozen=True)
@@ -44,20 +49,24 @@ class RefValidationError(ValueError):
     pass
 
 
-def _parse_expiry(raw: str) -> Optional[str]:
+def parse_expiry(raw: Optional[str]) -> Optional[str]:
+    """ISO date string, None for blank, RefValidationError for anything else."""
     raw = (raw or "").strip()
     if not raw:
         return None
     try:
         return date.fromisoformat(raw).isoformat()
     except ValueError:
-        # tolerate a couple of common human formats from a hand-filled CSV
-        for fmt in ("%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y"):
-            try:
-                return datetime.strptime(raw, fmt).date().isoformat()
-            except ValueError:
-                continue
-        raise RefValidationError(f"Unparseable expiry_date: {raw!r} (expected YYYY-MM-DD)")
+        pass
+    found = _DAY_FIRST.match(raw)
+    if found:
+        day, month, year = (int(part) for part in found.groups())
+        try:
+            return date(year, month, day).isoformat()
+        except ValueError as exc:
+            hint = " (le mois vient en second : JJ/MM/AAAA)" if month > 12 and day <= 12 else ""
+            raise RefValidationError(f"Date impossible : {raw!r}{hint}") from exc
+    raise RefValidationError(f"Date illisible : {raw!r}. Formats acceptés : AAAA-MM-JJ ou JJ/MM/AAAA.")
 
 
 class CsvRefSource(RefSource):
@@ -73,26 +82,47 @@ class CsvRefSource(RefSource):
         if not self.images_dir.exists():
             raise RefValidationError(f"refs image folder not found: {self.images_dir}")
 
-        with self.csv_path.open("r", encoding="utf-8", newline="") as f:
+        with self.csv_path.open("r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
             missing = REQUIRED_CSV_COLUMNS - set(reader.fieldnames or [])
             if missing:
                 raise RefValidationError(f"refs.csv is missing required columns: {sorted(missing)}")
 
-            for row in reader:
+            for line, row in enumerate(reader, start=2):
                 filename = (row.get("filename") or "").strip()
                 if not filename:
                     continue
                 image_path = self.images_dir / filename
                 if not image_path.exists():
                     raise RefValidationError(f"referenced image missing on disk: {image_path}")
+                try:
+                    expiry = parse_expiry(row.get("expiry_date", ""))
+                except RefValidationError as exc:
+                    raise RefValidationError(f"refs.csv line {line} ({filename}): {exc}") from exc
                 yield RefEntry(
                     filename=filename,
                     image_path=image_path,
-                    expiry_date=_parse_expiry(row.get("expiry_date", "")),
+                    expiry_date=expiry,
                     credit=(row.get("credit") or "").strip() or None,
                     notes=(row.get("notes") or "").strip() or None,
                 )
+
+
+@dataclass
+class RefFeatures:
+    width: int
+    height: int
+    phash: str
+    dhash: str
+    phash_flip: str
+    dhash_flip: str
+
+
+def reference_features(img: Image.Image) -> RefFeatures:
+    rgb = img.convert("RGB")
+    phash, dhash = compute_hashes(rgb)
+    phash_flip, dhash_flip = compute_flip_hashes(rgb)
+    return RefFeatures(img.size[0], img.size[1], phash, dhash, phash_flip, dhash_flip)
 
 
 def ingest(
@@ -103,37 +133,38 @@ def ingest(
     compute_embeddings: bool = True,
     progress=None,
 ) -> int:
-    """Hash (and optionally embed) every reference image and persist it.
+    """Hash (and optionally embed) every reference image into a SQLite database."""
+    from nyra import db
 
-    Returns the number of reference images ingested. `progress`, if given,
-    is called with (done, total_so_far) as entries are processed (total is
-    unknown up front since `RefSource` is a generator).
-    """
     db.init_db(db_path)
     entries = list(source.iter_refs())
-
+    batch = max(1, config.match.embedding_batch_size)
     with db.connect(db_path) as conn:
-        for i, entry in enumerate(entries):
-            with Image.open(entry.image_path) as img:
-                img.load()
-                width, height = img.size
-                phash, dhash = compute_hashes(img)
-                embedding = compute_clip_embedding(img, config.match) if compute_embeddings else None
-
-            db.upsert_reference_image(
-                conn,
-                filename=entry.filename,
-                path=str(entry.image_path),
-                expiry_date=entry.expiry_date,
-                credit=entry.credit,
-                notes=entry.notes,
-                phash=phash,
-                dhash=dhash,
-                embedding=embedding,
-                width=width,
-                height=height,
-            )
+        for start in range(0, len(entries), batch):
+            chunk = entries[start : start + batch]
+            images = []
+            for entry in chunk:
+                with Image.open(entry.image_path) as img:
+                    img.load()
+                    images.append(img.convert("RGB"))
+            embeddings = compute_clip_embeddings(images, config.match) if compute_embeddings else [None] * len(chunk)
+            for entry, img, embedding in zip(chunk, images, embeddings):
+                features = reference_features(img)
+                db.upsert_reference_image(
+                    conn,
+                    filename=entry.filename,
+                    path=str(entry.image_path),
+                    expiry_date=entry.expiry_date,
+                    credit=entry.credit,
+                    notes=entry.notes,
+                    phash=features.phash,
+                    dhash=features.dhash,
+                    phash_flip=features.phash_flip,
+                    dhash_flip=features.dhash_flip,
+                    embedding=embedding,
+                    width=features.width,
+                    height=features.height,
+                )
             if progress:
-                progress(i + 1, len(entries))
-
+                progress(min(start + batch, len(entries)), len(entries))
     return len(entries)

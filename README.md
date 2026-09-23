@@ -1,149 +1,91 @@
 # Nyra
 
-Deterministic CLI (no agent, no LLM in the loop) that takes a library of
-rights-managed reference images with expiry dates, crawls a website, and
-detects which reference images are present on the site. Output: an
-autonomous HTML report + a CSV, sorted by expiry urgency.
+Nyra watches websites for rights-managed images whose licence has expired
+or is about to. It keeps a library of reference images with their expiry
+dates, reads a site the way a visitor would, recognises the references
+among the images it finds — resized, recompressed, flipped or cropped —
+and ranks what it found by expiry urgency. There is no LLM in the loop:
+matching is perceptual hashing plus CLIP embeddings, deterministic given
+the same inputs and thresholds.
 
-Built for the Axel project's MVP demo, targeting `remymartin.com` as the
-test site.
-
-## Documentation
-
-This README is a quickstart. For anything deeper, see `docs/`:
-
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — pipeline diagram, module
-  responsibilities, why the codebase is structured the way it is.
-- **[docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md)** — every command, every
-  flag, typical workflows.
-- **[docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md)** — table-by-table
-  schema reference, idempotency/resumability model.
-- **[docs/MATCHING.md](docs/MATCHING.md)** — how the two-level matcher works,
-  confidence bands, calibrating thresholds against ground truth.
-- **[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)** — dev setup, running tests,
-  project conventions, how to extend `RefSource`/crawling/matching.
+It is a hosted, multi-organization product (Supabase for Postgres, Auth
+and Storage), plus a CLI that runs the same pipeline on a local SQLite
+file for debugging and threshold calibration.
 
 ## How it works
 
-1. **Ingest** a folder of reference images + a CSV (`filename, expiry_date,
-   credit, notes`) into a local SQLite database, computing a perceptual hash
-   (pHash), a difference hash (dHash), and a CLIP embedding for each image.
-2. **Crawl** a site with Playwright: discover pages via `sitemap.xml` (falling
-   back to internal-link BFS), extract every image (`<img>` src/srcset/data-src,
-   `<picture><source>`, CSS `background-image`, `og:image`, `twitter:image`),
-   download and hash them.
-3. **Match** every reference against every site image in two levels:
-   - Level 1: Hamming distance on pHash/dHash — catches identical or
-     lightly re-encoded/resized images, cheaply.
-   - Level 2 (only for pairs level 1 missed): CLIP cosine similarity —
-     catches crops, overlays, and other retouches.
-4. **Report**: a self-contained `report.html` (thumbnails inlined as base64)
-   and a `matches.csv`, both sorted by expiry urgency, with a separate
-   section for lower-confidence "à vérifier" matches.
+1. **Library.** An admin uploads reference images and their expiry dates
+   (one by one, in bulk, or from a CSV). Each image gets a pHash, a dHash,
+   the hashes of its mirror image, a thumbnail and a CLIP embedding.
+2. **Read the site.** The worker drives headless Chromium through the
+   site's sitemaps and internal links, gets past cookie banners and age
+   gates, and collects every image (`<img>`/`srcset`, `<picture>`, CSS
+   backgrounds, `og:image`). Identical bytes served under several URLs
+   are stored once.
+3. **Compare.** Hamming distance on the hashes catches the same image
+   re-encoded, resized or flipped; CLIP similarity catches crops and
+   overlays. Each hit gets a confidence: *confirmed*, *probable*, *to
+   verify*.
+4. **Review.** People go through what was found, oldest expiry first, and
+   mark each occurrence *to remove*, *false positive* or *removed*.
+5. **Report.** A dated, self-contained HTML report (printable to PDF) and
+   two CSVs, without the false positives.
 
-## Install
+## Running it
+
+Two processes share one Postgres database and one Supabase project:
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install -e ".[worker]"        # the worker needs Chromium and torch
 playwright install chromium
+cp .env.example .env              # fill in the Supabase values
+nyra serve                        # API + interface on http://127.0.0.1:8000
+nyra worker                       # runs crawl / compare / index / report jobs
 ```
 
-(`requirements.txt` is provided as an alternative to the editable install.)
-
-## Usage
+Apply `supabase/migrations/` to the project first, and create the first
+organization (there is no public sign-up):
 
 ```bash
-# 1. Ingest the reference library (CSV columns: filename, expiry_date, credit, notes)
-nyra ingest-refs --dir refs/ --csv refs.csv
-
-# 2. Crawl the target site
-nyra crawl --site https://www.remymartin.com --max-pages 300
-
-# 3. Match references against everything found on the site
-nyra match
-
-# 4. Generate the report (refs expired or expiring within N days)
-nyra report --within-days 90
-
-# Or run all four steps in sequence:
-nyra run-all --site https://www.remymartin.com --dir refs/ --csv refs.csv --within-days 90
+nyra cloud-provision-org --name "Rémy Martin" --slug remy-martin --admin-email admin@example.com
+nyra cloud-invite --org remy-martin --email reviewer@example.com --role client
 ```
 
-All commands accept `--db path/to/nyra.db` (default `nyra.db`)
-and `--config path/to/config.yaml` (default: the repo's `config.yaml`).
-Crawling is resumable: pages already marked "done" in the database are
-skipped on the next `crawl` run (`--no-resume` forces a full re-crawl).
+In production, `docker compose up -d --build` runs both processes; see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-### Calibrating match thresholds
+## Offline CLI
+
+The same crawler and matcher on a SQLite file, no account needed:
 
 ```bash
+nyra run-all --site https://www.example.com --dir refs/ --csv refs.csv --within-days 90
 nyra calibrate --ground-truth ground_truth.csv
 ```
 
-`ground_truth.csv` (see `ground_truth.example.csv`) is a small hand-confirmed
-set of `ref_filename, site_url, label` (`match`/`no_match`) pairs — both
-images must already be in the database (via `ingest-refs` and `crawl`).
-The command sweeps pHash/dHash Hamming-distance thresholds and CLIP cosine
-thresholds and prints precision/recall/F1 at each, so `config.yaml`'s
-`match:` thresholds can be tuned to the actual demo dataset rather than
-guessed. See `docs/MATCHING.md` for the full calibration workflow and how
-the two-level matcher works internally.
+See [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md).
 
-## Configuration
+## Documentation
 
-All thresholds and crawl behavior live in `config.yaml` — nothing is
-hard-coded in the modules:
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — processes, pipeline, module map, why it's built this way
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — images, Supabase setup, scaling, security notes
+- [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md) — every command
+- [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) — Postgres and SQLite schemas, job queue
+- [docs/MATCHING.md](docs/MATCHING.md) — the two-level matcher, calibration
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — setup, tests, conventions
+- [supabase/README.md](supabase/README.md) — applying the migrations
 
-- `crawl:` max pages, delay range, user agent, minimum image side (filters
-  out icons/tracking pixels), robots.txt compliance, timeouts.
-- `match:` pHash/dHash Hamming-distance threshold for a level-1 match, and
-  three CLIP cosine-similarity bands (`high` / `medium` / `floor`) that map
-  to confidence levels `haut` / `moyen` / `a_verifier`.
-- `report:` default expiry window in days.
-
-## Project layout
+## Layout
 
 ```
-backend/nyra/     pipeline and local API
-  cli.py                 Typer commands, including `nyra ui`
-  api.py                 FastAPI app: library, crawl, match, report
-  refs.py                Reference ingestion: RefSource + CsvRefSource
-  crawl.py               Page discovery and image extraction
-  fetch.py               Image download, size filter, cache
-  match.py               pHash/dHash, then CLIP
-  report.py              HTML + CSV report
-  db.py                  SQLite schema and access
-  templates/             Jinja2 report template
-backend/tests/           pytest suite, no network
-frontend/                TypeScript interface (Vite, React, Tailwind)
-config.yaml              thresholds and crawl limits
-docs/                    architecture, CLI, schema, matching, dev guide
+backend/nyra/
+  crawl.py fetch.py netguard.py   the crawler, image processing, outbound-request guard
+  match.py refs.py report.py      matching, reference ingestion, grouping and reports
+  db.py                           SQLite store for the CLI
+  cloud/                          hosted product: api (web), worker, jobs, store, db, storage, auth
+  cli.py config.py
+backend/tests/                    pytest; cloud tests need TEST_DATABASE_URL
+frontend/                         React + TypeScript interface (Vite, Tailwind, React Router, TanStack Query)
+supabase/migrations/              Postgres schema, RLS, storage buckets, job queue
+config.yaml                       thresholds and crawl behavior
 ```
-
-The interface is TypeScript. From `frontend/`, `npm install` then `npm run dev` (the API stays on port 8765 or 8000). `npm run build` writes `frontend/dist`, which `nyra ui` serves.
-
-`refs.py` exposes a `RefSource` abstract base class so the CSV+folder input
-used for the demo can later be swapped for a Brandcenter export adapter
-without touching ingestion, matching, or reporting — see
-`docs/DEVELOPMENT.md` for how to add one.
-
-## Testing
-
-```bash
-pip install -e ".[dev]"
-pytest
-```
-
-The test suite generates its own images with Pillow (original, recompressed,
-resized, cropped, overlaid, and a genuinely different image) so it runs
-without any binary fixtures, network access, or a Playwright browser. The
-one CLIP end-to-end test is skipped automatically if `torch`/`open_clip`
-aren't installed. See `docs/DEVELOPMENT.md` for what each test file covers
-and the conventions to follow when adding more.
-
-## Out of scope for this MVP
-
-The local interface is `frontend/`, served by `nyra ui`. Multi-tenant
-accounts, video, open-web search, a Brandcenter adapter, scheduled alerts,
-and multi-site support are still phase 2.

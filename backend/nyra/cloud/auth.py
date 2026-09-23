@@ -88,6 +88,18 @@ def _bearer_token(authorization: Optional[str] = Header(default=None)) -> str:
     return authorization.removeprefix("Bearer ").strip()
 
 
+def require_user(*, supabase_url: str, jwt_secret: Optional[str]):
+    """FastAPI dependency factory: a valid session, no organization involved."""
+
+    def dependency(token: str = Depends(_bearer_token)) -> Claims:
+        try:
+            return verify_jwt(token, supabase_url=supabase_url, jwt_secret=jwt_secret)
+        except AuthError as exc:
+            raise HTTPException(status_code=401, detail="Session expirée ou invalide. Reconnectez-vous.") from exc
+
+    return dependency
+
+
 def require_member(*, supabase_url: str, jwt_secret: Optional[str], database_url: str):
     """FastAPI dependency factory: verifies the JWT, then checks the
     caller has *any* membership in the org named by the route's
@@ -98,7 +110,7 @@ def require_member(*, supabase_url: str, jwt_secret: Optional[str], database_url
         try:
             claims = verify_jwt(token, supabase_url=supabase_url, jwt_secret=jwt_secret)
         except AuthError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
+            raise HTTPException(status_code=401, detail="Session expirée ou invalide. Reconnectez-vous.") from exc
 
         with cloud_db.connect(database_url) as conn:
             membership = cloud_db.get_membership(conn, user_id=claims.user_id, org_id=org_id)

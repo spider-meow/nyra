@@ -1,5 +1,5 @@
 """Shared fixtures. Only the cloud tests use this — the rest of the suite
-(test_match.py, test_crawl.py, test_integration.py, test_webapp.py) needs
+(test_match.py, test_crawl.py, test_integration.py, test_units.py) needs
 no external services and doesn't touch anything here.
 """
 
@@ -85,13 +85,14 @@ def cloud_database_url() -> str:
     import psycopg
 
     with psycopg.connect(url, autocommit=True) as conn:
-        already_migrated = conn.execute(
-            "SELECT to_regclass('public.organizations') IS NOT NULL"
-        ).fetchone()[0]
-        if not already_migrated:
-            conn.execute(_STUB_AUTH_AND_STORAGE)
-            for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
-                conn.execute(migration.read_text(encoding="utf-8"))
+        conn.execute(_STUB_AUTH_AND_STORAGE)
+        conn.execute("CREATE TABLE IF NOT EXISTS public._test_migrations (name text PRIMARY KEY)")
+        applied = {row[0] for row in conn.execute("SELECT name FROM public._test_migrations")}
+        for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
+            if migration.name in applied:
+                continue
+            conn.execute(migration.read_text(encoding="utf-8"))
+            conn.execute("INSERT INTO public._test_migrations (name) VALUES (%s)", (migration.name,))
 
     return url
 
@@ -132,6 +133,12 @@ class _FakeBucketProxy:
 
     def create_signed_url(self, path, expires_in, options=None):
         return {"signedUrl": f"https://fake-storage.test/{self.bucket}/{path}?expires_in={expires_in}"}
+
+    def create_signed_urls(self, paths, expires_in, options=None):
+        return [
+            {"path": p, "signedURL": f"https://fake-storage.test/{self.bucket}/{p}?expires_in={expires_in}", "error": None}
+            for p in paths
+        ]
 
 
 class FakeSupabaseClient:

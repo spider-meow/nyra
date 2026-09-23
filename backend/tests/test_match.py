@@ -94,7 +94,6 @@ def test_vectorized_match_finds_identical_hash_and_skips_a_distant_one(config):
 
     same = np.array([np.uint64(0xFFFF0000FFFF0000)], dtype=np.uint64)
     far = np.array([np.uint64(0xFFFFFFFFFFFFFFFF)], dtype=np.uint64)
-    ok = np.array([True])
     none = np.array([False])
     hits = match_index_pairs(
         [7, 8],

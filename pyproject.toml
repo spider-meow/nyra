@@ -1,16 +1,15 @@
 [project]
 name = "nyra"
-version = "0.1.0"
-description = "Deterministic CLI tool to detect reference/licensed images on a crawled website, ranked by rights-expiry urgency."
+version = "0.2.0"
+description = "Detect rights-managed reference images on websites, ranked by rights-expiry urgency."
 requires-python = ">=3.11"
 readme = "README.md"
+# What the web process needs. The worker adds the [worker] extra.
 dependencies = [
     "typer>=0.12",
-    "playwright>=1.44",
     "imagehash>=4.3",
     "Pillow>=10.0",
-    "open_clip_torch>=2.24",
-    "torch>=2.2",
+    "numpy>=1.26",
     "Jinja2>=3.1",
     "PyYAML>=6.0",
     "httpx>=0.27",
@@ -19,15 +18,22 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "python-multipart>=0.0.9",
-    "psycopg[binary]>=3.1",
+    "psycopg[binary,pool]>=3.2",
     "pgvector>=0.3",
     "supabase>=2.6",
     "pyjwt[crypto]>=2.9",
 ]
 
 [project.optional-dependencies]
+# Chromium and the CLIP model: `nyra worker` and the offline CLI pipeline.
+worker = [
+    "playwright>=1.44",
+    "open_clip_torch>=2.24",
+    "torch>=2.2",
+]
 dev = [
     "pytest>=8.0",
+    "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -46,3 +52,15 @@ nyra = ["templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py311"
+src = ["backend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = ["E501", "B008", "B904", "B905"]
+
+[tool.ruff.lint.per-file-ignores]
+"backend/tests/*" = ["F841"]
