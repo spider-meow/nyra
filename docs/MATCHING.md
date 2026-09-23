@@ -34,6 +34,17 @@ gets a normalized embedding (`open_clip`, `ViT-B-32` /
 The comparison runs as matrices: a Hamming matrix (refs × site images,
 2048 site images per chunk) and a dot product for CLIP.
 
+## Exclusions
+
+Recurring false positives — a logo, a generic visual reused on every
+page — can be excluded from the comparison screen. The site image's
+pHash and dHash go into `excluded_hashes`, and every site image within the
+usual Hamming threshold of them is left out of matching, copies included.
+The exclusion list is part of the match signature: adding or removing an
+exclusion makes the next pass a full one, which also brings back the
+matches of an image that is re-included. Adding one also deletes the
+matches it already produced right away.
+
 ## Incremental passes
 
 `run_matching` remembers a signature of the thresholds, the model and the

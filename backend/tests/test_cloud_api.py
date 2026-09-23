@@ -260,3 +260,32 @@ def test_client_routes_get_the_app_shell_and_security_headers(client):
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
     assert r.headers["x-content-type-options"] == "nosniff"
     assert client.get("/api/does-not-exist").status_code == 404
+
+
+def test_exclusions_purge_matches_and_can_be_undone(client, org_with_users, cloud_database_url):
+    org_id, admin_id, client_id, _ = org_with_users
+    logo = "ffff0000ffff0000"
+    with cloud_db.connect(cloud_database_url) as conn:
+        ref = cloud_db.upsert_reference_image(conn, org_id=org_id, filename="logo.png", storage_path=f"{org_id}/logo.png",
+                                              expiry_date=None, credit=None, notes=None, phash=logo, dhash=logo)
+        site = cloud_db.upsert_site(conn, org_id=org_id, url="https://t.test/")
+        images = [
+            conn.execute(
+                "INSERT INTO site_images (org_id, site_id, url, phash, dhash) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (org_id, site, url, phash, phash),
+            ).fetchone()["id"]
+            for url, phash in (("https://t.test/logo.png", logo), ("https://t.test/logo@2x.png", "ffff0000ffff0001"))
+        ]
+        cloud_db.write_matches(conn, org_id, [(ref, image, "phash", 1.0, "haut") for image in images])
+
+    body = {"site_image_id": str(images[0]), "reason": "Logo du site"}
+    assert client.post(f"/api/orgs/{org_id}/exclusions", headers=_headers(client_id), json=body).status_code == 403
+    r = client.post(f"/api/orgs/{org_id}/exclusions", headers=_headers(admin_id), json=body)
+    assert r.json()["matches_removed"] == 2  # the near copy goes too
+
+    listed = client.get(f"/api/orgs/{org_id}/exclusions", headers=_headers(client_id)).json()["exclusions"]
+    assert [item["reason"] for item in listed] == ["Logo du site"]
+
+    r = client.delete(f"/api/orgs/{org_id}/exclusions/{listed[0]['id']}", headers=_headers(admin_id))
+    assert r.status_code == 200 and r.json()["job"]["kind"] == "match"
+    assert client.get(f"/api/orgs/{org_id}/exclusions", headers=_headers(admin_id)).json()["exclusions"] == []

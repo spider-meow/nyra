@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "cd frontend && npm ci && npm run build",
+  "functions": {
+    "app.py": {
+      "includeFiles": "{frontend/dist/**,config.yaml,backend/nyra/templates/**}",
+      "maxDuration": 60
+    }
+  }
+}

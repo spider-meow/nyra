@@ -1,6 +1,9 @@
 import { useState } from "react";
-import { Modal } from "./feedback";
-import { Button, ConfidenceBadge, DecisionBadge, Kbd, StatusBadge, cx } from "./ui";
+import { Modal, useToast } from "./feedback";
+import { Button, ConfidenceBadge, DecisionBadge, FieldLabel, Input, Kbd, StatusBadge, cx } from "./ui";
+import { errorMessage } from "../lib/api";
+import { useOrg } from "../lib/org";
+import { useExclusionMutations } from "../lib/queries";
 import { confidenceHelp, daysText, formatDate, hostOf, pathOf } from "../lib/format";
 import type { Decision, Hit, MatchGroup } from "../types";
 
@@ -16,6 +19,25 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
   const [mode, setMode] = useState<"side" | "overlay">("side");
   const [mix, setMix] = useState(50);
   const [zoom, setZoom] = useState<{ src: string; title: string } | null>(null);
+  const [excluding, setExcluding] = useState(false);
+  const [reason, setReason] = useState("");
+  const { admin } = useOrg();
+  const exclusions = useExclusionMutations();
+  const toast = useToast();
+
+  function exclude() {
+    exclusions.add.mutate(
+      { siteImageId: hit.site_image_id, reason },
+      {
+        onSuccess: (data) => {
+          toast(`Image exclue. ${data.matches_removed} correspondance(s) retirée(s).`, "success");
+          setExcluding(false);
+          setReason("");
+        },
+        onError: (error) => toast(errorMessage(error), "error"),
+      },
+    );
+  }
   const refSrc = group.ref_image || group.ref_thumb;
   const siteSrc = hit.site_image || hit.site_thumb;
   const others = group.hits.length - 1;
@@ -108,6 +130,15 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
         ) : null}
       </div>
 
+      {admin ? (
+        <p className="text-[13px] text-muted">
+          Logo ou visuel générique que le site réutilise partout ?{" "}
+          <button type="button" className="underline underline-offset-2 hover:text-ink" onClick={() => setExcluding(true)}>
+            Exclure cette image de toutes les comparaisons
+          </button>
+        </p>
+      ) : null}
+
       <details className="text-[13px] text-muted">
         <summary className="cursor-pointer select-none">Détails techniques</summary>
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
@@ -121,6 +152,27 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
           <dd>{hit.site_image_ids.length} adresse(s) servant le même fichier</dd>
         </dl>
       </details>
+
+      <Modal
+        open={excluding}
+        onClose={() => setExcluding(false)}
+        title="Exclure cette image"
+        footer={
+          <>
+            <Button onClick={() => setExcluding(false)}>Annuler</Button>
+            <Button variant="danger" disabled={exclusions.add.isPending} onClick={exclude}>Exclure</Button>
+          </>
+        }
+      >
+        <p className="text-sm text-ink-soft">
+          Cette image, et ses copies redimensionnées ou recompressées, ne seront plus jamais proposées, pour aucun visuel.
+          Ses correspondances actuelles disparaissent. Vous pourrez la réintégrer depuis les Réglages.
+        </p>
+        <div className="mt-4">
+          <FieldLabel htmlFor="exclusion-reason" hint="facultatif">Raison</FieldLabel>
+          <Input id="exclusion-reason" data-autofocus placeholder="Logo du site, pictogramme…" value={reason} onChange={(event) => setReason(event.target.value)} />
+        </div>
+      </Modal>
 
       <Modal open={zoom !== null} onClose={() => setZoom(null)} title={zoom?.title ?? ""} wide>
         {zoom ? <img src={zoom.src} alt="" className="mx-auto max-h-[75vh] w-auto object-contain" /> : null}

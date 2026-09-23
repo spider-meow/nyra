@@ -15,6 +15,7 @@ supabase/migrations/
   20260923000008_thumbnails_and_flip_hashes.sql  vignettes, hash miroir, index content_hash
   20260923000009_jobs.sql                        file de tâches (web → worker)
   20260923000010_org_settings.sql                réglages par organisation
+  20260924000011_excluded_hashes.sql             images exclues (faux positifs récurrents)
 ```
 
 Les noms suivent le format attendu par le CLI Supabase
@@ -35,7 +36,7 @@ supabase migration repair --status applied 20260920000001 20260920000002 2026092
 supabase db push
 ```
 
-Ou collez simplement 008, 009 et 010 dans le SQL Editor.
+Ou collez simplement 008 à 011 dans le SQL Editor.
 
 Après 008, les références et images existantes n'ont ni vignette ni hash
 miroir : le worker les complète via une tâche `index` (voir

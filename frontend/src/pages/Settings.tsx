@@ -1,10 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useToast } from "../components/feedback";
-import { Button, Card, Checkbox, EmptyState, FieldLabel, Input, PageHeader, Skeleton } from "../components/ui";
+import { Button, Card, Checkbox, EmptyState, FieldLabel, Input, PageHeader, Skeleton, Thumb } from "../components/ui";
 import { errorMessage } from "../lib/api";
+import { formatDate, hostOf } from "../lib/format";
 import { useAuth } from "../lib/auth";
 import { useOrg } from "../lib/org";
-import { useSaveSettings, useSettings } from "../lib/queries";
+import { useExclusionMutations, useExclusions, useSaveSettings, useSettings } from "../lib/queries";
 import type { Settings as SettingsData, SettingsSection } from "../types";
 
 type Field = { section: "crawl" | "match" | "report"; key: string; label: string; hint: string; step?: string };
@@ -165,6 +166,8 @@ export function Settings() {
         )}
       </form>
 
+      <Exclusions />
+
       <Card className="mt-8">
         <h2 className="font-semibold">Compte</h2>
         <p className="mt-1 text-sm text-muted">
@@ -173,5 +176,56 @@ export function Settings() {
         <Button className="mt-3" onClick={() => void auth.signOut()}>Se déconnecter</Button>
       </Card>
     </>
+  );
+}
+
+function Exclusions() {
+  const { admin } = useOrg();
+  const exclusions = useExclusions();
+  const { remove } = useExclusionMutations();
+  const toast = useToast();
+  const items = exclusions.data?.exclusions ?? [];
+  return (
+    <Card className="mt-8" padded={false}>
+      <div className="px-5 pt-5">
+        <h2 className="font-semibold">Images exclues</h2>
+        <p className="mt-1 max-w-2xl text-sm text-muted">
+          Faux positifs récurrents (logos, visuels génériques) qui ne sont plus jamais proposés, copies proches comprises.
+          On exclut une image depuis l'écran « À traiter ».
+        </p>
+      </div>
+      {items.length ? (
+        <ul className="mt-3 divide-y divide-line border-t border-line">
+          {items.map((item) => (
+            <li key={item.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+              <Thumb src={item.thumb_url} size={40} />
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{item.reason || "Sans raison indiquée"}</span>
+                <span className="block truncate text-xs text-muted">
+                  {item.site_url ? `${hostOf(item.site_url)} · ` : ""}exclue le {formatDate(item.created_at)}
+                </span>
+              </span>
+              {admin ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={remove.isPending}
+                  onClick={() =>
+                    remove.mutate(item.id, {
+                      onSuccess: () => toast("Image réintégrée : elle sera de nouveau comparée à la prochaine comparaison."),
+                      onError: (error) => toast(errorMessage(error), "error"),
+                    })
+                  }
+                >
+                  Réintégrer
+                </Button>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="px-5 pt-2 pb-5 text-sm text-muted">Aucune image exclue.</p>
+      )}
+    </Card>
   );
 }

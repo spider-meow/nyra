@@ -341,6 +341,9 @@ class MatchStore(Protocol):
 
     def get_signature(self) -> Optional[str]: ...
 
+    def load_exclusions(self) -> list[tuple[str, str]]:
+        """(hash, "phash" | "dhash") of images never to match again."""
+
     def save_matches(
         self,
         *,
@@ -352,8 +355,11 @@ class MatchStore(Protocol):
     ) -> int: ...
 
 
-def signature(config: MatchConfig, use_clip: bool) -> str:
+def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[str, str]] = ()) -> str:
     """Anything that changes which pairs match. A different value forces a full recompute."""
+    import hashlib
+
+    excluded = hashlib.sha1(chr(10).join(sorted(f"{kind}:{value}" for value, kind in exclusions)).encode()).hexdigest()[:12]
     return "|".join(
         [
             str(config.phash_threshold),
@@ -363,8 +369,32 @@ def signature(config: MatchConfig, use_clip: bool) -> str:
             str(config.clip_similarity_floor),
             f"{config.clip_model_name}/{config.clip_pretrained}" if use_clip else "hash",
             "flip",
+            f"x{excluded}" if exclusions else "x0",
         ]
     )
+
+
+def excluded_site_ids(sites: Sequence[dict], exclusions: Sequence[tuple[str, str]], config: MatchConfig) -> set:
+    """Site images within the usual Hamming threshold of an excluded hash.
+
+    Exclusions are for recurring false positives — a logo, a generic
+    asset used everywhere — so a re-encoded or resized copy of the same
+    image is excluded too, not only the exact bytes.
+    """
+    if not sites or not exclusions:
+        return set()
+    packed = pack(sites, use_clip=False)
+    hit = np.zeros(len(sites), dtype=bool)
+    for kind, values, ok, threshold in (
+        ("phash", packed.phash, packed.p_ok, config.phash_threshold),
+        ("dhash", packed.dhash, packed.d_ok, config.dhash_threshold),
+    ):
+        refs = np.array([_u64(value)[0] for value, k in exclusions if k == kind and value], dtype=np.uint64)
+        if not refs.size:
+            continue
+        dist = _popcount(np.bitwise_xor(refs[:, None], values[None, :]))
+        hit |= ok & (dist <= threshold).any(axis=0)
+    return {packed.ids[index] for index in np.nonzero(hit)[0].tolist()}
 
 
 def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: bool = True, progress=None, should_stop=None) -> int:
@@ -381,14 +411,17 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
 
         store = LocalStore(store)
 
-    sig = signature(config.match, use_clip)
-    refs, sites = store.load_features(use_clip)
+    exclusions = list(store.load_exclusions()) if hasattr(store, "load_exclusions") else []
+    sig = signature(config.match, use_clip, exclusions)
+    refs, all_sites = store.load_features(use_clip)
+    excluded = excluded_site_ids(all_sites, exclusions, config.match)
+    sites = [row for row in all_sites if row["id"] not in excluded]
     full = store.get_signature() != sig
 
     if full:
         rectangles = [(refs, sites)]
         clear_ref_ids = [row["id"] for row in refs]
-        clear_site_ids = [row["id"] for row in sites]
+        clear_site_ids = [row["id"] for row in all_sites]
     else:
         new_refs = [row for row in refs if row["compared_at"] is None]
         new_sites = [row for row in sites if row["compared_at"] is None]

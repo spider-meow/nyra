@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from nyra import fetch, netguard
+from nyra import match as match_module
 from nyra import report as report_module
 from nyra.config import Config, load_config, validate_overrides, with_overrides
 from nyra.refs import RefValidationError, parse_expiry, reference_features
@@ -120,6 +121,11 @@ class ReviewBody(BaseModel):
     decision: str = ""
 
 
+class ExclusionBody(BaseModel):
+    site_image_id: uuid.UUID
+    reason: str = Field(default="", max_length=500)
+
+
 class SettingsBody(BaseModel):
     overrides: dict[str, Any] = Field(default_factory=dict)
 
@@ -143,6 +149,26 @@ def _content_security_policy(supabase_url: str) -> str:
         "base-uri 'self'",
         "form-action 'self'",
     ])
+
+
+def settings_from_env(config_path: Optional[Path] = None) -> CloudSettings:
+    """Settings from the environment (and a `.env` file when there is one)."""
+    import os
+
+    from nyra.envfile import load_env_files
+
+    load_env_files()
+    missing = [key for key in ("DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY") if not os.environ.get(key)]
+    if missing:
+        raise RuntimeError(f"Missing environment variables: {', '.join(missing)} (see .env.example).")
+    return CloudSettings(
+        database_url=os.environ["DATABASE_URL"],
+        supabase_url=os.environ["SUPABASE_URL"],
+        service_role_key=os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+        jwt_secret=os.environ.get("SUPABASE_JWT_SECRET") or None,
+        anon_key=os.environ.get("SUPABASE_ANON_KEY", ""),
+        config_path=config_path,
+    )
 
 
 def create_app(settings: CloudSettings) -> FastAPI:
@@ -569,6 +595,55 @@ def create_app(settings: CloudSettings) -> FastAPI:
         if body.decision and not touched:
             raise HTTPException(status_code=404, detail="Correspondance introuvable.")
         return {"ok": True, "updated": touched}
+
+    # --- exclusions ----------------------------------------------------------------------
+
+    @app.get("/api/orgs/{org_id}/exclusions")
+    def list_exclusions(org_id: uuid.UUID, member=Depends(member_dep)) -> dict:
+        with cloud_db.connect(settings.database_url) as conn:
+            rows = cloud_db.list_exclusions(conn, org_id)
+        urls = sign(cloud_storage.BUCKET_SITE_IMAGES, [row["thumb_path"] for row in rows])
+        return {
+            "exclusions": [
+                {"id": str(row["id"]), "reason": row["reason"] or "", "site_url": row["site_url"] or "",
+                 "thumb_url": urls.get(row["thumb_path"] or "", ""), "created_at": _iso(row["created_at"])}
+                for row in rows
+            ]
+        }
+
+    @app.post("/api/orgs/{org_id}/exclusions")
+    def add_exclusion(org_id: uuid.UUID, body: ExclusionBody, member=Depends(admin_dep)) -> dict:
+        """Never match this image (or a near copy of it) again.
+
+        Matches it already produced disappear at once; the next comparison
+        recomputes everything with the new exclusion list.
+        """
+        with cloud_db.connect(settings.database_url) as conn:
+            group_id = cloud_db.add_exclusion(conn, org_id, body.site_image_id, reason=body.reason.strip() or None,
+                                              created_by=member.user_id)
+            if group_id is None:
+                raise HTTPException(status_code=404, detail="Image introuvable.")
+            config = org_config(conn, org_id)
+            excluded = match_module.excluded_site_ids(
+                cloud_db.site_hashes(conn, org_id), cloud_db.load_exclusions(conn, org_id), config.match
+            )
+            removed = conn.execute(
+                "DELETE FROM matches WHERE org_id = %s AND site_image_id = ANY(%s)", (org_id, list(excluded))
+            ).rowcount
+        return {"id": str(group_id), "matches_removed": removed}
+
+    @app.delete("/api/orgs/{org_id}/exclusions/{exclusion_id}")
+    def delete_exclusion(org_id: uuid.UUID, exclusion_id: uuid.UUID, member=Depends(admin_dep)) -> dict:
+        with cloud_db.connect(settings.database_url) as conn:
+            if not cloud_db.delete_exclusion(conn, org_id, exclusion_id):
+                raise HTTPException(status_code=404, detail="Exclusion introuvable.")
+        # The match signature now differs: the next comparison brings the image back.
+        try:
+            with cloud_db.connect(settings.database_url) as conn:
+                job = cloud_jobs.enqueue(conn, org_id=org_id, kind="match", created_by=member.user_id)
+        except cloud_jobs.JobConflict:
+            job = None
+        return {"ok": True, "job": job}
 
     # --- reports ------------------------------------------------------------------------
 

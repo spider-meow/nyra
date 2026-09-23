@@ -140,3 +140,33 @@ def test_decode_refuses_decompression_bombs_and_garbage():
     processed = fetch.process_image(small.getvalue(), "image/jpeg", min_side_px=200, max_pixels=10_000_000)
     assert processed is not None and processed.extension == ".jpg"
     assert Image.open(io.BytesIO(processed.thumbnail)).size[0] <= fetch.THUMB_SIZE
+
+
+# --- exclusions -----------------------------------------------------------------------
+
+def test_exclusions_drop_near_copies_and_change_the_signature(tmp_path):
+    from nyra import db
+    from nyra.match import excluded_site_ids, run_matching, signature
+
+    config = Config()
+    logo = "ffff0000ffff0000"
+    near = "ffff0000ffff0001"  # one bit away: a re-encoded copy
+    other = "0f0f0f0f0f0f0f0f"
+    sites = [{"id": 1, "phash": near, "dhash": other}, {"id": 2, "phash": other, "dhash": other}]
+    assert excluded_site_ids(sites, [(logo, "phash")], config.match) == {1}
+    assert signature(config.match, False, [(logo, "phash")]) != signature(config.match, False, [])
+
+    db_path = tmp_path / "x.db"
+    db.init_db(db_path)
+    with db.connect(db_path) as conn:
+        db.upsert_reference_image(conn, filename="logo.png", path="logo.png", expiry_date=None, credit=None,
+                                  notes=None, phash=logo, dhash=logo)
+        db.upsert_site_image(conn, url="https://ex.com/logo.png", phash=logo, dhash=logo)
+    assert run_matching(db_path, Config(), use_clip=False) == 1
+    with db.connect(db_path) as conn:
+        conn.execute("INSERT INTO excluded_hashes (hash, hash_type, created_at) VALUES (?, 'phash', 'now')", (logo,))
+        conn.execute("INSERT INTO excluded_hashes (hash, hash_type, created_at) VALUES (?, 'dhash', 'now')", (logo,))
+    assert run_matching(db_path, Config(), use_clip=False) == 0
+    with db.connect(db_path) as conn:
+        conn.execute("DELETE FROM excluded_hashes")
+    assert run_matching(db_path, Config(), use_clip=False) == 1

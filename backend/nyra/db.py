@@ -96,6 +96,15 @@ CREATE TABLE IF NOT EXISTS reviews (
     PRIMARY KEY (reference_id, site_image_id)
 );
 
+CREATE TABLE IF NOT EXISTS excluded_hashes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT NOT NULL,
+    hash_type TEXT NOT NULL CHECK (hash_type IN ('phash', 'dhash')),
+    reason TEXT,
+    created_at TEXT NOT NULL,
+    UNIQUE (hash, hash_type)
+);
+
 CREATE TABLE IF NOT EXISTS match_meta (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     signature TEXT NOT NULL,
@@ -560,6 +569,10 @@ class LocalStore:
     def get_signature(self) -> Optional[str]:
         with self._conn() as conn:
             return get_match_signature(conn)
+
+    def load_exclusions(self) -> list[tuple[str, str]]:
+        with self._conn() as conn:
+            return [(row["hash"], row["hash_type"]) for row in conn.execute("SELECT hash, hash_type FROM excluded_hashes")]
 
     def save_matches(self, *, full, clear_ref_ids, clear_site_ids, hits, signature) -> int:
         created = now_iso()

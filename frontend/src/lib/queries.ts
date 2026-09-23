@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   CurrentJobs,
   Decision,
+  Exclusion,
   ImportRow,
   Job,
   LibraryItem,
@@ -203,4 +204,29 @@ export function useSaveSettings() {
     mutationFn: (overrides: Settings["overrides"]) => api.put(apiPath("/settings"), { overrides }),
     onSuccess: () => invalidate("settings", "overview"),
   });
+}
+
+export function useExclusions() {
+  const { apiPath, org } = useOrg();
+  return useQuery({
+    queryKey: ["exclusions", org.org_id],
+    queryFn: () => api.get<{ exclusions: Exclusion[] }>(apiPath("/exclusions")),
+  });
+}
+
+export function useExclusionMutations() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  const done = () => invalidate("exclusions", "matches", "overview", "jobs");
+  return {
+    add: useMutation({
+      mutationFn: (input: { siteImageId: string; reason: string }) =>
+        api.post<{ matches_removed: number }>(apiPath("/exclusions"), { site_image_id: input.siteImageId, reason: input.reason }),
+      onSuccess: done,
+    }),
+    remove: useMutation({
+      mutationFn: (id: string) => api.del(apiPath(`/exclusions/${id}`)),
+      onSuccess: done,
+    }),
+  };
 }

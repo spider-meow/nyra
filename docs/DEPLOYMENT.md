@@ -72,3 +72,21 @@ traceback is in the worker's log.
   guard that keeps crawls away from private addresses and cloud metadata.
 - `crawl.max_pages_limit` in `config.yaml` bounds the cost of any single
   crawl, whatever an organization asks for.
+
+## Vercel (web only)
+
+Vercel can host the **web** process; it cannot host the worker (Chromium,
+torch and jobs lasting minutes don't fit serverless functions). Run the
+`worker` image somewhere long-lived (Railway, Fly.io, Render, a VPS)
+against the same Supabase project.
+
+- `app.py` at the repository root is the entrypoint Vercel detects
+  (`app = create_app(settings_from_env())`); `vercel.json` builds the
+  interface and ships `frontend/dist`, `config.yaml` and the report
+  template with the function.
+- Project settings > Environment Variables: `DATABASE_URL`,
+  `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `SUPABASE_JWT_SECRET` (if legacy), `NYRA_PUBLIC_URL`, and
+  `NYRA_DB_POOL_MAX=2` so many small instances don't exhaust the
+  Supabase pooler.
+- The worker uses the same variables (without `NYRA_DB_POOL_MAX`).

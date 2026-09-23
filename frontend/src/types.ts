@@ -163,3 +163,5 @@ export type ImportRow = {
   status: "ok" | "unknown_file" | "bad_date";
   message: string;
 };
+
+export type Exclusion = { id: string; reason: string; site_url: string; thumb_url: string; created_at: string };

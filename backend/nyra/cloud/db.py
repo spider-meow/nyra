@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import os
 import re
 import threading
 import unicodedata
@@ -83,8 +84,10 @@ def pool(database_url: str) -> ConnectionPool:
         if existing is None:
             existing = ConnectionPool(
                 url,
-                min_size=1,
-                max_size=10,
+                # Serverless hosts run many small instances: keep each pool small
+                # there (NYRA_DB_POOL_MAX=2) so they don't exhaust the pooler.
+                min_size=0,
+                max_size=int(os.environ.get("NYRA_DB_POOL_MAX", "10")),
                 kwargs={"row_factory": dict_row},
                 configure=_configure,
                 open=True,
@@ -490,6 +493,57 @@ def unmatched_rows(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
     for row in rows:
         row["expiry_date"] = row["expiry_date"].isoformat() if row["expiry_date"] else None
     return rows
+
+
+# --- exclusions -----------------------------------------------------------
+
+def add_exclusion(
+    conn: psycopg.Connection, org_id: uuid.UUID, site_image_id: uuid.UUID, *,
+    reason: Optional[str], created_by: Optional[uuid.UUID],
+) -> Optional[uuid.UUID]:
+    """Exclude a site image by its hashes. Returns the exclusion's group id, None if the image is unknown."""
+    image = conn.execute(
+        "SELECT phash, dhash, thumb_path, url FROM site_images WHERE id = %s AND org_id = %s", (site_image_id, org_id)
+    ).fetchone()
+    if image is None or not (image["phash"] or image["dhash"]):
+        return None
+    group_id = uuid.uuid4()
+    for kind in ("phash", "dhash"):
+        if image[kind]:
+            conn.execute(
+                """INSERT INTO excluded_hashes (org_id, hash, hash_type, reason, group_id, thumb_path, site_url, created_by)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                   ON CONFLICT (org_id, hash, hash_type) DO UPDATE SET reason = excluded.reason, group_id = excluded.group_id,
+                       thumb_path = excluded.thumb_path, site_url = excluded.site_url""",
+                (org_id, image[kind], kind, reason, group_id, image["thumb_path"], image["url"], created_by),
+            )
+    return group_id
+
+
+def list_exclusions(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
+    return conn.execute(
+        """SELECT COALESCE(group_id, id) AS id, max(reason) AS reason, max(thumb_path) AS thumb_path,
+                  max(site_url) AS site_url, min(created_at) AS created_at
+           FROM excluded_hashes WHERE org_id = %s
+           GROUP BY COALESCE(group_id, id) ORDER BY min(created_at) DESC""",
+        (org_id,),
+    ).fetchall()
+
+
+def delete_exclusion(conn: psycopg.Connection, org_id: uuid.UUID, exclusion_id: uuid.UUID) -> int:
+    result = conn.execute(
+        "DELETE FROM excluded_hashes WHERE org_id = %s AND (group_id = %s OR id = %s)", (org_id, exclusion_id, exclusion_id)
+    )
+    return result.rowcount
+
+
+def site_hashes(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
+    return conn.execute("SELECT id, phash, dhash FROM site_images WHERE org_id = %s", (org_id,)).fetchall()
+
+
+def load_exclusions(conn: psycopg.Connection, org_id: uuid.UUID) -> list[tuple[str, str]]:
+    rows = conn.execute("SELECT hash, hash_type FROM excluded_hashes WHERE org_id = %s", (org_id,)).fetchall()
+    return [(row["hash"], row["hash_type"]) for row in rows]
 
 
 # --- crawl_runs -------------------------------------------------------------

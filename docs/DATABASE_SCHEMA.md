@@ -27,6 +27,7 @@ path. Storage objects live under `{org_id}/...` in three private buckets
 | `image_pages` | Image ↔ page | composite key |
 | `matches` | Reference ↔ site image hits | `level` (phash/dhash/clip), `score`, `confidence` (haut/moyen/a_verifier) |
 | `reviews` | Decisions | `decision` ∈ {retenu = to remove, ecarte = false positive, traite = removed}, `reviewed_by` |
+| `excluded_hashes` | Recurring false positives never matched again | `hash`, `hash_type` (phash/dhash), `group_id` (one exclusion = both rows), `reason`, `thumb_path` |
 | `match_meta` | Signature of the last match pass | thresholds + model; a change forces a full recompute |
 | `jobs` | The work queue | `kind`, `status` (queued/running/done/error/cancelled), `params`, `progress`, `message`, `result`, `error`, `cancel_requested`, `heartbeat_at` |
 | `crawl_runs` | Crawl history | counters, `errors`, `job_id` |

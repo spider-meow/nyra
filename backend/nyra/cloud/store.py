@@ -160,6 +160,10 @@ class CloudMatchStore:
         with cloud_db.connect(self.database_url) as conn:
             return cloud_db.get_match_signature(conn, self.org_id)
 
+    def load_exclusions(self) -> list[tuple[str, str]]:
+        with cloud_db.connect(self.database_url) as conn:
+            return cloud_db.load_exclusions(conn, self.org_id)
+
     def save_matches(self, *, full, clear_ref_ids, clear_site_ids, hits, signature) -> int:
         with cloud_db.connect(self.database_url) as conn:
             if full:
