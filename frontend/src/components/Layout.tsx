@@ -7,6 +7,7 @@ import { useOrg, useOrganizations } from "../lib/org";
 import { refreshAfter, useCancelJob, useInvalidate, useJobs, useOverview } from "../lib/queries";
 import type { Job } from "../types";
 import { useToast } from "./feedback";
+import { Logo } from "./Logo";
 import { Button, cx } from "./ui";
 
 export function Layout() {
@@ -63,8 +64,11 @@ export function Layout() {
   const sidebar = (
     <div className="flex h-full flex-col gap-6 p-4">
       <div className="px-3 pt-1">
-        <p className="text-[15px] font-semibold tracking-tight">Nyra</p>
-        <p className="text-xs text-muted">Droits à l'image sous surveillance</p>
+        <div className="flex items-center gap-2">
+          <Logo size={22} />
+          <p className="text-[15px] font-semibold tracking-tight">Nyra</p>
+        </div>
+        <p className="mt-1 text-xs text-muted">Droits à l'image sous surveillance</p>
       </div>
       {orgs.data && orgs.data.length > 1 ? (
         <select
@@ -99,7 +103,10 @@ export function Layout() {
     <div className="min-h-screen md:grid md:grid-cols-[248px_minmax(0,1fr)]">
       <aside className="sticky top-0 hidden h-screen border-r border-line bg-side md:block">{sidebar}</aside>
       <div className="flex items-center justify-between border-b border-line bg-side px-4 py-3 md:hidden">
-        <p className="font-semibold">Nyra · {org.name}</p>
+        <div className="flex items-center gap-2 font-semibold">
+          <Logo size={20} />
+          <p>Nyra · {org.name}</p>
+        </div>
         <Button size="sm" variant="ghost" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
           {menuOpen ? "Fermer" : "Menu"}
         </Button>
