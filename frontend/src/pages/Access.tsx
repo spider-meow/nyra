@@ -11,9 +11,12 @@ function Centered(props: { title: string; body?: ReactNode; children?: ReactNode
   return (
     <div className="grid min-h-screen place-items-center px-4 py-10">
       <div className="w-full max-w-sm">
-        <div className="mb-6 flex items-center justify-center gap-2">
-          <Logo size={22} />
-          <p className="text-[15px] font-semibold tracking-tight">Nyra</p>
+        <div className="mb-6 flex flex-col items-center gap-1">
+          <div className="flex items-center gap-2">
+            <Logo size={22} />
+            <p className="text-[15px] font-semibold tracking-tight">Nyra</p>
+          </div>
+          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted">by Axel Project</p>
         </div>
         <Card>
           <h1 className="text-xl font-semibold tracking-tight">{props.title}</h1>
