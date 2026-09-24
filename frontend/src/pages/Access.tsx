@@ -2,28 +2,45 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useNavigate, useParams } from "react-router";
 import { Layout } from "../components/Layout";
 import { Logo } from "../components/Logo";
-import { Button, Card, FieldLabel, Input, Spinner } from "../components/ui";
+import { Button, FieldLabel, Input, Spinner } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { OrgProvider, useOrganizations } from "../lib/org";
 
 function Centered(props: { title: string; body?: ReactNode; children?: ReactNode }) {
   return (
-    <div className="grid min-h-screen place-items-center px-4 py-10">
-      <div className="w-full max-w-sm">
-        <div className="mb-6 flex flex-col items-center gap-1">
-          <div className="flex items-center gap-2">
-            <Logo size={22} />
-            <p className="text-[15px] font-semibold tracking-tight">Nyra</p>
-          </div>
-          <p className="text-[11px] font-medium uppercase tracking-[0.18em] text-muted">by Axel Project</p>
+    <div className="grid min-h-screen md:grid-cols-2">
+      <aside className="relative hidden overflow-hidden bg-peach p-14 md:flex md:flex-col md:justify-between" aria-hidden>
+        <span className="absolute -right-28 -bottom-32 h-[560px] w-[560px] rounded-br-[96px] bg-[#f6b993] [clip-path:polygon(100%_0,100%_100%,0_100%)]" />
+        <span className="absolute right-12 bottom-12 h-64 w-64 rounded-tl-[40px] rounded-tr-xl rounded-bl-xl bg-bark/90 [clip-path:polygon(0_0,100%_0,0_100%)]" />
+        <div className="relative flex items-center gap-3">
+          <Logo size={32} />
+          <p className="font-display text-3xl">Nyra</p>
         </div>
-        <Card>
-          <h1 className="text-xl font-semibold tracking-tight">{props.title}</h1>
-          {props.body ? <p className="mt-1.5 text-sm text-muted">{props.body}</p> : null}
+        <div className="relative max-w-md">
+          <p className="font-display text-[54px] leading-[1.02] text-[#3b2410]">
+            Chaque visuel, <em>à sa juste date.</em>
+          </p>
+          <p className="mt-5 text-base leading-relaxed text-bark-800">
+            Nyra relit votre site comme un visiteur, retrouve les images dont les droits expirent et vous dit lesquelles retirer, dans l'ordre.
+          </p>
+        </div>
+        <p className="relative text-[11px] font-medium tracking-[0.18em] text-bark-800 uppercase">by Axel Project</p>
+      </aside>
+      <main className="flex items-center justify-center px-5 py-12">
+        <div className="w-full max-w-[400px]">
+          <div className="mb-10 flex flex-col items-start gap-1 md:hidden">
+            <div className="flex items-center gap-2.5">
+              <Logo size={28} />
+              <p className="font-display text-[28px] leading-none">Nyra</p>
+            </div>
+            <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">by Axel Project</p>
+          </div>
+          <h1 className="font-display text-[44px] leading-none">{props.title}</h1>
+          {props.body ? <p className="mt-3 text-[15px] leading-relaxed text-muted">{props.body}</p> : null}
           {props.children}
-        </Card>
-      </div>
+        </div>
+      </main>
     </div>
   );
 }
@@ -77,10 +94,10 @@ export function Login() {
 
   return (
     <Centered
-      title={mode === "password" ? "Connexion" : "Mot de passe oublié"}
-      body={mode === "password" ? "L'accès se fait sur invitation de votre administrateur." : "Nous vous envoyons un lien pour en choisir un nouveau."}
+      title={mode === "password" ? "Bon retour." : "Mot de passe oublié"}
+      body={mode === "password" ? "Connectez-vous à l'espace de votre organisation. L'accès se fait sur invitation." : "Nous vous envoyons un lien pour en choisir un nouveau."}
     >
-      <form className="mt-5 grid gap-4" onSubmit={(event) => void submit(event)}>
+      <form className="mt-8 grid gap-5" onSubmit={(event) => void submit(event)}>
         <div>
           <FieldLabel htmlFor="email">Adresse e-mail</FieldLabel>
           <Input id="email" type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} />
@@ -92,7 +109,7 @@ export function Login() {
           </div>
         ) : null}
         {error ? <p className="text-sm text-expired" role="alert">{error}</p> : null}
-        <Button type="submit" variant="primary" disabled={pending || auth.phase === "loading"}>
+        <Button type="submit" variant="primary" size="lg" disabled={pending || auth.phase === "loading"}>
           {pending ? "Un instant…" : mode === "password" ? "Se connecter" : "Envoyer le lien"}
         </Button>
         <button
@@ -144,7 +161,7 @@ export function SetPassword() {
 
   return (
     <Centered title="Choisissez votre mot de passe" body={`Pour le compte ${auth.email}.`}>
-      <form className="mt-5 grid gap-4" onSubmit={(event) => void submit(event)}>
+      <form className="mt-8 grid gap-5" onSubmit={(event) => void submit(event)}>
         <div>
           <FieldLabel htmlFor="new-password" hint="10 caractères minimum">Nouveau mot de passe</FieldLabel>
           <Input id="new-password" type="password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
@@ -154,7 +171,7 @@ export function SetPassword() {
           <Input id="confirm-password" type="password" autoComplete="new-password" required value={confirm} onChange={(event) => setConfirm(event.target.value)} />
         </div>
         {error ? <p className="text-sm text-expired" role="alert">{error}</p> : null}
-        <Button type="submit" variant="primary" disabled={pending}>{pending ? "Enregistrement…" : "Enregistrer et continuer"}</Button>
+        <Button type="submit" variant="primary" size="lg" disabled={pending}>{pending ? "Enregistrement…" : "Enregistrer et continuer"}</Button>
       </form>
     </Centered>
   );
@@ -179,7 +196,7 @@ export function OrgHome() {
     <Centered title="Organisations" body="Choisissez l'espace à ouvrir.">
       <div className="mt-5 grid gap-2">
         {list.map((org) => (
-          <Link key={org.org_id} to={`/o/${org.slug}/tableau-de-bord`} className="rounded-lg border border-line-strong px-3 py-2.5 text-sm font-medium hover:bg-canvas">
+          <Link key={org.org_id} to={`/o/${org.slug}/tableau-de-bord`} className="rounded-xl border border-line-strong bg-paper px-4 py-3 text-sm font-medium hover:border-faint">
             {org.name}
             <span className="block text-xs font-normal text-muted">{org.role === "admin" ? "Administrateur" : "Lecture et validation"}</span>
           </Link>

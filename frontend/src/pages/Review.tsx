@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { CompareView } from "../components/CompareView";
 import { Modal, useToast } from "../components/feedback";
-import { Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, FieldLabel, Input, Kbd, LinkButton, PageHeader, Select, Skeleton, StatusBadge, Thumb, cx } from "../components/ui";
+import { Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, FieldLabel, Kbd, LinkButton, PageHeader, SearchField, Select, Skeleton, StatusBadge, Thumb, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { daysText, hostOf, pathOf, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
@@ -165,11 +165,11 @@ export function Review() {
         </div>
         <div>
           <FieldLabel htmlFor="search">Rechercher</FieldLabel>
-          <Input id="search" type="search" placeholder="Nom de fichier" value={query} onChange={(event) => setQuery(event.target.value)} />
+          <SearchField id="search" placeholder="Nom de fichier" value={query} onChange={setQuery} />
         </div>
       </div>
 
-      <div className="mb-4 flex gap-1 overflow-x-auto shadow-[inset_0_-1px_0_var(--color-line)] [scrollbar-width:none]" role="tablist">
+      <div className="mb-5 flex gap-2 overflow-x-auto pb-1 [scrollbar-width:none]" role="tablist" aria-label="Catégories">
         {([
           ["found", "Trouvés", counts.found],
           ["verify", "À vérifier", counts.verify],
@@ -182,9 +182,12 @@ export function Review() {
             role="tab"
             aria-selected={tab === value}
             onClick={() => setParam("onglet", value === "found" ? null : value)}
-            className={cx("border-b-2 px-3 py-2 text-sm whitespace-nowrap", tab === value ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink")}
+            className={cx(
+              "inline-flex h-9 shrink-0 items-center gap-2 rounded-full px-4 text-[13.5px] whitespace-nowrap transition-colors",
+              tab === value ? "bg-ink font-medium text-paper" : "border border-line-strong bg-paper text-ink hover:border-faint",
+            )}
           >
-            {label} <span className="text-xs tabular text-muted">{count}</span>
+            {label} <span className={cx("tabular", tab === value ? "text-paper/70" : "text-muted")}>{count}</span>
           </button>
         ))}
       </div>
@@ -202,9 +205,9 @@ export function Review() {
           action={counts.found + counts.verify === 0 ? <LinkButton to={link("lectures")} variant="primary">Lire le site</LinkButton> : undefined}
         />
       ) : (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)]">
-          <Card padded={false}>
-            <div ref={listRef} role="listbox" aria-label="Occurrences" className="divide-y divide-line">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,480px)]">
+          <div className="self-start rounded-2xl border border-line bg-sunk">
+            <div ref={listRef} role="listbox" aria-label="Occurrences" className="flex flex-col gap-1 p-2">
               {rows.slice(0, shown).map((row) => (
                 <button
                   key={row.key}
@@ -217,18 +220,18 @@ export function Review() {
                     if (!window.matchMedia("(min-width: 1024px)").matches) setPanelOpen(true);
                   }}
                   className={cx(
-                    "flex w-full items-center gap-3 px-4 py-3 text-left",
-                    row.key === selectedKey ? "bg-focus-soft" : "hover:bg-canvas",
-                    row.hit.decision === "ecarte" && "opacity-60",
+                    "flex w-full items-center gap-3.5 rounded-[14px] border px-3 py-2.5 text-left transition-colors",
+                    row.key === selectedKey ? "border-[#e6d3c2] bg-paper shadow-[0_1px_2px_rgb(74_48_20/0.08),0_0_0_3px_var(--color-peach-soft)]" : "border-transparent hover:bg-paper",
+                    row.hit.decision === "ecarte" && "opacity-55",
                   )}
                 >
                   <span className="flex shrink-0 gap-1">
-                    <Thumb src={row.group.ref_thumb} size={40} />
-                    <Thumb src={row.hit.site_thumb} size={40} />
+                    <Thumb src={row.group.ref_thumb} size={46} />
+                    <Thumb src={row.hit.site_thumb} size={46} />
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{row.group.filename}</span>
-                    <span className="block truncate text-xs text-muted">
+                    <span className="mt-0.5 block truncate font-mono text-[11.5px] text-muted">
                       {hostOf(row.hit.site_url)} · {row.hit.pages[0] ? pathOf(row.hit.pages[0]) : pathOf(row.hit.site_url)}
                       {row.hit.page_count > 1 ? ` et ${row.hit.page_count - 1} autre(s) page(s)` : ""}
                     </span>
@@ -248,12 +251,12 @@ export function Review() {
                 <Button size="sm" onClick={() => setShown((value) => value + 100)}>Afficher plus · {shown}/{rows.length}</Button>
               </div>
             ) : null}
-            <p className="border-t border-line px-4 py-2 text-xs text-muted">{plural(rows.length, "occurrence")}</p>
-          </Card>
+            <p className="border-t border-line px-4 py-2.5 text-xs text-muted">{plural(rows.length, "occurrence")}</p>
+          </div>
 
           <div className="hidden lg:block">
             <div className="sticky top-6">
-              <Card>{selected ? <CompareView group={selected.group} hit={selected.hit} busy={review.isPending} onDecide={(decision, everywhere) => decide(selected, decision, everywhere)} /> : <p className="text-sm text-muted">Sélectionnez une occurrence.</p>}</Card>
+              <Card className="shadow-[0_12px_32px_rgb(74_48_20/0.06)]">{selected ? <CompareView group={selected.group} hit={selected.hit} busy={review.isPending} onDecide={(decision, everywhere) => decide(selected, decision, everywhere)} /> : <p className="text-sm text-muted">Sélectionnez une occurrence.</p>}</Card>
             </div>
           </div>
         </div>
@@ -269,13 +272,13 @@ export function Review() {
 function MissingList(props: { items: NonNullable<ReturnType<typeof useMatches>["data"]>["not_found"] }) {
   if (!props.items.length) return <EmptyState title="Aucun visuel manquant" body="Toutes les références de cette fenêtre ont au moins une occurrence en ligne." />;
   return (
-    <Card padded={false}>
-      <p className="border-b border-line px-4 py-3 text-sm text-muted">
+    <Card padded={false} className="overflow-hidden">
+      <p className="border-b border-line bg-sunk px-5 py-3.5 text-sm text-muted">
         Ces visuels n'ont été retrouvés nulle part. « Pas encore comparé » signifie qu'ils ont été ajoutés après la dernière comparaison : ce n'est pas une preuve d'absence.
       </p>
       <ul className="divide-y divide-line">
         {props.items.map((item) => (
-          <li key={item.reference_id} className="flex items-center gap-3 px-4 py-2.5">
+          <li key={item.reference_id} className="flex items-center gap-3 px-5 py-3">
             <Thumb src={item.ref_thumb} size={40} />
             <span className="min-w-0 flex-1 truncate text-sm">{item.filename}</span>
             <StatusBadge status={item.status} label={daysText(item.days_left)} />

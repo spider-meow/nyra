@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Modal, useToast } from "./feedback";
-import { Button, ConfidenceBadge, DecisionBadge, FieldLabel, Input, Kbd, StatusBadge, cx } from "./ui";
+import { Button, ConfidenceBadge, DecisionBadge, FieldLabel, Input, Segmented, StatusBadge, cx } from "./ui";
 import { errorMessage } from "../lib/api";
 import { useOrg } from "../lib/org";
 import { useExclusionMutations } from "../lib/queries";
@@ -46,63 +46,58 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="truncate font-semibold" title={group.filename}>{group.filename}</h2>
-          <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
-            <StatusBadge status={group.status} />
-            <span>{daysText(group.days_left)}</span>
-            {group.expiry_date ? <span>· échéance {formatDate(group.expiry_date)}</span> : null}
+          <h2 className="truncate text-lg font-semibold tracking-tight" title={group.filename}>{group.filename}</h2>
+          <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[13px] text-muted">
+            <StatusBadge status={group.status} label={daysText(group.days_left)} />
+            {group.expiry_date ? <span>Échéance {formatDate(group.expiry_date)}</span> : null}
           </p>
           {group.credit || group.notes ? (
             <p className="mt-1 text-[13px] text-muted">{[group.credit, group.notes].filter(Boolean).join(" · ")}</p>
           ) : null}
         </div>
-        <div className="flex rounded-lg border border-line-strong p-0.5 text-[13px]" role="group" aria-label="Affichage">
-          {(["side", "overlay"] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={mode === value}
-              className={cx("rounded-md px-2.5 py-1", mode === value ? "bg-ink text-white" : "text-ink-soft hover:text-ink")}
-              onClick={() => setMode(value)}
-            >
-              {value === "side" ? "Côte à côte" : "Superposition"}
-            </button>
-          ))}
-        </div>
+        <Segmented
+          label="Affichage"
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: "side", label: "Côte à côte" },
+            { value: "overlay", label: "Superposition" },
+          ]}
+        />
       </div>
 
       {mode === "side" ? (
         <div className="grid grid-cols-2 gap-3">
           <Figure label="Référence" src={refSrc} onZoom={() => setZoom({ src: refSrc, title: `Référence : ${group.filename}` })} />
-          <Figure label={`Sur ${hostOf(hit.site_url)}`} src={siteSrc} onZoom={() => setZoom({ src: siteSrc, title: hit.site_url })} />
+          <Figure found label={`Sur ${hostOf(hit.site_url)}`} src={siteSrc} onZoom={() => setZoom({ src: siteSrc, title: hit.site_url })} />
         </div>
       ) : (
         <div>
-          <div className="relative aspect-[4/3] overflow-hidden rounded-lg border border-line bg-canvas">
+          <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-side">
             <img src={refSrc} alt="Référence" className="absolute inset-0 h-full w-full object-contain" />
             <img src={siteSrc} alt="Image trouvée" className="absolute inset-0 h-full w-full object-contain" style={{ opacity: mix / 100 }} />
           </div>
           <label className="mt-2 flex items-center gap-3 text-[13px] text-muted">
             Référence
-            <input type="range" min={0} max={100} value={mix} onChange={(event) => setMix(Number(event.target.value))} className="flex-1 accent-ink" aria-label="Mélange entre la référence et l'image trouvée" />
+            <input type="range" min={0} max={100} value={mix} onChange={(event) => setMix(Number(event.target.value))} className="flex-1 accent-bark" aria-label="Mélange entre la référence et l'image trouvée" />
             Trouvée
           </label>
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2 text-sm">
+      <div className="flex flex-wrap items-center gap-2.5 rounded-xl bg-peach-soft px-3.5 py-2.5 text-[13px] text-bark-800">
         <ConfidenceBadge confidence={hit.confidence} />
-        <span className="text-muted">{confidenceHelp[hit.confidence]}</span>
+        <span>{confidenceHelp[hit.confidence]}</span>
       </div>
 
-      <div className="rounded-lg border border-line">
-        <p className="border-b border-line px-3 py-2 text-[13px] font-medium">
+      <div className="rounded-xl border border-line">
+        <p className="border-b border-line px-3.5 py-2.5 text-[13px] font-semibold">
           Visible sur {hit.page_count} page{hit.page_count > 1 ? "s" : ""}
         </p>
-        <ul className="max-h-40 overflow-y-auto px-3 py-2 text-[13px]">
+        <ul className="max-h-40 overflow-y-auto px-3.5 py-2 font-mono text-xs">
           {hit.pages.map((page) => (
             <li key={page} className="truncate py-0.5">
-              <a href={page} target="_blank" rel="noreferrer noopener" className="text-ink-soft underline decoration-line-strong underline-offset-2 hover:text-ink">
+              <a href={page} target="_blank" rel="noreferrer noopener" className="text-bark-700 hover:text-bark-800 hover:underline">
                 {pathOf(page)}
               </a>
             </li>
@@ -111,12 +106,12 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
         </ul>
       </div>
 
-      <div className="rounded-lg bg-canvas p-3">
+      <div className="rounded-2xl bg-sunk p-3.5">
         <div className="flex items-center justify-between gap-2">
-          <p className="text-[13px] font-medium">Décision</p>
+          <p className="text-[13px] font-semibold">Décision</p>
           <DecisionBadge decision={hit.decision} />
         </div>
-        <div className="mt-2 grid grid-cols-3 gap-2">
+        <div className="mt-3 grid grid-cols-3 gap-2">
           <DecisionButton label="À retirer" shortcut="R" active={hit.decision === "retenu"} disabled={busy} onClick={() => onDecide(hit.decision === "retenu" ? "" : "retenu")} />
           <DecisionButton label="Faux positif" shortcut="F" active={hit.decision === "ecarte"} disabled={busy} onClick={() => onDecide(hit.decision === "ecarte" ? "" : "ecarte")} />
           <DecisionButton label="Retiré" shortcut="T" active={hit.decision === "traite"} disabled={busy} onClick={() => onDecide(hit.decision === "traite" ? "" : "traite")} />
@@ -181,29 +176,38 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
   );
 }
 
-function Figure(props: { label: string; src: string; onZoom: () => void }) {
+function Figure(props: { label: string; src: string; onZoom: () => void; found?: boolean }) {
   return (
     <figure className="min-w-0">
-      <button type="button" onClick={props.onZoom} className="block w-full overflow-hidden rounded-lg border border-line bg-canvas" aria-label={`Agrandir : ${props.label}`}>
+      <button
+        type="button"
+        onClick={props.onZoom}
+        className={cx("block w-full overflow-hidden rounded-2xl bg-side", props.found && "ring-3 ring-peach")}
+        aria-label={`Agrandir : ${props.label}`}
+      >
         {props.src ? <img src={props.src} alt="" className="aspect-square w-full object-contain" /> : <span className="block aspect-square" />}
       </button>
-      <figcaption className="mt-1.5 truncate text-[13px] text-muted">{props.label}</figcaption>
+      <figcaption className="mt-2 truncate text-[13px] font-medium">{props.label}</figcaption>
     </figure>
   );
 }
 
 function DecisionButton(props: { label: string; shortcut: string; active: boolean; onClick: () => void; disabled?: boolean }) {
   return (
-    <Button
-      size="sm"
-      variant={props.active ? "primary" : "secondary"}
+    <button
+      type="button"
       aria-pressed={props.active}
       disabled={props.disabled}
       onClick={props.onClick}
-      className="justify-between"
+      className={cx(
+        "flex h-14 flex-col items-center justify-center gap-0.5 rounded-[14px] border text-[13.5px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+        props.active ? "border-ink bg-ink text-paper" : "border-line-strong bg-paper text-ink hover:border-faint",
+      )}
     >
       {props.label}
-      <Kbd>{props.shortcut}</Kbd>
-    </Button>
+      <span className={cx("text-[11px] font-normal", props.active ? "text-paper/60" : "text-muted")} aria-hidden>
+        {props.shortcut}
+      </span>
+    </button>
   );
 }
