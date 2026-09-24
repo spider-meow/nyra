@@ -2,45 +2,28 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useNavigate, useParams } from "react-router";
 import { Layout } from "../components/Layout";
 import { Logo } from "../components/Logo";
-import { Button, FieldLabel, Input, Spinner } from "../components/ui";
+import { Button, Card, FieldLabel, Input, Spinner } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { OrgProvider, useOrganizations } from "../lib/org";
 
 function Centered(props: { title: string; body?: ReactNode; children?: ReactNode }) {
   return (
-    <div className="grid min-h-screen md:grid-cols-2">
-      <aside className="relative hidden overflow-hidden bg-peach p-14 md:flex md:flex-col md:justify-between" aria-hidden>
-        <span className="absolute -right-28 -bottom-32 h-[560px] w-[560px] rounded-br-[96px] bg-[#f6b993] [clip-path:polygon(100%_0,100%_100%,0_100%)]" />
-        <span className="absolute right-12 bottom-12 h-64 w-64 rounded-tl-[40px] rounded-tr-xl rounded-bl-xl bg-bark/90 [clip-path:polygon(0_0,100%_0,0_100%)]" />
-        <div className="relative flex items-center gap-3">
-          <Logo size={32} />
-          <p className="font-display text-3xl">Nyra</p>
-        </div>
-        <div className="relative max-w-md">
-          <p className="font-display text-[54px] leading-[1.02] text-[#3b2410]">
-            Chaque visuel, <em>à sa juste date.</em>
-          </p>
-          <p className="mt-5 text-base leading-relaxed text-bark-800">
-            Nyra relit votre site comme un visiteur, retrouve les images dont les droits expirent et vous dit lesquelles retirer, dans l'ordre.
-          </p>
-        </div>
-        <p className="relative text-[11px] font-medium tracking-[0.18em] text-bark-800 uppercase">by Axel Project</p>
-      </aside>
-      <main className="flex items-center justify-center px-5 py-12">
-        <div className="w-full max-w-[400px]">
-          <div className="mb-10 flex flex-col items-start gap-1 md:hidden">
-            <div className="flex items-center gap-2.5">
-              <Logo size={28} />
-              <p className="font-display text-[28px] leading-none">Nyra</p>
-            </div>
-            <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">by Axel Project</p>
+    <div className="grid min-h-screen place-items-center px-4 py-10">
+      <div className="w-full max-w-[400px]">
+        <div className="mb-8 flex flex-col items-center gap-1.5">
+          <div className="flex items-center gap-2.5">
+            <Logo size={28} />
+            <p className="font-display text-[30px] leading-none">Nyra</p>
           </div>
-          <h1 className="font-display text-[44px] leading-none">{props.title}</h1>
-          {props.body ? <p className="mt-3 text-[15px] leading-relaxed text-muted">{props.body}</p> : null}
-          {props.children}
+          <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">by Axel Project</p>
         </div>
-      </main>
+        <Card className="p-8 shadow-float">
+          <h1 className="font-display text-[34px] leading-none">{props.title}</h1>
+          {props.body ? <p className="mt-2.5 text-sm leading-relaxed text-muted">{props.body}</p> : null}
+          {props.children}
+        </Card>
+      </div>
     </div>
   );
 }
@@ -94,10 +77,10 @@ export function Login() {
 
   return (
     <Centered
-      title={mode === "password" ? "Bon retour." : "Mot de passe oublié"}
-      body={mode === "password" ? "Connectez-vous à l'espace de votre organisation. L'accès se fait sur invitation." : "Nous vous envoyons un lien pour en choisir un nouveau."}
+      title={mode === "password" ? "Connexion" : "Mot de passe oublié"}
+      body={mode === "password" ? "L'accès se fait sur invitation de votre administrateur." : "Nous vous envoyons un lien pour en choisir un nouveau."}
     >
-      <form className="mt-8 grid gap-5" onSubmit={(event) => void submit(event)}>
+      <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div>
           <FieldLabel htmlFor="email">Adresse e-mail</FieldLabel>
           <Input id="email" type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} />
@@ -161,7 +144,7 @@ export function SetPassword() {
 
   return (
     <Centered title="Choisissez votre mot de passe" body={`Pour le compte ${auth.email}.`}>
-      <form className="mt-8 grid gap-5" onSubmit={(event) => void submit(event)}>
+      <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div>
           <FieldLabel htmlFor="new-password" hint="10 caractères minimum">Nouveau mot de passe</FieldLabel>
           <Input id="new-password" type="password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
