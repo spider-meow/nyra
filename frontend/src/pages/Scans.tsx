@@ -149,7 +149,7 @@ export function Scans() {
                     ) : scan.status === "done" && scan.pages_visited > 0 && scan.images_found === 0 ? (
                       "Aucune image assez grande trouvée"
                     ) : (
-                      "—"
+                      "·"
                     )}
                   </td>
                 </tr>

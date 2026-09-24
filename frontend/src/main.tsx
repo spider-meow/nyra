@@ -30,7 +30,7 @@ function Titled(props: { children: ReactNode }) {
   const matches = useMatches();
   const title = [...matches].reverse().find((match) => (match.handle as Handle | undefined)?.title)?.handle as Handle | undefined;
   useEffect(() => {
-    document.title = title ? `${title.title} — Nyra` : "Nyra";
+    document.title = title ? `${title.title} · Nyra` : "Nyra";
   }, [title]);
   return <>{props.children}</>;
 }

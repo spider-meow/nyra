@@ -1,5 +1,5 @@
-const DARK = "#292680";
-const LIGHT = "#5951EA";
+const DARK = "#936225";
+const LIGHT = "#FDCBAC";
 
 /** The Nyra mark: two rounded triangles split by a diagonal gap. */
 export function Logo(props: { size?: number; className?: string }) {

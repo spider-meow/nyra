@@ -42,13 +42,13 @@ const dateTimeFormat = new Intl.DateTimeFormat("fr-FR", {
 });
 
 export function formatDate(iso: string | null | undefined): string {
-  if (!iso) return "—";
+  if (!iso) return "·";
   const date = new Date(iso.length === 10 ? `${iso}T00:00:00` : iso);
   return Number.isNaN(date.getTime()) ? iso : dateFormat.format(date);
 }
 
 export function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return "—";
+  if (!iso) return "·";
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : dateTimeFormat.format(date);
 }

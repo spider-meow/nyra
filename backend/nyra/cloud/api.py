@@ -725,7 +725,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
                 return FileResponse(static)
             if not_found_page.is_file():
                 return HTMLResponse(not_found_page.read_text(encoding="utf-8"), status_code=404)
-            return HTMLResponse("<p>404 — page introuvable.</p>", status_code=404)
+            return HTMLResponse("<p>404 : page introuvable.</p>", status_code=404)
         return index_page()
 
     return app

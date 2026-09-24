@@ -189,7 +189,7 @@ export function OrgHome() {
   );
 }
 
-/** /o/:slug/* — resolves the organization, then renders the app shell. */
+/** /o/:slug/*: resolves the organization, then renders the app shell. */
 export function OrgShell() {
   const { slug } = useParams();
   const orgs = useOrganizations();

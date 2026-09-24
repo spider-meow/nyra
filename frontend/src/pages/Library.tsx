@@ -171,7 +171,7 @@ export function Library() {
             <div>
               <p className="text-sm font-medium text-expired">{plural(failures.length, "fichier refusé", "fichiers refusés")}</p>
               <ul className="mt-1 text-[13px] text-ink-soft">
-                {failures.map((item) => <li key={item.filename}>{item.filename} — {item.reason}</li>)}
+                {failures.map((item) => <li key={item.filename}>{item.filename} : {item.reason}</li>)}
               </ul>
             </div>
             <Button size="sm" variant="ghost" onClick={() => setFailures([])}>Fermer</Button>
@@ -303,7 +303,7 @@ export function Library() {
                       )}
                     </td>
                     <td className="px-2 py-2"><StatusBadge status={item.status} label={item.status === "inconnue" ? undefined : daysText(item.days_left)} /></td>
-                    <td className="max-w-[200px] truncate px-2 py-2 text-ink-soft" title={item.credit}>{item.credit || <span className="text-faint">—</span>}</td>
+                    <td className="max-w-[200px] truncate px-2 py-2 text-ink-soft" title={item.credit}>{item.credit || <span className="text-faint">·</span>}</td>
                     <td className="px-4 py-2 text-right">
                       <Button size="sm" variant="ghost" onClick={() => setEditing(item)}>{admin ? "Modifier" : "Voir"}</Button>
                     </td>
@@ -488,7 +488,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
                 <tr key={`${row.line}-${row.filename}`}>
                   <td className="px-3 py-1.5 text-muted tabular">{row.line}</td>
                   <td className="max-w-[240px] truncate px-3 py-1.5">{row.filename}</td>
-                  <td className="px-3 py-1.5 tabular">{row.expiry_date ? formatDate(row.expiry_date) : "—"}</td>
+                  <td className="px-3 py-1.5 tabular">{row.expiry_date ? formatDate(row.expiry_date) : "·"}</td>
                   <td className={cx("px-3 py-1.5", row.status === "ok" ? "text-ok" : "text-expired")} title={row.message}>
                     {importStatus[row.status]}
                     {row.message && row.status === "bad_date" ? <span className="block text-xs text-muted">{row.message}</span> : null}

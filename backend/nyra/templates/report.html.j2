@@ -30,7 +30,7 @@
           {% if hit.pages|length > 6 %}<span class="muted small">et {{ hit.pages|length - 6 }} autre{{ 's' if hit.pages|length - 6 > 1 }} page{{ 's' if hit.pages|length - 6 > 1 }}</span>{% endif %}
         </td>
         <td class="c-conf">{{ confidence_labels.get(hit.confidence, hit.confidence) }}<span class="muted small"> · {{ (hit.score * 100)|round|int }} %</span></td>
-        <td class="c-dec">{{ decision_labels.get(hit.decision or '', '—') }}</td>
+        <td class="c-dec">{{ decision_labels.get(hit.decision or '', '·') }}</td>
       </tr>
     {% endfor %}
     </tbody>
@@ -42,7 +42,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rapport Nyra{% if organization %} — {{ organization }}{% endif %}</title>
+<title>Rapport Nyra{% if organization %} · {{ organization }}{% endif %}</title>
 <style>
   :root {
     --ink: #111; --muted: #5f5f5f; --line: #e3e3e3; --soft: #f6f6f5;

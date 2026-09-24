@@ -73,7 +73,7 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
 
       {mode === "side" ? (
         <div className="grid grid-cols-2 gap-3">
-          <Figure label="Référence" src={refSrc} onZoom={() => setZoom({ src: refSrc, title: `Référence — ${group.filename}` })} />
+          <Figure label="Référence" src={refSrc} onZoom={() => setZoom({ src: refSrc, title: `Référence : ${group.filename}` })} />
           <Figure label={`Sur ${hostOf(hit.site_url)}`} src={siteSrc} onZoom={() => setZoom({ src: siteSrc, title: hit.site_url })} />
         </div>
       ) : (
