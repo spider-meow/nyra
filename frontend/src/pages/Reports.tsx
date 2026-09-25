@@ -72,9 +72,9 @@ export function Reports() {
                   </p>
                 </div>
                 <div className="flex flex-wrap gap-2 text-sm">
-                  <FileLink href={report.files["report.html"]} label="Ouvrir le rapport" primary />
-                  <FileLink href={report.files["matches.csv"]} label="CSV des occurrences" />
-                  <FileLink href={report.files["not_found.csv"]} label="CSV des non trouvés" />
+                  <FileLink href={report.files["report.html"]} label="Ouvrir le rapport" primary open />
+                  <FileLink href={report.files["matches.csv"]} label="CSV des occurrences" filename="occurrences.csv" />
+                  <FileLink href={report.files["not_found.csv"]} label="CSV des non trouvés" filename="non-trouves.csv" />
                 </div>
               </li>
             ))}
@@ -85,16 +85,56 @@ export function Reports() {
   );
 }
 
-function FileLink(props: { href: string; label: string; primary?: boolean }) {
+/**
+ * Storage serves every stored file as plain text without a charset (an HTML
+ * file would otherwise run on its domain), so a direct link shows the
+ * report's source with broken accents. The file is fetched and handed to the
+ * browser with the right type instead: the report opens as a page, the CSVs
+ * download under their name.
+ */
+function FileLink(props: { href: string; label: string; primary?: boolean; open?: boolean; filename?: string }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
   if (!props.href) return <span className="text-muted">{props.label} (indisponible)</span>;
+
+  async function go() {
+    // Opened right away, inside the click: a tab opened after an await is blocked as a pop-up.
+    const tab = props.open ? window.open("", "_blank") : null;
+    setBusy(true);
+    try {
+      const response = await fetch(props.href);
+      if (!response.ok) throw new Error(response.status === 400 || response.status === 403 ? "Le lien a expiré : rechargez la page." : "Le fichier est introuvable.");
+      const blob = new Blob([await response.arrayBuffer()], { type: props.open ? "text/html;charset=utf-8" : "text/csv;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      if (tab) {
+        tab.location.href = url;
+      } else {
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = props.filename ?? "export.csv";
+        link.click();
+      }
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (error) {
+      tab?.close();
+      toast.show({ tone: "error", message: "Le fichier n'a pas pu être ouvert", description: errorMessage(error) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <a
-      href={props.href}
-      target="_blank"
-      rel="noreferrer noopener"
-      className={props.primary ? "font-medium underline underline-offset-2" : "text-ink-soft underline decoration-line-strong underline-offset-2 hover:text-ink"}
+    <button
+      type="button"
+      onClick={() => void go()}
+      disabled={busy}
+      className={
+        props.primary
+          ? "font-medium underline underline-offset-2 disabled:cursor-progress disabled:opacity-60"
+          : "text-ink-soft underline decoration-line-strong underline-offset-2 hover:text-ink disabled:cursor-progress disabled:opacity-60"
+      }
     >
-      {props.label}
-    </a>
+      {busy ? (props.open ? "Ouverture…" : "Téléchargement…") : props.label}
+    </button>
   );
 }
