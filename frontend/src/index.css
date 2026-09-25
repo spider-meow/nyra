@@ -1,34 +1,50 @@
 @import "tailwindcss";
 
+/* Nyra design system, "Terre & Pêche": warm neutrals, the logo's bark brown
+   and peach for brand moments, and one strict colour ladder for expiry. */
 @theme {
   --font-sans: "Geist", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
 
-  /* Neutrals */
-  --color-ink: #111111;
-  --color-ink-soft: #3d3d3d;
-  --color-muted: #5f5f5f; /* 6.4:1 on white, 5.9:1 on canvas */
-  --color-faint: #8a8a8a;
-  --color-line: #e4e4e2;
-  --color-line-strong: #cfcfcc;
-  --color-canvas: #f6f6f4;
-  --color-side: #fbfbfa;
-  --color-paper: #ffffff;
+  /* Warm neutrals */
+  --color-ink: #1f1a15; /* espresso: text, primary buttons */
+  --color-ink-soft: #463d35;
+  --color-muted: #6f655b; /* 5.6:1 on canvas */
+  --color-faint: #a2978b;
+  --color-line: #eae3d9;
+  --color-line-strong: #d8cec1;
+  --color-canvas: #f7f3ee;
+  --color-side: #f1ebe3;
+  --color-sunk: #fbf8f4;
+  --color-paper: #fffefc;
 
-  /* Status: one hue per urgency, used for text, borders and soft fills */
-  --color-expired: #b42318;
-  --color-expired-soft: #fdecea;
-  --color-urgent: #b54708;
-  --color-urgent-soft: #fef0e6;
-  --color-soon: #8a6500;
-  --color-soon-soft: #fdf6dc;
-  --color-ok: #1f7a3a;
-  --color-ok-soft: #e8f5ec;
-  --color-unknown: #5f5f5f;
-  --color-unknown-soft: #efefed;
+  /* Brand, from the logo */
+  --color-bark-800: #5a3710;
+  --color-bark-700: #7a4e1d;
+  --color-bark: #93622a;
+  --color-peach: #fbcbae;
+  --color-peach-soft: #fdebdd;
 
-  /* Accent for focus and selection */
-  --color-focus: #2f5bd3;
-  --color-focus-soft: #e9efff;
+  /* Status: one hue per urgency, used for text, borders and soft fills.
+     They also differ in lightness, not only in hue. */
+  --color-expired: #a8261b;
+  --color-expired-soft: #fbe7e3;
+  --color-urgent: #a34e0c;
+  --color-urgent-soft: #fcebdb;
+  --color-soon: #7d6200;
+  --color-soon-soft: #f8f0d2;
+  --color-ok: #2f6b45;
+  --color-ok-soft: #e4f0e7;
+  --color-unknown: #6f655b;
+  --color-unknown-soft: #efeae3;
+
+  /* Focus and selection follow the brand */
+  --color-focus: #93622a;
+  --color-focus-soft: #fdebdd;
+
+  --shadow-lift: 0 1px 2px rgb(74 48 20 / 0.08);
+  --shadow-float: 0 12px 32px rgb(74 48 20 / 0.12);
 }
 
 html,
@@ -46,18 +62,27 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+a {
+  text-underline-offset: 2px;
+}
+
 :focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
-  border-radius: 6px;
+  border-radius: 8px;
 }
 
 ::selection {
-  background: var(--color-focus-soft);
+  background: var(--color-peach-soft);
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+.font-display {
+  font-weight: 400;
+  letter-spacing: -0.02em;
 }
 
 @keyframes toast-in {

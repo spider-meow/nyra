@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Icon } from "./icons";
 import { Button, cx } from "./ui";
 
 // --- toasts -------------------------------------------------------------------
@@ -105,17 +106,20 @@ export function ToastProvider(props: { children: ReactNode }) {
             role={toast.tone === "error" ? "alert" : "status"}
             onMouseEnter={() => window.clearTimeout(timers.current.get(toast.id))}
             onMouseLeave={() => schedule(toast)}
-            className="toast-in pointer-events-auto w-full max-w-sm overflow-hidden rounded-xl bg-ink text-sm text-white shadow-lg ring-1 ring-black/5"
+            className={cx(
+              "toast-in pointer-events-auto w-full max-w-sm overflow-hidden rounded-xl text-sm shadow-float",
+              toast.tone === "error" ? "border border-expired/20 bg-expired-soft text-expired" : "bg-ink text-paper",
+            )}
           >
             <div className="flex items-start gap-3 px-4 py-3">
               <ToastIcon tone={toast.tone} />
               <div className="min-w-0 flex-1">
                 <p className="font-medium leading-5">{toast.message}</p>
-                {toast.description ? <p className="mt-0.5 text-[13px] leading-5 text-white/70">{toast.description}</p> : null}
+                {toast.description ? <p className="mt-0.5 text-[13px] leading-5 opacity-75">{toast.description}</p> : null}
                 {toast.action ? (
                   <button
                     type="button"
-                    className="mt-1.5 text-[13px] font-medium text-white underline underline-offset-2 hover:text-white/80 disabled:cursor-default disabled:no-underline disabled:opacity-60"
+                    className="mt-1.5 text-[13px] font-medium underline underline-offset-2 hover:opacity-80 disabled:cursor-default disabled:no-underline disabled:opacity-60"
                     disabled={toast.action.disabled}
                     onClick={() => {
                       toast.action?.onClick();
@@ -127,24 +131,24 @@ export function ToastProvider(props: { children: ReactNode }) {
                 ) : null}
               </div>
               {toast.tone !== "loading" ? (
-                <button type="button" className="-mr-1 px-1 text-base leading-5 text-white/60 hover:text-white" aria-label="Fermer" onClick={() => dismiss(toast.id)}>
-                  ×
+                <button type="button" className="mt-0.5 opacity-60 hover:opacity-100" aria-label="Fermer" onClick={() => dismiss(toast.id)}>
+                  <Icon name="close" size={14} strokeWidth={2} />
                 </button>
               ) : null}
             </div>
             {toast.progress === null ? (
-              <div className="h-1 overflow-hidden bg-white/10" role="progressbar" aria-valuemin={0} aria-valuemax={100}>
-                <div className="progress-indeterminate h-full w-1/4 bg-white" />
+              <div className="h-1 overflow-hidden bg-paper/10" role="progressbar" aria-valuemin={0} aria-valuemax={100}>
+                <div className="progress-indeterminate h-full w-1/4 bg-peach" />
               </div>
             ) : toast.progress !== undefined ? (
               <div
-                className="h-1 bg-white/10"
+                className="h-1 bg-paper/10"
                 role="progressbar"
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={Math.round(toast.progress * 100)}
               >
-                <div className="h-full bg-white transition-[width] duration-300" style={{ width: `${Math.max(3, Math.min(100, toast.progress * 100))}%` }} />
+                <div className="h-full bg-peach transition-[width] duration-300" style={{ width: `${Math.max(3, Math.min(100, toast.progress * 100))}%` }} />
               </div>
             ) : null}
           </div>
@@ -156,18 +160,11 @@ export function ToastProvider(props: { children: ReactNode }) {
 
 function ToastIcon(props: { tone: Tone }) {
   if (props.tone === "loading") {
-    return <span aria-hidden className="mt-0.5 h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/30 border-t-white" />;
+    return <span aria-hidden className="mt-0.5 h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-paper/30 border-t-peach" />;
   }
-  const style = {
-    success: { className: "bg-ok", glyph: "✓" },
-    error: { className: "bg-expired", glyph: "!" },
-    info: { className: "bg-white/20", glyph: "i" },
-  }[props.tone];
-  return (
-    <span aria-hidden className={cx("mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px] font-bold leading-none text-white", style.className)}>
-      {style.glyph}
-    </span>
-  );
+  if (props.tone === "success") return <Icon name="check" size={16} strokeWidth={2} className="mt-0.5 shrink-0 text-peach" />;
+  if (props.tone === "error") return <Icon name="alert" size={16} strokeWidth={2} className="mt-0.5 shrink-0" />;
+  return <Icon name="alert" size={16} strokeWidth={2} className="mt-0.5 shrink-0 opacity-70" />;
 }
 
 // Without a provider (a hot reload that recreated this module, a test), toasts
@@ -211,23 +208,23 @@ export function Modal(props: { open: boolean; onClose: () => void; title: string
 
   if (!props.open) return null;
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4" onMouseDown={props.onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#1f1a15]/45 p-4 backdrop-blur-[2px]" onMouseDown={props.onClose}>
       <div
         ref={panel}
         role="dialog"
         aria-modal="true"
         aria-label={props.title}
-        className={cx("flex max-h-[90vh] w-full flex-col rounded-xl bg-paper shadow-xl", props.wide ? "max-w-3xl" : "max-w-md")}
+        className={cx("flex max-h-[90vh] w-full flex-col rounded-[20px] bg-paper shadow-float", props.wide ? "max-w-3xl" : "max-w-md")}
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
-          <h2 className="font-semibold">{props.title}</h2>
-          <button type="button" className="rounded p-1 text-muted hover:text-ink" aria-label="Fermer" onClick={props.onClose}>
-            ×
+        <div className="flex items-center justify-between gap-4 px-6 pt-5 pb-3">
+          <h2 className="min-w-0 truncate text-lg font-semibold tracking-tight">{props.title}</h2>
+          <button type="button" className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-muted hover:bg-side hover:text-ink" aria-label="Fermer" onClick={props.onClose}>
+            <Icon name="close" size={16} strokeWidth={2} />
           </button>
         </div>
-        <div className="overflow-y-auto px-5 py-4">{props.children}</div>
-        {props.footer ? <div className="flex justify-end gap-2 border-t border-line px-5 py-3">{props.footer}</div> : null}
+        <div className="overflow-y-auto px-6 pb-5">{props.children}</div>
+        {props.footer ? <div className="flex justify-end gap-2 border-t border-line bg-sunk px-6 py-3.5 rounded-b-[20px]">{props.footer}</div> : null}
       </div>
     </div>
   );
