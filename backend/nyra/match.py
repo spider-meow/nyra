@@ -368,8 +368,14 @@ class MatchStore(Protocol):
     # has it, CLIP candidates are checked geometrically (nyra/verify.py).
 
 
-def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[str, str]] = ()) -> str:
-    """Anything that changes which pairs match. A different value forces a full recompute."""
+def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[str, str]] = (),
+              verified: bool = False) -> str:
+    """Anything that changes which pairs match. A different value forces a full recompute.
+
+    `verified` says whether CLIP candidates are actually checked this pass (the
+    option is on *and* the store can load images *and* OpenCV is installed): a
+    pass that couldn't check must not look like one that did.
+    """
     import hashlib
 
     excluded = hashlib.sha1(chr(10).join(sorted(f"{kind}:{value}" for value, kind in exclusions)).encode()).hexdigest()[:12]
@@ -381,8 +387,8 @@ def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[st
             str(config.clip_similarity_medium),
             str(config.clip_similarity_floor),
             f"{config.clip_model_name}/{config.clip_pretrained}" if use_clip else "hash",
-            (f"geo{config.geometric_min_inliers}/{config.geometric_review_coverage}/{config.geometric_confirm_coverage}"
-             if use_clip and config.verify_clip_matches else "nogeo"),
+            (f"verified{config.geometric_min_inliers}/{config.geometric_review_coverage}/{config.geometric_confirm_coverage}"
+             if use_clip and verified else "unverified"),
             "flip",
             f"x{excluded}" if exclusions else "x0",
         ]
@@ -428,7 +434,15 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
         store = LocalStore(store)
 
     exclusions = list(store.load_exclusions()) if hasattr(store, "load_exclusions") else []
-    sig = signature(config.match, use_clip, exclusions)
+    loader = getattr(store, "load_image", None)
+    verifying = False
+    if use_clip and config.match.verify_clip_matches and loader is not None:
+        from nyra import verify
+
+        verifying = verify.available()
+        if not verifying:
+            log.warning("OpenCV is missing: CLIP matches are kept without geometric verification")
+    sig = signature(config.match, use_clip, exclusions, verified=verifying)
     refs, all_sites = store.load_features(use_clip)
     excluded = excluded_site_ids(all_sites, exclusions, config.match)
     sites = [row for row in all_sites if row["id"] not in excluded]
@@ -474,17 +488,13 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
     if should_stop and should_stop():
         raise MatchStopped()
 
-    loader = getattr(store, "load_image", None)
-    if use_clip and config.match.verify_clip_matches and loader is not None:
+    if verifying:
         from nyra import verify
 
-        if verify.available():
-            hits = verify.verify_hits(
-                hits, loader, config.match, level_clip=LEVEL_CLIP, level_verified=LEVEL_GEOMETRY, confidence_high=CONFIDENCE_HIGH,
-                confidence_to_verify=CONFIDENCE_TO_VERIFY, progress=verify_progress, should_stop=should_stop,
-            )
-        else:
-            log.warning("OpenCV is missing: CLIP matches are kept without geometric verification")
+        hits = verify.verify_hits(
+            hits, loader, config.match, level_clip=LEVEL_CLIP, level_verified=LEVEL_GEOMETRY, confidence_high=CONFIDENCE_HIGH,
+            confidence_to_verify=CONFIDENCE_TO_VERIFY, progress=verify_progress, should_stop=should_stop,
+        )
         if should_stop and should_stop():
             raise MatchStopped()
 

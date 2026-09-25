@@ -483,6 +483,7 @@ def configure_logging() -> None:
         level=os.environ.get("NYRA_LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    # One line per image request drowns everything else.
-    for noisy in ("httpx", "httpcore", "huggingface_hub", "root"):
+    # One line per image request drowns everything else. (Not "root": that name is the
+    # root logger itself, and silencing it hid every INFO line of the worker.)
+    for noisy in ("httpx", "httpcore", "huggingface_hub"):
         logging.getLogger(noisy).setLevel(logging.WARNING)

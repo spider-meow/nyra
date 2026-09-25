@@ -193,3 +193,11 @@ def test_reference_decoding_scales_big_jpegs_down_and_says_why_it_refuses():
     assert img is None and reason.startswith("Fichier incomplet ou endommagé")
     img, reason = _fetch.decode_reference(b"not an image", 6_000_000)
     assert img is None and reason.startswith("Format non reconnu")
+
+
+def test_a_pass_that_could_not_check_clip_candidates_does_not_look_like_one_that_did():
+    from nyra.config import MatchConfig as _MatchConfig
+    from nyra.match import signature as _signature
+
+    config = _MatchConfig()
+    assert _signature(config, True, verified=False) != _signature(config, True, verified=True)
