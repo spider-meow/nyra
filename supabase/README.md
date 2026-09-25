@@ -16,7 +16,21 @@ supabase/migrations/
   20260923000009_jobs.sql                        file de tâches (web → worker)
   20260923000010_org_settings.sql                réglages par organisation
   20260924000011_excluded_hashes.sql             images exclues (faux positifs récurrents)
+  20260925000012_brands.sql                      marques (étape 1, sans risque pour le code en place)
+  20260925000013_brands_constraints.sql          marques (étape 2, après déploiement du code)
+  20260926000014_reference_working_copies.sql   copie de travail des références (work_path)
 ```
+
+## Marques (012 puis 013)
+
+En deux temps, pour que le code en place continue de tourner entre les deux :
+
+1. **012** : crée `brands`, une marque par organisation (même nom, même
+   slug) qui reçoit tout l'existant, ajoute les colonnes `brand_id`, et un
+   trigger range sous cette marque ce que l'ancien code écrit encore.
+2. Déployer le code web et worker.
+3. **013** : `brand_id` obligatoire, clés d'unicité par marque, un job
+   actif par marque, suppression du trigger.
 
 Les noms suivent le format attendu par le CLI Supabase
 (`YYYYMMDDHHMMSS_nom.sql`).

@@ -278,7 +278,10 @@ def cloud_provision_org(
     slug: str = typer.Option(..., "--slug", help="Normalized to lowercase ascii and hyphens, e.g. 'remy-martin'."),
     admin_email: str = typer.Option(..., "--admin-email", help="First admin. Invited by e-mail if they have no account."),
 ) -> None:
-    """Create a client organization and its first admin. There is no public sign-up."""
+    """Create a client organization (with a first brand of the same name) and its first admin.
+
+    There is no public sign-up. Further brands are added in the interface, under Réglages.
+    """
     import uuid
 
     from nyra.cloud import db as cloud_db

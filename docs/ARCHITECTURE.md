@@ -24,8 +24,8 @@ reproducible given the same inputs and thresholds.
   comparing, computing embeddings, building a report — becomes a row in
   `jobs`. The web image has neither Chromium nor torch.
 - **worker** claims queued jobs (`FOR UPDATE SKIP LOCKED`), at most one
-  running job per organization, several organizations in parallel across
-  workers. It heartbeats every 30 s and while it reports progress; a job
+  running job per brand, several brands (of one organization or not) in
+  parallel across workers. It heartbeats every 30 s and while it reports progress; a job
   whose heartbeat stops (crash, redeploy) is marked failed by the next
   worker instead of staying "running" forever. Cancellation is a flag the
   worker checks between steps.
@@ -33,9 +33,19 @@ reproducible given the same inputs and thresholds.
   while something runs, every 20 s otherwise — and refreshes the lists a
   finished job changed.
 
-Job kinds: `crawl` (then compare), `match`, `index` (fill in embeddings,
-mirror hashes and thumbnails — queued after every upload, also backfills
-older rows), `report`.
+Job kinds: `crawl` (the chosen addresses of a brand, then compare),
+`match`, `index` (fill in embeddings, mirror hashes and thumbnails —
+queued after every upload, also backfills older rows), `report`.
+
+## Organizations and brands
+
+An organization is a client; it holds brands. A brand owns a library and
+one or more sites (typically one per market: louis-xiii.com/us, /fr...),
+and its references are only ever compared with images read on its own
+sites. Exclusions, reports and the job queue are per brand; settings and
+memberships per organization. Product routes live under
+`/api/orgs/{org_id}/brands/{brand_id}/...`, the interface under
+`/o/{org}/m/{brand}/...`.
 
 ## Pipeline
 
@@ -95,9 +105,10 @@ numbers and the report itself are pure functions over plain dicts in
   Supabase dashboard too, or anyone holding the public anon key can still
   create an (organization-less, powerless) account.
 - **Every route** under `/api/orgs/{org_id}` verifies the JWT locally and
-  the caller's membership; admin-only routes (library, crawls, settings,
-  reports) check the role. Reviews are open to every member and are
-  checked against the organization's own matches.
+  the caller's membership; brand routes then check the brand belongs to
+  that organization. Admin-only routes (brands, sites, library, crawls,
+  settings, reports) check the role. Reviews are open to every member and
+  are checked against the brand's own matches.
 - **The backend uses the service role**, which bypasses RLS; every query
   filters on `org_id` itself. RLS policies are the safety net for any
   other access path.

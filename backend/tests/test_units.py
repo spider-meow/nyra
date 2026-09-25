@@ -170,3 +170,26 @@ def test_exclusions_drop_near_copies_and_change_the_signature(tmp_path):
     with db.connect(db_path) as conn:
         conn.execute("DELETE FROM excluded_hashes")
     assert run_matching(db_path, Config(), use_clip=False) == 1
+
+
+def test_reference_decoding_scales_big_jpegs_down_and_says_why_it_refuses():
+    import io as _io
+
+    from PIL import Image as _Image
+
+    from nyra import fetch as _fetch
+
+    def encoded(size, fmt):
+        buf = _io.BytesIO()
+        _Image.new("RGB", size, (200, 30, 30)).save(buf, format=fmt)
+        return buf.getvalue()
+
+    img, reason = _fetch.decode_reference(encoded((4000, 3000), "JPEG"), 6_000_000)
+    assert reason == "" and img.info["original_size"] == (4000, 3000)
+    assert img.size[0] * img.size[1] <= 6_000_000
+    img, reason = _fetch.decode_reference(encoded((4000, 3000), "PNG"), 6_000_000)
+    assert img is None and reason.startswith("Image trop grande : 4000 × 3000 px")
+    img, reason = _fetch.decode_reference(encoded((400, 300), "JPEG")[:500], 6_000_000)
+    assert img is None and reason.startswith("Fichier incomplet ou endommagé")
+    img, reason = _fetch.decode_reference(b"not an image", 6_000_000)
+    assert img is None and reason.startswith("Format non reconnu")

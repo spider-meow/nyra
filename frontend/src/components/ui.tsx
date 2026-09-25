@@ -21,14 +21,43 @@ export function buttonClass(variant: Variant = "secondary", size: "sm" | "md" = 
   );
 }
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: "sm" | "md" };
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: Variant;
+  size?: "sm" | "md";
+  /** Work in progress: a spinner, and no second click. */
+  loading?: boolean;
+};
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = "secondary", size = "md", className, type = "button", ...rest },
+  { variant = "secondary", size = "md", className, type = "button", loading = false, disabled, children, ...rest },
   ref,
 ) {
-  return <button ref={ref} type={type} className={buttonClass(variant, size, className)} {...rest} />;
+  return (
+    <button
+      ref={ref}
+      type={type}
+      className={buttonClass(variant, size, cx(loading && "disabled:cursor-progress disabled:opacity-80", className))}
+      disabled={disabled || loading}
+      aria-busy={loading || undefined}
+      {...rest}
+    >
+      {loading ? <ButtonSpinner light={variant === "primary"} /> : null}
+      {children}
+    </button>
+  );
 });
+
+function ButtonSpinner(props: { light: boolean }) {
+  return (
+    <span
+      aria-hidden
+      className={cx(
+        "h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2",
+        props.light ? "border-white/35 border-t-white" : "border-line-strong border-t-ink",
+      )}
+    />
+  );
+}
 
 /** A navigation link that looks like a button. */
 export function LinkButton(props: { to: string; children: ReactNode; variant?: Variant; size?: "sm" | "md"; className?: string }) {

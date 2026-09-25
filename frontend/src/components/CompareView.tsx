@@ -30,11 +30,17 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
       { siteImageId: hit.site_image_id, reason },
       {
         onSuccess: (data) => {
-          toast(`Image exclue. ${data.matches_removed} correspondance(s) retirée(s).`, "success");
+          toast.show({
+            tone: "success",
+            message: "Image exclue",
+            description: data.matches_removed > 1
+              ? `${data.matches_removed} correspondances retirées. Vous pouvez la réintégrer depuis les Réglages.`
+              : "Elle ne sera plus proposée. Vous pouvez la réintégrer depuis les Réglages.",
+          });
           setExcluding(false);
           setReason("");
         },
-        onError: (error) => toast(errorMessage(error), "error"),
+        onError: (error) => toast.show({ tone: "error", message: "L'image n'a pas été exclue", description: errorMessage(error) }),
       },
     );
   }
@@ -145,7 +151,7 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
           <dt>Adresse de l'image</dt>
           <dd className="break-all"><a className="underline" href={hit.site_url} target="_blank" rel="noreferrer noopener">{hit.site_url}</a></dd>
           <dt>Méthode</dt>
-          <dd>{hit.level === "clip" ? "Similarité visuelle (CLIP)" : `Empreinte perceptuelle (${hit.level})`}</dd>
+          <dd>{methodLabel(hit.level, hit.confidence)}</dd>
           <dt>Score</dt>
           <dd className="tabular">{Math.round(hit.score * 100)} %</dd>
           <dt>Variantes</dt>
@@ -160,7 +166,7 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
         footer={
           <>
             <Button onClick={() => setExcluding(false)}>Annuler</Button>
-            <Button variant="danger" disabled={exclusions.add.isPending} onClick={exclude}>Exclure</Button>
+            <Button variant="danger" loading={exclusions.add.isPending} onClick={exclude}>Exclure</Button>
           </>
         }
       >
@@ -206,4 +212,14 @@ function DecisionButton(props: { label: string; shortcut: string; active: boolea
       <Kbd>{props.shortcut}</Kbd>
     </Button>
   );
+}
+
+function methodLabel(level: string, confidence: string): string {
+  if (level === "geo") {
+    return confidence === "haut"
+      ? "Même photo, vérifiée point par point (recadrage ou retouche possible)"
+      : "Élément commun vérifié point par point (même détourage produit, autre composition ?)";
+  }
+  if (level === "clip") return "Ressemblance visuelle (CLIP), non vérifiée";
+  return `Empreinte perceptuelle (${level})`;
 }

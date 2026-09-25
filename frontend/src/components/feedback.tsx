@@ -1,44 +1,152 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Button, cx } from "./ui";
 
 // --- toasts -------------------------------------------------------------------
 
-type Toast = { id: number; message: string; tone: "info" | "error" | "success" };
+type Tone = "info" | "success" | "error" | "loading";
 
-const ToastContext = createContext<(message: string, tone?: Toast["tone"]) => void>(() => {});
+export type ToastInput = {
+  message: string;
+  /** A second, quieter line: what happens next, or why it failed. */
+  description?: string;
+  tone?: Tone;
+  /** 0 to 1: a thin bar under the message; null: work in progress of unknown length. */
+  progress?: number | null;
+  /** `keep`: the toast stays after the click (it will be updated). */
+  action?: { label: string; onClick: () => void; keep?: boolean; disabled?: boolean };
+  /** Milliseconds before it goes away; loading toasts stay until updated. */
+  duration?: number;
+};
+
+type Toast = ToastInput & { id: number; tone: Tone };
+
+export type Toaster = {
+  /** toast("Adresse ajoutée.", "success") */
+  (message: string, tone?: Exclude<Tone, "loading">): number;
+  show: (input: ToastInput) => number;
+  /** Stays on screen, with a spinner, until `update` gives it a final tone. */
+  loading: (message: string, description?: string) => number;
+  update: (id: number, input: Partial<ToastInput>) => void;
+  dismiss: (id: number) => void;
+};
+
+const ToastContext = createContext<Toaster | null>(null);
+
+function defaultDuration(toast: Toast): number | null {
+  if (toast.tone === "loading") return null;
+  if (toast.duration) return toast.duration;
+  if (toast.tone === "error") return 9000;
+  return toast.action ? 7000 : 4500;
+}
 
 export function ToastProvider(props: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(1);
+  const timers = useRef(new Map<number, number>());
+  const current = useRef<Toast[]>([]);
+  current.current = toasts;
 
-  const push = useCallback((message: string, tone: Toast["tone"] = "info") => {
-    const id = nextId.current++;
-    setToasts((current) => [...current.slice(-3), { id, message, tone }]);
-    window.setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), tone === "error" ? 8000 : 4500);
+  const dismiss = useCallback((id: number) => {
+    window.clearTimeout(timers.current.get(id));
+    timers.current.delete(id);
+    current.current = current.current.filter((toast) => toast.id !== id);
+    setToasts(current.current);
   }, []);
 
+  const schedule = useCallback(
+    (toast: Toast) => {
+      window.clearTimeout(timers.current.get(toast.id));
+      const delay = defaultDuration(toast);
+      if (delay !== null) timers.current.set(toast.id, window.setTimeout(() => dismiss(toast.id), delay));
+    },
+    [dismiss],
+  );
+
+  const toaster = useMemo<Toaster>(() => {
+    const show = (input: ToastInput) => {
+      const toast: Toast = { ...input, id: nextId.current++, tone: input.tone ?? "info" };
+      // At most four on screen: the oldest finished one makes room, never a task still in progress.
+      let list = current.current;
+      if (list.length >= 4) {
+        const oldest = list.find((item) => item.tone !== "loading");
+        if (oldest) list = list.filter((item) => item !== oldest);
+      }
+      current.current = [...list, toast];
+      setToasts(current.current);
+      schedule(toast);
+      return toast.id;
+    };
+    const fn = ((message: string, tone: Exclude<Tone, "loading"> = "info") => show({ message, tone })) as Toaster;
+    fn.show = show;
+    fn.loading = (message, description) => show({ message, description, tone: "loading" });
+    fn.update = (id, input) => {
+      const existing = current.current.find((toast) => toast.id === id);
+      const next: Toast = existing ? { ...existing, ...input } : { message: "", ...input, id, tone: input.tone ?? "info" };
+      const list = existing ? current.current.map((toast) => (toast.id === id ? next : toast)) : [...current.current.slice(-3), next];
+      // Two updates in the same tick must build on each other.
+      current.current = list;
+      setToasts(list);
+      if (!existing || input.tone) schedule(next);
+    };
+    fn.dismiss = dismiss;
+    return fn;
+  }, [dismiss, schedule]);
+
   return (
-    <ToastContext.Provider value={push}>
+    <ToastContext.Provider value={toaster}>
       {props.children}
-      <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2 px-4" aria-live="polite">
+      <div
+        className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex flex-col items-center gap-2 px-4 sm:inset-x-auto sm:right-4 sm:items-end"
+        aria-live="polite"
+      >
         {toasts.map((toast) => (
           <div
             key={toast.id}
             role={toast.tone === "error" ? "alert" : "status"}
-            className={cx(
-              "toast-in pointer-events-auto flex max-w-lg items-start gap-3 rounded-lg px-4 py-2.5 text-sm shadow-lg",
-              toast.tone === "error" ? "bg-expired text-white" : "bg-ink text-white",
-            )}
+            onMouseEnter={() => window.clearTimeout(timers.current.get(toast.id))}
+            onMouseLeave={() => schedule(toast)}
+            className="toast-in pointer-events-auto w-full max-w-sm overflow-hidden rounded-xl bg-ink text-sm text-white shadow-lg ring-1 ring-black/5"
           >
-            <span className="min-w-0 flex-1">{toast.message}</span>
-            <button
-              type="button"
-              className="text-white/70 hover:text-white"
-              aria-label="Fermer"
-              onClick={() => setToasts((current) => current.filter((item) => item.id !== toast.id))}
-            >
-              ×
-            </button>
+            <div className="flex items-start gap-3 px-4 py-3">
+              <ToastIcon tone={toast.tone} />
+              <div className="min-w-0 flex-1">
+                <p className="font-medium leading-5">{toast.message}</p>
+                {toast.description ? <p className="mt-0.5 text-[13px] leading-5 text-white/70">{toast.description}</p> : null}
+                {toast.action ? (
+                  <button
+                    type="button"
+                    className="mt-1.5 text-[13px] font-medium text-white underline underline-offset-2 hover:text-white/80 disabled:cursor-default disabled:no-underline disabled:opacity-60"
+                    disabled={toast.action.disabled}
+                    onClick={() => {
+                      toast.action?.onClick();
+                      if (!toast.action?.keep) dismiss(toast.id);
+                    }}
+                  >
+                    {toast.action.label}
+                  </button>
+                ) : null}
+              </div>
+              {toast.tone !== "loading" ? (
+                <button type="button" className="-mr-1 px-1 text-base leading-5 text-white/60 hover:text-white" aria-label="Fermer" onClick={() => dismiss(toast.id)}>
+                  ×
+                </button>
+              ) : null}
+            </div>
+            {toast.progress === null ? (
+              <div className="h-1 overflow-hidden bg-white/10" role="progressbar" aria-valuemin={0} aria-valuemax={100}>
+                <div className="progress-indeterminate h-full w-1/4 bg-white" />
+              </div>
+            ) : toast.progress !== undefined ? (
+              <div
+                className="h-1 bg-white/10"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={Math.round(toast.progress * 100)}
+              >
+                <div className="h-full bg-white transition-[width] duration-300" style={{ width: `${Math.max(3, Math.min(100, toast.progress * 100))}%` }} />
+              </div>
+            ) : null}
           </div>
         ))}
       </div>
@@ -46,8 +154,33 @@ export function ToastProvider(props: { children: ReactNode }) {
   );
 }
 
-export function useToast() {
-  return useContext(ToastContext);
+function ToastIcon(props: { tone: Tone }) {
+  if (props.tone === "loading") {
+    return <span aria-hidden className="mt-0.5 h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/30 border-t-white" />;
+  }
+  const style = {
+    success: { className: "bg-ok", glyph: "✓" },
+    error: { className: "bg-expired", glyph: "!" },
+    info: { className: "bg-white/20", glyph: "i" },
+  }[props.tone];
+  return (
+    <span aria-hidden className={cx("mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px] font-bold leading-none text-white", style.className)}>
+      {style.glyph}
+    </span>
+  );
+}
+
+// Without a provider (a hot reload that recreated this module, a test), toasts
+// fall back to the console instead of taking the page down.
+const consoleToaster: Toaster = Object.assign((message: string) => (console.info(message), 0), {
+  show: (input: ToastInput) => (console.info(input.message, input.description ?? ""), 0),
+  loading: (message: string) => (console.info(message), 0),
+  update: () => {},
+  dismiss: () => {},
+});
+
+export function useToast(): Toaster {
+  return useContext(ToastContext) ?? consoleToaster;
 }
 
 // --- dialogs ---------------------------------------------------------------------

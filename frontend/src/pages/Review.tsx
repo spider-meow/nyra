@@ -4,7 +4,7 @@ import { CompareView } from "../components/CompareView";
 import { Modal, useToast } from "../components/feedback";
 import { Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, FieldLabel, Input, Kbd, LinkButton, PageHeader, Select, Skeleton, StatusBadge, Thumb, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
-import { daysText, hostOf, pathOf, plural } from "../lib/format";
+import { daysText, decisionLabel, hostOf, pathOf, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useMatches, useOverview, useReview } from "../lib/queries";
 import type { Decision, Hit, MatchGroup, Status } from "../types";
@@ -88,11 +88,36 @@ export function Review() {
   }, [rows, selected]);
 
   function decide(row: Row, decision: Decision | "", everywhere = false) {
-    const ids = everywhere ? row.group.hits.flatMap((hit) => hit.site_image_ids) : row.hit.site_image_ids;
+    const hits = everywhere ? row.group.hits : [row.hit];
+    const ids = hits.flatMap((hit) => hit.site_image_ids);
     const nextKey = rows[selectedIndex + 1]?.key ?? rows[selectedIndex - 1]?.key ?? null;
+    // What each occurrence was before, so "Annuler" puts every one back.
+    const before = new Map<Decision | "", string[]>();
+    for (const hit of hits) before.set(hit.decision ?? "", [...(before.get(hit.decision ?? "") ?? []), ...hit.site_image_ids]);
+    const undo = () => {
+      for (const [previous, siteImageIds] of before) {
+        review.mutate(
+          { referenceId: row.group.reference_id, siteImageIds, decision: previous },
+          { onError: (error) => toast.show({ tone: "error", message: "L'annulation n'a pas abouti", description: errorMessage(error) }) },
+        );
+      }
+    };
     review.mutate(
       { referenceId: row.group.reference_id, siteImageIds: ids, decision },
-      { onError: (error) => toast(errorMessage(error), "error") },
+      {
+        onSuccess: () =>
+          toast.show({
+            tone: "success",
+            message: decision
+              ? `${decisionLabel[decision]}${hits.length > 1 ? ` · ${plural(hits.length, "occurrence")}` : ""}`
+              : "Décision retirée",
+            description: row.group.filename,
+            action: { label: "Annuler", onClick: undo },
+            duration: 5000,
+          }),
+        onError: (error) =>
+          toast.show({ tone: "error", message: "La décision n'a pas été enregistrée", description: `${errorMessage(error)} Elle a été annulée à l'écran.` }),
+      },
     );
     // Move on when the decided row will leave the current filter.
     if (decision && !keep({ ...row.hit, decision }, decisionFilter)) setSelectedKey(nextKey);

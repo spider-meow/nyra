@@ -27,9 +27,9 @@ export const decisionLabel: Record<Decision, string> = {
 };
 
 export const jobLabel: Record<JobKind, string> = {
-  crawl: "Lecture du site",
+  crawl: "Lecture des sites",
   match: "Comparaison",
-  index: "Indexation",
+  index: "Indexation des nouveaux visuels",
   report: "Rapport",
 };
 

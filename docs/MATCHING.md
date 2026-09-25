@@ -34,6 +34,36 @@ gets a normalized embedding (`open_clip`, `ViT-B-32` /
 The comparison runs as matrices: a Hamming matrix (refs × site images,
 2048 site images per chunk) and a dot product for CLIP.
 
+**Level 3 — keypoint check of every CLIP candidate.** CLIP measures what an
+image *shows*: two different shots of the same bottle, or two vineyards at
+dusk, score 0.8–0.9. So no CLIP candidate is kept on its score alone
+(`nyra/verify.py`, OpenCV, worker only):
+
+1. SIFT keypoints on both images (grayscale, 1024 px on the long side);
+2. ratio test and mutual nearest neighbors, so each keypoint is used once;
+3. RANSAC fits one similarity transform (resize, crop, slight rotation),
+   and the mirrored reference is tried too; a degenerate transform (scale
+   outside 1/8–8) is rejected;
+4. the agreeing keypoints (inliers) must be at least
+   `geometric_min_inliers` (20) and span, as a convex hull, enough of
+   **both** images:
+
+| Coverage of both images | Result | What it usually is |
+|---|---|---|
+| < `geometric_review_coverage` (5 %) | dropped | another shot of the same product, a shared logo |
+| 5–20 % | kept, `a_verifier` | the same product cut-out in another composition, a special edition shot on the same template |
+| ≥ `geometric_confirm_coverage` (20 %) | kept, `haut` | the same photo: cropped, resized, recolored, mirrored, text over it, set in a banner |
+
+Kept candidates get level `geo`. A candidate whose images can't be read
+stays at level `clip`, `a_verifier`.
+
+Calibration (1,057 real images of a brand site, September 2026): 560
+edited copies (crop, resize + JPEG 50, color, text overlay, mirror, set in
+a banner, square crop) were kept 97.5 % of the time (84 % confirmed); 300
+pairs of different images, 0 %. Of 400 pairs CLIP scored ≥ 0.75 that level
+1 didn't match, 42 % were dropped: different shots of the same bottles,
+cocktails, cellars and vineyards, checked by eye.
+
 ## Exclusions
 
 Recurring false positives — a logo, a generic visual reused on every
@@ -93,13 +123,12 @@ in Settings.
 
 ## Known limits, and what to try next
 
-- **CLIP measures semantic similarity**, so two photos from the same shoot
-  can score high. Models trained for copy detection (SSCD, DINOv2) should
-  separate "same image, edited" from "same scene" better. Changing the
-  model means re-embedding every image and recalibrating; do it once the
-  interface has accumulated enough decisions to compare models on real
-  data (`cloud-calibrate` gives the baseline).
-- **Heavy crops** of a small region can fall below the CLIP floor. A
-  local-feature check (ORB/SIFT with geometric verification) on the
-  "À vérifier" band would confirm or reject those automatically.
+- **A shared product cut-out** (the same bottle render on another
+  background) lands in "À vérifier": geometrically it *is* the same
+  pixels, and whether its rights are the picture's depends on the
+  contract. Two editions shot on the same template (XO and a special XO)
+  can land there too.
+- **Heavy crops** of a small region can fall below the CLIP floor and are
+  never proposed. A model trained for copy detection (SSCD, DINOv2) as the
+  candidate finder would help; changing it means re-embedding every image.
 - **Rotations** other than a horizontal flip are not handled at level 1.

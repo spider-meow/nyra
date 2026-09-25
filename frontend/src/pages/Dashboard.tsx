@@ -36,7 +36,7 @@ export function Dashboard() {
           <h2 className="font-semibold">Mise en route</h2>
           <ol className="mt-4 grid gap-3 text-sm">
             <Step done={!noLibrary} index={1} title="Déposer les visuels sous droits et leur date d'expiration" to={link("bibliotheque")} cta="Ouvrir la bibliothèque" />
-            <Step done={!neverCrawled} index={2} title="Lire le site sur lequel ils pourraient encore apparaître" to={link("lectures")} cta="Lancer une lecture" disabled={noLibrary || !admin} />
+            <Step done={!neverCrawled} index={2} title="Ajouter les sites sur lesquels ils pourraient encore apparaître, puis les lire" to={link("lectures")} cta="Sites et lectures" disabled={noLibrary || !admin} />
             <Step done={false} index={3} title="Traiter les correspondances trouvées" to={link("a-traiter")} cta="Voir les correspondances" disabled={neverCrawled} />
           </ol>
         </Card>
@@ -49,7 +49,7 @@ export function Dashboard() {
     <>
       <PageHeader
         title="Tableau de bord"
-        description={lastCrawl ? <>Dernière lecture de {hostOf(lastCrawl.site_url)} le {formatDateTime(lastCrawl.finished_at ?? lastCrawl.started_at)}.</> : null}
+        description={lastCrawl ? <>Dernière lecture de {lastCrawl.site_label || hostOf(lastCrawl.site_url)} le {formatDateTime(lastCrawl.finished_at ?? lastCrawl.started_at)}.</> : null}
         actions={<LinkButton to={link("rapports")}>Rapports</LinkButton>}
       />
 
@@ -73,11 +73,35 @@ export function Dashboard() {
             Voir les visuels expirés
           </LinkButton>
         ) : null}
+        {dashboard.unreferenced_online ? (
+          <p className="mt-4 border-t border-line/70 pt-3 text-sm text-ink-soft">
+            {hero ? "Par ailleurs, " : "Attention : "}
+            <Link className="font-medium text-urgent underline" to={link("images-du-site")}>
+              {plural(dashboard.unreferenced_online, "image en ligne n'a", "images en ligne n'ont")} jamais eu ses droits vérifiés
+            </Link>
+            . Certaines sont peut-être expirées : elles ne sont pas comptées ici tant qu'elles ne sont pas dans la bibliothèque.
+          </p>
+        ) : null}
       </section>
 
-      <div className="mt-4 grid gap-4 md:grid-cols-3">
+      <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat value={dashboard.urgent_online} label="expirent sous 30 jours et sont en ligne" tone={dashboard.urgent_online ? "warn" : undefined} />
         <Stat value={dashboard.pending_review} label="visuels trouvés sans décision" hint={dashboard.pending_review ? <Link className="underline" to={link("a-traiter")}>Les traiter</Link> : "Tout est décidé."} />
+        <Stat
+          value={dashboard.unreferenced_online}
+          label="images en ligne dont les droits n'ont jamais été vérifiés"
+          tone={dashboard.unreferenced_online ? "warn" : undefined}
+          hint={
+            dashboard.unreferenced_online ? (
+              <>
+                Certaines sont peut-être expirées : ajoutez-les à la bibliothèque avec leur échéance, ou ignorez-les si elles ne sont pas sous droits.{" "}
+                <Link className="underline" to={link("images-du-site")}>Les vérifier</Link>
+              </>
+            ) : (
+              "Toutes les images en ligne ont des droits vérifiés."
+            )
+          }
+        />
         <Stat value={stats.reference_images} label="visuels sous surveillance" hint={`${plural(stats.site_images, "image lue", "images lues")} sur ${plural(stats.pages_crawled, "page")}`} />
       </div>
 
@@ -115,7 +139,7 @@ export function Dashboard() {
           </dl>
           {admin ? (
             <LinkButton to={link("lectures")} className="mt-4 w-full">
-              Relire le site
+              Relire les sites
             </LinkButton>
           ) : null}
         </Card>

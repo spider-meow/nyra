@@ -1,19 +1,28 @@
 import { useMemo, useRef, useState, type DragEvent } from "react";
 import { Modal, useConfirm, useToast } from "../components/feedback";
-import { Button, Card, EmptyState, FieldLabel, Input, PageHeader, Select, Skeleton, StatusBadge, Thumb, cx } from "../components/ui";
+import { Button, Card, EmptyState, FieldLabel, Input, PageHeader, Select, Skeleton, Spinner, StatusBadge, Thumb, cx } from "../components/ui";
 import { downloadFile, errorMessage } from "../lib/api";
 import { daysText, formatDate, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
-import { useLibrary, useLibraryMutations } from "../lib/queries";
+import { useLibrary, useLibraryMutations, useReferenceUpload } from "../lib/queries";
 import type { ImportRow, LibraryItem, Status } from "../types";
 
 type Filter = "all" | Status | "unindexed";
+
+/** Refused files grouped by reason: one explanation, then the names it applies to. */
+function byReason(failures: { filename: string; reason: string }[]): [string, string[]][] {
+  const groups = new Map<string, string[]>();
+  for (const item of failures) groups.set(item.reason, [...(groups.get(item.reason) ?? []), item.filename]);
+  return [...groups];
+}
 type Sort = "expiry" | "name";
 
 export function Library() {
-  const { admin, apiPath } = useOrg();
+  const { admin, apiPath, brand } = useOrg();
   const library = useLibrary();
   const mutations = useLibraryMutations();
+  const uploader = useReferenceUpload();
+  const [exporting, setExporting] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -27,6 +36,9 @@ export function Library() {
   const [bulkDate, setBulkDate] = useState("");
   const [shown, setShown] = useState(100);
   const [failures, setFailures] = useState<{ filename: string; reason: string }[]>([]);
+  // The refused files themselves, to send them again in one click.
+  const [retryable, setRetryable] = useState<File[]>([]);
+  const [replaced, setReplaced] = useState<string[]>([]);
 
   const items = library.data?.items ?? [];
   const visible = useMemo(() => {
@@ -55,14 +67,30 @@ export function Library() {
 
   function upload(files: File[]) {
     if (!admin || !files.length) return;
+    if (uploader.uploading) {
+      toast.show({ message: "Un envoi est déjà en cours", description: "Ajoutez ces fichiers dès qu'il est terminé." });
+      return;
+    }
     setFailures([]);
-    mutations.upload.mutate(files, {
-      onSuccess: (result) => {
-        if (result.saved.length) toast(`${plural(result.saved.length, "visuel ajouté", "visuels ajoutés")}. L'indexation démarre.`, "success");
-        setFailures(result.failed);
-      },
-      onError: (error) => toast(errorMessage(error), "error"),
+    setRetryable([]);
+    setReplaced([]);
+    void uploader.run(files).then((result) => {
+      setFailures(result.failed);
+      setReplaced(result.replaced);
+      const refused = new Set(result.failed.map((item) => item.filename));
+      setRetryable(files.filter((file) => refused.has(file.name)));
     });
+  }
+
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      await downloadFile(apiPath("/library/export-csv"), "references.csv");
+    } catch (error) {
+      toast.show({ tone: "error", message: "L'export n'a pas abouti", description: errorMessage(error) });
+    } finally {
+      setExporting(false);
+    }
   }
 
   function onDrop(event: DragEvent) {
@@ -74,7 +102,16 @@ export function Library() {
   function saveExpiry(item: LibraryItem, value: string) {
     mutations.updateMeta.mutate(
       { filename: item.filename, expiry_date: value, credit: item.credit, notes: item.notes },
-      { onError: (error) => toast(errorMessage(error), "error") },
+      {
+        onSuccess: () =>
+          toast.show({
+            tone: "success",
+            message: value ? `Échéance enregistrée : ${formatDate(value)}` : "Échéance retirée",
+            description: item.filename,
+            duration: 2500,
+          }),
+        onError: (error) => toast.show({ tone: "error", message: "L'échéance n'a pas été enregistrée", description: errorMessage(error) }),
+      },
     );
   }
 
@@ -91,13 +128,14 @@ export function Library() {
       danger: true,
     });
     if (!ok) return;
+    const pending = toast.loading(names.length > 1 ? `Suppression de ${names.length} visuels…` : "Suppression du visuel…");
     mutations.remove.mutate(names, {
       onSuccess: (result) => {
-        toast(`${plural(result.deleted, "visuel supprimé", "visuels supprimés")}.`);
+        toast.update(pending, { tone: "success", message: result.deleted > 1 ? `${result.deleted} visuels supprimés` : "Visuel supprimé" });
         setSelected(new Set());
         setEditing(null);
       },
-      onError: (error) => toast(errorMessage(error), "error"),
+      onError: (error) => toast.update(pending, { tone: "error", message: "La suppression n'a pas abouti", description: errorMessage(error) }),
     });
   }
 
@@ -107,10 +145,14 @@ export function Library() {
       { filenames: names, expiry_date: bulkDate },
       {
         onSuccess: (result) => {
-          toast(bulkDate ? `Échéance fixée au ${formatDate(bulkDate)} pour ${plural(result.updated, "visuel")}.` : `Échéance retirée pour ${plural(result.updated, "visuel")}.`);
+          toast.show({
+            tone: "success",
+            message: bulkDate ? `Échéance fixée au ${formatDate(bulkDate)}` : "Échéance retirée",
+            description: plural(result.updated, "visuel mis à jour", "visuels mis à jour"),
+          });
           setSelected(new Set());
         },
-        onError: (error) => toast(errorMessage(error), "error"),
+        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
       },
     );
   }
@@ -135,14 +177,18 @@ export function Library() {
         description="Les visuels sous droits et leur date d'expiration. C'est à eux que chaque page lue est comparée."
         actions={
           <>
-            <Button variant="ghost" onClick={() => void downloadFile(apiPath("/library/export-csv"), "references.csv").catch((error) => toast(errorMessage(error), "error"))}>
+            <Button variant="ghost" loading={exporting} onClick={() => void exportCsv()}>
               Exporter en CSV
             </Button>
             {admin ? <Button onClick={() => setImportOpen(true)}>Importer des dates (CSV)</Button> : null}
             {admin ? (
               <>
-                <Button variant="primary" disabled={mutations.upload.isPending} onClick={() => fileInput.current?.click()}>
-                  {mutations.upload.isPending ? "Envoi en cours…" : "Ajouter des visuels"}
+                <Button variant="primary" loading={uploader.uploading} onClick={() => fileInput.current?.click()}>
+                  {uploader.progress
+                    ? uploader.progress.total > 1
+                      ? `Envoi · ${uploader.progress.done}/${uploader.progress.total}`
+                      : "Envoi en cours…"
+                    : "Ajouter des visuels"}
                 </Button>
                 <input
                   ref={fileInput}
@@ -161,20 +207,58 @@ export function Library() {
         }
       />
 
+      {dragging ? (
+        <p className="pointer-events-none fixed inset-x-0 top-6 z-40 mx-auto w-fit rounded-full bg-ink px-4 py-2 text-sm text-white shadow-lg">
+          Déposez pour ajouter à la bibliothèque de {brand.name}
+        </p>
+      ) : null}
+
       {library.data?.indexing ? (
-        <p className="mb-4 rounded-lg bg-focus-soft px-4 py-2.5 text-sm">Indexation en cours : les nouveaux visuels seront comparés au site dès qu'elle sera terminée.</p>
+        <p className="mb-4 flex items-center gap-2.5 rounded-lg bg-focus-soft px-4 py-2.5 text-sm">
+          <span aria-hidden className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-focus/30 border-t-focus" />
+          Indexation en cours : les nouveaux visuels seront comparés aux sites dès qu'elle sera terminée.
+        </p>
+      ) : null}
+
+      {replaced.length ? (
+        <Card className="mb-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                {replaced.length > 1 ? `${replaced.length} visuels remplacés` : "1 visuel remplacé"}
+              </p>
+              <p className="mt-0.5 text-[13px] text-muted">
+                Un visuel du même nom était déjà dans la bibliothèque : l'image a été remplacée, son échéance, son crédit et ses notes sont conservés.
+              </p>
+              <p className="mt-1 break-words text-[13px] text-ink-soft">{replaced.join(", ")}</p>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setReplaced([])}>Fermer</Button>
+          </div>
+        </Card>
       ) : null}
 
       {failures.length ? (
         <Card className="mb-4 border-expired/30">
-          <div className="flex items-start justify-between gap-3">
-            <div>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-expired">{plural(failures.length, "fichier refusé", "fichiers refusés")}</p>
-              <ul className="mt-1 text-[13px] text-ink-soft">
-                {failures.map((item) => <li key={item.filename}>{item.filename} : {item.reason}</li>)}
-              </ul>
+              <div className="mt-2 grid gap-3">
+                {byReason(failures).map(([reason, items]) => (
+                  <div key={reason}>
+                    <p className="text-[13px] font-medium text-ink">{reason}</p>
+                    <p className="mt-0.5 break-words text-[13px] text-ink-soft">{items.join(", ")}</p>
+                  </div>
+                ))}
+              </div>
             </div>
-            <Button size="sm" variant="ghost" onClick={() => setFailures([])}>Fermer</Button>
+            <div className="flex gap-1">
+              {retryable.length ? (
+                <Button size="sm" loading={uploader.uploading} onClick={() => upload(retryable)}>
+                  Réessayer {retryable.length > 1 ? `les ${retryable.length}` : ""}
+                </Button>
+              ) : null}
+              <Button size="sm" variant="ghost" onClick={() => { setFailures([]); setRetryable([]); }}>Fermer</Button>
+            </div>
           </div>
         </Card>
       ) : null}
@@ -187,7 +271,7 @@ export function Library() {
         <EmptyState
           title="Aucun visuel pour l'instant"
           body={admin ? "Glissez vos images ici, ou utilisez « Ajouter des visuels ». Vous renseignerez ensuite leur date d'expiration, une par une ou par import CSV." : "Un administrateur doit d'abord déposer les visuels à surveiller."}
-          action={admin ? <Button variant="primary" onClick={() => fileInput.current?.click()}>Ajouter des visuels</Button> : undefined}
+          action={admin ? <Button variant="primary" loading={uploader.uploading} onClick={() => fileInput.current?.click()}>Ajouter des visuels</Button> : undefined}
         />
       ) : (
         <>
@@ -223,9 +307,9 @@ export function Library() {
               <span className="flex items-center gap-2">
                 <label htmlFor="bulk-date" className="text-white/70">Échéance</label>
                 <input id="bulk-date" type="date" value={bulkDate} onChange={(event) => setBulkDate(event.target.value)} className="h-8 rounded-md border border-white/20 bg-white/10 px-2 text-white [color-scheme:dark]" />
-                <Button size="sm" onClick={applyBulkDate} disabled={mutations.setExpiry.isPending}>Appliquer</Button>
+                <Button size="sm" onClick={applyBulkDate} loading={mutations.setExpiry.isPending}>Appliquer</Button>
               </span>
-              <Button size="sm" variant="danger" onClick={() => void removeSelected([...selected])}>Supprimer</Button>
+              <Button size="sm" variant="danger" loading={mutations.remove.isPending} onClick={() => void removeSelected([...selected])}>Supprimer</Button>
               <button type="button" className="ml-auto text-white/70 hover:text-white" onClick={() => setSelected(new Set())}>Tout désélectionner</button>
             </div>
           ) : null}
@@ -346,10 +430,10 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
       { filename: item.filename, ...form },
       {
         onSuccess: () => {
-          toast("Modifications enregistrées.", "success");
+          toast.show({ tone: "success", message: "Modifications enregistrées", description: item.filename, duration: 3000 });
           props.onClose();
         },
-        onError: (error) => toast(errorMessage(error), "error"),
+        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
       },
     );
   }
@@ -365,7 +449,7 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
           <>
             <Button variant="danger" className="mr-auto" onClick={() => props.onDelete(item)}>Supprimer</Button>
             <Button onClick={props.onClose}>Annuler</Button>
-            <Button variant="primary" onClick={save} disabled={updateMeta.isPending}>Enregistrer</Button>
+            <Button variant="primary" onClick={save} loading={updateMeta.isPending}>Enregistrer</Button>
           </>
         ) : (
           <Button onClick={props.onClose}>Fermer</Button>
@@ -427,7 +511,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
 
   function preview(next: File) {
     setFile(next);
-    importCsv.mutate({ file: next, apply: false }, { onSuccess: (data) => setRows(data.rows), onError: (error) => toast(errorMessage(error), "error") });
+    importCsv.mutate({ file: next, apply: false }, { onSuccess: (data) => setRows(data.rows), onError: (error) => toast.show({ tone: "error", message: "Le fichier n'a pas pu être lu", description: errorMessage(error) }) });
   }
 
   function apply() {
@@ -436,10 +520,14 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
       { file, apply: true },
       {
         onSuccess: (data) => {
-          toast(`${plural(data.applied, "ligne appliquée", "lignes appliquées")}.`, "success");
+          toast.show({
+            tone: "success",
+            message: `${plural(data.applied, "échéance mise à jour", "échéances mises à jour")}`,
+            description: "Le tableau de bord en tient compte dès maintenant.",
+          });
           close();
         },
-        onError: (error) => toast(errorMessage(error), "error"),
+        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
       },
     );
   }
@@ -454,7 +542,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
       footer={
         <>
           <Button onClick={close}>Annuler</Button>
-          <Button variant="primary" disabled={!ready || importCsv.isPending} onClick={apply}>
+          <Button variant="primary" disabled={!ready} loading={importCsv.isPending && rows !== null} onClick={apply}>
             {ready ? `Appliquer ${plural(ready, "ligne")}` : "Appliquer"}
           </Button>
         </>
@@ -472,6 +560,9 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
           if (next) preview(next);
         }}
       />
+      {importCsv.isPending && !rows ? (
+        <div className="mt-4"><Spinner label="Lecture du fichier…" /></div>
+      ) : null}
       {rows ? (
         <div className="mt-4 max-h-80 overflow-y-auto rounded-lg border border-line">
           <table className="w-full text-[13px]">

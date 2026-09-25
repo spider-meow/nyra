@@ -1,6 +1,10 @@
 export type Role = "admin" | "client";
 
-export type Organization = { org_id: string; name: string; slug: string; role: Role };
+export type Brand = { id: string; name: string; slug: string };
+
+export type Organization = { org_id: string; name: string; slug: string; role: Role; brands: Brand[] };
+
+export type Site = { id: string; url: string; label: string; images: number; last_crawled_at: string | null };
 
 export type Status = "expire" | "<30j" | "<90j" | "ok" | "inconnue";
 
@@ -33,6 +37,7 @@ export type Upcoming = { reference_id: string; filename: string; expiry_date: st
 
 export type Overview = {
   organization: { id: string; name: string; slug: string };
+  brand: { id: string; name: string };
   role: Role;
   stats: {
     reference_images: number;
@@ -47,17 +52,20 @@ export type Overview = {
     pending_review: number;
     references_online: number;
     upcoming: Upcoming[];
+    /** Images read on the sites that match nothing in the library (rights unknown). */
+    unreferenced_online: number;
   };
   jobs: CurrentJobs;
   last_crawl: null | {
     site_url: string;
+    site_label: string;
     status: string;
     started_at: string;
     finished_at: string | null;
     pages_visited: number;
     images_new: number;
   };
-  sites: string[];
+  sites: Site[];
   defaults: { max_pages: number; max_pages_limit: number; within_days: number };
 };
 
@@ -126,7 +134,9 @@ export type Matches = {
 
 export type Scan = {
   id: string;
+  site_id: string;
   site_url: string;
+  site_label: string;
   status: "running" | "done" | "error" | "cancelled";
   started_at: string;
   finished_at: string | null;
@@ -165,3 +175,22 @@ export type ImportRow = {
 };
 
 export type Exclusion = { id: string; reason: string; site_url: string; thumb_url: string; created_at: string };
+
+export type SiteImage = {
+  id: string;
+  ids: string[];
+  url: string;
+  urls: string[];
+  url_count: number;
+  filename: string;
+  pages: string[];
+  page_count: number;
+  site_ids: string[];
+  sites: string[];
+  width: number | null;
+  height: number | null;
+  compared: boolean;
+  first_seen: string;
+  thumb: string;
+  image: string;
+};

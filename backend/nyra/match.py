@@ -18,6 +18,7 @@ hosted product (`cloud.store.CloudMatchStore`).
 from __future__ import annotations
 
 import io
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -29,6 +30,8 @@ from PIL import Image, ImageOps
 
 from nyra.config import Config, MatchConfig
 
+log = logging.getLogger("nyra.match")
+
 CONFIDENCE_HIGH = "haut"
 CONFIDENCE_MEDIUM = "moyen"
 CONFIDENCE_TO_VERIFY = "a_verifier"
@@ -36,6 +39,8 @@ CONFIDENCE_TO_VERIFY = "a_verifier"
 LEVEL_PHASH = "phash"
 LEVEL_DHASH = "dhash"
 LEVEL_CLIP = "clip"
+# A CLIP candidate whose keypoints were checked and line up (nyra/verify.py).
+LEVEL_GEOMETRY = "geo"
 
 
 @dataclass(frozen=True)
@@ -83,6 +88,11 @@ def _load_clip(model_name: str, pretrained: str):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
     return model, preprocess, device
+
+
+def warm_clip(config: MatchConfig) -> None:
+    """Load the CLIP model now (downloading its weights the first time), so a caller can say so."""
+    _load_clip(config.clip_model_name, config.clip_pretrained)
 
 
 def compute_clip_embeddings(images: Sequence[Image.Image], config: MatchConfig) -> list[np.ndarray]:
@@ -354,6 +364,9 @@ class MatchStore(Protocol):
         signature: str,
     ) -> int: ...
 
+    # Optional: `load_image("ref" | "site", id)` -> PIL image or None. When a store
+    # has it, CLIP candidates are checked geometrically (nyra/verify.py).
+
 
 def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[str, str]] = ()) -> str:
     """Anything that changes which pairs match. A different value forces a full recompute."""
@@ -368,6 +381,8 @@ def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[st
             str(config.clip_similarity_medium),
             str(config.clip_similarity_floor),
             f"{config.clip_model_name}/{config.clip_pretrained}" if use_clip else "hash",
+            (f"geo{config.geometric_min_inliers}/{config.geometric_review_coverage}/{config.geometric_confirm_coverage}"
+             if use_clip and config.verify_clip_matches else "nogeo"),
             "flip",
             f"x{excluded}" if exclusions else "x0",
         ]
@@ -397,7 +412,8 @@ def excluded_site_ids(sites: Sequence[dict], exclusions: Sequence[tuple[str, str
     return {packed.ids[index] for index in np.nonzero(hit)[0].tolist()}
 
 
-def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: bool = True, progress=None, should_stop=None) -> int:
+def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: bool = True, progress=None, should_stop=None,
+                 verify_progress=None) -> int:
     """Match references against site images and persist hits.
 
     A finished pass is remembered. The next one only compares what is new
@@ -457,6 +473,20 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
 
     if should_stop and should_stop():
         raise MatchStopped()
+
+    loader = getattr(store, "load_image", None)
+    if use_clip and config.match.verify_clip_matches and loader is not None:
+        from nyra import verify
+
+        if verify.available():
+            hits = verify.verify_hits(
+                hits, loader, config.match, level_clip=LEVEL_CLIP, level_verified=LEVEL_GEOMETRY, confidence_high=CONFIDENCE_HIGH,
+                confidence_to_verify=CONFIDENCE_TO_VERIFY, progress=verify_progress, should_stop=should_stop,
+            )
+        else:
+            log.warning("OpenCV is missing: CLIP matches are kept without geometric verification")
+        if should_stop and should_stop():
+            raise MatchStopped()
 
     return store.save_matches(
         full=full, clear_ref_ids=clear_ref_ids, clear_site_ids=clear_site_ids, hits=hits, signature=sig

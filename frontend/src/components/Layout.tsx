@@ -1,21 +1,24 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { jobLabel } from "../lib/format";
-import { useOrg, useOrganizations } from "../lib/org";
+import { brandLink, useOrg, useOrganizations } from "../lib/org";
 import { refreshAfter, useCancelJob, useInvalidate, useJobs, useOverview } from "../lib/queries";
 import type { Job } from "../types";
-import { useToast } from "./feedback";
+import { useToast, type ToastInput } from "./feedback";
 import { Logo } from "./Logo";
 import { Button, cx } from "./ui";
 
 export function Layout() {
-  const { org, link } = useOrg();
+  const { org, brand, link } = useOrg();
   const auth = useAuth();
   const orgs = useOrganizations();
   const overview = useOverview();
   const navigate = useNavigate();
+  const location = useLocation();
+  // Same page, other brand: /o/x/m/a/bibliotheque -> /o/x/m/b/bibliotheque
+  const page = location.pathname.slice(link().length + 1) || "tableau-de-bord";
   const [menuOpen, setMenuOpen] = useState(false);
   const pending = overview.data?.dashboard.pending_review ?? 0;
   const expired = overview.data?.dashboard.expired_online ?? 0;
@@ -24,7 +27,8 @@ export function Layout() {
     { to: link("tableau-de-bord"), label: "Tableau de bord", count: expired, tone: "alert" as const },
     { to: link("a-traiter"), label: "À traiter", count: pending, tone: "neutral" as const },
     { to: link("bibliotheque"), label: "Bibliothèque", count: overview.data?.stats.reference_images, tone: "muted" as const },
-    { to: link("lectures"), label: "Lectures du site" },
+    { to: link("images-du-site"), label: "Droits non vérifiés", count: overview.data?.dashboard.unreferenced_online, tone: "warn" as const },
+    { to: link("lectures"), label: "Sites et lectures" },
     { to: link("rapports"), label: "Rapports" },
     { to: link("reglages"), label: "Réglages" },
   ];
@@ -51,6 +55,7 @@ export function Layout() {
                 item.tone === "alert" && "bg-expired-soft font-medium text-expired",
                 item.tone === "neutral" && "bg-ink text-white",
                 item.tone === "muted" && "text-muted",
+                item.tone === "warn" && "bg-urgent-soft font-medium text-urgent",
               )}
             >
               {item.count}
@@ -75,7 +80,7 @@ export function Layout() {
           aria-label="Organisation"
           className="h-9 rounded-lg border border-line-strong bg-paper px-2 text-sm"
           value={org.slug}
-          onChange={(event) => navigate(`/o/${event.target.value}/tableau-de-bord`)}
+          onChange={(event) => navigate(`/o/${event.target.value}`)}
         >
           {orgs.data.map((item) => (
             <option key={item.org_id} value={item.slug}>
@@ -86,6 +91,25 @@ export function Layout() {
       ) : (
         <p className="px-3 text-sm font-medium">{org.name}</p>
       )}
+      {org.brands.length > 1 ? (
+        <div className="-mt-3 grid gap-1">
+          <label htmlFor="brand-select" className="px-3 text-xs text-muted">Marque</label>
+          <select
+            id="brand-select"
+            className="h-9 rounded-lg border border-line-strong bg-paper px-2 text-sm"
+            value={brand.slug}
+            onChange={(event) => navigate(brandLink(org, event.target.value, page))}
+          >
+            {org.brands.map((item) => (
+              <option key={item.id} value={item.slug}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : brand.name !== org.name ? (
+        <p className="-mt-4 px-3 text-xs text-muted">{brand.name}</p>
+      ) : null}
       {nav}
       <div className="mt-auto border-t border-line px-3 pt-4">
         <p className="truncate text-xs text-ink-soft" title={auth.email}>
@@ -105,7 +129,7 @@ export function Layout() {
       <div className="flex items-center justify-between border-b border-line bg-side px-4 py-3 md:hidden">
         <div className="flex items-center gap-2 font-semibold">
           <Logo size={20} />
-          <p>Nyra · {org.name}</p>
+          <p>Nyra · {org.brands.length > 1 ? brand.name : org.name}</p>
         </div>
         <Button size="sm" variant="ghost" aria-expanded={menuOpen} onClick={() => setMenuOpen((open) => !open)}>
           {menuOpen ? "Fermer" : "Menu"}
@@ -114,7 +138,7 @@ export function Layout() {
       {menuOpen ? <div className="border-b border-line bg-side md:hidden">{sidebar}</div> : null}
       <main className="min-w-0 px-4 py-6 md:px-10 md:py-8">
         <div className="mx-auto max-w-6xl">
-          <JobBar />
+          <JobToasts />
           <Outlet />
         </div>
       </main>
@@ -122,69 +146,145 @@ export function Layout() {
   );
 }
 
-function JobBar() {
+/**
+ * Tasks of the brand as toasts: one per running task, one per group of
+ * waiting tasks of the same kind, updated at every poll, then turned into
+ * the outcome (done, stopped, failed) when the task ends.
+ */
+function JobToasts() {
   const { admin } = useOrg();
   const jobs = useJobs();
   const cancel = useCancelJob();
   const toast = useToast();
   const invalidate = useInvalidate();
   const seen = useRef<Map<string, Job["kind"]>>(new Map());
+  // Lead job id -> its toast.
+  const toastFor = useRef<Map<string, number>>(new Map());
+  const [stopping, setStopping] = useState<Set<string>>(new Set());
 
-  // Notice jobs that just left the active list, and refresh what they changed.
   useEffect(() => {
     const data = jobs.data;
     if (!data) return;
-    const active = new Map(data.active.map((job) => [job.id, job.kind]));
+
+    // Jobs that just left the active list: refresh what they changed, show how they ended.
+    const activeIds = new Map(data.active.map((job) => [job.id, job.kind]));
     for (const [id, kind] of seen.current) {
-      if (active.has(id)) continue;
+      if (activeIds.has(id)) continue;
       invalidate(...refreshAfter[kind]);
+      const existing = toastFor.current.get(id);
+      toastFor.current.delete(id);
       if (data.last?.id === id) {
         const last = data.last;
-        toast(last.status === "error" ? `${jobLabel[kind]} : ${last.message}` : last.message || `${jobLabel[kind]} terminée.`, last.status === "error" ? "error" : "success");
+        const outcome =
+          last.status === "error"
+            ? { tone: "error" as const, message: `${jobLabel[kind]} : échec`, description: last.message }
+            : last.status === "cancelled"
+              ? { tone: "info" as const, message: `${jobLabel[kind]} arrêtée`, description: last.message }
+              : { tone: "success" as const, message: `${jobLabel[kind]} terminée`, description: last.message || undefined };
+        if (existing !== undefined) toast.update(existing, { ...outcome, progress: undefined, action: undefined });
+        else toast.show(outcome);
+      } else if (existing !== undefined) {
+        toast.dismiss(existing);
       }
     }
-    seen.current = active;
-    // invalidate/toast are stable enough; only react to new data.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs.data]);
+    seen.current = activeIds;
 
-  const active = jobs.data?.active ?? [];
-  if (!active.length) return null;
-  return (
-    <div className="mb-6 grid gap-2">
-      {active.map((job) => {
-        const total = Number(job.progress.total || 0);
-        const done = Number(job.progress.done || 0);
-        const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
-        return (
-          <div key={job.id} className="flex items-center gap-4 rounded-xl border border-line bg-paper px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm">
-                <span className="font-medium">{jobLabel[job.kind]}</span>
-                <span className="text-muted"> · {job.status === "queued" ? "en attente d'un worker" : job.message}</span>
-              </p>
-              <div className="mt-2 h-1 overflow-hidden rounded-full bg-canvas" role="progressbar" aria-valuenow={percent ?? undefined} aria-valuemin={0} aria-valuemax={100}>
-                {percent === null ? (
-                  <div className={cx("h-full w-1/4 rounded-full", job.status === "queued" ? "bg-line-strong" : "progress-indeterminate bg-ink")} />
-                ) : (
-                  <div className="h-full rounded-full bg-ink transition-[width]" style={{ width: `${Math.max(3, percent)}%` }} />
-                )}
-              </div>
-            </div>
-            {percent !== null ? <span className="text-xs text-muted tabular">{percent} %</span> : null}
-            {admin ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={job.cancel_requested || cancel.isPending}
-                onClick={() => cancel.mutate(job.id, { onError: (error) => toast(errorMessage(error), "error") })}
-              >
-                {job.cancel_requested ? "Arrêt…" : job.status === "queued" ? "Annuler" : "Arrêter"}
-              </Button>
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
+    // Running jobs one toast each; queued ones of the same kind share one.
+    const rows: Job[][] = [];
+    for (const job of data.active) {
+      const same = job.status === "queued" ? rows.find((row) => row[0].status === "queued" && row[0].kind === job.kind) : undefined;
+      if (same) same.push(job);
+      else rows.push([job]);
+    }
+    const leads = new Set(rows.map((row) => row[0].id));
+    for (const [id, toastId] of toastFor.current) {
+      if (!leads.has(id)) {
+        toast.dismiss(toastId);
+        toastFor.current.delete(id);
+      }
+    }
+    for (const row of rows) {
+      const input = describe(row, data.active);
+      const existing = toastFor.current.get(row[0].id);
+      if (existing !== undefined) toast.update(existing, input);
+      else toastFor.current.set(row[0].id, toast.show(input));
+    }
+    // invalidate/toast are stable; describe reads admin and stopping.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobs.data, stopping, admin]);
+
+  // Leaving the brand: its tasks' toasts go with it.
+  useEffect(() => {
+    const toasts = toastFor.current;
+    return () => {
+      for (const toastId of toasts.values()) toast.dismiss(toastId);
+      toasts.clear();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function describe(row: Job[], active: Job[]): ToastInput {
+    const job = row[0];
+    const queued = job.status === "queued" ? queuedText(job, active, admin) : null;
+    const total = Number(job.progress.total || 0);
+    const done = Number(job.progress.done || 0);
+    return {
+      tone: "loading",
+      message: jobLabel[job.kind],
+      description: queued
+        ? [row.length > 1 ? groupLine(row.length, active) : capitalize(queued.line), queued.hint].filter(Boolean).join(". ")
+        : job.message,
+      progress: queued ? undefined : total > 0 ? Math.min(1, done / total) : null,
+      action: admin
+        ? {
+            label: job.cancel_requested ? "Arrêt demandé…" : queued ? (row.length > 1 ? "Tout annuler" : "Annuler") : "Arrêter",
+            disabled: job.cancel_requested || stopping.has(job.id),
+            keep: true,
+            onClick: () => void stop(row),
+          }
+        : undefined,
+    };
+  }
+
+  async function stop(row: Job[]) {
+    const lead = row[0];
+    setStopping((current) => new Set(current).add(lead.id));
+    try {
+      await Promise.all(row.map((job) => cancel.mutateAsync(job.id)));
+    } catch (error) {
+      toast.show({ tone: "error", message: "La tâche n'a pas pu être arrêtée", description: errorMessage(error) });
+    } finally {
+      setStopping((current) => {
+        const next = new Set(current);
+        next.delete(lead.id);
+        return next;
+      });
+    }
+  }
+
+  return null;
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Several queued requests of one kind: they'll be handled together, one after the other. */
+function groupLine(count: number, active: Job[]): string {
+  const running = active.find((other) => other.status === "running");
+  return running ? `${count} demandes en attente, après « ${jobLabel[running.kind]} »` : `${count} demandes en attente`;
+}
+
+/** A queued job in plain words: behind another task, about to start, or waiting for a worker nobody started. */
+function queuedText(job: Job, active: Job[], admin: boolean): { line: string; hint?: string } {
+  const running = active.find((other) => other.status === "running");
+  if (running) return { line: `en file d'attente, démarre après « ${jobLabel[running.kind]} »` };
+  const waitedSeconds = (Date.now() - new Date(job.created_at).getTime()) / 1000;
+  if (waitedSeconds < 60) return { line: "démarre dans un instant" };
+  return {
+    line: "en attente",
+    hint: admin
+      ? "Aucun worker ne traite les tâches pour l'instant : lancez « nyra worker » (ou vérifiez qu'il tourne). La tâche démarrera alors toute seule."
+      : "Elle démarrera automatiquement dès que le serveur d'analyse sera disponible.",
+  };
 }

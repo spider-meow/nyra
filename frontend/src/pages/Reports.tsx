@@ -20,7 +20,11 @@ export function Reports() {
   function generate() {
     start.mutate(
       { kind: "report", body: { within_days: Number(range) } },
-      { onSuccess: () => toast("Rapport en préparation. Il apparaîtra ici dans quelques instants."), onError: (error) => toast(errorMessage(error), "error") },
+      {
+        onSuccess: () =>
+          toast.show({ tone: "success", message: "Rapport en préparation", description: "Il apparaîtra dans la liste ci-dessous dans quelques instants." }),
+        onError: (error) => toast.show({ tone: "error", message: "Le rapport n'a pas été lancé", description: errorMessage(error) }),
+      },
     );
   }
 
@@ -41,7 +45,7 @@ export function Reports() {
                 <option value="3650">Toutes les échéances</option>
               </Select>
             </div>
-            <Button variant="primary" onClick={generate} disabled={generating || start.isPending}>
+            <Button variant="primary" onClick={generate} loading={generating || start.isPending}>
               {generating ? "Préparation…" : "Générer un rapport"}
             </Button>
           </div>

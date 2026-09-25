@@ -120,9 +120,11 @@ class CloudCrawlStore:
         return image_id
 
     def save_image(self, *, url, page_id, data, content_type, processed: fetch.ProcessedImage, embedding) -> uuid.UUID:
-        storage_path = cloud_storage.path_for(self.org_id, f"{processed.content_hash}{processed.extension}")
+        # The original stays on the site: only a working copy and a thumbnail are stored.
+        storage_path = cloud_storage.site_work_path(self.org_id, processed.content_hash)
         thumb_path = cloud_storage.site_thumb_path(self.org_id, processed.content_hash)
-        cloud_storage.upload(self.storage, cloud_storage.BUCKET_SITE_IMAGES, storage_path, data, content_type=content_type)
+        cloud_storage.upload(self.storage, cloud_storage.BUCKET_SITE_IMAGES, storage_path,
+                             fetch.make_working_copy(processed.rgb), content_type="image/jpeg")
         cloud_storage.upload(self.storage, cloud_storage.BUCKET_SITE_IMAGES, thumb_path, processed.thumbnail,
                              content_type="image/jpeg")
         with cloud_db.connect(self.database_url) as conn:
@@ -136,45 +138,71 @@ class CloudCrawlStore:
 
 
 class CloudMatchStore:
-    def __init__(self, *, org_id: uuid.UUID, database_url: str):
+    """One brand: its library against the images of its own sites, nothing else."""
+
+    def __init__(self, *, org_id: uuid.UUID, brand_id: uuid.UUID, database_url: str, storage_client=None,
+                 max_image_pixels: int = 60_000_000):
         self.org_id = org_id
+        self.brand_id = brand_id
         self.database_url = database_url
+        self.storage = storage_client
+        self.max_image_pixels = max_image_pixels
+        self._paths: dict[tuple[str, Any], tuple[Optional[str], Optional[str]]] = {}
 
     def load_features(self, use_clip: bool) -> tuple[list[dict], list[dict]]:
         embedding = "embedding" if use_clip else "NULL::vector AS embedding"
         with cloud_db.connect(self.database_url) as conn:
             refs = conn.execute(
-                f"""SELECT id, phash, dhash, phash_flip, dhash_flip, {embedding}, compared_at
-                    FROM reference_images WHERE org_id = %s""",
-                (self.org_id,),
+                f"""SELECT id, phash, dhash, phash_flip, dhash_flip, {embedding}, compared_at,
+                           COALESCE(work_path, storage_path) AS storage_path
+                    FROM reference_images WHERE brand_id = %s""",
+                (self.brand_id,),
             ).fetchall()
             sites = conn.execute(
-                f"SELECT id, phash, dhash, {embedding}, compared_at FROM site_images WHERE org_id = %s",
-                (self.org_id,),
+                f"""SELECT si.id, si.phash, si.dhash, {"si." + embedding if use_clip else embedding}, si.compared_at,
+                           si.storage_path
+                    FROM site_images si JOIN sites s ON s.id = si.site_id WHERE s.brand_id = %s""",
+                (self.brand_id,),
             ).fetchall()
         for row in (*refs, *sites):
             row["embedding"] = _vector(row["embedding"])
+        self._paths = {**{("ref", row["id"]): (row["storage_path"], row["phash"]) for row in refs},
+                       **{("site", row["id"]): (row["storage_path"], row["phash"]) for row in sites}}
         return refs, sites
+
+    def load_image(self, side: str, image_id: Any):
+        """The working copy (or, for older rows, the original), for the keypoint check of CLIP
+        candidates; None when it can't be read. Read through the worker's disk cache."""
+        path, version = self._paths.get((side, image_id), (None, None))
+        if self.storage is None or not path:
+            return None
+        bucket = cloud_storage.BUCKET_REFS if side == "ref" else cloud_storage.BUCKET_SITE_IMAGES
+        try:
+            data = cloud_storage.cached_download(self.storage, bucket, path, version=version or "")
+        except Exception:  # noqa: BLE001 - a missing object leaves the pair "to verify"
+            return None
+        if side == "ref":
+            return fetch.decode_reference(data, self.max_image_pixels)[0]
+        return fetch.decode(data, self.max_image_pixels)
 
     def get_signature(self) -> Optional[str]:
         with cloud_db.connect(self.database_url) as conn:
-            return cloud_db.get_match_signature(conn, self.org_id)
+            return cloud_db.get_match_signature(conn, self.brand_id)
 
     def load_exclusions(self) -> list[tuple[str, str]]:
         with cloud_db.connect(self.database_url) as conn:
-            return cloud_db.load_exclusions(conn, self.org_id)
+            return cloud_db.load_exclusions(conn, self.brand_id)
 
     def save_matches(self, *, full, clear_ref_ids, clear_site_ids, hits, signature) -> int:
         with cloud_db.connect(self.database_url) as conn:
             if full:
-                cloud_db.clear_matches(conn, self.org_id)
+                cloud_db.clear_matches(conn, self.brand_id)
             else:
                 cloud_db.delete_matches_for(conn, org_id=self.org_id, reference_ids=clear_ref_ids, site_ids=clear_site_ids)
             cloud_db.write_matches(conn, self.org_id, hits)
             cloud_db.stamp_compared(conn, clear_ref_ids, clear_site_ids)
-            cloud_db.set_match_signature(conn, self.org_id, signature)
-            row = conn.execute("SELECT COUNT(*) AS c FROM matches WHERE org_id = %s", (self.org_id,)).fetchone()
-        return row["c"]
+            cloud_db.set_match_signature(conn, self.org_id, self.brand_id, signature)
+            return cloud_db.count_matches(conn, self.brand_id)
 
 
 def feature_dict(row: dict[str, Any]) -> dict[str, Any]:

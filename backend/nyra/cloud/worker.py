@@ -3,11 +3,13 @@
 Runs in its own process (and container): it's the only part of the
 product that needs Chromium and torch. Several workers can run side by
 side; `jobs.claim` hands each one a different job and never two jobs of
-the same organization at once.
+the same brand at once. Every job works on one brand: its library, its
+sites.
 
 Job kinds:
-- crawl  — read a site, then compare (unless asked not to);
-- match  — compare the library with every image read so far;
+- crawl  — read one or several of the brand's sites, then compare (unless
+           asked not to);
+- match  — compare the brand's library with every image read on its sites;
 - index  — fill in whatever a reference or site image is missing
            (CLIP embedding, mirror hashes, thumbnail), then compare. The
            web process enqueues one after every upload; it also
@@ -31,7 +33,7 @@ from nyra import fetch, netguard
 from nyra import report as report_module
 from nyra.config import Config, load_config, with_overrides
 from nyra.crawl import CrawlStats, crawl_site, normalize_url
-from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching
+from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching, warm_clip
 
 from . import db as cloud_db
 from . import jobs as cloud_jobs
@@ -135,7 +137,7 @@ class Worker:
 
     def run_job(self, job: dict) -> None:
         ctx = JobContext(self.database_url, job)
-        log.info("job %s (%s) for org %s started", job["id"], job["kind"], job["org_id"])
+        log.info("job %s (%s) for org %s, brand %s started", job["id"], job["kind"], job["org_id"], job["brand_id"])
         handler = {
             "crawl": self._crawl,
             "match": self._match_job,
@@ -143,7 +145,7 @@ class Worker:
             "report": self._report,
         }[job["kind"]]
         try:
-            message, result = handler(ctx, uuid.UUID(job["org_id"]), job.get("params") or {})
+            message, result = handler(ctx, uuid.UUID(job["org_id"]), uuid.UUID(job["brand_id"]), job.get("params") or {})
             status = "cancelled" if ctx.cancelled else "done"
             with cloud_db.connect(self.database_url) as conn:
                 cloud_jobs.finish(conn, job["id"], status=status, message=message, result=result)
@@ -170,34 +172,78 @@ class Worker:
             overrides = cloud_db.get_overrides(conn, org_id)
         return with_overrides(load_config(self.config_path), overrides)
 
-    def _compare(self, ctx: JobContext, org_id: uuid.UUID, config: Config) -> int:
+    def _compare(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, config: Config) -> int:
         def progress(done: int, total: int) -> None:
             ctx.report(f"Comparaison {done}/{total}", {"phase": "match", "done": done, "total": total})
 
+        def verifying(done: int, total: int) -> None:
+            ctx.report(f"Vérification des ressemblances · {done}/{total}", {"phase": "verify", "done": done, "total": total})
+
         ctx.report("Comparaison avec la bibliothèque…", {"phase": "match"}, force=True)
-        return run_matching(CloudMatchStore(org_id=org_id, database_url=self.database_url), config,
-                            use_clip=True, progress=progress, should_stop=ctx.should_stop)
+        store = CloudMatchStore(org_id=org_id, brand_id=brand_id, database_url=self.database_url,
+                                storage_client=self.storage_client_factory(),
+                                max_image_pixels=config.crawl.max_image_pixels)
+        return run_matching(store, config, use_clip=True, progress=progress, should_stop=ctx.should_stop,
+                            verify_progress=verifying)
+
+    def _sites_to_crawl(self, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> list[dict]:
+        with cloud_db.connect(self.database_url) as conn:
+            if params.get("site") and not params.get("site_ids"):
+                # Queued before brands existed: a bare address, filed under the job's brand.
+                site_id = cloud_db.create_site(conn, org_id=org_id, brand_id=brand_id,
+                                               url=normalize_url(str(params["site"])))
+                return cloud_db.get_sites(conn, brand_id, [site_id])
+            ids = [uuid.UUID(str(value)) for value in params.get("site_ids") or []]
+            if not ids:
+                ids = [row["id"] for row in cloud_db.list_sites(conn, brand_id)]
+            return cloud_db.get_sites(conn, brand_id, ids)
 
     # --- handlers ---------------------------------------------------------------
 
-    def _crawl(self, ctx: JobContext, org_id: uuid.UUID, params: dict) -> tuple[str, dict]:
+    def _crawl(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         config = self.config_for(org_id)
-        site = normalize_url(str(params["site"]))
+        sites = self._sites_to_crawl(org_id, brand_id, params)
+        if not sites:
+            raise JobFailed("Aucune adresse à lire pour cette marque.")
         limit = min(int(params.get("max_pages") or config.crawl.max_pages), config.crawl.max_pages_limit)
+        runs = []
+        for index, site in enumerate(sites):
+            if ctx.cancelled:
+                break
+            prefix = f"{site['label'] or site['url']} ({index + 1}/{len(sites)}) · " if len(sites) > 1 else ""
+            runs.append(self._crawl_site(ctx, org_id, site, config, limit, params, prefix))
+
+        result = {
+            "runs": [run["run_id"] for run in runs],
+            **{key: sum(run[key] for run in runs)
+               for key in ("pages_visited", "images_found", "images_stored", "images_new", "blocked_by_robots")},
+            "errors": [error for run in runs for error in run["errors"]][:8],
+        }
+        if ctx.cancelled:
+            return "Lecture arrêtée. Les pages déjà lues sont conservées.", result
+        where = f" sur {len(runs)} sites" if len(runs) > 1 else ""
+        message = f"{result['pages_visited']} page(s) lue(s){where}, {result['images_new']} nouvelle(s) image(s)."
+        if params.get("then_match", True):
+            result["matches"] = self._compare(ctx, org_id, brand_id, config)
+            message += f" {result['matches']} correspondance(s) au total."
+        return message, result
+
+    def _crawl_site(self, ctx: JobContext, org_id: uuid.UUID, site: dict, config: Config, limit: int,
+                    params: dict, prefix: str) -> dict:
         storage = self.storage_client_factory()
+        created_by = ctx.job.get("created_by")
         with cloud_db.connect(self.database_url) as conn:
-            site_id = cloud_db.upsert_site(conn, org_id=org_id, url=site)
-            created_by = ctx.job.get("created_by")
-            run_id = cloud_db.start_crawl_run(conn, org_id=org_id, site_id=site_id,
+            run_id = cloud_db.start_crawl_run(conn, org_id=org_id, site_id=site["id"],
                                               triggered_by=uuid.UUID(created_by) if created_by else None,
                                               job_id=uuid.UUID(ctx.job["id"]))
-        store = CloudCrawlStore(org_id=org_id, site_id=site_id, database_url=self.database_url, storage_client=storage)
+        store = CloudCrawlStore(org_id=org_id, site_id=site["id"], database_url=self.database_url,
+                                storage_client=storage)
         last_run_update = 0.0
 
         def progress(stats: CrawlStats) -> None:
             nonlocal last_run_update
             ctx.report(
-                f"Page {stats.pages_visited}/{limit} · {stats.images_new} nouvelle(s) image(s)",
+                f"{prefix}Page {stats.pages_visited}/{limit} · {stats.images_new} nouvelle(s) image(s)",
                 {"phase": "crawl", "done": stats.pages_visited, "total": limit, "images_new": stats.images_new,
                  "images_stored": stats.images_stored, "errors": len(stats.errors),
                  "blocked_by_robots": stats.blocked_by_robots},
@@ -207,10 +253,10 @@ class Worker:
                 with cloud_db.connect(self.database_url) as conn:
                     cloud_db.update_crawl_run_progress(conn, run_id, stats)
 
-        ctx.report("Lecture du sitemap…", {"phase": "crawl", "done": 0, "total": limit}, force=True)
+        ctx.report(f"{prefix}Lecture du sitemap…", {"phase": "crawl", "done": 0, "total": limit}, force=True)
         try:
             stats = crawl_site(
-                site, store, config, max_pages=limit,
+                site["url"], store, config, max_pages=limit,
                 embedder=lambda images: compute_clip_embeddings(images, config.match),
                 resume=not params.get("fresh", False), progress=progress, should_stop=ctx.should_stop,
             )
@@ -218,57 +264,66 @@ class Worker:
             with cloud_db.connect(self.database_url) as conn:
                 cloud_db.finish_crawl_run(conn, run_id, status="error", errors=[str(exc)])
             raise JobFailed(f"Adresse refusée : {exc}.") from exc
-        except Exception:
+        except Exception as exc:
+            problem = browser_problem(exc)
             with cloud_db.connect(self.database_url) as conn:
-                cloud_db.finish_crawl_run(conn, run_id, status="error", errors=[traceback.format_exc(limit=2)])
+                cloud_db.finish_crawl_run(conn, run_id, status="error",
+                                          errors=[problem or traceback.format_exc(limit=2)])
+            if problem:
+                raise JobFailed(problem) from exc
             raise
 
         with cloud_db.connect(self.database_url) as conn:
             cloud_db.update_crawl_run_progress(conn, run_id, stats)
             cloud_db.finish_crawl_run(conn, run_id, status="cancelled" if ctx.cancelled else "done", errors=stats.errors)
-
-        result = {
+        return {
             "run_id": str(run_id), "pages_visited": stats.pages_visited, "images_found": stats.images_found,
             "images_stored": stats.images_stored, "images_new": stats.images_new,
             "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8],
         }
-        if ctx.cancelled:
-            return "Lecture arrêtée. Les pages déjà lues sont conservées.", result
-        message = f"{stats.pages_visited} page(s) lue(s), {stats.images_new} nouvelle(s) image(s)."
-        if params.get("then_match", True):
-            result["matches"] = self._compare(ctx, org_id, config)
-            message += f" {result['matches']} correspondance(s) au total."
-        return message, result
 
-    def _match_job(self, ctx: JobContext, org_id: uuid.UUID, params: dict) -> tuple[str, dict]:
-        count = self._compare(ctx, org_id, self.config_for(org_id))
+    def _match_job(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
+        count = self._compare(ctx, org_id, brand_id, self.config_for(org_id))
         return f"Comparaison terminée : {count} correspondance(s).", {"matches": count}
 
-    def _index(self, ctx: JobContext, org_id: uuid.UUID, params: dict) -> tuple[str, dict]:
+    def _index(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         config = self.config_for(org_id)
         storage = self.storage_client_factory()
         batch = max(1, config.match.embedding_batch_size)
         with cloud_db.connect(self.database_url) as conn:
             refs = conn.execute(
-                """SELECT id, filename, storage_path, thumb_path, phash_flip IS NULL AS needs_flip,
+                """SELECT id, filename, storage_path, thumb_path, work_path, phash, phash_flip IS NULL AS needs_flip,
                           embedding IS NULL AS needs_embedding
                    FROM reference_images
-                   WHERE org_id = %s AND (embedding IS NULL OR phash_flip IS NULL OR thumb_path IS NULL)""",
-                (org_id,),
+                   WHERE brand_id = %s
+                     AND (embedding IS NULL OR phash_flip IS NULL OR thumb_path IS NULL OR work_path IS NULL)""",
+                (brand_id,),
             ).fetchall()
             sites = conn.execute(
-                """SELECT id, storage_path, content_hash, thumb_path, embedding IS NULL AS needs_embedding
-                   FROM site_images
-                   WHERE org_id = %s AND storage_path IS NOT NULL AND (embedding IS NULL OR thumb_path IS NULL)""",
-                (org_id,),
+                """SELECT si.id, si.storage_path, si.content_hash, si.phash, si.thumb_path,
+                          si.embedding IS NULL AS needs_embedding
+                   FROM site_images si JOIN sites s ON s.id = si.site_id
+                   WHERE s.brand_id = %s AND si.storage_path IS NOT NULL
+                     AND (si.embedding IS NULL OR si.thumb_path IS NULL)""",
+                (brand_id,),
             ).fetchall()
         total = len(refs) + len(sites)
         done = 0
         updated = 0
+        # Say what's happening before the first batch: loading the model can take minutes the first time.
+        if any(row["needs_embedding"] for row in (*refs, *sites)):
+            ctx.report(f"Chargement du modèle d'analyse ({total} image(s) à indexer ; plus long la toute première fois)…",
+                       {"phase": "index", "done": 0, "total": total}, force=True)
+            warm_clip(config.match)
 
-        def load(bucket: str, path: str):
+        def load(bucket: str, path: str, version: str):
+            ctx.report(f"Lecture des images · {done}/{total}", {"phase": "index", "done": done, "total": total})
             try:
-                img = fetch.decode(cloud_storage.download(storage, bucket, path), config.crawl.max_image_pixels)
+                data = cloud_storage.cached_download(storage, bucket, path, version=version or "")
+                if bucket == cloud_storage.BUCKET_REFS:
+                    img, _ = fetch.decode_reference(data, config.crawl.max_image_pixels)
+                else:
+                    img = fetch.decode(data, config.crawl.max_image_pixels)
             except Exception:  # noqa: BLE001 - a missing object must not stop the others
                 return None
             return None if img is None else img.convert("RGB")
@@ -276,7 +331,9 @@ class Worker:
         for start in range(0, len(refs), batch):
             if ctx.should_stop():
                 break
-            chunk = [(row, load(cloud_storage.BUCKET_REFS, row["storage_path"])) for row in refs[start : start + batch]]
+            # The working copy is enough; the original only to make a missing working copy.
+            chunk = [(row, load(cloud_storage.BUCKET_REFS, row["work_path"] or row["storage_path"], row["phash"]))
+                     for row in refs[start : start + batch]]
             chunk = [(row, img) for row, img in chunk if img is not None]
             to_embed = [img for row, img in chunk if row["needs_embedding"]]
             embeddings = iter(compute_clip_embeddings(to_embed, config.match))
@@ -287,8 +344,13 @@ class Worker:
                     phash_flip, dhash_flip = compute_flip_hashes(img)
                 thumb_path = row["thumb_path"]
                 if not thumb_path:
-                    thumb_path = cloud_storage.ref_thumb_path(org_id, row["filename"])
+                    thumb_path = cloud_storage.ref_thumb_path(org_id, brand_id, row["filename"])
                     cloud_storage.upload(storage, cloud_storage.BUCKET_REFS, thumb_path, fetch.make_thumbnail(img),
+                                         content_type="image/jpeg")
+                work_path = row["work_path"]
+                if not work_path:
+                    work_path = cloud_storage.ref_work_path(org_id, brand_id, row["filename"])
+                    cloud_storage.upload(storage, cloud_storage.BUCKET_REFS, work_path, fetch.make_working_copy(img),
                                          content_type="image/jpeg")
                 with cloud_db.connect(self.database_url) as conn:
                     conn.execute(
@@ -297,19 +359,21 @@ class Worker:
                                phash_flip = COALESCE(%s, phash_flip),
                                dhash_flip = COALESCE(%s, dhash_flip),
                                thumb_path = %s,
+                               work_path = %s,
                                compared_at = CASE WHEN %s OR %s THEN NULL ELSE compared_at END
                            WHERE id = %s""",
-                        (embedding, phash_flip, dhash_flip, thumb_path, embedding is not None,
+                        (embedding, phash_flip, dhash_flip, thumb_path, work_path, embedding is not None,
                          phash_flip is not None, row["id"]),
                     )
                 updated += 1
             done += len(refs[start : start + batch])
-            ctx.report(f"Indexation {done}/{total}", {"phase": "index", "done": done, "total": total})
+            ctx.report(f"Analyse des images · {done}/{total}", {"phase": "index", "done": done, "total": total})
 
         for start in range(0, len(sites), batch):
             if ctx.should_stop():
                 break
-            chunk = [(row, load(cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"])) for row in sites[start : start + batch]]
+            chunk = [(row, load(cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"], row["content_hash"] or row["phash"]))
+                     for row in sites[start : start + batch]]
             chunk = [(row, img) for row, img in chunk if img is not None]
             to_embed = [img for row, img in chunk if row["needs_embedding"]]
             embeddings = iter(compute_clip_embeddings(to_embed, config.match))
@@ -330,19 +394,23 @@ class Worker:
                     )
                 updated += 1
             done += len(sites[start : start + batch])
-            ctx.report(f"Indexation {done}/{total}", {"phase": "index", "done": done, "total": total})
+            ctx.report(f"Analyse des images · {done}/{total}", {"phase": "index", "done": done, "total": total})
 
         result: dict[str, Any] = {"indexed": updated}
         if ctx.cancelled:
             return "Indexation arrêtée.", result
         with cloud_db.connect(self.database_url) as conn:
-            has_sites = conn.execute("SELECT EXISTS (SELECT 1 FROM site_images WHERE org_id = %s) AS e", (org_id,)).fetchone()["e"]
+            has_sites = conn.execute(
+                """SELECT EXISTS (SELECT 1 FROM site_images si JOIN sites s ON s.id = si.site_id
+                                  WHERE s.brand_id = %s) AS e""",
+                (brand_id,),
+            ).fetchone()["e"]
         if has_sites:
-            result["matches"] = self._compare(ctx, org_id, config)
+            result["matches"] = self._compare(ctx, org_id, brand_id, config)
             return f"{updated} image(s) indexée(s), comparaison à jour.", result
         return f"{updated} image(s) indexée(s).", result
 
-    def _report(self, ctx: JobContext, org_id: uuid.UUID, params: dict) -> tuple[str, dict]:
+    def _report(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         config = self.config_for(org_id)
         storage = self.storage_client_factory()
         within_days = params.get("within_days")
@@ -350,9 +418,10 @@ class Worker:
         ctx.report("Préparation du rapport…", {"phase": "report"}, force=True)
         with cloud_db.connect(self.database_url) as conn:
             org = cloud_db.get_organization(conn, org_id)
-            matches = cloud_db.match_rows(conn, org_id)
-            unmatched = cloud_db.unmatched_rows(conn, org_id)
-            stats = asdict(cloud_db.get_stats(conn, org_id))
+            brand = cloud_db.get_brand(conn, org_id, brand_id)
+            matches = cloud_db.match_rows(conn, brand_id)
+            unmatched = cloud_db.unmatched_rows(conn, brand_id)
+            stats = asdict(cloud_db.get_stats(conn, brand_id))
         for row in matches:
             row["ref_thumb"] = (cloud_storage.BUCKET_REFS, row["ref_thumb_path"] or row["ref_storage_path"])
             row["site_thumb"] = (cloud_storage.BUCKET_SITE_IMAGES, row["site_thumb_path"] or row["site_storage_path"])
@@ -365,7 +434,7 @@ class Worker:
 
         files = report_module.build_report(
             matches, unmatched, within_days=within_days, stats=stats, thumb_loader=loader,
-            organization=org["name"] if org else "",
+            organization=report_title(org, brand),
         )
         report_id = uuid.uuid4()
         base = cloud_storage.path_for(org_id, str(report_id))
@@ -381,12 +450,32 @@ class Worker:
         created_by = ctx.job.get("created_by")
         with cloud_db.connect(self.database_url) as conn:
             saved_id = cloud_db.create_report(
-                conn, org_id=org_id, within_days=within_days, storage_path_html=paths["html"],
+                conn, org_id=org_id, brand_id=brand_id, within_days=within_days, storage_path_html=paths["html"],
                 storage_path_csv=paths["csv"], storage_path_not_found_csv=paths["not_found"],
                 stats={**stats, **{k: v for k, v in files.summary.items() if k != "upcoming"}},
                 generated_by=uuid.UUID(created_by) if created_by else None,
             )
         return "Rapport prêt.", {"report_id": str(saved_id)}
+
+
+def browser_problem(exc: Exception) -> Optional[str]:
+    """The worker's Chromium is missing or won't start: say how to fix it instead of a traceback."""
+    text = str(exc)
+    if "Executable doesn't exist" in text or "playwright install" in text:
+        return ("Le navigateur de lecture (Chromium) n'est pas installé pour ce worker. Sur la machine du worker, lancez "
+                "« python -m playwright install chromium », dans le même terminal que « nyra worker » "
+                "(PLAYWRIGHT_BROWSERS_PATH doit pointer au même endroit), puis relancez la lecture.")
+    if type(exc).__module__.startswith("playwright") and "launch" in text:
+        return f"Le navigateur de lecture (Chromium) n'a pas pu démarrer sur le worker : {text.splitlines()[0][:200]}"
+    return None
+
+
+def report_title(org: Optional[dict], brand: Optional[dict]) -> str:
+    """"Rémy Martin", or "Rémy Martin · Louis XIII" once the brand isn't just the organization."""
+    names = [item["name"] for item in (org, brand) if item]
+    if len(names) == 2 and names[0].casefold() == names[1].casefold():
+        names = names[:1]
+    return " · ".join(names)
 
 
 def configure_logging() -> None:

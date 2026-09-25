@@ -62,6 +62,15 @@ class MatchConfig:
     clip_model_name: str = "ViT-B-32"
     clip_pretrained: str = "laion2b_s34b_b79k"
     embedding_batch_size: int = 16
+    # Every CLIP candidate is checked geometrically (see nyra/verify.py): enough
+    # keypoints must line up under one transform, over enough of *both* images.
+    # Below `review` coverage: dropped (another shot of the same product). From
+    # `review`: "to verify" (a shared cut-out, a special edition). From `confirm`:
+    # confirmed. Calibrated on 1,057 real images (docs/MATCHING.md).
+    verify_clip_matches: bool = True
+    geometric_min_inliers: int = 20
+    geometric_review_coverage: float = 0.05
+    geometric_confirm_coverage: float = 0.20
 
 
 @dataclass(frozen=True)
@@ -82,7 +91,8 @@ ORG_OVERRIDABLE = {
     "crawl": {"max_pages", "concurrency", "delay_seconds_min", "delay_seconds_max", "min_image_side_px",
               "respect_robots_txt", "dismiss_overlays", "pre_actions"},
     "match": {"phash_threshold", "dhash_threshold", "clip_similarity_high", "clip_similarity_medium",
-              "clip_similarity_floor"},
+              "clip_similarity_floor", "verify_clip_matches", "geometric_min_inliers", "geometric_review_coverage",
+              "geometric_confirm_coverage"},
     "report": {"default_within_days"},
 }
 
