@@ -12,6 +12,16 @@ export function useOrganizations(enabled = true) {
   });
 }
 
+/** The signed-in account: whether it belongs to the Nyra team (back office). */
+export function useMe(enabled = true) {
+  return useQuery({
+    queryKey: ["me"],
+    queryFn: () => api.get<{ user_id: string; email: string | null; staff: boolean }>("/me"),
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+}
+
 type OrgState = {
   org: Organization;
   admin: boolean;

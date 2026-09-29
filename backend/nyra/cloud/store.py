@@ -77,17 +77,19 @@ class CloudCrawlStore:
     def image_by_content_hash(self, digest: str) -> Optional[dict]:
         with cloud_db.connect(self.database_url) as conn:
             return conn.execute(
-                """SELECT storage_path, thumb_path, content_hash, width, height, phash, dhash, embedding
+                """SELECT storage_path, thumb_path, content_hash, width, height, phash, dhash, embedding, byte_size
                    FROM site_images WHERE org_id = %s AND content_hash = %s AND phash IS NOT NULL LIMIT 1""",
                 (self.org_id, digest),
             ).fetchone()
 
-    def _upsert(self, conn, *, url, storage_path, thumb_path, content_hash, width, height, phash, dhash, embedding):
+    def _upsert(self, conn, *, url, storage_path, thumb_path, content_hash, width, height, phash, dhash, embedding,
+                byte_size):
         row = conn.execute(
             """
             INSERT INTO site_images
-                (org_id, site_id, url, storage_path, thumb_path, content_hash, width, height, phash, dhash, embedding)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                (org_id, site_id, url, storage_path, thumb_path, content_hash, width, height, phash, dhash, embedding,
+                 byte_size)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (site_id, url) DO UPDATE SET
                 storage_path=excluded.storage_path,
                 thumb_path=excluded.thumb_path,
@@ -97,6 +99,7 @@ class CloudCrawlStore:
                 phash=excluded.phash,
                 dhash=excluded.dhash,
                 embedding=COALESCE(excluded.embedding, site_images.embedding),
+                byte_size=COALESCE(excluded.byte_size, site_images.byte_size),
                 last_seen=now(),
                 compared_at=CASE
                     WHEN site_images.content_hash IS DISTINCT FROM excluded.content_hash
@@ -105,7 +108,7 @@ class CloudCrawlStore:
             RETURNING id
             """,
             (self.org_id, self.site_id, url, storage_path, thumb_path, content_hash, width, height, phash, dhash,
-             embedding),
+             embedding, byte_size),
         ).fetchone()
         return row["id"]
 
@@ -115,6 +118,7 @@ class CloudCrawlStore:
                 conn, url=url, storage_path=existing["storage_path"], thumb_path=existing["thumb_path"],
                 content_hash=existing["content_hash"], width=existing["width"], height=existing["height"],
                 phash=existing["phash"], dhash=existing["dhash"], embedding=existing["embedding"],
+                byte_size=existing.get("byte_size"),
             )
             cloud_db.link_image_page(conn, image_id, page_id)
         return image_id
@@ -129,7 +133,7 @@ class CloudCrawlStore:
             image_id = self._upsert(
                 conn, url=url, storage_path=storage_path, thumb_path=thumb_path,
                 content_hash=processed.content_hash, width=processed.width, height=processed.height,
-                phash=processed.phash, dhash=processed.dhash, embedding=embedding,
+                phash=processed.phash, dhash=processed.dhash, embedding=embedding, byte_size=len(data),
             )
             cloud_db.link_image_page(conn, image_id, page_id)
         return image_id

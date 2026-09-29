@@ -36,6 +36,7 @@ from nyra.refs import RefValidationError, parse_expiry, reference_features
 
 from . import auth as cloud_auth
 from . import db as cloud_db
+from . import insights as cloud_insights
 from . import jobs as cloud_jobs
 from . import storage as cloud_storage
 
@@ -223,6 +224,23 @@ def create_app(settings: CloudSettings) -> FastAPI:
     def auth_config() -> dict:
         return {"supabaseUrl": settings.supabase_url, "anonKey": settings.anon_key}
 
+    @app.get("/api/me")
+    def me(claims: cloud_auth.Claims = Depends(user_dep)) -> dict:
+        with cloud_db.connect(settings.database_url) as conn:
+            staff = cloud_insights.is_staff(conn, claims.user_id)
+        return {"user_id": str(claims.user_id), "email": claims.email, "staff": staff}
+
+    def staff_dep(claims: cloud_auth.Claims = Depends(user_dep)) -> cloud_auth.Claims:
+        with cloud_db.connect(settings.database_url) as conn:
+            if not cloud_insights.is_staff(conn, claims.user_id):
+                raise HTTPException(status_code=403, detail="Réservé à l'équipe Nyra.")
+        return claims
+
+    @app.get("/api/staff/insights")
+    def staff_insights(claims=Depends(staff_dep)) -> dict:
+        with cloud_db.connect(settings.database_url) as conn:
+            return cloud_insights.platform_insights(conn)
+
     @app.get("/api/orgs")
     def list_orgs(claims: cloud_auth.Claims = Depends(user_dep)) -> dict:
         with cloud_db.connect(settings.database_url) as conn:
@@ -269,6 +287,11 @@ def create_app(settings: CloudSettings) -> FastAPI:
                 "within_days": config.report.default_within_days,
             },
         }
+
+    @app.get("/api/orgs/{org_id}/insights")
+    def org_insights(org_id: uuid.UUID, member=Depends(admin_dep)) -> dict:
+        with cloud_db.connect(settings.database_url) as conn:
+            return cloud_insights.org_insights(conn, org_id)
 
     # --- library --------------------------------------------------------------------
 
@@ -349,6 +372,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
                     phash=features.phash, dhash=features.dhash,
                     phash_flip=features.phash_flip, dhash_flip=features.dhash_flip,
                     embedding=None, width=features.width, height=features.height, thumb_path=thumb_path,
+                    byte_size=len(data),
                 )
             saved.append(filename)
         job = None

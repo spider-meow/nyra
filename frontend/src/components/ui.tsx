@@ -184,7 +184,7 @@ export function Kbd(props: { children: ReactNode }) {
 
 export function Stat(props: { value: ReactNode; label: string; tone?: "alert" | "warn"; hint?: ReactNode }) {
   return (
-    <div className="rounded-xl border border-line bg-paper p-4">
+    <div className="min-w-0 rounded-xl border border-line bg-paper p-4">
       <p className={cx("text-3xl font-semibold tracking-tight tabular", props.tone === "alert" && "text-expired", props.tone === "warn" && "text-urgent")}>
         {props.value}
       </p>

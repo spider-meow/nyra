@@ -3,15 +3,16 @@ import { NavLink, Outlet, useNavigate } from "react-router";
 import { errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { jobLabel } from "../lib/format";
-import { useOrg, useOrganizations } from "../lib/org";
+import { useMe, useOrg, useOrganizations } from "../lib/org";
 import { refreshAfter, useCancelJob, useInvalidate, useJobs, useOverview } from "../lib/queries";
 import type { Job } from "../types";
 import { useToast } from "./feedback";
 import { Button, cx } from "./ui";
 
 export function Layout() {
-  const { org, link } = useOrg();
+  const { org, link, admin } = useOrg();
   const auth = useAuth();
+  const me = useMe();
   const orgs = useOrganizations();
   const overview = useOverview();
   const navigate = useNavigate();
@@ -25,7 +26,9 @@ export function Layout() {
     { to: link("bibliotheque"), label: "Bibliothèque", count: overview.data?.stats.reference_images, tone: "muted" as const },
     { to: link("lectures"), label: "Lectures du site" },
     { to: link("rapports"), label: "Rapports" },
+    ...(admin ? [{ to: link("statistiques"), label: "Statistiques" }] : []),
     { to: link("reglages"), label: "Réglages" },
+    ...(me.data?.staff ? [{ to: "/interne", label: "Back office Nyra" }] : []),
   ];
 
   const nav = (

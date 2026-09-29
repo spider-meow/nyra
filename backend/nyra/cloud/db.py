@@ -241,13 +241,14 @@ def upsert_reference_image(
     width: Optional[int] = None,
     height: Optional[int] = None,
     thumb_path: Optional[str] = None,
+    byte_size: Optional[int] = None,
 ) -> uuid.UUID:
     row = conn.execute(
         """
         INSERT INTO reference_images
             (org_id, filename, storage_path, expiry_date, credit, notes,
-             phash, dhash, phash_flip, dhash_flip, embedding, width, height, thumb_path)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             phash, dhash, phash_flip, dhash_flip, embedding, width, height, thumb_path, byte_size)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (org_id, filename) DO UPDATE SET
             storage_path=excluded.storage_path,
             expiry_date=excluded.expiry_date,
@@ -261,6 +262,7 @@ def upsert_reference_image(
             width=excluded.width,
             height=excluded.height,
             thumb_path=excluded.thumb_path,
+            byte_size=COALESCE(excluded.byte_size, reference_images.byte_size),
             compared_at=CASE
                 WHEN reference_images.phash IS DISTINCT FROM excluded.phash
                   OR reference_images.dhash IS DISTINCT FROM excluded.dhash
@@ -272,7 +274,7 @@ def upsert_reference_image(
         RETURNING id
         """,
         (org_id, filename, storage_path, expiry_date, credit, notes, phash, dhash, phash_flip, dhash_flip,
-         embedding, width, height, thumb_path),
+         embedding, width, height, thumb_path, byte_size),
     ).fetchone()
     return row["id"]
 
@@ -563,9 +565,9 @@ def start_crawl_run(
 def update_crawl_run_progress(conn: psycopg.Connection, run_id: uuid.UUID, stats) -> None:
     conn.execute(
         """UPDATE crawl_runs SET pages_visited = %s, images_found = %s, images_stored = %s,
-               images_new = %s, blocked_by_robots = %s WHERE id = %s""",
+               images_new = %s, blocked_by_robots = %s, metrics = %s WHERE id = %s""",
         (stats.pages_visited, stats.images_found, stats.images_stored, stats.images_new,
-         stats.blocked_by_robots, run_id),
+         stats.blocked_by_robots, json.dumps(stats.metrics()), run_id),
     )
 
 

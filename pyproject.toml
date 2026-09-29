@@ -31,6 +31,10 @@ worker = [
     "open_clip_torch>=2.24",
     "torch>=2.2",
 ]
+# Error reporting (Sentry), enabled by SENTRY_DSN. See docs/OBSERVABILITY.md.
+observability = [
+    "sentry-sdk[fastapi]>=2.0",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",

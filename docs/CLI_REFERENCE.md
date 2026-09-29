@@ -58,6 +58,18 @@ nyra cloud-invite --org remy-martin --email reviewer@example.com --role client
 `--role admin`: library, crawls, reports, settings. `--role client`:
 read and record decisions.
 
+### `cloud-staff`
+
+Grants access to the Nyra team back office (`/interne`: every
+organization's statistics, the job queue, recent failures), inviting the
+person if they have no account. `--remove` takes it away. See
+`OBSERVABILITY.md`.
+
+```bash
+nyra cloud-staff --email arthur@example.com
+nyra cloud-staff --email arthur@example.com --remove
+```
+
 ### `cloud-calibrate`
 
 Threshold sweep using the decisions already recorded in the interface as

@@ -87,6 +87,8 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/db.py` | Pooled Postgres access, one query per screen (no N+1). |
 | `cloud/storage.py` | Supabase Storage; signs URLs in batches. |
 | `cloud/auth.py` | JWT verification (HS256 or JWKS) and membership/role checks. |
+| `cloud/insights.py` | Statistics for the Statistiques page and the back office, from the `insights` views. |
+| `observability.py` | JSON logs tagged with the job in progress, optional Sentry. |
 
 ## Security model
 

@@ -44,6 +44,7 @@ def _fake_embeddings(images, _config):
 @pytest.fixture()
 def worker(cloud_database_url, fake_storage_client, monkeypatch):
     monkeypatch.setattr(worker_module, "compute_clip_embeddings", _fake_embeddings)
+    monkeypatch.setattr(worker_module, "_load_clip", lambda *_: None)  # no model download in tests
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
     return worker_module.Worker(database_url=cloud_database_url, storage_client_factory=lambda: fake_storage_client)
@@ -94,6 +95,10 @@ def test_index_job_backfills_references_and_site_images_then_compares(worker, cl
     assert finished["status"] == "done", finished
     assert finished["result"]["indexed"] == 2
     assert finished["result"]["matches"] == 1
+    # Timings and what the comparison did, for the statistics pages.
+    assert finished["result"]["metrics"]["embedded"] == 2
+    assert finished["result"]["match_metrics"]["pairs"] >= 1
+    assert finished["result"]["match_metrics"]["hits"] == 1 and "seconds" in finished["result"]["match_metrics"]
 
     with cloud_db.connect(cloud_database_url) as conn:
         ref = cloud_db.get_reference_by_filename(conn, cloud_org, "hero.jpg")

@@ -32,6 +32,21 @@ path. Storage objects live under `{org_id}/...` in three private buckets
 | `jobs` | The work queue | `kind`, `status` (queued/running/done/error/cancelled), `params`, `progress`, `message`, `result`, `error`, `cancel_requested`, `heartbeat_at` |
 | `crawl_runs` | Crawl history | counters, `errors`, `job_id` |
 | `reports` | Generated reports | Storage paths of the three files, `stats` |
+| `platform_staff` | Nyra team members who see the back office | `user_id` (service role only, no RLS policy) |
+
+`crawl_runs.metrics` (jsonb) holds each crawl's timings and byte counts;
+`site_images.byte_size` and `reference_images.byte_size` the weight of each
+file.
+
+### The `insights` schema
+
+Read-only views for the statistics pages and Grafana (see
+`OBSERVABILITY.md`): `crawl_runs` (measurements flattened, rates derived),
+`jobs` (wait and run time), `site_images` and `site_image_formats`
+(weight, dimensions, formats, counted once per distinct file), `library`,
+`matching` (decisions and false-positive rate per confidence and level).
+Not exposed through the Supabase API; grant a monitoring role access to
+this schema only.
 
 ### The job queue
 

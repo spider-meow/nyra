@@ -80,3 +80,44 @@ export function pathOf(url: string): string {
     return url;
   }
 }
+
+// --- numbers for the statistics pages ---
+
+const numberFormats = new Map<number, Intl.NumberFormat>();
+
+/** A number in French notation, with at most `digits` decimals; "—" when unknown. */
+export function num(value: number | null | undefined, digits = 0): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  let format = numberFormats.get(digits);
+  if (!format) {
+    format = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: digits });
+    numberFormats.set(digits, format);
+  }
+  return format.format(value);
+}
+
+export function bytes(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  const units = ["o", "Ko", "Mo", "Go", "To"];
+  let size = value;
+  let unit = 0;
+  while (size >= 1000 && unit < units.length - 1) {
+    size /= 1000;
+    unit += 1;
+  }
+  return `${num(size, size < 10 && unit > 0 ? 1 : 0)} ${units[unit]}`;
+}
+
+export function duration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined) return "—";
+  if (seconds < 1) return `${num(seconds * 1000)} ms`;
+  if (seconds < 60) return `${num(seconds, seconds < 10 ? 1 : 0)} s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ${String(Math.round(seconds % 60)).padStart(2, "0")}`;
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")}`;
+}
+
+export function percent(ratio: number | null | undefined, digits = 0): string {
+  if (ratio === null || ratio === undefined) return "—";
+  return `${num(ratio * 100, digits)} %`;
+}

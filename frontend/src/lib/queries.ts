@@ -7,6 +7,7 @@ import type {
   Job,
   LibraryItem,
   Matches,
+  OrgInsights,
   Overview,
   Report,
   Scan,
@@ -69,6 +70,15 @@ export function useReports() {
   });
 }
 
+export function useInsights() {
+  const { apiPath, org } = useOrg();
+  return useQuery({
+    queryKey: ["insights", org.org_id],
+    queryFn: () => api.get<OrgInsights>(apiPath("/insights")),
+    staleTime: 60_000,
+  });
+}
+
 export function useSettings() {
   const { apiPath, org } = useOrg();
   return useQuery({ queryKey: ["settings", org.org_id], queryFn: () => api.get<Settings>(apiPath("/settings")) });
@@ -76,10 +86,10 @@ export function useSettings() {
 
 /** What to refresh when a job of each kind finishes. */
 export const refreshAfter: Record<Job["kind"], string[]> = {
-  crawl: ["overview", "matches", "scans", "library"],
-  match: ["overview", "matches", "library"],
-  index: ["overview", "matches", "library"],
-  report: ["reports"],
+  crawl: ["overview", "matches", "scans", "library", "insights"],
+  match: ["overview", "matches", "library", "insights"],
+  index: ["overview", "matches", "library", "insights"],
+  report: ["reports", "insights"],
 };
 
 export function useInvalidate() {

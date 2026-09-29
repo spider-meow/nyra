@@ -18,7 +18,6 @@ Job kinds:
 from __future__ import annotations
 
 import logging
-import os
 import threading
 import time
 import traceback
@@ -27,11 +26,11 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from nyra import fetch, netguard
+from nyra import fetch, netguard, observability
 from nyra import report as report_module
 from nyra.config import Config, load_config, with_overrides
 from nyra.crawl import CrawlStats, crawl_site, normalize_url
-from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching
+from nyra.match import MatchStopped, _load_clip, compute_clip_embeddings, compute_flip_hashes, run_matching
 
 from . import db as cloud_db
 from . import jobs as cloud_jobs
@@ -134,6 +133,10 @@ class Worker:
         return True
 
     def run_job(self, job: dict) -> None:
+        with observability.job_scope(org_id=str(job["org_id"]), job_id=str(job["id"]), kind=job["kind"]):
+            self._run_job(job)
+
+    def _run_job(self, job: dict) -> None:
         ctx = JobContext(self.database_url, job)
         log.info("job %s (%s) for org %s started", job["id"], job["kind"], job["org_id"])
         handler = {
@@ -156,6 +159,7 @@ class Worker:
                 cloud_jobs.finish(conn, job["id"], status="error", message=str(exc), error=str(exc))
         except Exception as exc:  # noqa: BLE001
             log.error("job %s failed:\n%s", job["id"], traceback.format_exc())
+            _capture(exc)
             with cloud_db.connect(self.database_url) as conn:
                 cloud_jobs.finish(conn, job["id"], status="error", message="La tâche a échoué.",
                                   error=f"{type(exc).__name__}: {str(exc)[:500]}")
@@ -170,13 +174,28 @@ class Worker:
             overrides = cloud_db.get_overrides(conn, org_id)
         return with_overrides(load_config(self.config_path), overrides)
 
-    def _compare(self, ctx: JobContext, org_id: uuid.UUID, config: Config) -> int:
+    @staticmethod
+    def _warm_clip(config: Config) -> float:
+        """Load the CLIP weights up front, so embedding throughput isn't skewed by the first batch. Returns seconds."""
+        started = time.perf_counter()
+        _load_clip(config.match.clip_model_name, config.match.clip_pretrained)
+        return time.perf_counter() - started
+
+    def _compare(self, ctx: JobContext, org_id: uuid.UUID, config: Config, metrics: Optional[dict] = None) -> int:
+        """Run a comparison pass. `metrics`, if given, receives what the pass did and how long it took."""
         def progress(done: int, total: int) -> None:
             ctx.report(f"Comparaison {done}/{total}", {"phase": "match", "done": done, "total": total})
 
         ctx.report("Comparaison avec la bibliothèque…", {"phase": "match"}, force=True)
-        return run_matching(CloudMatchStore(org_id=org_id, database_url=self.database_url), config,
-                            use_clip=True, progress=progress, should_stop=ctx.should_stop)
+        info: dict = {}
+        started = time.perf_counter()
+        count = run_matching(CloudMatchStore(org_id=org_id, database_url=self.database_url), config,
+                             use_clip=True, progress=progress, should_stop=ctx.should_stop, stats=info)
+        info["seconds"] = round(time.perf_counter() - started, 3)
+        info["matches_total"] = count
+        if metrics is not None:
+            metrics.update(info)
+        return count
 
     # --- handlers ---------------------------------------------------------------
 
@@ -209,6 +228,7 @@ class Worker:
 
         ctx.report("Lecture du sitemap…", {"phase": "crawl", "done": 0, "total": limit}, force=True)
         try:
+            model_load_seconds = self._warm_clip(config)
             stats = crawl_site(
                 site, store, config, max_pages=limit,
                 embedder=lambda images: compute_clip_embeddings(images, config.match),
@@ -223,6 +243,7 @@ class Worker:
                 cloud_db.finish_crawl_run(conn, run_id, status="error", errors=[traceback.format_exc(limit=2)])
             raise
 
+        stats.model_load_seconds = model_load_seconds
         with cloud_db.connect(self.database_url) as conn:
             cloud_db.update_crawl_run_progress(conn, run_id, stats)
             cloud_db.finish_crawl_run(conn, run_id, status="cancelled" if ctx.cancelled else "done", errors=stats.errors)
@@ -231,18 +252,21 @@ class Worker:
             "run_id": str(run_id), "pages_visited": stats.pages_visited, "images_found": stats.images_found,
             "images_stored": stats.images_stored, "images_new": stats.images_new,
             "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8],
+            "metrics": stats.metrics(),
         }
         if ctx.cancelled:
             return "Lecture arrêtée. Les pages déjà lues sont conservées.", result
         message = f"{stats.pages_visited} page(s) lue(s), {stats.images_new} nouvelle(s) image(s)."
         if params.get("then_match", True):
-            result["matches"] = self._compare(ctx, org_id, config)
+            result["match_metrics"] = {}
+            result["matches"] = self._compare(ctx, org_id, config, result["match_metrics"])
             message += f" {result['matches']} correspondance(s) au total."
         return message, result
 
     def _match_job(self, ctx: JobContext, org_id: uuid.UUID, params: dict) -> tuple[str, dict]:
-        count = self._compare(ctx, org_id, self.config_for(org_id))
-        return f"Comparaison terminée : {count} correspondance(s).", {"matches": count}
+        metrics: dict = {}
+        count = self._compare(ctx, org_id, self.config_for(org_id), metrics)
+        return f"Comparaison terminée : {count} correspondance(s).", {"matches": count, "match_metrics": metrics}
 
     def _index(self, ctx: JobContext, org_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         config = self.config_for(org_id)
@@ -265,13 +289,27 @@ class Worker:
         total = len(refs) + len(sites)
         done = 0
         updated = 0
+        timing = {"embedded": 0, "embed_seconds": 0.0, "load_seconds": 0.0}
+        index_started = time.perf_counter()
+        model_load_seconds = self._warm_clip(config) if (refs or sites) else 0.0
 
         def load(bucket: str, path: str):
+            started = time.perf_counter()
             try:
                 img = fetch.decode(cloud_storage.download(storage, bucket, path), config.crawl.max_image_pixels)
             except Exception:  # noqa: BLE001 - a missing object must not stop the others
                 return None
+            finally:
+                timing["load_seconds"] += time.perf_counter() - started
             return None if img is None else img.convert("RGB")
+
+        def embed(images: list) -> list:
+            started = time.perf_counter()
+            vectors = compute_clip_embeddings(images, config.match)
+            if images:
+                timing["embed_seconds"] += time.perf_counter() - started
+                timing["embedded"] += len(images)
+            return vectors
 
         for start in range(0, len(refs), batch):
             if ctx.should_stop():
@@ -279,7 +317,7 @@ class Worker:
             chunk = [(row, load(cloud_storage.BUCKET_REFS, row["storage_path"])) for row in refs[start : start + batch]]
             chunk = [(row, img) for row, img in chunk if img is not None]
             to_embed = [img for row, img in chunk if row["needs_embedding"]]
-            embeddings = iter(compute_clip_embeddings(to_embed, config.match))
+            embeddings = iter(embed(to_embed))
             for row, img in chunk:
                 embedding = next(embeddings) if row["needs_embedding"] else None
                 phash_flip = dhash_flip = None
@@ -312,7 +350,7 @@ class Worker:
             chunk = [(row, load(cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"])) for row in sites[start : start + batch]]
             chunk = [(row, img) for row, img in chunk if img is not None]
             to_embed = [img for row, img in chunk if row["needs_embedding"]]
-            embeddings = iter(compute_clip_embeddings(to_embed, config.match))
+            embeddings = iter(embed(to_embed))
             for row, img in chunk:
                 embedding = next(embeddings) if row["needs_embedding"] else None
                 thumb_path = row["thumb_path"]
@@ -332,13 +370,19 @@ class Worker:
             done += len(sites[start : start + batch])
             ctx.report(f"Indexation {done}/{total}", {"phase": "index", "done": done, "total": total})
 
-        result: dict[str, Any] = {"indexed": updated}
+        result: dict[str, Any] = {"indexed": updated, "metrics": {
+            "embedded": timing["embedded"], "embed_seconds": round(timing["embed_seconds"], 3),
+            "load_seconds": round(timing["load_seconds"], 3),
+            "model_load_seconds": round(model_load_seconds, 3),
+            "duration_seconds": round(time.perf_counter() - index_started, 3),
+        }}
         if ctx.cancelled:
             return "Indexation arrêtée.", result
         with cloud_db.connect(self.database_url) as conn:
             has_sites = conn.execute("SELECT EXISTS (SELECT 1 FROM site_images WHERE org_id = %s) AS e", (org_id,)).fetchone()["e"]
         if has_sites:
-            result["matches"] = self._compare(ctx, org_id, config)
+            result["match_metrics"] = {}
+            result["matches"] = self._compare(ctx, org_id, config, result["match_metrics"])
             return f"{updated} image(s) indexée(s), comparaison à jour.", result
         return f"{updated} image(s) indexée(s).", result
 
@@ -389,11 +433,15 @@ class Worker:
         return "Rapport prêt.", {"report_id": str(saved_id)}
 
 
+def _capture(exc: BaseException) -> None:
+    """Report a job failure to Sentry when it is enabled."""
+    try:
+        import sentry_sdk
+    except ImportError:
+        return
+    sentry_sdk.capture_exception(exc)
+
+
 def configure_logging() -> None:
-    logging.basicConfig(
-        level=os.environ.get("NYRA_LOG_LEVEL", "INFO"),
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-    # One line per image request drowns everything else.
-    for noisy in ("httpx", "httpcore", "huggingface_hub", "root"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    observability.configure_logging("worker")
+    observability.init_sentry("worker")

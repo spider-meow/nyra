@@ -218,9 +218,12 @@ def serve_cmd(
     """Run the web process: API + interface. Long jobs go to `nyra worker`."""
     import uvicorn
 
+    from nyra import observability
     from nyra.cloud.api import CloudSettings, create_app
 
     env = _cloud_env()
+    observability.configure_logging("web")
+    observability.init_sentry("web")
     if not env["SUPABASE_ANON_KEY"]:
         typer.secho("SUPABASE_ANON_KEY is missing — the interface cannot open a session.", fg=typer.colors.YELLOW)
     settings = CloudSettings(
@@ -229,7 +232,7 @@ def serve_cmd(
         anon_key=env["SUPABASE_ANON_KEY"], config_path=config,
     )
     typer.secho(f"Nyra  ->  http://{host}:{port}", fg=typer.colors.GREEN)
-    uvicorn.run(create_app(settings), host=host, port=port, log_level="info", proxy_headers=True)
+    uvicorn.run(create_app(settings), host=host, port=port, log_level="info", proxy_headers=True, log_config=None)
 
 
 @app.command("worker")
@@ -321,6 +324,33 @@ def cloud_invite(
         cloud_db.add_membership(conn, user_id=uuid.UUID(user_id), org_id=organization["id"], role=role)
     note = " (invitation e-mail sent)" if invited else ""
     typer.secho(f"{email} is {role} of {organization['name']}{note}.", fg=typer.colors.GREEN)
+
+
+@app.command("cloud-staff")
+def cloud_staff(
+    email: str = typer.Option(..., "--email"),
+    remove: bool = typer.Option(False, "--remove", help="Take the access away instead of granting it."),
+) -> None:
+    """Grant (or remove) access to the Nyra team back office: every organization's statistics, the job queue."""
+    import uuid
+
+    from nyra.cloud import db as cloud_db
+    from nyra.cloud import insights
+
+    env = _cloud_env(need_storage=not remove)
+    if remove:
+        with cloud_db.connect(env["DATABASE_URL"]) as conn:
+            row = conn.execute("SELECT id FROM auth.users WHERE lower(email) = lower(%s)", (email,)).fetchone()
+            if row is None:
+                _fail(f"No account for {email}.")
+            insights.set_staff(conn, row["id"], False)
+        typer.secho(f"{email} no longer has back office access.", fg=typer.colors.GREEN)
+        return
+    user_id, invited = _find_or_invite_user(env, email)
+    with cloud_db.connect(env["DATABASE_URL"]) as conn:
+        insights.set_staff(conn, uuid.UUID(user_id), True)
+    note = " (invitation e-mail sent)" if invited else ""
+    typer.secho(f"{email} has back office access{note}.", fg=typer.colors.GREEN)
 
 
 @app.command("cloud-calibrate")

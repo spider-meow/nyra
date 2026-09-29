@@ -20,7 +20,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY backend/ ./backend/
-RUN pip install . && useradd --create-home --uid 10001 nyra
+RUN pip install ".[observability]" && useradd --create-home --uid 10001 nyra
 COPY config.yaml ./
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 USER nyra
@@ -40,7 +40,7 @@ WORKDIR /app
 RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
 COPY pyproject.toml README.md ./
 COPY backend/ ./backend/
-RUN pip install ".[worker]" playwright==1.63.0 && playwright install chromium
+RUN pip install ".[worker,observability]" playwright==1.63.0 && playwright install chromium
 COPY config.yaml ./
 # Bake the CLIP weights into the image so the first job doesn't download them.
 RUN python -c "from nyra.config import load_config; from nyra.match import _load_clip; c = load_config().match; _load_clip(c.clip_model_name, c.clip_pretrained)" \

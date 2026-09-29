@@ -397,7 +397,8 @@ def excluded_site_ids(sites: Sequence[dict], exclusions: Sequence[tuple[str, str
     return {packed.ids[index] for index in np.nonzero(hit)[0].tolist()}
 
 
-def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: bool = True, progress=None, should_stop=None) -> int:
+def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: bool = True, progress=None, should_stop=None,
+                 stats: Optional[dict] = None) -> int:
     """Match references against site images and persist hits.
 
     A finished pass is remembered. The next one only compares what is new
@@ -405,6 +406,9 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
     images), unless the thresholds, the model or the CLIP switch changed —
     then everything is recomputed. Hits are written in one go after the
     comparison, so a stop or a crash keeps the previous results.
+
+    `stats`, if given, is filled with what the pass did (mode, sizes, pairs
+    compared, hits by level) for the insights pages.
     """
     if isinstance(store, (str, Path)):
         from nyra.db import LocalStore
@@ -417,6 +421,9 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
     excluded = excluded_site_ids(all_sites, exclusions, config.match)
     sites = [row for row in all_sites if row["id"] not in excluded]
     full = store.get_signature() != sig
+    info = stats if stats is not None else {}
+    info.update({"full": full, "references": len(refs), "site_images": len(all_sites), "excluded": len(excluded),
+                 "pairs": 0, "hits": 0, "hits_by_level": {}})
 
     if full:
         rectangles = [(refs, sites)]
@@ -446,6 +453,7 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
         if progress:
             progress(done_steps, max(total_steps, 1))
 
+    info["pairs"] = sum(len(ref_pack.ids) * len(site_pack.ids) for ref_pack, site_pack in prepared)
     hits: list[tuple] = []
     seen: set[tuple] = set()
     for ref_pack, site_pack in prepared:
@@ -458,6 +466,9 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
     if should_stop and should_stop():
         raise MatchStopped()
 
+    info["hits"] = len(hits)
+    for hit in hits:
+        info["hits_by_level"][hit[2]] = info["hits_by_level"].get(hit[2], 0) + 1
     return store.save_matches(
         full=full, clear_ref_ids=clear_ref_ids, clear_site_ids=clear_site_ids, hits=hits, signature=sig
     )

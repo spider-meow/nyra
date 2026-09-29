@@ -4,7 +4,7 @@ import { Layout } from "../components/Layout";
 import { Button, Card, FieldLabel, Input, Spinner } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { OrgProvider, useOrganizations } from "../lib/org";
+import { OrgProvider, useMe, useOrganizations } from "../lib/org";
 
 function Centered(props: { title: string; body?: ReactNode; children?: ReactNode }) {
   return (
@@ -157,10 +157,12 @@ export function SetPassword() {
 export function OrgHome() {
   const orgs = useOrganizations();
   const auth = useAuth();
-  if (orgs.isLoading) return <Centered title="Un instant"><div className="mt-4"><Spinner label="Chargement des organisations…" /></div></Centered>;
+  const me = useMe();
+  if (orgs.isLoading || me.isLoading) return <Centered title="Un instant"><div className="mt-4"><Spinner label="Chargement des organisations…" /></div></Centered>;
   if (orgs.error) return <Centered title="Erreur" body={errorMessage(orgs.error)} />;
   const list = orgs.data ?? [];
-  if (list.length === 1) return <Navigate to={`/o/${list[0].slug}/tableau-de-bord`} replace />;
+  if (list.length === 1 && !me.data?.staff) return <Navigate to={`/o/${list[0].slug}/tableau-de-bord`} replace />;
+  if (list.length === 0 && me.data?.staff) return <Navigate to="/interne" replace />;
   if (list.length === 0) {
     return (
       <Centered title="Aucune organisation" body={`Le compte ${auth.email} n'est rattaché à aucune organisation. Demandez à votre administrateur de vous inviter.`}>
@@ -177,6 +179,12 @@ export function OrgHome() {
             <span className="block text-xs font-normal text-muted">{org.role === "admin" ? "Administrateur" : "Lecture et validation"}</span>
           </Link>
         ))}
+        {me.data?.staff ? (
+          <Link to="/interne" className="rounded-lg border border-dashed border-line-strong px-3 py-2.5 text-sm font-medium hover:bg-canvas">
+            Back office Nyra
+            <span className="block text-xs font-normal text-muted">Toutes les marques, la file de tâches, les performances</span>
+          </Link>
+        ) : null}
       </div>
     </Centered>
   );

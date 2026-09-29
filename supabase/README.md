@@ -16,6 +16,7 @@ supabase/migrations/
   20260923000009_jobs.sql                        file de tâches (web → worker)
   20260923000010_org_settings.sql                réglages par organisation
   20260924000011_excluded_hashes.sql             images exclues (faux positifs récurrents)
+  20260929000012_insights.sql                    mesures des lectures, poids des images, équipe Nyra, vues `insights`
 ```
 
 Les noms suivent le format attendu par le CLI Supabase

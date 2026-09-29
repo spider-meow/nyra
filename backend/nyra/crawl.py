@@ -24,6 +24,7 @@ import asyncio
 import gzip
 import random
 import threading
+import time
 import urllib.robotparser
 import xml.etree.ElementTree as ET
 from collections import deque
@@ -418,6 +419,45 @@ class CrawlStats:
     blocked_by_robots: int = 0
     blocked_by_guard: int = 0
     errors: list[str] = field(default_factory=list)
+    # Measurements for the insights pages. Times are wall-clock seconds
+    # summed over pages or batches (pages render in parallel, so the sums
+    # can exceed the crawl's duration).
+    sitemap_urls: int = 0
+    pages_failed: int = 0
+    http_statuses: dict[str, int] = field(default_factory=dict)
+    images_known: int = 0          # already stored under this URL: not downloaded again
+    images_duplicate: int = 0      # same bytes already stored under another URL
+    images_rejected: int = 0       # too small, undecodable or over the pixel cap
+    downloads: int = 0
+    downloads_failed: int = 0
+    bytes_downloaded: int = 0
+    bytes_new: int = 0             # originals stored by this crawl
+    thumb_bytes_new: int = 0
+    pixels_new: int = 0
+    formats_new: dict[str, int] = field(default_factory=dict)
+    discover_seconds: float = 0.0
+    render_seconds: float = 0.0    # page load, overlays, scrolling, DOM read
+    download_seconds: float = 0.0
+    process_seconds: float = 0.0   # decode, hashes, thumbnail
+    embed_seconds: float = 0.0
+    embedded: int = 0
+    store_seconds: float = 0.0     # uploads + database writes for new images
+    model_load_seconds: float = 0.0  # CLIP weights loaded before the crawl (0 once the process has them)
+    duration_seconds: float = 0.0
+
+    def metrics(self) -> dict[str, Any]:
+        """The measurements as a JSON-ready dict (everything but the counters crawl_runs already has)."""
+        keys = (
+            "sitemap_urls", "pages_failed", "http_statuses", "images_known", "images_duplicate", "images_rejected",
+            "downloads", "downloads_failed", "bytes_downloaded", "bytes_new", "thumb_bytes_new", "pixels_new",
+            "formats_new", "discover_seconds", "render_seconds", "download_seconds", "process_seconds",
+            "embed_seconds", "embedded", "store_seconds", "model_load_seconds", "duration_seconds", "blocked_by_guard",
+        )
+        out = {key: getattr(self, key) for key in keys}
+        for key, value in out.items():
+            if isinstance(value, float):
+                out[key] = round(value, 3)
+        return out
 
 
 class CrawlStore(Protocol):
@@ -482,6 +522,7 @@ class _Crawl:
 
     def discover(self) -> None:
         cfg = self.config.crawl
+        started = time.perf_counter()
         with netguard.client(headers={"User-Agent": cfg.user_agent}) as client:
             robots = load_robots(self.site_url, client)
             self.robots = robots if cfg.respect_robots_txt else None
@@ -491,6 +532,8 @@ class _Crawl:
         seeds = [normalize_url(url) for url in sitemap_urls if same_site(url, self.netloc)]
         for url in [self.site_url, *seeds]:
             self.enqueue(url)
+        self.stats.sitemap_urls = len(seeds)
+        self.stats.discover_seconds = time.perf_counter() - started
 
     def enqueue(self, url: str) -> None:
         if url not in self.visited and url not in self.queued:
@@ -569,6 +612,7 @@ class _Crawl:
     async def _crawl_page(self, page, http: httpx.AsyncClient, url: str) -> None:
         cfg = self.config.crawl
         page_id = await asyncio.to_thread(self._locked, self.store.upsert_page, url)
+        render_started = time.perf_counter()
         try:
             await netguard.check_url_async(url)
             response = await page.goto(url, timeout=cfg.page_load_timeout_ms, wait_until="load")
@@ -585,10 +629,15 @@ class _Crawl:
             http_status = response.status if response else 0
             final_url = page.url
         except Exception as exc:  # noqa: BLE001 - one bad page must not kill the crawl
+            self.stats.render_seconds += time.perf_counter() - render_started
             self.stats.errors.append(f"{url}: {str(exc).splitlines()[0][:300]}")
+            self.stats.pages_failed += 1
             await asyncio.to_thread(self._locked, self.store.mark_page, page_id, 0)
             self.stats.pages_visited += 1
             return
+        self.stats.render_seconds += time.perf_counter() - render_started
+        status_key = str(http_status)
+        self.stats.http_statuses[status_key] = self.stats.http_statuses.get(status_key, 0) + 1
 
         image_urls = extract_images_from_html(html, final_url)
         image_urls |= {urljoin(final_url, u) for u in background_urls if u and not u.startswith("data:")}
@@ -604,6 +653,7 @@ class _Crawl:
         candidates = [url for url in image_urls if url not in self.skipped_images]
         self.stats.images_found += len(image_urls)
         known = await asyncio.to_thread(self._locked, self.store.known_images, candidates)
+        self.stats.images_known += len(known)
         for image_id in known.values():
             await asyncio.to_thread(self._locked, self.store.link, image_id, page_id)
             self.stats.images_stored += 1
@@ -615,15 +665,22 @@ class _Crawl:
                 result = await fetch.adownload(url, http, timeout=cfg.request_timeout_seconds, max_bytes=cfg.max_image_bytes)
             if result is None:
                 self.skipped_images.add(url)
+                self.stats.downloads_failed += 1
                 return None
+            self.stats.bytes_downloaded += len(result[0])
             return url, result[0], result[1]
 
+        download_started = time.perf_counter()
         downloads = [item for item in await asyncio.gather(*(grab(url) for url in to_fetch)) if item]
+        self.stats.downloads += len(to_fetch)
+        if to_fetch:
+            self.stats.download_seconds += time.perf_counter() - download_started
         if downloads:
             await asyncio.to_thread(self._locked, self._store_downloads, downloads, page_id)
 
     def _store_downloads(self, downloads: list[tuple[str, bytes, Optional[str]]], page_id: Any) -> None:
         cfg = self.config.crawl
+        stats = self.stats
         fresh: list[tuple[str, bytes, Optional[str], fetch.ProcessedImage]] = []
         batch_by_hash: dict[str, str] = {}
         for url, data, content_type in downloads:
@@ -631,26 +688,42 @@ class _Crawl:
             existing = self.store.image_by_content_hash(digest)
             if existing is not None:
                 self.store.save_duplicate(url=url, page_id=page_id, existing=existing)
-                self.stats.images_stored += 1
+                stats.images_stored += 1
+                stats.images_duplicate += 1
                 continue
             if digest in batch_by_hash:
                 self.skipped_images.add(url)
+                stats.images_duplicate += 1
                 continue
+            process_started = time.perf_counter()
             processed = fetch.process_image(data, content_type, min_side_px=cfg.min_image_side_px, max_pixels=cfg.max_image_pixels)
+            stats.process_seconds += time.perf_counter() - process_started
             if processed is None:
                 self.skipped_images.add(url)
+                stats.images_rejected += 1
                 continue
             batch_by_hash[digest] = url
             fresh.append((url, data, content_type, processed))
 
         embeddings: list[Optional[np.ndarray]] = [None] * len(fresh)
         if self.embedder and fresh:
+            embed_started = time.perf_counter()
             embeddings = list(self.embedder([item[3].rgb for item in fresh]))
+            stats.embed_seconds += time.perf_counter() - embed_started
+            stats.embedded += len(fresh)
+        store_started = time.perf_counter()
         for (url, data, content_type, processed), embedding in zip(fresh, embeddings):
             self.store.save_image(url=url, page_id=page_id, data=data, content_type=content_type,
                                   processed=processed, embedding=embedding)
-            self.stats.images_stored += 1
-            self.stats.images_new += 1
+            stats.images_stored += 1
+            stats.images_new += 1
+            stats.bytes_new += len(data)
+            stats.thumb_bytes_new += len(processed.thumbnail)
+            stats.pixels_new += processed.width * processed.height
+            fmt = processed.extension.lstrip(".") or "autre"
+            stats.formats_new[fmt] = stats.formats_new.get(fmt, 0) + 1
+        if fresh:
+            stats.store_seconds += time.perf_counter() - store_started
 
 
 def crawl_site(
@@ -673,5 +746,8 @@ def crawl_site(
     limit = min(max_pages or config.crawl.max_pages, config.crawl.max_pages_limit)
     crawl = _Crawl(site_url, store, config, max_pages=limit, embedder=embedder, resume=resume,
                    progress=progress, should_stop=should_stop)
+    started = time.perf_counter()
     crawl.discover()
-    return asyncio.run(crawl.run())
+    stats = asyncio.run(crawl.run())
+    stats.duration_seconds = time.perf_counter() - started
+    return stats

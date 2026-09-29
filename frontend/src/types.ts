@@ -165,3 +165,211 @@ export type ImportRow = {
 };
 
 export type Exclusion = { id: string; reason: string; site_url: string; thumb_url: string; created_at: string };
+
+// --- insights (Statistiques, back office) ---
+
+export type CrawlRun = {
+  id: string;
+  org_name: string;
+  site_url: string;
+  status: JobStatus;
+  started_at: string;
+  finished_at: string | null;
+  duration_seconds: number | null;
+  pages_visited: number;
+  images_found: number;
+  images_stored: number;
+  images_new: number;
+  blocked_by_robots: number;
+  error_count: number;
+  sitemap_urls: number | null;
+  pages_failed: number | null;
+  images_known: number | null;
+  images_duplicate: number | null;
+  images_rejected: number | null;
+  downloads: number | null;
+  downloads_failed: number | null;
+  bytes_downloaded: number | null;
+  bytes_new: number | null;
+  embedded: number | null;
+  embed_seconds: number | null;
+  pages_per_minute: number | null;
+  images_scanned_per_second: number | null;
+  clip_images_per_second: number | null;
+  seconds_per_page: number | null;
+  avg_new_image_bytes: number | null;
+  images_per_page: number | null;
+};
+
+export type Phases = {
+  render_seconds: number;
+  download_seconds: number;
+  process_seconds: number;
+  embed_seconds: number;
+  store_seconds: number;
+};
+
+export type CrawlSummary = {
+  runs: number;
+  finished: number;
+  failed: number;
+  avg_duration_seconds: number | null;
+  max_duration_seconds: number | null;
+  avg_pages: number | null;
+  avg_pages_per_minute: number | null;
+  avg_images_scanned_per_second: number | null;
+  avg_seconds_per_page: number | null;
+  avg_images_per_page: number | null;
+  clip_images_per_second: number | null;
+  avg_new_image_bytes: number | null;
+  images_found: number;
+  images_new: number;
+  bytes_downloaded: number;
+  bytes_new: number;
+  phases_seconds: Phases;
+  http_statuses: Record<string, number>;
+  formats_new: Record<string, number>;
+};
+
+export type JobKindStats = {
+  kind: JobKind;
+  total: number;
+  done: number;
+  failed: number;
+  cancelled: number;
+  avg_run_seconds: number | null;
+  p95_run_seconds: number | null;
+  avg_wait_seconds: number | null;
+};
+
+export type CompareStats = {
+  full: boolean;
+  references: number;
+  site_images: number;
+  excluded: number;
+  pairs: number;
+  hits: number;
+  hits_by_level: Record<string, number>;
+  seconds: number;
+  pairs_per_second: number | null;
+  finished_at: string;
+};
+
+export type MatchBucket = {
+  matches: number;
+  reviewed: number;
+  to_remove: number;
+  removed: number;
+  false_positives: number;
+  false_positive_rate: number | null;
+};
+
+export type MatchingStats = {
+  total: MatchBucket & { review_progress: number | null };
+  by_confidence: Partial<Record<Confidence, MatchBucket>>;
+  by_level: Record<string, MatchBucket>;
+};
+
+export type OrgInsights = {
+  site: {
+    image_urls: number;
+    distinct_files: number;
+    files_with_size: number;
+    total_bytes: number | null;
+    avg_bytes: number | null;
+    median_bytes: number | null;
+    max_bytes: number | null;
+    avg_width: number | null;
+    avg_height: number | null;
+    avg_megapixels: number | null;
+    pages_read: number;
+    image_page_links: number;
+  };
+  formats: { format: string; files: number; total_bytes: number | null; avg_bytes: number | null }[];
+  library: {
+    references_total: number;
+    references_indexed: number;
+    expired: number;
+    expiring_30_days: number;
+    expiring_90_days: number;
+    without_expiry: number;
+    total_bytes: number | null;
+    avg_bytes: number | null;
+    avg_megapixels: number | null;
+  };
+  crawls: { summary: CrawlSummary; last: CrawlRun | null; history: CrawlRun[] };
+  jobs: JobKindStats[];
+  compare: CompareStats | null;
+  matching: MatchingStats;
+};
+
+export type PlatformOrg = {
+  org_id: string;
+  name: string;
+  slug: string;
+  distinct_files: number;
+  site_bytes: number | null;
+  avg_image_bytes: number | null;
+  pages_read: number;
+  references_total: number;
+  expired: number;
+  expiring_90_days: number;
+  library_bytes: number | null;
+  matches: number;
+  members: number;
+  storage_bytes: number;
+  crawls_90d: number;
+  last_crawl_at: string | null;
+  last_crawl_status: JobStatus | null;
+  last_crawl_seconds: number | null;
+  avg_crawl_seconds: number | null;
+  avg_pages_per_minute: number | null;
+  clip_images_per_second: number | null;
+  false_positive_rate: number | null;
+  jobs_30d: number;
+  failed_jobs_30d: number;
+};
+
+export type PlatformInsights = {
+  totals: {
+    organizations: number;
+    members: number;
+    references: number;
+    site_files: number;
+    pages_read: number;
+    matches: number;
+    storage_bytes: number;
+  };
+  organizations: PlatformOrg[];
+  crawls: {
+    summary: CrawlSummary;
+    history: Pick<
+      CrawlRun,
+      | "org_name"
+      | "started_at"
+      | "status"
+      | "duration_seconds"
+      | "pages_visited"
+      | "images_found"
+      | "images_new"
+      | "pages_per_minute"
+      | "images_scanned_per_second"
+      | "clip_images_per_second"
+      | "avg_new_image_bytes"
+    >[];
+  };
+  jobs: JobKindStats[];
+  compare: CompareStats | null;
+  matching: MatchingStats;
+  queue: {
+    queued: number;
+    running: number;
+    oldest_queued_seconds: number | null;
+    last_heartbeat_seconds: number | null;
+    jobs_24h: number;
+    failed_24h: number;
+    last_finished_at: string | null;
+  };
+  running: { id: string; org_name: string; kind: JobKind; message: string; started_at: string; heartbeat_age_seconds: number | null }[];
+  failures: { id: string; org_name: string; kind: JobKind; error: string | null; finished_at: string | null }[];
+};

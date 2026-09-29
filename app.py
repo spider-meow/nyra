@@ -10,6 +10,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / "backend"))
 
+from nyra import observability  # noqa: E402
 from nyra.cloud.api import create_app, settings_from_env  # noqa: E402
 
+observability.init_sentry("web")
 app = create_app(settings_from_env())

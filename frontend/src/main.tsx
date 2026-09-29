@@ -6,12 +6,14 @@ import { ConfirmProvider, ToastProvider } from "./components/feedback";
 import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
 import { Login, NotFound, OrgHome, OrgShell, RequireSession, SetPassword } from "./pages/Access";
+import { BackOffice } from "./pages/BackOffice";
 import { Dashboard } from "./pages/Dashboard";
 import { Library } from "./pages/Library";
 import { Reports } from "./pages/Reports";
 import { Review } from "./pages/Review";
 import { Scans } from "./pages/Scans";
 import { Settings } from "./pages/Settings";
+import { Statistics } from "./pages/Statistics";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -44,6 +46,7 @@ const router = createBrowserRouter([
     element: <RequireSession />,
     children: [
       { path: "/", element: page(<OrgHome />) },
+      { path: "/interne", element: page(<BackOffice />), handle: { title: "Back office" } },
       {
         path: "/o/:slug",
         element: <OrgShell />,
@@ -54,6 +57,7 @@ const router = createBrowserRouter([
           { path: "bibliotheque", element: page(<Library />), handle: { title: "Bibliothèque" } },
           { path: "lectures", element: page(<Scans />), handle: { title: "Lectures du site" } },
           { path: "rapports", element: page(<Reports />), handle: { title: "Rapports" } },
+          { path: "statistiques", element: page(<Statistics />), handle: { title: "Statistiques" } },
           { path: "reglages", element: page(<Settings />), handle: { title: "Réglages" } },
           { path: "*", element: page(<NotFound />), handle: { title: "Page introuvable" } },
         ],
