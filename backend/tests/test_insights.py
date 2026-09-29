@@ -102,29 +102,32 @@ def test_metrics_are_json_ready_and_rounded():
 # --- Postgres (TEST_DATABASE_URL) ----------------------------------------------------------
 
 
-def _seed(conn, org_id, *, crawl_seconds=120.0):
+def _seed(conn, org_id, brand_id, *, crawl_seconds=120.0, host="brand.test"):
     from nyra.cloud import db as cloud_db
 
-    site_id = cloud_db.upsert_site(conn, org_id=org_id, url="https://brand.test/")
+    site_id = cloud_db.create_site(conn, org_id=org_id, brand_id=brand_id, url=f"https://{host}/")
     page = conn.execute(
-        "INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, 'https://brand.test/p', 'done') RETURNING id",
-        (org_id, site_id),
+        "INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, %s, 'done') RETURNING id",
+        (org_id, site_id, f"https://{host}/p"),
     ).fetchone()["id"]
     images = []
-    for url, digest, size, ext in (
-        ("https://brand.test/a.jpg", "h1", 100_000, "jpg"),
-        ("https://brand.test/a-2.jpg", "h1", 100_000, "jpg"),   # same bytes: counted once
-        ("https://brand.test/b.webp", "h2", 300_000, "webp"),
+    for name, digest, size, fmt, path in (
+        ("a.jpg", f"{host}-h1", 100_000, "jpg", "work/h1.jpg"),
+        ("a-2.jpg", f"{host}-h1", 100_000, "jpg", "work/h1.jpg"),   # same bytes: counted once
+        ("b.webp", f"{host}-h2", 300_000, "webp", "work/h2.jpg"),
+        ("old.png", f"{host}-h3", None, None, "h3.png"),             # stored before formats and sizes were kept
     ):
         images.append(conn.execute(
             """INSERT INTO site_images (org_id, site_id, url, storage_path, content_hash, width, height, phash, dhash,
-                                        byte_size)
-               VALUES (%s, %s, %s, %s, %s, 1000, 500, 'ffff', 'ffff', %s) RETURNING id""",
-            (org_id, site_id, url, f"{org_id}/{digest}.{ext}", digest, size),
+                                        byte_size, format, stored_bytes)
+               VALUES (%s, %s, %s, %s, %s, 1000, 500, 'ffff', 'ffff', %s, %s, %s) RETURNING id""",
+            (org_id, site_id, f"https://{host}/{name}", f"{org_id}/{path}", digest, size, fmt,
+             None if size is None else 20_000),
         ).fetchone()["id"])
         conn.execute("INSERT INTO image_pages (image_id, page_id) VALUES (%s, %s)", (images[-1], page))
-    ref = cloud_db.upsert_reference_image(conn, org_id=org_id, filename="ref.jpg", storage_path=f"{org_id}/ref.jpg",
-                                          expiry_date="2000-01-01", credit=None, notes=None, byte_size=5_000_000)
+    ref = cloud_db.upsert_reference_image(conn, org_id=org_id, brand_id=brand_id, filename="ref.jpg",
+                                          storage_path=f"{org_id}/{brand_id}/ref.jpg", expiry_date="2000-01-01",
+                                          credit=None, notes=None, byte_size=5_000_000)
     conn.execute(
         """INSERT INTO matches (org_id, reference_id, site_image_id, level, score, confidence)
            VALUES (%s, %s, %s, 'phash', 2, 'haut'), (%s, %s, %s, 'clip', 0.8, 'a_verifier')""",
@@ -144,27 +147,34 @@ def _seed(conn, org_id, *, crawl_seconds=120.0):
         (org_id, site_id, json.dumps(metrics.metrics())),
     )
     conn.execute(
-        """INSERT INTO jobs (org_id, kind, status, created_at, started_at, finished_at, result)
-           VALUES (%s, 'crawl', 'done', now() - interval '10 minutes', now() - interval '9 minutes', now(), %s),
-                  (%s, 'match', 'error', now(), now(), now(), NULL)""",
-        (org_id, json.dumps({"match_metrics": {"pairs": 1000, "seconds": 0.5, "hits": 2, "full": True}}), org_id),
+        """INSERT INTO jobs (org_id, brand_id, kind, status, created_at, started_at, finished_at, result)
+           VALUES (%s, %s, 'crawl', 'done', now() - interval '10 minutes', now() - interval '9 minutes', now(), %s),
+                  (%s, %s, 'match', 'error', now(), now(), now(), NULL)""",
+        (org_id, brand_id, json.dumps({"match_metrics": {"pairs": 1000, "seconds": 0.5, "hits": 2, "full": True}}),
+         org_id, brand_id),
     )
 
 
-def test_org_insights_numbers(cloud_database_url, cloud_org):
+def test_brand_insights_numbers_stay_within_the_brand(cloud_database_url, cloud_org, cloud_brand):
     from nyra.cloud import db as cloud_db
     from nyra.cloud import insights
 
     with cloud_db.connect(cloud_database_url) as conn:
-        _seed(conn, cloud_org)
-        data = insights.org_insights(conn, cloud_org)
+        _seed(conn, cloud_org, cloud_brand)
+        # Another brand of the same organization: none of its numbers may leak in.
+        other = cloud_db.create_brand(conn, org_id=cloud_org, name="Autre", slug=f"autre-{uuid.uuid4().hex[:6]}")
+        _seed(conn, cloud_org, other, crawl_seconds=999.0, host="other.test")
+        data = insights.brand_insights(conn, cloud_brand)
 
     site = data["site"]
-    assert site["image_urls"] == 3 and site["distinct_files"] == 2
+    assert site["image_urls"] == 4 and site["distinct_files"] == 3
+    assert site["files_with_size"] == 2
     assert site["total_bytes"] == 400_000 and site["avg_bytes"] == 200_000
+    assert site["stored_bytes"] == 40_000
     assert site["avg_megapixels"] == pytest.approx(0.5)
-    assert site["pages_read"] == 1 and site["image_page_links"] == 3
-    assert {row["format"]: row["files"] for row in data["formats"]} == {"jpg": 1, "webp": 1}
+    assert site["pages_read"] == 1 and site["image_page_links"] == 4 and site["sites"] == 1
+    # The original's format, not the stored working copy's; an old row falls back to its extension.
+    assert {row["format"]: row["files"] for row in data["formats"]} == {"jpg": 1, "webp": 1, "png": 1}
 
     assert data["library"]["references_total"] == 1 and data["library"]["expired"] == 1
     assert data["library"]["total_bytes"] == 5_000_000
@@ -182,7 +192,7 @@ def test_org_insights_numbers(cloud_database_url, cloud_org):
     assert data["crawls"]["last"]["seconds_per_page"] == pytest.approx(6.0)
 
     jobs = {row["kind"]: row for row in data["jobs"]}
-    assert jobs["crawl"]["done"] == 1 and jobs["crawl"]["avg_run_seconds"] == pytest.approx(540, abs=1)
+    assert jobs["crawl"]["total"] == 1 and jobs["crawl"]["avg_run_seconds"] == pytest.approx(540, abs=1)
     assert jobs["crawl"]["avg_wait_seconds"] == pytest.approx(60, abs=1)
     assert jobs["match"]["failed"] == 1
     assert data["compare"]["pairs_per_second"] == pytest.approx(2000)
@@ -195,31 +205,34 @@ def test_org_insights_numbers(cloud_database_url, cloud_org):
     json.dumps(data)
 
 
-def test_platform_insights_lists_every_organization(cloud_database_url):
+def test_platform_insights_lists_every_brand(cloud_database_url):
     from nyra.cloud import db as cloud_db
     from nyra.cloud import insights
 
     with cloud_db.connect(cloud_database_url) as conn:
-        a = cloud_db.create_organization(conn, name="Marque A", slug=f"a-{uuid.uuid4().hex[:8]}")
-        b = cloud_db.create_organization(conn, name="Marque B", slug=f"b-{uuid.uuid4().hex[:8]}")
-        _seed(conn, a, crawl_seconds=100.0)
+        a = cloud_db.create_organization(conn, name="Maison A", slug=f"a-{uuid.uuid4().hex[:8]}")
+        brand_a = conn.execute("SELECT id FROM brands WHERE org_id = %s", (a,)).fetchone()["id"]
+        second = cloud_db.create_brand(conn, org_id=a, name="Cuvée", slug=f"cuvee-{uuid.uuid4().hex[:6]}")
+        _seed(conn, a, brand_a, crawl_seconds=100.0)
         data = insights.platform_insights(conn)
 
-    orgs = {row["org_id"]: row for row in data["organizations"]}
-    assert orgs[str(a)]["storage_bytes"] == 5_400_000
-    assert orgs[str(a)]["last_crawl_seconds"] == 100
-    assert orgs[str(a)]["false_positive_rate"] == 0.5
-    assert orgs[str(a)]["failed_jobs_30d"] == 1
-    assert orgs[str(b)]["crawls_90d"] == 0 and orgs[str(b)]["last_crawl_at"] is None
-    assert data["totals"]["organizations"] >= 2
-    assert any(row["org_name"] == "Marque A" and row["kind"] == "match" for row in data["failures"])
+    brands = {row["brand_id"]: row for row in data["brands"]}
+    # Stored: working copies + thumbnails (40 KB), plus the old row's nothing, plus the library's 5 MB.
+    assert brands[str(brand_a)]["storage_bytes"] == 5_040_000
+    assert brands[str(brand_a)]["org_name"] == "Maison A"
+    assert brands[str(brand_a)]["last_crawl_seconds"] == 100
+    assert brands[str(brand_a)]["false_positive_rate"] == 0.5
+    assert brands[str(brand_a)]["failed_jobs_30d"] == 1
+    assert brands[str(second)]["crawls_90d"] == 0 and brands[str(second)]["last_crawl_at"] is None
+    assert data["totals"]["brands"] >= 2 and data["totals"]["organizations"] >= 1
+    assert any(row["brand_name"] == "Maison A" and row["kind"] == "match" for row in data["failures"])
     assert "queued" in data["queue"] and "running" in data["queue"]
     json.dumps(data)
 
 
 # --- API -------------------------------------------------------------------------------------
 
-def test_insights_routes_are_gated(cloud_database_url, cloud_org, fake_storage_client):
+def test_insights_routes_are_gated(cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
     pytest.importorskip("fastapi")
     import jwt as pyjwt
     from fastapi.testclient import TestClient
@@ -247,14 +260,16 @@ def test_insights_routes_are_gated(cloud_database_url, cloud_org, fake_storage_c
         cloud_db.add_membership(conn, user_id=member, org_id=cloud_org, role="client")
         insights.set_staff(conn, staff, True)
 
-    assert client.get(f"/api/orgs/{cloud_org}/insights", headers=headers(admin)).status_code == 200
-    assert client.get(f"/api/orgs/{cloud_org}/insights", headers=headers(member)).status_code == 403
-    assert client.get(f"/api/orgs/{cloud_org}/insights", headers=headers(staff)).status_code == 403
+    path = f"/api/orgs/{cloud_org}/brands/{cloud_brand}/insights"
+    assert client.get(path, headers=headers(admin)).status_code == 200
+    assert client.get(path, headers=headers(member)).status_code == 403
+    assert client.get(path, headers=headers(staff)).status_code == 403
+    assert client.get(f"/api/orgs/{cloud_org}/brands/{uuid.uuid4()}/insights", headers=headers(admin)).status_code == 404
 
     assert client.get("/api/staff/insights").status_code == 401
     assert client.get("/api/staff/insights", headers=headers(admin)).status_code == 403
     body = client.get("/api/staff/insights", headers=headers(staff)).json()
-    assert "organizations" in body and "queue" in body
+    assert "brands" in body and "queue" in body
 
     assert client.get("/api/me", headers=headers(staff)).json()["staff"] is True
     assert client.get("/api/me", headers=headers(admin)).json()["staff"] is False

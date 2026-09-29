@@ -13,6 +13,9 @@ import pytest
 
 MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
 
+# Tests never read or fill the worker's real image cache (tests of the cache set their own).
+os.environ.setdefault("NYRA_IMAGE_CACHE", "off")
+
 # Minimal stand-ins for the parts of Supabase's `auth`/`storage` schemas the
 # migrations reference (auth.users, auth.uid(), storage.buckets/objects).
 # Every statement is guarded (IF NOT EXISTS / check-before-create) so this
@@ -105,6 +108,15 @@ def cloud_org(cloud_database_url: str):
     with cloud_db.connect(cloud_database_url) as conn:
         org_id = cloud_db.create_organization(conn, name="Test Org", slug=f"test-{uuid.uuid4().hex[:12]}")
     return org_id
+
+
+@pytest.fixture()
+def cloud_brand(cloud_database_url: str, cloud_org):
+    """The test organization's brand (every organization is created with one)."""
+    from nyra.cloud import db as cloud_db
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        return conn.execute("SELECT id FROM brands WHERE org_id = %s", (cloud_org,)).fetchone()["id"]
 
 
 class _FakeBucketProxy:

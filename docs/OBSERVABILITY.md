@@ -4,8 +4,8 @@ Three layers, each answering a different question:
 
 | Question | Where | Setup |
 |---|---|---|
-| How does a brand's site and pipeline behave? (image count, average weight, images per second, crawl duration, false positives…) | **Statistiques** page, `/o/<slug>/statistiques`, organization admins | nothing: built in |
-| How is the whole platform doing? (every brand side by side, job queue, failures, throughput) | **Back office**, `/interne`, Nyra team only | `nyra cloud-staff --email …` |
+| How does a brand's site and pipeline behave? (image count, average weight, images per second, crawl duration, false positives…) | **Statistiques** page of each brand, `/o/<org>/m/<brand>/statistiques`, organization admins | nothing: built in |
+| How is the whole platform doing? (every brand of every organization side by side, job queue, failures, throughput) | **Back office**, `/interne`, Nyra team only | `nyra cloud-staff --email …` |
 | Is it up? What broke, and when? Trends over months, alerts | **Grafana** (metrics, logs, SQL) + **Sentry** (exceptions) | below |
 
 ## What is measured
@@ -23,9 +23,11 @@ Every crawl records, in `crawl_runs.metrics` (see `CrawlStats` in
   duration. Pages render in parallel, so the phase sums can exceed the
   duration: they say where the effort goes, not the wall-clock split.
 
-`site_images.byte_size` and `reference_images.byte_size` record the weight
-of every stored file (from the `insights` migration on; older rows have
-none and are left out of averages).
+Site images keep their weight on the site (`byte_size`), their original
+format (`format`: Nyra only stores a JPEG working copy) and what Nyra
+stores for them (`stored_bytes`); references keep the weight of the
+uploaded original. From the `insights` migration on: older rows have none
+and are left out of averages.
 
 Jobs keep their timings (`created_at`, `started_at`, `finished_at`), and
 their `result` now carries `metrics` (index: images embedded, embedding and
@@ -108,20 +110,21 @@ Starter panels:
 
 ```sql
 -- Crawl duration per brand (time series)
-select started_at as time, org_name as metric, duration_seconds as value
+select started_at as time, brand_name as metric, duration_seconds as value
 from insights.crawl_runs where $__timeFilter(started_at) and status = 'done' order by 1;
 
 -- Throughput: pages/min, images scanned/s, CLIP images/s (one panel each: one scale per panel)
-select started_at as time, org_name as metric, clip_images_per_second as value
+select started_at as time, brand_name as metric, clip_images_per_second as value
 from insights.crawl_runs where $__timeFilter(started_at) and clip_images_per_second is not null order by 1;
 
 -- Where the time goes (stacked bars, last 30 days)
-select org_name, sum(render_seconds) as render, sum(download_seconds) as download,
+select brand_name, sum(render_seconds) as render, sum(download_seconds) as download,
        sum(process_seconds) as process, sum(embed_seconds) as clip, sum(store_seconds) as store
 from insights.crawl_runs where started_at > now() - interval '30 days' group by 1;
 
 -- Storage per brand
-select org_name, total_bytes from insights.site_images order by total_bytes desc nulls last;
+-- Weight on the sites vs what Nyra stores (working copies + thumbnails), per brand
+select org_name, brand_name, total_bytes, stored_bytes from insights.site_images order by stored_bytes desc nulls last;
 
 -- Jobs: failure rate and p95 duration per kind, 7 days
 select kind, count(*) filter (where status = 'error')::float / count(*) as failure_rate,

@@ -564,7 +564,19 @@ class LocalStore:
         if not use_clip:
             for row in (*refs, *sites):
                 row["embedding"] = None
+        self._paths = {**{("ref", row["id"]): row.get("path") for row in refs},
+                       **{("site", row["id"]): row.get("local_path") for row in sites}}
         return refs, sites
+
+    def load_image(self, side: str, image_id):
+        """The image file, for the geometric check of CLIP candidates (None when it can't be read)."""
+        path = getattr(self, "_paths", {}).get((side, image_id))
+        if not path or not Path(path).is_file():
+            return None
+        from nyra import fetch
+
+        data = Path(path).read_bytes()
+        return fetch.decode_reference(data, 60_000_000)[0] if side == "ref" else fetch.decode(data, 60_000_000)
 
     def get_signature(self) -> Optional[str]:
         with self._conn() as conn:

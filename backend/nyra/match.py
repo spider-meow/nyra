@@ -18,6 +18,8 @@ hosted product (`cloud.store.CloudMatchStore`).
 from __future__ import annotations
 
 import io
+import logging
+import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -29,6 +31,8 @@ from PIL import Image, ImageOps
 
 from nyra.config import Config, MatchConfig
 
+log = logging.getLogger("nyra.match")
+
 CONFIDENCE_HIGH = "haut"
 CONFIDENCE_MEDIUM = "moyen"
 CONFIDENCE_TO_VERIFY = "a_verifier"
@@ -36,6 +40,8 @@ CONFIDENCE_TO_VERIFY = "a_verifier"
 LEVEL_PHASH = "phash"
 LEVEL_DHASH = "dhash"
 LEVEL_CLIP = "clip"
+# A CLIP candidate whose keypoints were checked and line up (nyra/verify.py).
+LEVEL_GEOMETRY = "geo"
 
 
 @dataclass(frozen=True)
@@ -83,6 +89,11 @@ def _load_clip(model_name: str, pretrained: str):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
     return model, preprocess, device
+
+
+def warm_clip(config: MatchConfig) -> None:
+    """Load the CLIP model now (downloading its weights the first time), so a caller can say so."""
+    _load_clip(config.clip_model_name, config.clip_pretrained)
 
 
 def compute_clip_embeddings(images: Sequence[Image.Image], config: MatchConfig) -> list[np.ndarray]:
@@ -354,9 +365,18 @@ class MatchStore(Protocol):
         signature: str,
     ) -> int: ...
 
+    # Optional: `load_image("ref" | "site", id)` -> PIL image or None. When a store
+    # has it, CLIP candidates are checked geometrically (nyra/verify.py).
 
-def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[str, str]] = ()) -> str:
-    """Anything that changes which pairs match. A different value forces a full recompute."""
+
+def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[str, str]] = (),
+              verified: bool = False) -> str:
+    """Anything that changes which pairs match. A different value forces a full recompute.
+
+    `verified` says whether CLIP candidates are actually checked this pass (the
+    option is on *and* the store can load images *and* OpenCV is installed): a
+    pass that couldn't check must not look like one that did.
+    """
     import hashlib
 
     excluded = hashlib.sha1(chr(10).join(sorted(f"{kind}:{value}" for value, kind in exclusions)).encode()).hexdigest()[:12]
@@ -368,6 +388,8 @@ def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[st
             str(config.clip_similarity_medium),
             str(config.clip_similarity_floor),
             f"{config.clip_model_name}/{config.clip_pretrained}" if use_clip else "hash",
+            (f"verified{config.geometric_min_inliers}/{config.geometric_review_coverage}/{config.geometric_confirm_coverage}"
+             if use_clip and verified else "unverified"),
             "flip",
             f"x{excluded}" if exclusions else "x0",
         ]
@@ -398,7 +420,7 @@ def excluded_site_ids(sites: Sequence[dict], exclusions: Sequence[tuple[str, str
 
 
 def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: bool = True, progress=None, should_stop=None,
-                 stats: Optional[dict] = None) -> int:
+                 verify_progress=None, stats: Optional[dict] = None) -> int:
     """Match references against site images and persist hits.
 
     A finished pass is remembered. The next one only compares what is new
@@ -408,7 +430,8 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
     comparison, so a stop or a crash keeps the previous results.
 
     `stats`, if given, is filled with what the pass did (mode, sizes, pairs
-    compared, hits by level) for the insights pages.
+    compared, candidates checked by keypoints, hits by level, timings) for
+    the statistics pages.
     """
     if isinstance(store, (str, Path)):
         from nyra.db import LocalStore
@@ -416,14 +439,23 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
         store = LocalStore(store)
 
     exclusions = list(store.load_exclusions()) if hasattr(store, "load_exclusions") else []
-    sig = signature(config.match, use_clip, exclusions)
+    loader = getattr(store, "load_image", None)
+    verifying = False
+    if use_clip and config.match.verify_clip_matches and loader is not None:
+        from nyra import verify
+
+        verifying = verify.available()
+        if not verifying:
+            log.warning("OpenCV is missing: CLIP matches are kept without geometric verification")
+    sig = signature(config.match, use_clip, exclusions, verified=verifying)
     refs, all_sites = store.load_features(use_clip)
     excluded = excluded_site_ids(all_sites, exclusions, config.match)
     sites = [row for row in all_sites if row["id"] not in excluded]
     full = store.get_signature() != sig
     info = stats if stats is not None else {}
     info.update({"full": full, "references": len(refs), "site_images": len(all_sites), "excluded": len(excluded),
-                 "pairs": 0, "hits": 0, "hits_by_level": {}})
+                 "pairs": 0, "hits": 0, "hits_by_level": {}, "verified_candidates": 0,
+                 "compare_seconds": 0.0, "verify_seconds": 0.0})
 
     if full:
         rectangles = [(refs, sites)]
@@ -454,6 +486,7 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
             progress(done_steps, max(total_steps, 1))
 
     info["pairs"] = sum(len(ref_pack.ids) * len(site_pack.ids) for ref_pack, site_pack in prepared)
+    compare_started = time.perf_counter()
     hits: list[tuple] = []
     seen: set[tuple] = set()
     for ref_pack, site_pack in prepared:
@@ -465,6 +498,20 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
 
     if should_stop and should_stop():
         raise MatchStopped()
+    info["compare_seconds"] = round(time.perf_counter() - compare_started, 3)
+
+    if verifying:
+        from nyra import verify
+
+        info["verified_candidates"] = sum(1 for hit in hits if hit[2] == LEVEL_CLIP)
+        verify_started = time.perf_counter()
+        hits = verify.verify_hits(
+            hits, loader, config.match, level_clip=LEVEL_CLIP, level_verified=LEVEL_GEOMETRY, confidence_high=CONFIDENCE_HIGH,
+            confidence_to_verify=CONFIDENCE_TO_VERIFY, progress=verify_progress, should_stop=should_stop,
+        )
+        if should_stop and should_stop():
+            raise MatchStopped()
+        info["verify_seconds"] = round(time.perf_counter() - verify_started, 3)
 
     info["hits"] = len(hits)
     for hit in hits:

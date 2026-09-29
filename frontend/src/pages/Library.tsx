@@ -1,19 +1,29 @@
 import { useMemo, useRef, useState, type DragEvent } from "react";
 import { Modal, useConfirm, useToast } from "../components/feedback";
-import { Button, Card, EmptyState, FieldLabel, Input, PageHeader, Select, Skeleton, StatusBadge, Thumb, cx } from "../components/ui";
+import { Icon } from "../components/icons";
+import { Button, Card, Chip, EmptyState, FieldLabel, Input, PageHeader, SearchField, Segmented, Skeleton, Spinner, StatusBadge, cx } from "../components/ui";
 import { downloadFile, errorMessage } from "../lib/api";
 import { daysText, formatDate, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
-import { useLibrary, useLibraryMutations } from "../lib/queries";
+import { useLibrary, useLibraryMutations, useReferenceUpload } from "../lib/queries";
 import type { ImportRow, LibraryItem, Status } from "../types";
 
 type Filter = "all" | Status | "unindexed";
+
+/** Refused files grouped by reason: one explanation, then the names it applies to. */
+function byReason(failures: { filename: string; reason: string }[]): [string, string[]][] {
+  const groups = new Map<string, string[]>();
+  for (const item of failures) groups.set(item.reason, [...(groups.get(item.reason) ?? []), item.filename]);
+  return [...groups];
+}
 type Sort = "expiry" | "name";
 
 export function Library() {
-  const { admin, apiPath } = useOrg();
+  const { admin, apiPath, brand } = useOrg();
   const library = useLibrary();
   const mutations = useLibraryMutations();
+  const uploader = useReferenceUpload();
+  const [exporting, setExporting] = useState(false);
   const toast = useToast();
   const confirm = useConfirm();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -27,6 +37,9 @@ export function Library() {
   const [bulkDate, setBulkDate] = useState("");
   const [shown, setShown] = useState(100);
   const [failures, setFailures] = useState<{ filename: string; reason: string }[]>([]);
+  // The refused files themselves, to send them again in one click.
+  const [retryable, setRetryable] = useState<File[]>([]);
+  const [replaced, setReplaced] = useState<string[]>([]);
 
   const items = library.data?.items ?? [];
   const visible = useMemo(() => {
@@ -44,38 +57,49 @@ export function Library() {
     });
   }, [items, filter, sort, query]);
 
-  const counts = useMemo(() => {
-    const out: Record<string, number> = { expire: 0, "<30j": 0, inconnue: 0, unindexed: 0 };
-    for (const item of items) {
-      out[item.status] = (out[item.status] ?? 0) + 1;
-      if (!item.indexed) out.unindexed += 1;
-    }
-    return out;
-  }, [items]);
+  const filters: { value: Filter; label: string; dot?: Status; count?: number }[] = [
+    { value: "all", label: "Tous", count: items.length },
+    { value: "expire", label: "Expirés", dot: "expire", count: countStatus(items, "expire") },
+    { value: "<30j", label: "Sous 30 j", dot: "<30j", count: countStatus(items, "<30j") },
+    { value: "<90j", label: "Sous 90 j", dot: "<90j", count: countStatus(items, "<90j") },
+    { value: "ok", label: "Dans les délais", dot: "ok" },
+    { value: "inconnue", label: "Sans échéance", dot: "inconnue", count: countStatus(items, "inconnue") },
+    { value: "unindexed", label: "Pas encore indexés", count: items.filter((item) => !item.indexed).length },
+  ];
+
 
   function upload(files: File[]) {
     if (!admin || !files.length) return;
+    if (uploader.uploading) {
+      toast.show({ message: "Un envoi est déjà en cours", description: "Ajoutez ces fichiers dès qu'il est terminé." });
+      return;
+    }
     setFailures([]);
-    mutations.upload.mutate(files, {
-      onSuccess: (result) => {
-        if (result.saved.length) toast(`${plural(result.saved.length, "visuel ajouté", "visuels ajoutés")}. L'indexation démarre.`, "success");
-        setFailures(result.failed);
-      },
-      onError: (error) => toast(errorMessage(error), "error"),
+    setRetryable([]);
+    setReplaced([]);
+    void uploader.run(files).then((result) => {
+      setFailures(result.failed);
+      setReplaced(result.replaced);
+      const refused = new Set(result.failed.map((item) => item.filename));
+      setRetryable(files.filter((file) => refused.has(file.name)));
     });
+  }
+
+  async function exportCsv() {
+    setExporting(true);
+    try {
+      await downloadFile(apiPath("/library/export-csv"), "references.csv");
+    } catch (error) {
+      toast.show({ tone: "error", message: "L'export n'a pas abouti", description: errorMessage(error) });
+    } finally {
+      setExporting(false);
+    }
   }
 
   function onDrop(event: DragEvent) {
     event.preventDefault();
     setDragging(false);
     upload(Array.from(event.dataTransfer.files));
-  }
-
-  function saveExpiry(item: LibraryItem, value: string) {
-    mutations.updateMeta.mutate(
-      { filename: item.filename, expiry_date: value, credit: item.credit, notes: item.notes },
-      { onError: (error) => toast(errorMessage(error), "error") },
-    );
   }
 
   async function removeSelected(names: string[]) {
@@ -91,13 +115,14 @@ export function Library() {
       danger: true,
     });
     if (!ok) return;
+    const pending = toast.loading(names.length > 1 ? `Suppression de ${names.length} visuels…` : "Suppression du visuel…");
     mutations.remove.mutate(names, {
       onSuccess: (result) => {
-        toast(`${plural(result.deleted, "visuel supprimé", "visuels supprimés")}.`);
+        toast.update(pending, { tone: "success", message: result.deleted > 1 ? `${result.deleted} visuels supprimés` : "Visuel supprimé" });
         setSelected(new Set());
         setEditing(null);
       },
-      onError: (error) => toast(errorMessage(error), "error"),
+      onError: (error) => toast.update(pending, { tone: "error", message: "La suppression n'a pas abouti", description: errorMessage(error) }),
     });
   }
 
@@ -107,10 +132,14 @@ export function Library() {
       { filenames: names, expiry_date: bulkDate },
       {
         onSuccess: (result) => {
-          toast(bulkDate ? `Échéance fixée au ${formatDate(bulkDate)} pour ${plural(result.updated, "visuel")}.` : `Échéance retirée pour ${plural(result.updated, "visuel")}.`);
+          toast.show({
+            tone: "success",
+            message: bulkDate ? `Échéance fixée au ${formatDate(bulkDate)}` : "Échéance retirée",
+            description: plural(result.updated, "visuel mis à jour", "visuels mis à jour"),
+          });
           setSelected(new Set());
         },
-        onError: (error) => toast(errorMessage(error), "error"),
+        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
       },
     );
   }
@@ -135,14 +164,18 @@ export function Library() {
         description="Les visuels sous droits et leur date d'expiration. C'est à eux que chaque page lue est comparée."
         actions={
           <>
-            <Button variant="ghost" onClick={() => void downloadFile(apiPath("/library/export-csv"), "references.csv").catch((error) => toast(errorMessage(error), "error"))}>
+            <Button variant="ghost" loading={exporting} onClick={() => void exportCsv()}>
               Exporter en CSV
             </Button>
             {admin ? <Button onClick={() => setImportOpen(true)}>Importer des dates (CSV)</Button> : null}
             {admin ? (
               <>
-                <Button variant="primary" disabled={mutations.upload.isPending} onClick={() => fileInput.current?.click()}>
-                  {mutations.upload.isPending ? "Envoi en cours…" : "Ajouter des visuels"}
+                <Button variant="primary" loading={uploader.uploading} onClick={() => fileInput.current?.click()}>
+                  {uploader.progress
+                    ? uploader.progress.total > 1
+                      ? `Envoi · ${uploader.progress.done}/${uploader.progress.total}`
+                      : "Envoi en cours…"
+                    : "Ajouter des visuels"}
                 </Button>
                 <input
                   ref={fileInput}
@@ -161,20 +194,58 @@ export function Library() {
         }
       />
 
+      {dragging ? (
+        <p className="pointer-events-none fixed inset-x-0 top-6 z-40 mx-auto w-fit rounded-full bg-ink px-4 py-2 text-sm text-white shadow-lg">
+          Déposez pour ajouter à la bibliothèque de {brand.name}
+        </p>
+      ) : null}
+
       {library.data?.indexing ? (
-        <p className="mb-4 rounded-lg bg-focus-soft px-4 py-2.5 text-sm">Indexation en cours : les nouveaux visuels seront comparés au site dès qu'elle sera terminée.</p>
+        <p className="mb-5 flex items-center gap-2.5 rounded-xl bg-peach-soft px-4 py-3 text-sm text-bark-800">
+          <span aria-hidden className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-bark-800/25 border-t-bark-800" />
+          Indexation en cours : les nouveaux visuels seront comparés aux sites dès qu'elle sera terminée.
+        </p>
+      ) : null}
+
+      {replaced.length ? (
+        <Card className="mb-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                {replaced.length > 1 ? `${replaced.length} visuels remplacés` : "1 visuel remplacé"}
+              </p>
+              <p className="mt-0.5 text-[13px] text-muted">
+                Un visuel du même nom était déjà dans la bibliothèque : l'image a été remplacée, son échéance, son crédit et ses notes sont conservés.
+              </p>
+              <p className="mt-1 break-words text-[13px] text-ink-soft">{replaced.join(", ")}</p>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setReplaced([])}>Fermer</Button>
+          </div>
+        </Card>
       ) : null}
 
       {failures.length ? (
         <Card className="mb-4 border-expired/30">
-          <div className="flex items-start justify-between gap-3">
-            <div>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-expired">{plural(failures.length, "fichier refusé", "fichiers refusés")}</p>
-              <ul className="mt-1 text-[13px] text-ink-soft">
-                {failures.map((item) => <li key={item.filename}>{item.filename} — {item.reason}</li>)}
-              </ul>
+              <div className="mt-2 grid gap-3">
+                {byReason(failures).map(([reason, items]) => (
+                  <div key={reason}>
+                    <p className="text-[13px] font-medium text-ink">{reason}</p>
+                    <p className="mt-0.5 break-words text-[13px] text-ink-soft">{items.join(", ")}</p>
+                  </div>
+                ))}
+              </div>
             </div>
-            <Button size="sm" variant="ghost" onClick={() => setFailures([])}>Fermer</Button>
+            <div className="flex gap-1">
+              {retryable.length ? (
+                <Button size="sm" loading={uploader.uploading} onClick={() => upload(retryable)}>
+                  Réessayer {retryable.length > 1 ? `les ${retryable.length}` : ""}
+                </Button>
+              ) : null}
+              <Button size="sm" variant="ghost" onClick={() => { setFailures([]); setRetryable([]); }}>Fermer</Button>
+            </div>
           </div>
         </Card>
       ) : null}
@@ -187,137 +258,113 @@ export function Library() {
         <EmptyState
           title="Aucun visuel pour l'instant"
           body={admin ? "Glissez vos images ici, ou utilisez « Ajouter des visuels ». Vous renseignerez ensuite leur date d'expiration, une par une ou par import CSV." : "Un administrateur doit d'abord déposer les visuels à surveiller."}
-          action={admin ? <Button variant="primary" onClick={() => fileInput.current?.click()}>Ajouter des visuels</Button> : undefined}
+          action={admin ? <Button variant="primary" loading={uploader.uploading} onClick={() => fileInput.current?.click()}>Ajouter des visuels</Button> : undefined}
         />
       ) : (
         <>
-          <div className="mb-3 flex flex-wrap items-end gap-3">
-            <div className="w-full sm:w-64">
-              <FieldLabel htmlFor="lib-search">Rechercher</FieldLabel>
-              <Input id="lib-search" type="search" placeholder="Nom de fichier" value={query} onChange={(event) => { setQuery(event.target.value); setShown(100); }} />
+          <div className="mb-5 flex flex-wrap items-center gap-2">
+            <SearchField id="lib-search" placeholder="Rechercher un visuel" className="w-full sm:w-72" value={query} onChange={(value) => { setQuery(value); setShown(100); }} />
+            <div className="flex gap-2 overflow-x-auto pb-0.5 [scrollbar-width:none]">
+              {filters.map((item) => (
+                <Chip key={item.value} active={filter === item.value} dot={item.dot} count={item.count} onClick={() => { setFilter(item.value); setShown(100); }}>
+                  {item.label}
+                </Chip>
+              ))}
             </div>
-            <div className="w-full sm:w-56">
-              <FieldLabel htmlFor="lib-filter">Afficher</FieldLabel>
-              <Select id="lib-filter" value={filter} onChange={(event) => { setFilter(event.target.value as Filter); setShown(100); }}>
-                <option value="all">Tous ({items.length})</option>
-                <option value="expire">Expirés ({counts.expire})</option>
-                <option value="<30j">Moins de 30 jours ({counts["<30j"]})</option>
-                <option value="<90j">Moins de 90 jours</option>
-                <option value="ok">Dans les délais</option>
-                <option value="inconnue">Sans échéance ({counts.inconnue})</option>
-                <option value="unindexed">Pas encore indexés ({counts.unindexed})</option>
-              </Select>
-            </div>
-            <div className="w-full sm:w-44">
-              <FieldLabel htmlFor="lib-sort">Trier par</FieldLabel>
-              <Select id="lib-sort" value={sort} onChange={(event) => setSort(event.target.value as Sort)}>
-                <option value="expiry">Échéance</option>
-                <option value="name">Nom</option>
-              </Select>
+            <div className="ml-auto">
+              <Segmented label="Trier par" value={sort} onChange={setSort} options={[{ value: "expiry", label: "Échéance" }, { value: "name", label: "Nom" }]} />
             </div>
           </div>
 
           {admin && selected.size ? (
-            <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-xl bg-ink px-4 py-2.5 text-sm text-white shadow-xl md:left-[calc(248px+2.5rem)]" role="region" aria-label="Actions sur la sélection">
+            <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-2xl bg-ink px-4 py-2.5 text-sm text-paper shadow-float md:left-[calc(256px+3.5rem)]" role="region" aria-label="Actions sur la sélection">
               <span className="font-medium">{plural(selected.size, "sélectionné")}</span>
               <span className="flex items-center gap-2">
                 <label htmlFor="bulk-date" className="text-white/70">Échéance</label>
-                <input id="bulk-date" type="date" value={bulkDate} onChange={(event) => setBulkDate(event.target.value)} className="h-8 rounded-md border border-white/20 bg-white/10 px-2 text-white [color-scheme:dark]" />
-                <Button size="sm" onClick={applyBulkDate} disabled={mutations.setExpiry.isPending}>Appliquer</Button>
+                <input id="bulk-date" type="date" value={bulkDate} onChange={(event) => setBulkDate(event.target.value)} className="h-9 rounded-[10px] border border-white/20 bg-white/10 px-2.5 text-paper [color-scheme:dark]" />
+                <button type="button" className="h-9 rounded-[10px] bg-peach px-3.5 text-[13.5px] font-medium text-bark-800 hover:bg-[#f9bd98] disabled:cursor-progress disabled:opacity-60" onClick={applyBulkDate} disabled={mutations.setExpiry.isPending}>
+                  {mutations.setExpiry.isPending ? "Application…" : "Appliquer"}
+                </button>
               </span>
-              <Button size="sm" variant="danger" onClick={() => void removeSelected([...selected])}>Supprimer</Button>
+              <button type="button" className="h-9 rounded-[10px] px-3 text-[13.5px] text-[#f4b3a8] hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" disabled={mutations.remove.isPending} onClick={() => void removeSelected([...selected])}>
+                {mutations.remove.isPending ? "Suppression…" : "Supprimer"}
+              </button>
               <button type="button" className="ml-auto text-white/70 hover:text-white" onClick={() => setSelected(new Set())}>Tout désélectionner</button>
             </div>
           ) : null}
 
-          <Card padded={false} className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead>
-                <tr className="border-b border-line text-left text-xs text-muted">
-                  {admin ? (
-                    <th className="w-10 px-4 py-2.5">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 accent-ink"
-                        aria-label="Tout sélectionner"
-                        checked={allVisibleSelected}
-                        onChange={(event) => setSelected(event.target.checked ? new Set(visible.map((item) => item.filename)) : new Set())}
-                      />
-                    </th>
-                  ) : null}
-                  <th className="px-2 py-2.5 font-medium">Visuel</th>
-                  <th className="w-44 px-2 py-2.5 font-medium">Échéance</th>
-                  <th className="w-44 px-2 py-2.5 font-medium">Statut</th>
-                  <th className="px-2 py-2.5 font-medium">Crédit</th>
-                  <th className="w-24 px-4 py-2.5" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {visible.slice(0, shown).map((item) => (
-                  <tr key={item.id} className={cx(selected.has(item.filename) && "bg-focus-soft")}>
-                    {admin ? (
-                      <td className="px-4 py-2">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-ink"
-                          aria-label={`Sélectionner ${item.filename}`}
-                          checked={selected.has(item.filename)}
-                          onChange={(event) => {
-                            const next = new Set(selected);
-                            if (event.target.checked) next.add(item.filename);
-                            else next.delete(item.filename);
-                            setSelected(next);
-                          }}
-                        />
-                      </td>
-                    ) : null}
-                    <td className="px-2 py-2">
-                      <div className="flex items-center gap-3">
-                        <Thumb src={item.thumb_url} size={40} />
-                        <div className="min-w-0">
-                          <p className="max-w-[280px] truncate font-medium" title={item.filename}>{item.filename}</p>
-                          <p className="text-xs text-muted">
-                            {item.width && item.height ? `${item.width} × ${item.height}` : ""}
-                            {!item.indexed ? <span className="ml-1 text-urgent">· indexation en attente</span> : null}
-                          </p>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-2 py-2">
-                      {admin ? (
-                        <Input
-                          type="date"
-                          aria-label={`Échéance de ${item.filename}`}
-                          defaultValue={item.expiry_date}
-                          key={`${item.id}-${item.expiry_date}`}
-                          className="h-8"
-                          onBlur={(event) => {
-                            if (event.target.value !== item.expiry_date) saveExpiry(item, event.target.value);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter") (event.target as HTMLInputElement).blur();
-                          }}
-                        />
-                      ) : (
-                        <span className="tabular">{formatDate(item.expiry_date)}</span>
-                      )}
-                    </td>
-                    <td className="px-2 py-2"><StatusBadge status={item.status} label={item.status === "inconnue" ? undefined : daysText(item.days_left)} /></td>
-                    <td className="max-w-[200px] truncate px-2 py-2 text-ink-soft" title={item.credit}>{item.credit || <span className="text-faint">—</span>}</td>
-                    <td className="px-4 py-2 text-right">
-                      <Button size="sm" variant="ghost" onClick={() => setEditing(item)}>{admin ? "Modifier" : "Voir"}</Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {visible.length > shown ? (
-              <div className="border-t border-line p-3 text-center">
-                <Button size="sm" onClick={() => setShown((value) => value + 100)}>Afficher plus · {shown}/{visible.length}</Button>
-              </div>
+          {admin && visible.length ? (
+            <label className="mb-3 inline-flex items-center gap-2 text-[13px] text-muted">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-ink"
+                checked={allVisibleSelected}
+                onChange={(event) => setSelected(event.target.checked ? new Set(visible.map((item) => item.filename)) : new Set())}
+              />
+              Tout sélectionner
+            </label>
+          ) : null}
+          <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+            {admin && filter === "all" && !query ? (
+              <li>
+                <button
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  className="flex h-full min-h-56 w-full flex-col items-center justify-center gap-2.5 rounded-2xl border-[1.5px] border-dashed border-line-strong bg-sunk p-4 text-center transition-colors hover:border-bark hover:bg-peach-soft/40"
+                >
+                  <span className="grid h-11 w-11 place-items-center rounded-xl bg-peach-soft text-bark-700"><Icon name="upload" size={20} /></span>
+                  <span className="text-sm font-medium">Déposez des images</span>
+                  <span className="text-[12.5px] leading-snug text-muted">ou cliquez pour choisir. JPG, PNG, WebP…</span>
+                </button>
+              </li>
             ) : null}
-            {!visible.length ? <p className="px-4 py-6 text-center text-sm text-muted">Aucun visuel ne correspond à ces filtres.</p> : null}
-          </Card>
+            {visible.slice(0, shown).map((item) => {
+              const checked = selected.has(item.filename);
+              return (
+                <li
+                  key={item.id}
+                  className={cx(
+                    "group relative flex flex-col overflow-hidden rounded-2xl border bg-paper transition-shadow hover:shadow-float",
+                    checked ? "border-[#e6d3c2] shadow-[0_0_0_3px_var(--color-peach-soft)]" : "border-line",
+                  )}
+                >
+                  <button type="button" onClick={() => setEditing(item)} className="block text-left" aria-label={`${admin ? "Modifier" : "Voir"} ${item.filename}`}>
+                    <span className="block aspect-[4/3] overflow-hidden bg-side">
+                      {item.thumb_url ? <img src={item.thumb_url} alt="" loading="lazy" className="h-full w-full object-cover" /> : null}
+                    </span>
+                    <span className="flex flex-col gap-2 px-3.5 pt-3 pb-3.5">
+                      <span className="truncate text-[13.5px] font-medium" title={item.filename}>{item.filename}</span>
+                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <StatusBadge status={item.status} label={item.status === "inconnue" ? undefined : daysText(item.days_left)} />
+                        {item.expiry_date ? <span className="text-[11.5px] text-muted tabular">{formatDate(item.expiry_date)}</span> : null}
+                      </span>
+                      {!item.indexed ? <span className="text-[11.5px] text-urgent">Indexation en attente</span> : null}
+                    </span>
+                  </button>
+                  {admin ? (
+                    <input
+                      type="checkbox"
+                      className={cx("absolute top-2.5 left-2.5 h-5 w-5 accent-ink transition-opacity", checked || selected.size ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
+                      aria-label={`Sélectionner ${item.filename}`}
+                      checked={checked}
+                      onChange={(event) => {
+                        const next = new Set(selected);
+                        if (event.target.checked) next.add(item.filename);
+                        else next.delete(item.filename);
+                        setSelected(next);
+                      }}
+                    />
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+          {visible.length > shown ? (
+            <div className="mt-6 text-center">
+              <Button onClick={() => setShown((value) => value + 100)}>Afficher plus · {shown}/{visible.length}</Button>
+            </div>
+          ) : null}
+          {!visible.length ? <p className="py-10 text-center text-sm text-muted">Aucun visuel ne correspond à ces filtres.</p> : null}
         </>
       )}
 
@@ -346,10 +393,10 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
       { filename: item.filename, ...form },
       {
         onSuccess: () => {
-          toast("Modifications enregistrées.", "success");
+          toast.show({ tone: "success", message: "Modifications enregistrées", description: item.filename, duration: 3000 });
           props.onClose();
         },
-        onError: (error) => toast(errorMessage(error), "error"),
+        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
       },
     );
   }
@@ -365,7 +412,7 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
           <>
             <Button variant="danger" className="mr-auto" onClick={() => props.onDelete(item)}>Supprimer</Button>
             <Button onClick={props.onClose}>Annuler</Button>
-            <Button variant="primary" onClick={save} disabled={updateMeta.isPending}>Enregistrer</Button>
+            <Button variant="primary" onClick={save} loading={updateMeta.isPending}>Enregistrer</Button>
           </>
         ) : (
           <Button onClick={props.onClose}>Fermer</Button>
@@ -373,7 +420,7 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
       }
     >
       <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <a href={item.url} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-lg border border-line bg-canvas">
+        <a href={item.url} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-2xl bg-side">
           <img src={item.url || item.thumb_url} alt="" className="aspect-square w-full object-contain" />
         </a>
         <div className="grid content-start gap-4">
@@ -394,7 +441,7 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
               placeholder="Usages autorisés, territoires, numéro de contrat…"
               value={form.notes}
               onChange={(event) => setForm({ ...form, notes: event.target.value })}
-              className="w-full rounded-lg border border-line-strong bg-paper px-3 py-2 text-sm outline-none focus:border-focus focus:ring-2 focus:ring-focus-soft disabled:bg-canvas"
+              className="w-full rounded-[10px] border border-line-strong bg-paper px-3.5 py-2.5 text-sm outline-none focus:border-focus focus:ring-4 focus:ring-focus-soft disabled:bg-canvas"
             />
           </div>
           <p className="text-xs text-muted">
@@ -427,7 +474,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
 
   function preview(next: File) {
     setFile(next);
-    importCsv.mutate({ file: next, apply: false }, { onSuccess: (data) => setRows(data.rows), onError: (error) => toast(errorMessage(error), "error") });
+    importCsv.mutate({ file: next, apply: false }, { onSuccess: (data) => setRows(data.rows), onError: (error) => toast.show({ tone: "error", message: "Le fichier n'a pas pu être lu", description: errorMessage(error) }) });
   }
 
   function apply() {
@@ -436,10 +483,14 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
       { file, apply: true },
       {
         onSuccess: (data) => {
-          toast(`${plural(data.applied, "ligne appliquée", "lignes appliquées")}.`, "success");
+          toast.show({
+            tone: "success",
+            message: `${plural(data.applied, "échéance mise à jour", "échéances mises à jour")}`,
+            description: "Le tableau de bord en tient compte dès maintenant.",
+          });
           close();
         },
-        onError: (error) => toast(errorMessage(error), "error"),
+        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
       },
     );
   }
@@ -454,7 +505,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
       footer={
         <>
           <Button onClick={close}>Annuler</Button>
-          <Button variant="primary" disabled={!ready || importCsv.isPending} onClick={apply}>
+          <Button variant="primary" disabled={!ready} loading={importCsv.isPending && rows !== null} onClick={apply}>
             {ready ? `Appliquer ${plural(ready, "ligne")}` : "Appliquer"}
           </Button>
         </>
@@ -472,6 +523,9 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
           if (next) preview(next);
         }}
       />
+      {importCsv.isPending && !rows ? (
+        <div className="mt-4"><Spinner label="Lecture du fichier…" /></div>
+      ) : null}
       {rows ? (
         <div className="mt-4 max-h-80 overflow-y-auto rounded-lg border border-line">
           <table className="w-full text-[13px]">
@@ -488,7 +542,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
                 <tr key={`${row.line}-${row.filename}`}>
                   <td className="px-3 py-1.5 text-muted tabular">{row.line}</td>
                   <td className="max-w-[240px] truncate px-3 py-1.5">{row.filename}</td>
-                  <td className="px-3 py-1.5 tabular">{row.expiry_date ? formatDate(row.expiry_date) : "—"}</td>
+                  <td className="px-3 py-1.5 tabular">{row.expiry_date ? formatDate(row.expiry_date) : "·"}</td>
                   <td className={cx("px-3 py-1.5", row.status === "ok" ? "text-ok" : "text-expired")} title={row.message}>
                     {importStatus[row.status]}
                     {row.message && row.status === "bad_date" ? <span className="block text-xs text-muted">{row.message}</span> : null}
@@ -501,4 +555,8 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
       ) : null}
     </Modal>
   );
+}
+
+function countStatus(items: LibraryItem[], status: Status): number {
+  return items.filter((item) => item.status === status).length;
 }

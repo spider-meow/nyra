@@ -64,6 +64,44 @@ def decode(data: bytes, max_pixels: int) -> Optional[Image.Image]:
         Image.MAX_IMAGE_PIXELS = previous
 
 
+def decode_reference(data: bytes, max_pixels: int) -> tuple[Optional[Image.Image], str]:
+    """A library image, or None and why not, in words an admin can act on.
+
+    Only hashes, a CLIP embedding and a thumbnail come out of a reference,
+    so a JPEG above `max_pixels` (a studio export) is decoded at a reduced
+    scale instead of being refused; its real size is kept in
+    `img.info["original_size"]`. Other formats can't be decoded smaller and
+    stay capped.
+    """
+    previous = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = None  # the size is checked here, before anything is decoded
+    try:
+        try:
+            img = Image.open(io.BytesIO(data))
+        except UnidentifiedImageError:
+            return None, "Format non reconnu : le fichier n'est pas une image lisible (JPEG, PNG, WebP…)."
+        width, height = img.size
+        if width * height > max_pixels:
+            if img.format != "JPEG":
+                return None, (
+                    f"Image trop grande : {width} × {height} px, soit {width * height / 1e6:.0f} Mpx "
+                    f"({max_pixels / 1e6:.0f} Mpx au plus pour un {img.format or 'fichier de ce format'}). "
+                    "Réduisez-la ou exportez-la en JPEG, puis renvoyez-la."
+                )
+            # JPEG decodes at 1/2, 1/4 or 1/8 scale: the first one under the cap.
+            scale = next((s for s in (2, 4, 8) if (width // s) * (height // s) <= max_pixels), 8)
+            img.draft("RGB", (width // scale, height // scale))
+        img.load()
+        img.info["original_size"] = (width, height)
+        return img, ""
+    except OSError:
+        return None, "Fichier incomplet ou endommagé : l'image ne se lit pas jusqu'au bout. Réexportez-la puis renvoyez-la."
+    except (ValueError, Image.DecompressionBombError):
+        return None, "Image illisible : son contenu ne correspond pas à son format."
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous
+
+
 def meets_min_size(img: Image.Image, min_side_px: int) -> bool:
     width, height = img.size
     return min(width, height) >= min_side_px
@@ -74,6 +112,22 @@ def make_thumbnail(img: Image.Image, size: int = THUMB_SIZE) -> bytes:
     rgb.thumbnail((size, size))
     buf = io.BytesIO()
     rgb.save(buf, format="JPEG", quality=78, optimize=True)
+    return buf.getvalue()
+
+
+WORKING_SIDE = 1024
+
+
+def make_working_copy(img: Image.Image, side: int = WORKING_SIDE) -> bytes:
+    """What the pipeline reads instead of an original: JPEG, at most `side` px on the long side.
+
+    Enough for CLIP (224 px), the keypoint check (1024 px) and the comparison
+    screen, at a fraction of the original's weight.
+    """
+    rgb = ImageOps.exif_transpose(img).convert("RGB")
+    rgb.thumbnail((side, side))
+    buf = io.BytesIO()
+    rgb.save(buf, format="JPEG", quality=85, optimize=True)
     return buf.getvalue()
 
 

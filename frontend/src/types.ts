@@ -1,6 +1,10 @@
 export type Role = "admin" | "client";
 
-export type Organization = { org_id: string; name: string; slug: string; role: Role };
+export type Brand = { id: string; name: string; slug: string };
+
+export type Organization = { org_id: string; name: string; slug: string; role: Role; brands: Brand[] };
+
+export type Site = { id: string; url: string; label: string; images: number; last_crawled_at: string | null };
 
 export type Status = "expire" | "<30j" | "<90j" | "ok" | "inconnue";
 
@@ -33,6 +37,7 @@ export type Upcoming = { reference_id: string; filename: string; expiry_date: st
 
 export type Overview = {
   organization: { id: string; name: string; slug: string };
+  brand: { id: string; name: string };
   role: Role;
   stats: {
     reference_images: number;
@@ -47,17 +52,20 @@ export type Overview = {
     pending_review: number;
     references_online: number;
     upcoming: Upcoming[];
+    /** Images read on the sites that match nothing in the library (rights unknown). */
+    unreferenced_online: number;
   };
   jobs: CurrentJobs;
   last_crawl: null | {
     site_url: string;
+    site_label: string;
     status: string;
     started_at: string;
     finished_at: string | null;
     pages_visited: number;
     images_new: number;
   };
-  sites: string[];
+  sites: Site[];
   defaults: { max_pages: number; max_pages_limit: number; within_days: number };
 };
 
@@ -126,7 +134,9 @@ export type Matches = {
 
 export type Scan = {
   id: string;
+  site_id: string;
   site_url: string;
+  site_label: string;
   status: "running" | "done" | "error" | "cancelled";
   started_at: string;
   finished_at: string | null;
@@ -166,11 +176,31 @@ export type ImportRow = {
 
 export type Exclusion = { id: string; reason: string; site_url: string; thumb_url: string; created_at: string };
 
+export type SiteImage = {
+  id: string;
+  ids: string[];
+  url: string;
+  urls: string[];
+  url_count: number;
+  filename: string;
+  pages: string[];
+  page_count: number;
+  site_ids: string[];
+  sites: string[];
+  width: number | null;
+  height: number | null;
+  compared: boolean;
+  first_seen: string;
+  thumb: string;
+  image: string;
+};
+
 // --- insights (Statistiques, back office) ---
 
 export type CrawlRun = {
   id: string;
   org_name: string;
+  brand_name: string | null;
   site_url: string;
   status: JobStatus;
   started_at: string;
@@ -250,6 +280,9 @@ export type CompareStats = {
   pairs: number;
   hits: number;
   hits_by_level: Record<string, number>;
+  verified_candidates?: number;
+  compare_seconds?: number;
+  verify_seconds?: number;
   seconds: number;
   pairs_per_second: number | null;
   finished_at: string;
@@ -282,8 +315,10 @@ export type OrgInsights = {
     avg_width: number | null;
     avg_height: number | null;
     avg_megapixels: number | null;
+    stored_bytes: number | null;
     pages_read: number;
     image_page_links: number;
+    sites: number;
   };
   formats: { format: string; files: number; total_bytes: number | null; avg_bytes: number | null }[];
   library: {
@@ -303,10 +338,15 @@ export type OrgInsights = {
   matching: MatchingStats;
 };
 
-export type PlatformOrg = {
-  org_id: string;
+export type PlatformBrand = {
+  brand_id: string;
   name: string;
   slug: string;
+  org_id: string;
+  org_name: string;
+  org_slug: string;
+  sites: number;
+  site_stored_bytes: number | null;
   distinct_files: number;
   site_bytes: number | null;
   avg_image_bytes: number | null;
@@ -333,6 +373,7 @@ export type PlatformOrg = {
 export type PlatformInsights = {
   totals: {
     organizations: number;
+    brands: number;
     members: number;
     references: number;
     site_files: number;
@@ -340,12 +381,13 @@ export type PlatformInsights = {
     matches: number;
     storage_bytes: number;
   };
-  organizations: PlatformOrg[];
+  brands: PlatformBrand[];
   crawls: {
     summary: CrawlSummary;
     history: Pick<
       CrawlRun,
       | "org_name"
+      | "brand_name"
       | "started_at"
       | "status"
       | "duration_seconds"
@@ -370,6 +412,6 @@ export type PlatformInsights = {
     failed_24h: number;
     last_finished_at: string | null;
   };
-  running: { id: string; org_name: string; kind: JobKind; message: string; started_at: string; heartbeat_age_seconds: number | null }[];
-  failures: { id: string; org_name: string; kind: JobKind; error: string | null; finished_at: string | null }[];
+  running: { id: string; org_name: string; brand_name: string | null; kind: JobKind; message: string; started_at: string; heartbeat_age_seconds: number | null }[];
+  failures: { id: string; org_name: string; brand_name: string | null; kind: JobKind; error: string | null; finished_at: string | null }[];
 };

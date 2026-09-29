@@ -98,7 +98,9 @@ function BackOfficeContent() {
   if (insights.error || !insights.data) return <EmptyState title="Impossible de charger le back office" body={errorMessage(insights.error)} />;
 
   const data = insights.data;
-  const { totals, organizations, crawls, queue, running, failures } = data;
+  const { totals, brands, crawls, queue, running, failures } = data;
+  const brandLabel = (row: { org_name: string; brand_name: string | null }) =>
+    row.brand_name && row.brand_name !== row.org_name ? `${row.org_name} · ${row.brand_name}` : row.org_name;
   const state = health(queue, running);
 
   return (
@@ -121,10 +123,10 @@ function BackOfficeContent() {
       </section>
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat value={num(totals.organizations)} label="marques" hint={`${num(totals.members)} compte(s) rattaché(s)`} />
+        <Stat value={num(totals.brands)} label="marques" hint={`${num(totals.organizations)} organisation(s) · ${num(totals.members)} compte(s)`} />
         <Stat value={num(totals.site_files)} label="images de sites stockées" hint={`${num(totals.pages_read)} pages lues`} />
         <Stat value={num(totals.references)} label="visuels sous surveillance" hint={`${num(totals.matches)} correspondance(s)`} />
-        <Stat value={bytes(totals.storage_bytes)} label="stockage total" hint="images des sites + bibliothèques" />
+        <Stat value={bytes(totals.storage_bytes)} label="stockage total" hint="copies de travail des sites + bibliothèques" />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -136,9 +138,13 @@ function BackOfficeContent() {
 
       <Section className="mt-6" title="Marques" description="Stockage, lectures sur 90 jours, qualité du matching, échecs sur 30 jours.">
         <Table
-          head={["Marque", "Images", "Poids moy.", "Visuels", "Expirés", "Stockage", "Lectures", "Dernière", "Durée moy.", "Pages/min", "CLIP img/s", "Corresp.", "Taux FP", "Échecs 30 j", ""]}
-          rows={organizations.map((org) => [
-            org.name,
+          head={["Marque", "Sites", "Images", "Poids moy.", "Visuels", "Expirés", "Stockage", "Lectures", "Dernière", "Durée moy.", "Pages/min", "CLIP img/s", "Corresp.", "Taux FP", "Échecs 30 j", ""]}
+          rows={brands.map((org) => [
+            <span>
+              {org.name}
+              {org.org_name !== org.name ? <span className="block text-xs font-normal text-muted">{org.org_name}</span> : null}
+            </span>,
+            num(org.sites),
             num(org.distinct_files),
             bytes(org.avg_image_bytes),
             num(org.references_total),
@@ -158,7 +164,7 @@ function BackOfficeContent() {
             num(org.matches),
             percent(org.false_positive_rate),
             org.failed_jobs_30d ? <span className="text-expired">{num(org.failed_jobs_30d)} / {num(org.jobs_30d)}</span> : `0 / ${num(org.jobs_30d)}`,
-            <Link to={`/o/${org.slug}/statistiques`} className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline">Détail</Link>,
+            <Link to={`/o/${org.org_slug}/m/${org.slug}/statistiques`} className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline">Détail</Link>,
           ])}
           empty="Aucune marque."
         />
@@ -200,7 +206,7 @@ function BackOfficeContent() {
             head={["Marque", "Tâche", "Depuis", "Battement", "Message"]}
             align={["left", "left", "right", "right", "left"]}
             rows={running.map((job) => [
-              job.org_name,
+              brandLabel(job),
               jobLabel[job.kind],
               formatDateTime(job.started_at),
               <span className={(job.heartbeat_age_seconds ?? 0) > 120 ? "text-expired" : undefined}>{duration(job.heartbeat_age_seconds)}</span>,
@@ -214,7 +220,7 @@ function BackOfficeContent() {
             head={["Marque", "Tâche", "Quand", "Erreur"]}
             align={["left", "left", "right", "left"]}
             rows={failures.map((job) => [
-              job.org_name,
+              brandLabel(job),
               jobLabel[job.kind],
               formatDateTime(job.finished_at),
               <span className="block max-w-48 truncate font-mono text-xs text-muted" title={job.error ?? undefined}>{job.error ?? "—"}</span>,

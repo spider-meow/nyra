@@ -135,7 +135,7 @@ export function SplitBar(props: { segments: Segment[]; format: (value: number) =
         {props.segments.map((segment, index) => (
           <li
             key={segment.key}
-            className={cx("flex items-center gap-2 transition-opacity", active && active !== segment.key && "opacity-50")}
+            className={cx("flex min-w-0 items-center gap-2 transition-opacity", active && active !== segment.key && "opacity-50")}
             onMouseEnter={() => setActive(segment.key)}
             onMouseLeave={() => setActive(null)}
           >

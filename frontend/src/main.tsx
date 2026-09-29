@@ -5,7 +5,7 @@ import { createBrowserRouter, Navigate, RouterProvider, useMatches } from "react
 import { ConfirmProvider, ToastProvider } from "./components/feedback";
 import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
-import { Login, NotFound, OrgHome, OrgShell, RequireSession, SetPassword } from "./pages/Access";
+import { BrandShell, FirstBrand, Login, NotFound, OrgHome, OrgShell, RequireSession, SetPassword } from "./pages/Access";
 import { BackOffice } from "./pages/BackOffice";
 import { Dashboard } from "./pages/Dashboard";
 import { Library } from "./pages/Library";
@@ -13,6 +13,7 @@ import { Reports } from "./pages/Reports";
 import { Review } from "./pages/Review";
 import { Scans } from "./pages/Scans";
 import { Settings } from "./pages/Settings";
+import { SiteImages } from "./pages/SiteImages";
 import { Statistics } from "./pages/Statistics";
 import "./index.css";
 
@@ -32,7 +33,7 @@ function Titled(props: { children: ReactNode }) {
   const matches = useMatches();
   const title = [...matches].reverse().find((match) => (match.handle as Handle | undefined)?.title)?.handle as Handle | undefined;
   useEffect(() => {
-    document.title = title ? `${title.title} — Nyra` : "Nyra";
+    document.title = title ? `${title.title} · Nyra` : "Nyra";
   }, [title]);
   return <>{props.children}</>;
 }
@@ -51,15 +52,25 @@ const router = createBrowserRouter([
         path: "/o/:slug",
         element: <OrgShell />,
         children: [
-          { index: true, element: <Navigate to="tableau-de-bord" replace /> },
-          { path: "tableau-de-bord", element: page(<Dashboard />), handle: { title: "Tableau de bord" } },
-          { path: "a-traiter", element: page(<Review />), handle: { title: "À traiter" } },
-          { path: "bibliotheque", element: page(<Library />), handle: { title: "Bibliothèque" } },
-          { path: "lectures", element: page(<Scans />), handle: { title: "Lectures du site" } },
-          { path: "rapports", element: page(<Reports />), handle: { title: "Rapports" } },
-          { path: "statistiques", element: page(<Statistics />), handle: { title: "Statistiques" } },
-          { path: "reglages", element: page(<Settings />), handle: { title: "Réglages" } },
-          { path: "*", element: page(<NotFound />), handle: { title: "Page introuvable" } },
+          { index: true, element: <FirstBrand /> },
+          {
+            path: "m/:brand",
+            element: <BrandShell />,
+            children: [
+              { index: true, element: <Navigate to="tableau-de-bord" replace /> },
+              { path: "tableau-de-bord", element: page(<Dashboard />), handle: { title: "Tableau de bord" } },
+              { path: "a-traiter", element: page(<Review />), handle: { title: "À traiter" } },
+              { path: "bibliotheque", element: page(<Library />), handle: { title: "Bibliothèque" } },
+              { path: "images-du-site", element: page(<SiteImages />), handle: { title: "Droits non vérifiés" } },
+              { path: "lectures", element: page(<Scans />), handle: { title: "Sites et lectures" } },
+              { path: "rapports", element: page(<Reports />), handle: { title: "Rapports" } },
+              { path: "statistiques", element: page(<Statistics />), handle: { title: "Statistiques" } },
+              { path: "reglages", element: page(<Settings />), handle: { title: "Réglages" } },
+              { path: "*", element: page(<NotFound />), handle: { title: "Page introuvable" } },
+            ],
+          },
+          // Links from before brands: /o/:slug/bibliotheque -> the first brand's library.
+          { path: "*", element: <FirstBrand /> },
         ],
       },
     ],

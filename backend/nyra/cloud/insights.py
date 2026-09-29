@@ -1,12 +1,13 @@
 """Statistics for the insights pages, read from the `insights` views.
 
 Two audiences, one source:
-- `org_insights` — one organization's numbers, for its admins
-  (`/o/<slug>/statistiques`);
-- `platform_insights` — every organization side by side, plus the health
-  of the job queue, for the Nyra team (`/interne`, `platform_staff` only).
+- `brand_insights` — one brand's numbers, for its organization's admins
+  (`/o/<org>/m/<brand>/statistiques`);
+- `platform_insights` — every brand of every organization side by side,
+  plus the health of the job queue, for the Nyra team (`/interne`,
+  `platform_staff` only).
 
-The views live in `supabase/migrations/20260929000012_insights.sql`;
+The views live in `supabase/migrations/20260929000015_insights.sql`;
 Grafana reads the same ones (docs/OBSERVABILITY.md). Everything returned
 here is plain JSON: numbers are floats or ints, dates ISO strings.
 """
@@ -75,7 +76,7 @@ def set_staff(conn: psycopg.Connection, user_id: uuid.UUID, staff: bool) -> None
 # --- building blocks ----------------------------------------------------------------
 
 _RUN_COLUMNS = """
-    id, org_id, org_name, site_url, status, started_at, finished_at, duration_seconds,
+    id, org_id, org_name, brand_id, brand_name, site_url, status, started_at, finished_at, duration_seconds,
     pages_visited, images_found, images_stored, images_new, blocked_by_robots, error_count,
     sitemap_urls, pages_failed, images_known, images_duplicate, images_rejected,
     downloads, downloads_failed, bytes_downloaded, bytes_new, thumb_bytes_new, pixels_new,
@@ -151,8 +152,8 @@ def _last_compare(conn: psycopg.Connection, where: str, params: Any) -> Optional
             "pairs_per_second": metrics.get("pairs", 0) / seconds if seconds else None}
 
 
-def _matching(conn: psycopg.Connection, org_id: Optional[uuid.UUID]) -> Row:
-    where, params = ("org_id = %s", (org_id,)) if org_id else ("TRUE", None)
+def _matching(conn: psycopg.Connection, brand_id: Optional[uuid.UUID]) -> Row:
+    where, params = ("brand_id = %s", (brand_id,)) if brand_id else ("TRUE", None)
     rows = _all(conn, f"SELECT * FROM insights.matching WHERE {where}", params)
     by_confidence: dict[str, Row] = {}
     by_level: dict[str, Row] = {}
@@ -172,61 +173,67 @@ def _matching(conn: psycopg.Connection, org_id: Optional[uuid.UUID]) -> Row:
     return {"total": total, "by_confidence": by_confidence, "by_level": by_level}
 
 
-# --- one organization ------------------------------------------------------------------
+# --- one brand -------------------------------------------------------------------------
 
-def org_insights(conn: psycopg.Connection, org_id: uuid.UUID) -> Row:
+def brand_insights(conn: psycopg.Connection, brand_id: uuid.UUID) -> Row:
     runs = _all(conn, f"""SELECT {_RUN_COLUMNS} FROM insights.crawl_runs
-                          WHERE org_id = %s ORDER BY started_at DESC LIMIT %s""", (org_id, HISTORY_RUNS))
+                          WHERE brand_id = %s ORDER BY started_at DESC LIMIT %s""", (brand_id, HISTORY_RUNS))
     return {
-        "site": _one(conn, "SELECT * FROM insights.site_images WHERE org_id = %s", (org_id,)),
+        "site": _one(conn, "SELECT * FROM insights.site_images WHERE brand_id = %s", (brand_id,)),
         "formats": _all(conn, """SELECT format, files, total_bytes, avg_bytes FROM insights.site_image_formats
-                                  WHERE org_id = %s ORDER BY files DESC""", (org_id,)),
-        "library": _one(conn, "SELECT * FROM insights.library WHERE org_id = %s", (org_id,)),
+                                  WHERE brand_id = %s ORDER BY files DESC""", (brand_id,)),
+        "library": _one(conn, "SELECT * FROM insights.library WHERE brand_id = %s", (brand_id,)),
         "crawls": {
             "summary": _crawl_summary(runs),
             "last": runs[0] if runs else None,
             # Oldest first, for the charts.
             "history": list(reversed(runs)),
         },
-        "jobs": _jobs_by_kind(conn, "org_id = %s", (org_id,)),
-        "compare": _last_compare(conn, "org_id = %s", (org_id,)),
-        "matching": _matching(conn, org_id),
+        "jobs": _jobs_by_kind(conn, "brand_id = %s", (brand_id,)),
+        "compare": _last_compare(conn, "brand_id = %s", (brand_id,)),
+        "matching": _matching(conn, brand_id),
     }
 
 
-# --- every organization ----------------------------------------------------------------
+# --- every brand ------------------------------------------------------------------------
 
 def platform_insights(conn: psycopg.Connection) -> Row:
-    organizations = _all(conn, """
-        SELECT o.id AS org_id, o.name, o.slug,
-               s.distinct_files, s.total_bytes AS site_bytes, s.avg_bytes AS avg_image_bytes, s.pages_read,
+    brands = _all(conn, """
+        SELECT b.id AS brand_id, b.name, b.slug, o.id AS org_id, o.name AS org_name, o.slug AS org_slug,
+               s.distinct_files, s.total_bytes AS site_bytes, s.avg_bytes AS avg_image_bytes,
+               s.stored_bytes AS site_stored_bytes, s.pages_read, s.sites,
                l.references_total, l.expired, l.expiring_90_days, l.total_bytes AS library_bytes,
-               (SELECT COUNT(*) FROM matches m WHERE m.org_id = o.id) AS matches,
+               (SELECT COUNT(*) FROM matches m JOIN reference_images r ON r.id = m.reference_id
+                 WHERE r.brand_id = b.id) AS matches,
                (SELECT COUNT(*) FROM memberships ms WHERE ms.org_id = o.id) AS members
-        FROM organizations o
-        LEFT JOIN insights.site_images s ON s.org_id = o.id
-        LEFT JOIN insights.library l ON l.org_id = o.id
-        ORDER BY o.name""")
+        FROM brands b
+        JOIN organizations o ON o.id = b.org_id
+        LEFT JOIN insights.site_images s ON s.brand_id = b.id
+        LEFT JOIN insights.library l ON l.brand_id = b.id
+        ORDER BY o.name, b.name""")
     runs = _all(conn, f"""SELECT {_RUN_COLUMNS} FROM insights.crawl_runs
                           WHERE started_at > now() - interval '90 days' ORDER BY started_at DESC""")
-    runs_by_org: dict[str, list[Row]] = {}
+    runs_by_brand: dict[str, list[Row]] = {}
     for run in runs:
-        runs_by_org.setdefault(run["org_id"], []).append(run)
-    fp_rates = {row["org_id"]: row for row in _all(conn, """
-        SELECT org_id, SUM(reviewed) AS reviewed, SUM(false_positives) AS false_positives
-        FROM insights.matching GROUP BY org_id""")}
-    job_errors = {row["org_id"]: row for row in _all(conn, """
-        SELECT org_id, COUNT(*) AS jobs_30d, COUNT(*) FILTER (WHERE status = 'error') AS failed_30d
-        FROM insights.jobs WHERE created_at > now() - interval '30 days' GROUP BY org_id""")}
+        runs_by_brand.setdefault(run["brand_id"], []).append(run)
+    fp_rates = {row["brand_id"]: row for row in _all(conn, """
+        SELECT brand_id, SUM(reviewed) AS reviewed, SUM(false_positives) AS false_positives
+        FROM insights.matching GROUP BY brand_id""")}
+    job_errors = {row["brand_id"]: row for row in _all(conn, """
+        SELECT brand_id, COUNT(*) AS jobs_30d, COUNT(*) FILTER (WHERE status = 'error') AS failed_30d
+        FROM insights.jobs WHERE created_at > now() - interval '30 days' GROUP BY brand_id""")}
 
-    for org in organizations:
-        org_runs = runs_by_org.get(org["org_id"], [])
-        summary = _crawl_summary(org_runs)
-        last = org_runs[0] if org_runs else None
-        fp = fp_rates.get(org["org_id"]) or {}
-        errors = job_errors.get(org["org_id"]) or {}
-        org.update({
-            "storage_bytes": (org.get("site_bytes") or 0) + (org.get("library_bytes") or 0),
+    for brand in brands:
+        brand_runs = runs_by_brand.get(brand["brand_id"], [])
+        summary = _crawl_summary(brand_runs)
+        last = brand_runs[0] if brand_runs else None
+        fp = fp_rates.get(brand["brand_id"]) or {}
+        errors = job_errors.get(brand["brand_id"]) or {}
+        brand.update({
+            # What Nyra keeps: working copies + thumbnails of site images (the originals stay on the
+            # sites; older rows without that figure count their weight on the site), the library's originals.
+            "storage_bytes": (brand.get("site_stored_bytes") or brand.get("site_bytes") or 0)
+                             + (brand.get("library_bytes") or 0),
             "crawls_90d": summary["runs"],
             "last_crawl_at": last["started_at"] if last else None,
             "last_crawl_status": last["status"] if last else None,
@@ -238,6 +245,7 @@ def platform_insights(conn: psycopg.Connection) -> Row:
             "jobs_30d": errors.get("jobs_30d", 0),
             "failed_jobs_30d": errors.get("failed_30d", 0),
         })
+    organizations = {brand["org_id"] for brand in brands}
 
     queue = _one(conn, """
         SELECT COUNT(*) FILTER (WHERE status = 'queued') AS queued,
@@ -249,31 +257,32 @@ def platform_insights(conn: psycopg.Connection) -> Row:
                MAX(finished_at) AS last_finished_at
         FROM jobs""")
     running = _all(conn, """
-        SELECT j.id, o.name AS org_name, j.kind, j.message, j.progress, j.started_at,
+        SELECT j.id, o.name AS org_name, b.name AS brand_name, j.kind, j.message, j.progress, j.started_at,
                EXTRACT(EPOCH FROM now() - j.heartbeat_at) AS heartbeat_age_seconds
-        FROM jobs j JOIN organizations o ON o.id = j.org_id
+        FROM jobs j JOIN organizations o ON o.id = j.org_id LEFT JOIN brands b ON b.id = j.brand_id
         WHERE j.status = 'running' ORDER BY j.started_at""")
     failures = _all(conn, """
-        SELECT id, org_name, kind, error, finished_at FROM insights.jobs
+        SELECT id, org_name, brand_name, kind, error, finished_at FROM insights.jobs
         WHERE status = 'error' ORDER BY finished_at DESC NULLS LAST LIMIT 15""")
 
     history = [{key: run[key] for key in (
-        "org_name", "started_at", "status", "duration_seconds", "pages_visited", "images_found", "images_new",
+        "org_name", "brand_name", "started_at", "status", "duration_seconds", "pages_visited", "images_found", "images_new",
         "pages_per_minute", "images_scanned_per_second", "clip_images_per_second", "avg_new_image_bytes",
     )} for run in reversed(runs[:60])]
 
     totals = {
         "organizations": len(organizations),
-        "members": sum(org["members"] or 0 for org in organizations),
-        "references": sum(org["references_total"] or 0 for org in organizations),
-        "site_files": sum(org["distinct_files"] or 0 for org in organizations),
-        "pages_read": sum(org["pages_read"] or 0 for org in organizations),
-        "matches": sum(org["matches"] or 0 for org in organizations),
-        "storage_bytes": sum(org["storage_bytes"] for org in organizations),
+        "brands": len(brands),
+        "members": _one(conn, "SELECT COUNT(DISTINCT user_id) AS c FROM memberships")["c"],
+        "references": sum(brand["references_total"] or 0 for brand in brands),
+        "site_files": sum(brand["distinct_files"] or 0 for brand in brands),
+        "pages_read": sum(brand["pages_read"] or 0 for brand in brands),
+        "matches": sum(brand["matches"] or 0 for brand in brands),
+        "storage_bytes": sum(brand["storage_bytes"] for brand in brands),
     }
     return {
         "totals": totals,
-        "organizations": organizations,
+        "brands": brands,
         "crawls": {"summary": _crawl_summary(runs), "history": history},
         "jobs": _jobs_by_kind(conn, "created_at > now() - interval '30 days'", None),
         "compare": _last_compare(conn, "TRUE", None),

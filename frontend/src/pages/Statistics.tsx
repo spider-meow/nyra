@@ -18,7 +18,7 @@ import {
 } from "../components/insights";
 import { EmptyState, PageHeader, Skeleton, Stat } from "../components/ui";
 import { errorMessage } from "../lib/api";
-import { bytes, duration, formatDateTime, hostOf, num, percent } from "../lib/format";
+import { bytes, duration, formatDateTime, num, percent } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useInsights } from "../lib/queries";
 
@@ -30,6 +30,7 @@ export function Statistics() {
 }
 
 function StatisticsContent() {
+  const { brand } = useOrg();
   const insights = useInsights();
   const [metric, setMetric] = useState<HistoryMetric>("duration_seconds");
 
@@ -55,7 +56,7 @@ function StatisticsContent() {
     <>
       <PageHeader
         title="Statistiques"
-        description={last ? <>Mesures des lectures de {hostOf(last.site_url)}, de la bibliothèque et des comparaisons. Dernière lecture le {formatDateTime(last.started_at)}.</> : "Mesures des lectures, de la bibliothèque et des comparaisons."}
+        description={last ? <>Lectures des {num(site.sites)} site(s) de {brand.name}, bibliothèque et comparaisons. Dernière lecture le {formatDateTime(last.started_at)}.</> : `Lectures des sites de ${brand.name}, bibliothèque et comparaisons.`}
       />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -68,7 +69,7 @@ function StatisticsContent() {
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Stat value={num(summary.avg_pages_per_minute, 1)} label="pages lues par minute" hint={`${duration(summary.avg_seconds_per_page)} de rendu par page`} />
         <Stat value={num(summary.avg_images_per_page, 1)} label="images par page" hint={`${num(site.image_page_links)} liens image-page`} />
-        <Stat value={bytes((site.total_bytes ?? 0) + (library.total_bytes ?? 0))} label="stockage utilisé" hint={`site ${bytes(site.total_bytes)} · bibliothèque ${bytes(library.total_bytes)}`} />
+        <Stat value={bytes((site.stored_bytes ?? 0) + (library.total_bytes ?? 0))} label="stockage utilisé" hint={`copies des images ${bytes(site.stored_bytes)} · bibliothèque ${bytes(library.total_bytes)}`} />
         <Stat value={percent(matching.total.false_positive_rate)} label="de faux positifs" hint={`sur ${num(matching.total.reviewed)} correspondance(s) décidée(s)`} />
       </div>
 
@@ -126,7 +127,8 @@ function StatisticsContent() {
             rows={[
               ["Dimensions moyennes", site.avg_width ? `${num(site.avg_width)} × ${num(site.avg_height)} px` : "—"],
               ["Mégapixels moyens", num(site.avg_megapixels, 2)],
-              ["Poids total", bytes(site.total_bytes)],
+              ["Poids total sur le site", bytes(site.total_bytes)],
+              ["Stocké par Nyra (copies + vignettes)", bytes(site.stored_bytes)],
               ["Poids médian", bytes(site.median_bytes)],
               ["URL servant des octets déjà vus", percent(dedupRatio)],
               ["Poids mesuré pour", `${num(site.files_with_size)} / ${num(site.distinct_files)} fichiers`],

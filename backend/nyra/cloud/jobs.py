@@ -6,11 +6,12 @@ nothing, several web instances can run behind a load balancer, and a
 worker that dies mid-job is noticed through its heartbeat.
 
 Rules:
-- one running job per organization (unique partial index), several
-  organizations in parallel across workers;
+- every job belongs to one brand of an organization;
+- one running job per brand (unique partial index), several brands (of
+  the same organization or not) in parallel across workers;
 - a crawl, a match or a report is refused while the same kind is already
-  queued or running for the organization; an `index` request joins the
-  one already queued instead;
+  queued or running for the brand; an `index` request joins the one
+  already queued instead;
 - cancelling a queued job cancels it at once; a running one gets
   `cancel_requested`, which the worker checks between steps.
 """
@@ -36,7 +37,7 @@ def _row(row: Optional[dict]) -> Optional[dict]:
     if row is None:
         return None
     out = dict(row)
-    for key in ("id", "org_id", "created_by"):
+    for key in ("id", "org_id", "brand_id", "created_by"):
         if out.get(key) is not None:
             out[key] = str(out[key])
     for key in ("created_at", "started_at", "finished_at", "heartbeat_at"):
@@ -46,32 +47,37 @@ def _row(row: Optional[dict]) -> Optional[dict]:
 
 
 def enqueue(
-    conn: psycopg.Connection, *, org_id: uuid.UUID, kind: str, params: Optional[dict] = None,
-    created_by: Optional[uuid.UUID] = None,
+    conn: psycopg.Connection, *, org_id: uuid.UUID, brand_id: uuid.UUID, kind: str,
+    params: Optional[dict] = None, created_by: Optional[uuid.UUID] = None,
 ) -> dict:
     if kind not in KINDS:
         raise ValueError(f"unknown job kind {kind}")
-    # Serialize enqueues per organization so two clicks can't both pass the check.
-    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"jobs:{org_id}",))
-    existing = conn.execute(
-        "SELECT * FROM jobs WHERE org_id = %s AND kind = %s AND status = ANY(%s) ORDER BY created_at LIMIT 1",
-        (org_id, kind, list(ACTIVE)),
-    ).fetchone()
-    if existing is not None:
-        if kind == "index" and existing["status"] == "queued":
-            return _row(existing)
-        if kind != "index":
-            raise JobConflict(kind)
+    # Serialize enqueues per brand so two clicks can't both pass the check.
+    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"jobs:{brand_id}",))
+    if kind == "index":
+        # Every upload asks for one: they all join the one still waiting, even
+        # while another index job is running.
+        waiting = conn.execute(
+            "SELECT * FROM jobs WHERE brand_id = %s AND kind = 'index' AND status = 'queued' ORDER BY created_at LIMIT 1",
+            (brand_id,),
+        ).fetchone()
+        if waiting is not None:
+            return _row(waiting)
+    elif conn.execute(
+        "SELECT 1 FROM jobs WHERE brand_id = %s AND kind = %s AND status = ANY(%s) LIMIT 1",
+        (brand_id, kind, list(ACTIVE)),
+    ).fetchone():
+        raise JobConflict(kind)
     row = conn.execute(
-        """INSERT INTO jobs (org_id, kind, params, created_by, message)
-           VALUES (%s, %s, %s, %s, 'En attente…') RETURNING *""",
-        (org_id, kind, json.dumps(params or {}), created_by),
+        """INSERT INTO jobs (org_id, brand_id, kind, params, created_by, message)
+           VALUES (%s, %s, %s, %s, %s, 'En attente…') RETURNING *""",
+        (org_id, brand_id, kind, json.dumps(params or {}), created_by),
     ).fetchone()
     return _row(row)
 
 
 def claim(conn: psycopg.Connection) -> Optional[dict]:
-    """Take the oldest queued job of an organization that has nothing running."""
+    """Take the oldest queued job of a brand that has nothing running."""
     try:
         row = conn.execute(
             """
@@ -79,7 +85,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
             WHERE id = (
                 SELECT j.id FROM jobs j
                 WHERE j.status = 'queued'
-                  AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.org_id = j.org_id AND r.status = 'running')
+                  AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.brand_id = j.brand_id AND r.status = 'running')
                 ORDER BY j.created_at
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
@@ -88,7 +94,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
             """
         ).fetchone()
     except psycopg.errors.UniqueViolation:
-        # Another worker started a job for the same organization in the meantime.
+        # Another worker started a job for the same brand in the meantime.
         conn.rollback()
         return None
     return _row(row)
@@ -117,16 +123,16 @@ def finish(conn: psycopg.Connection, job_id: str, *, status: str, message: str,
     )
 
 
-def request_cancel(conn: psycopg.Connection, org_id: uuid.UUID, job_id: uuid.UUID) -> Optional[dict]:
+def request_cancel(conn: psycopg.Connection, brand_id: uuid.UUID, job_id: uuid.UUID) -> Optional[dict]:
     row = conn.execute(
         """UPDATE jobs SET
                status = CASE WHEN status = 'queued' THEN 'cancelled' ELSE status END,
                finished_at = CASE WHEN status = 'queued' THEN now() ELSE finished_at END,
                message = CASE WHEN status = 'queued' THEN 'Annulé avant le démarrage.' ELSE 'Arrêt demandé…' END,
                cancel_requested = true
-           WHERE id = %s AND org_id = %s AND status = ANY(%s)
+           WHERE id = %s AND brand_id = %s AND status = ANY(%s)
            RETURNING *""",
-        (job_id, org_id, list(ACTIVE)),
+        (job_id, brand_id, list(ACTIVE)),
     ).fetchone()
     return _row(row)
 
@@ -150,27 +156,27 @@ def reap_stale(conn: psycopg.Connection, older_than_seconds: int = STALE_AFTER_S
     return len(ids)
 
 
-def get(conn: psycopg.Connection, org_id: uuid.UUID, job_id: uuid.UUID) -> Optional[dict]:
-    return _row(conn.execute("SELECT * FROM jobs WHERE id = %s AND org_id = %s", (job_id, org_id)).fetchone())
+def get(conn: psycopg.Connection, brand_id: uuid.UUID, job_id: uuid.UUID) -> Optional[dict]:
+    return _row(conn.execute("SELECT * FROM jobs WHERE id = %s AND brand_id = %s", (job_id, brand_id)).fetchone())
 
 
-def current(conn: psycopg.Connection, org_id: uuid.UUID) -> dict[str, Any]:
+def current(conn: psycopg.Connection, brand_id: uuid.UUID) -> dict[str, Any]:
     """Active jobs (running first) and the most recently finished one."""
     active = conn.execute(
-        """SELECT * FROM jobs WHERE org_id = %s AND status = ANY(%s)
+        """SELECT * FROM jobs WHERE brand_id = %s AND status = ANY(%s)
            ORDER BY (status = 'running') DESC, created_at""",
-        (org_id, list(ACTIVE)),
+        (brand_id, list(ACTIVE)),
     ).fetchall()
     last = conn.execute(
-        """SELECT * FROM jobs WHERE org_id = %s AND status <> ALL(%s)
+        """SELECT * FROM jobs WHERE brand_id = %s AND status <> ALL(%s)
            ORDER BY finished_at DESC NULLS LAST LIMIT 1""",
-        (org_id, list(ACTIVE)),
+        (brand_id, list(ACTIVE)),
     ).fetchone()
     return {"active": [_row(row) for row in active], "last": _row(last)}
 
 
-def recent(conn: psycopg.Connection, org_id: uuid.UUID, limit: int = 20) -> list[dict]:
+def recent(conn: psycopg.Connection, brand_id: uuid.UUID, limit: int = 20) -> list[dict]:
     rows = conn.execute(
-        "SELECT * FROM jobs WHERE org_id = %s ORDER BY created_at DESC LIMIT %s", (org_id, limit)
+        "SELECT * FROM jobs WHERE brand_id = %s ORDER BY created_at DESC LIMIT %s", (brand_id, limit)
     ).fetchall()
     return [_row(row) for row in rows]

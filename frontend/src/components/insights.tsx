@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { bytes, confidenceLabel, duration, formatDateTime, jobLabel, num, percent } from "../lib/format";
+import { bytes, confidenceLabel, duration, formatDateTime, hostOf, jobLabel, num, percent } from "../lib/format";
 import type { CompareStats, Confidence, CrawlRun, CrawlSummary, JobKindStats, MatchingStats } from "../types";
 import { BarHistory, ShareBar, SplitBar, type Bar } from "./charts";
 import { Card, cx } from "./ui";
@@ -68,7 +68,7 @@ function dayLabel(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : shortDate.format(date);
 }
 
-type HistoryRun = Pick<CrawlRun, "started_at" | "status" | "duration_seconds" | "pages_visited" | "images_found" | "images_new" | "pages_per_minute" | "images_scanned_per_second" | "clip_images_per_second"> & { org_name?: string };
+type HistoryRun = Pick<CrawlRun, "started_at" | "status" | "duration_seconds" | "pages_visited" | "images_found" | "images_new" | "pages_per_minute" | "images_scanned_per_second" | "clip_images_per_second"> & { org_name?: string; brand_name?: string | null; site_url?: string };
 
 export type HistoryMetric = "duration_seconds" | "pages_per_minute" | "images_scanned_per_second" | "clip_images_per_second" | "images_new";
 
@@ -80,12 +80,21 @@ export const historyMetrics: Record<HistoryMetric, { label: string; format: (val
   images_new: { label: "Nouvelles images", format: (value) => num(value) },
 };
 
+function runOwner(run: HistoryRun, withOrg: boolean): string {
+  if (withOrg) {
+    const name = run.brand_name && run.brand_name !== run.org_name ? `${run.org_name} · ${run.brand_name}` : run.org_name;
+    return name ? `${name} · ` : "";
+  }
+  // One brand, several sites: say which one.
+  return run.site_url ? `${hostOf(run.site_url)} · ` : "";
+}
+
 export function historyBars(runs: HistoryRun[], metric: HistoryMetric, withOrg = false): Bar[] {
   return runs.map((run, index) => ({
     key: `${run.started_at}-${index}`,
     value: run[metric] ?? null,
-    label: `${withOrg && run.org_name ? `${run.org_name} · ` : ""}${dayLabel(run.started_at)}`,
-    longLabel: `${withOrg && run.org_name ? `${run.org_name} · ` : ""}${formatDateTime(run.started_at)}`,
+    label: `${withOrg ? runOwner(run, true) : ""}${dayLabel(run.started_at)}`,
+    longLabel: `${runOwner(run, withOrg)}${formatDateTime(run.started_at)}`,
     details: [
       { label: "Durée", value: duration(run.duration_seconds) },
       { label: "Pages", value: num(run.pages_visited) },
@@ -232,6 +241,8 @@ export function CompareFacts(props: { compare: CompareStats | null }) {
         ["Mode", compare.full ? "Complète (tout recomparé)" : "Incrémentale (seulement le nouveau)"],
         ["Paires comparées", num(compare.pairs)],
         ["Durée", duration(compare.seconds)],
+        ["dont comparaison des empreintes", duration(compare.compare_seconds)],
+        ["dont vérification par points-clés", compare.verified_candidates ? `${duration(compare.verify_seconds)} · ${num(compare.verified_candidates)} candidat(s)` : "—"],
         ["Débit", compare.pairs_per_second === null ? "—" : `${num(compare.pairs_per_second)} paires / s`],
         ["Correspondances trouvées", num(compare.hits)],
         ["Images exclues (faux positifs récurrents)", num(compare.excluded)],
@@ -242,7 +253,10 @@ export function CompareFacts(props: { compare: CompareStats | null }) {
 
 export function crawlRunRows(runs: CrawlRun[]): ReactNode[][] {
   return [...runs].reverse().map((run) => [
-    formatDateTime(run.started_at),
+    <span>
+      {formatDateTime(run.started_at)}
+      <span className="block text-xs font-normal text-muted">{hostOf(run.site_url)}</span>
+    </span>,
     run.status === "done" ? duration(run.duration_seconds) : run.status === "error" ? <span className="text-expired">Échec</span> : run.status === "cancelled" ? "Arrêtée" : "En cours",
     num(run.pages_visited),
     num(run.pages_per_minute, 1),

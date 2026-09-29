@@ -40,54 +40,63 @@ def test_slugify_folds_accents_and_separators():
         cloud_db.slugify("---")
 
 
-def _ref(conn, org_id, name, phash=HASH_A, expiry=None):
+def _brand(conn, org_id):
+    return conn.execute("SELECT id FROM brands WHERE org_id = %s ORDER BY created_at LIMIT 1", (org_id,)).fetchone()["id"]
+
+
+def _ref(conn, org_id, brand_id, name, phash=HASH_A, expiry=None):
     return cloud_db.upsert_reference_image(
-        conn, org_id=org_id, filename=name, storage_path=f"{org_id}/{name}", expiry_date=expiry,
-        credit=None, notes=None, phash=phash, dhash=phash,
+        conn, org_id=org_id, brand_id=brand_id, filename=name, storage_path=f"{org_id}/{brand_id}/{name}",
+        expiry_date=expiry, credit=None, notes=None, phash=phash, dhash=phash,
     )
 
 
-def _site_image(conn, org_id, site_id, url, phash=HASH_A):
+def _site(conn, org_id, brand_id, url="https://t.test/"):
+    return cloud_db.create_site(conn, org_id=org_id, brand_id=brand_id, url=url)
+
+
+def _site_image(conn, org_id, site_id, url, phash=HASH_A, storage_path=None):
     return conn.execute(
         """INSERT INTO site_images (org_id, site_id, url, storage_path, phash, dhash)
            VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
-        (org_id, site_id, url, f"{org_id}/{uuid.uuid4().hex}.jpg", phash, phash),
+        (org_id, site_id, url, storage_path or f"{org_id}/{uuid.uuid4().hex}.jpg", phash, phash),
     ).fetchone()["id"]
 
 
-def test_reference_rehash_resets_compared_at_and_delete_returns_paths(cloud_database_url, cloud_org):
+def test_reference_rehash_resets_compared_at_and_delete_returns_paths(cloud_database_url, cloud_org, cloud_brand):
     with cloud_db.connect(cloud_database_url) as conn:
-        ref_id = _ref(conn, cloud_org, "a.jpg")
+        ref_id = _ref(conn, cloud_org, cloud_brand, "a.jpg")
         cloud_db.stamp_compared(conn, [ref_id], [])
-        _ref(conn, cloud_org, "a.jpg")  # same hashes: stays compared
-        assert cloud_db.get_reference_by_filename(conn, cloud_org, "a.jpg")["compared_at"] is not None
-        _ref(conn, cloud_org, "a.jpg", phash=HASH_B)
-        assert cloud_db.get_reference_by_filename(conn, cloud_org, "a.jpg")["compared_at"] is None
+        _ref(conn, cloud_org, cloud_brand, "a.jpg")  # same hashes: stays compared
+        assert cloud_db.get_reference_by_filename(conn, cloud_brand, "a.jpg")["compared_at"] is not None
+        _ref(conn, cloud_org, cloud_brand, "a.jpg", phash=HASH_B)
+        assert cloud_db.get_reference_by_filename(conn, cloud_brand, "a.jpg")["compared_at"] is None
 
-        listed = cloud_db.list_references(conn, cloud_org)
+        listed = cloud_db.list_references(conn, cloud_brand)
         assert [row["filename"] for row in listed] == ["a.jpg"] and "embedding" not in listed[0]
-        deleted = cloud_db.delete_references(conn, cloud_org, ["a.jpg", "nope.jpg"])
-        assert [row["storage_path"] for row in deleted] == [f"{cloud_org}/a.jpg"]
+        deleted = cloud_db.delete_references(conn, cloud_brand, ["a.jpg", "nope.jpg"])
+        assert [row["storage_path"] for row in deleted] == [f"{cloud_org}/{cloud_brand}/a.jpg"]
 
 
-def test_reviews_only_attach_to_this_organizations_matches(cloud_database_url, cloud_org):
+def test_reviews_only_attach_to_this_brands_matches(cloud_database_url, cloud_org, cloud_brand):
     with cloud_db.connect(cloud_database_url) as conn:
         other_org = cloud_db.create_organization(conn, name="Other", slug=f"other-{uuid.uuid4().hex[:8]}")
-        site = cloud_db.upsert_site(conn, org_id=other_org, url="https://other.test/")
-        foreign_ref = _ref(conn, other_org, "x.jpg")
+        other_brand = _brand(conn, other_org)
+        site = _site(conn, other_org, other_brand, "https://other.test/")
+        foreign_ref = _ref(conn, other_org, other_brand, "x.jpg")
         foreign_img = _site_image(conn, other_org, site, "https://other.test/x.jpg")
         cloud_db.write_matches(conn, other_org, [(foreign_ref, foreign_img, "phash", 1.0, "haut")])
 
-        touched = cloud_db.set_reviews(conn, org_id=cloud_org, reference_id=foreign_ref,
+        touched = cloud_db.set_reviews(conn, brand_id=cloud_brand, reference_id=foreign_ref,
                                        site_image_ids=[foreign_img], decision="ecarte", reviewed_by=None)
         assert touched == 0
         assert conn.execute("SELECT COUNT(*) AS c FROM reviews WHERE reference_id = %s", (foreign_ref,)).fetchone()["c"] == 0
 
 
-def test_match_rows_aggregates_pages_in_one_query(cloud_database_url, cloud_org):
+def test_match_rows_aggregates_pages_in_one_query(cloud_database_url, cloud_org, cloud_brand):
     with cloud_db.connect(cloud_database_url) as conn:
-        site = cloud_db.upsert_site(conn, org_id=cloud_org, url="https://t.test/")
-        ref = _ref(conn, cloud_org, "a.jpg", expiry="2026-10-01")
+        site = _site(conn, cloud_org, cloud_brand)
+        ref = _ref(conn, cloud_org, cloud_brand, "a.jpg", expiry="2026-10-01")
         img = _site_image(conn, cloud_org, site, "https://t.test/a.jpg")
         for path in ("/b", "/a"):
             page = conn.execute(
@@ -96,7 +105,7 @@ def test_match_rows_aggregates_pages_in_one_query(cloud_database_url, cloud_org)
             ).fetchone()["id"]
             cloud_db.link_image_page(conn, img, page)
         cloud_db.write_matches(conn, cloud_org, [(ref, img, "phash", 1.0, "haut")])
-        rows = cloud_db.match_rows(conn, cloud_org)
+        rows = cloud_db.match_rows(conn, cloud_brand)
     assert len(rows) == 1
     assert rows[0]["pages"] == ["https://t.test/a", "https://t.test/b"]
     assert rows[0]["expiry_date"] == "2026-10-01"
@@ -120,30 +129,102 @@ def test_memberships_and_ping(cloud_database_url, cloud_org):
     assert cloud_db.ping(cloud_database_url)
 
 
+# --- brands ---------------------------------------------------------------------------
+
+def test_an_organization_starts_with_one_brand_named_after_it(cloud_database_url, cloud_org):
+    with cloud_db.connect(cloud_database_url) as conn:
+        org = cloud_db.get_organization(conn, cloud_org)
+        brands = cloud_db.list_brands(conn, [cloud_org])
+    assert [(b["name"], b["slug"]) for b in brands] == [(org["name"], org["slug"])]
+
+
+def test_an_address_belongs_to_one_brand(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        other = cloud_db.create_brand(conn, org_id=cloud_org, name="Louis XIII", slug="louis-xiii")
+        site = _site(conn, cloud_org, cloud_brand, "https://fr.t.test/")
+        assert _site(conn, cloud_org, cloud_brand, "https://fr.t.test/") == site
+        with pytest.raises(cloud_db.SiteTaken):
+            _site(conn, cloud_org, other, "https://fr.t.test/")
+
+
+def test_brands_of_one_organization_are_matched_separately(cloud_database_url, cloud_org, cloud_brand):
+    config = load_config()
+    with cloud_db.connect(cloud_database_url) as conn:
+        other = cloud_db.create_brand(conn, org_id=cloud_org, name="Louis XIII", slug="louis-xiii")
+        _ref(conn, cloud_org, cloud_brand, "a.jpg")
+        _ref(conn, cloud_org, other, "a.jpg")  # same filename, other library
+        _site_image(conn, cloud_org, _site(conn, cloud_org, cloud_brand, "https://a.test/"), "https://a.test/x.jpg")
+    assert run_matching(CloudMatchStore(org_id=cloud_org, brand_id=cloud_brand, database_url=cloud_database_url),
+                        config, use_clip=True) == 1
+    # The other brand has no site yet: its identical reference matches nothing.
+    assert run_matching(CloudMatchStore(org_id=cloud_org, brand_id=other, database_url=cloud_database_url),
+                        config, use_clip=True) == 0
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert cloud_db.get_stats(conn, cloud_brand).matches == 1
+        assert cloud_db.get_stats(conn, other).matches == 0
+
+
+def test_deleting_a_brand_keeps_files_another_brand_still_uses(cloud_database_url, cloud_org, cloud_brand):
+    shared = f"{cloud_org}/shared.jpg"
+    with cloud_db.connect(cloud_database_url) as conn:
+        other = cloud_db.create_brand(conn, org_id=cloud_org, name="Louis XIII", slug="louis-xiii")
+        _ref(conn, cloud_org, other, "gone.jpg")
+        _ref(conn, cloud_org, cloud_brand, "kept.jpg")
+        _site_image(conn, cloud_org, _site(conn, cloud_org, other, "https://us.t.test/"), "https://us.t.test/a.jpg",
+                    storage_path=shared)
+        _site_image(conn, cloud_org, _site(conn, cloud_org, other, "https://uk.t.test/"), "https://uk.t.test/b.jpg",
+                    storage_path=f"{cloud_org}/only-other.jpg")
+        _site_image(conn, cloud_org, _site(conn, cloud_org, cloud_brand, "https://fr.t.test/"), "https://fr.t.test/a.jpg",
+                    storage_path=shared)
+        orphans = cloud_db.delete_brand(conn, cloud_org, other)
+        assert cloud_db.delete_brand(conn, cloud_org, other) is None
+        assert [row["filename"] for row in cloud_db.list_references(conn, cloud_brand)] == ["kept.jpg"]
+        assert [row["url"] for row in cloud_db.list_sites(conn, cloud_brand)] == ["https://fr.t.test/"]
+    assert orphans.refs == [f"{cloud_org}/{other}/gone.jpg"]
+    assert orphans.site_images == [f"{cloud_org}/only-other.jpg"]
+
+
+def test_deleting_a_site_removes_its_images_and_matches(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        ref = _ref(conn, cloud_org, cloud_brand, "a.jpg")
+        site = _site(conn, cloud_org, cloud_brand)
+        img = _site_image(conn, cloud_org, site, "https://t.test/a.jpg")
+        cloud_db.write_matches(conn, cloud_org, [(ref, img, "phash", 1.0, "haut")])
+        orphans = cloud_db.delete_site(conn, cloud_org, cloud_brand, site)
+        assert len(orphans) == 1
+        assert cloud_db.get_stats(conn, cloud_brand).matches == 0
+        assert cloud_db.list_sites(conn, cloud_brand) == []
+
+
 # --- job queue ---------------------------------------------------------------------
 
-def test_enqueue_refuses_a_second_crawl_and_coalesces_index(cloud_database_url, cloud_org):
+def test_enqueue_refuses_a_second_crawl_and_coalesces_index(cloud_database_url, cloud_org, cloud_brand):
+    brand = {"org_id": cloud_org, "brand_id": cloud_brand}
     with cloud_db.connect(cloud_database_url) as conn:
-        first = cloud_jobs.enqueue(conn, org_id=cloud_org, kind="crawl", params={"site": "https://a.test"})
+        first = cloud_jobs.enqueue(conn, **brand, kind="crawl", params={"site_ids": []})
     with pytest.raises(cloud_jobs.JobConflict):
         with cloud_db.connect(cloud_database_url) as conn:
-            cloud_jobs.enqueue(conn, org_id=cloud_org, kind="crawl")
+            cloud_jobs.enqueue(conn, **brand, kind="crawl")
     with cloud_db.connect(cloud_database_url) as conn:
-        index_a = cloud_jobs.enqueue(conn, org_id=cloud_org, kind="index")
-        index_b = cloud_jobs.enqueue(conn, org_id=cloud_org, kind="index")
+        index_a = cloud_jobs.enqueue(conn, **brand, kind="index")
+        index_b = cloud_jobs.enqueue(conn, **brand, kind="index")
         assert index_a["id"] == index_b["id"]
-        current = cloud_jobs.current(conn, cloud_org)
+        # Another brand of the same organization has its own queue.
+        other = cloud_db.create_brand(conn, org_id=cloud_org, name="Louis XIII", slug="louis-xiii")
+        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=other, kind="crawl")
+        current = cloud_jobs.current(conn, cloud_brand)
     assert [job["id"] for job in current["active"]] == [first["id"], index_a["id"]]
 
 
-def test_claim_runs_one_job_per_organization_at_a_time(cloud_database_url):
+def test_claim_runs_one_job_per_brand_at_a_time(cloud_database_url):
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
-        org_a = cloud_db.create_organization(conn, name="A", slug=f"a-{uuid.uuid4().hex[:8]}")
-        org_b = cloud_db.create_organization(conn, name="B", slug=f"b-{uuid.uuid4().hex[:8]}")
-        a1 = cloud_jobs.enqueue(conn, org_id=org_a, kind="match")
-        a2 = cloud_jobs.enqueue(conn, org_id=org_a, kind="report")
-        b1 = cloud_jobs.enqueue(conn, org_id=org_b, kind="match")
+        org = cloud_db.create_organization(conn, name="A", slug=f"a-{uuid.uuid4().hex[:8]}")
+        brand_a = _brand(conn, org)
+        brand_b = cloud_db.create_brand(conn, org_id=org, name="B", slug="b")
+        a1 = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="match")
+        a2 = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="report")
+        b1 = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_b, kind="match")
     with cloud_db.connect(cloud_database_url) as conn:
         first = cloud_jobs.claim(conn)
     with cloud_db.connect(cloud_database_url) as conn:
@@ -151,7 +232,7 @@ def test_claim_runs_one_job_per_organization_at_a_time(cloud_database_url):
     with cloud_db.connect(cloud_database_url) as conn:
         third = cloud_jobs.claim(conn)
     assert first["id"] == a1["id"]
-    assert second["id"] == b1["id"]  # a2 waits: org A already has a running job
+    assert second["id"] == b1["id"]  # a2 waits: brand A already has a running job, brand B doesn't
     assert third is None
     with cloud_db.connect(cloud_database_url) as conn:
         cloud_jobs.finish(conn, first["id"], status="done", message="ok")
@@ -162,12 +243,13 @@ def test_cancel_queued_is_immediate_and_running_is_flagged(cloud_database_url):
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
         org = cloud_db.create_organization(conn, name="C", slug=f"c-{uuid.uuid4().hex[:8]}")
-        running = cloud_jobs.enqueue(conn, org_id=org, kind="match")
-        queued = cloud_jobs.enqueue(conn, org_id=org, kind="report")
+        brand = _brand(conn, org)
+        running = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="match")
+        queued = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="report")
     with cloud_db.connect(cloud_database_url) as conn:
         assert cloud_jobs.claim(conn)["id"] == running["id"]
-        assert cloud_jobs.request_cancel(conn, org, uuid.UUID(queued["id"]))["status"] == "cancelled"
-        assert cloud_jobs.request_cancel(conn, org, uuid.UUID(running["id"]))["status"] == "running"
+        assert cloud_jobs.request_cancel(conn, brand, uuid.UUID(queued["id"]))["status"] == "cancelled"
+        assert cloud_jobs.request_cancel(conn, brand, uuid.UUID(running["id"]))["status"] == "running"
         assert cloud_jobs.heartbeat(conn, running["id"], message="x") is True
 
 
@@ -175,12 +257,13 @@ def test_reap_stale_fails_jobs_whose_worker_disappeared(cloud_database_url):
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
         org = cloud_db.create_organization(conn, name="D", slug=f"d-{uuid.uuid4().hex[:8]}")
-        job = cloud_jobs.enqueue(conn, org_id=org, kind="match")
+        brand = _brand(conn, org)
+        job = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="match")
     with cloud_db.connect(cloud_database_url) as conn:
         cloud_jobs.claim(conn)
         conn.execute("UPDATE jobs SET heartbeat_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
         assert cloud_jobs.reap_stale(conn) == 1
-        assert cloud_jobs.get(conn, org, uuid.UUID(job["id"]))["status"] == "error"
+        assert cloud_jobs.get(conn, brand, uuid.UUID(job["id"]))["status"] == "error"
 
 
 # --- stores ---------------------------------------------------------------------------
@@ -193,9 +276,10 @@ def _jpeg(seed: int) -> bytes:
     return buf.getvalue()
 
 
-def test_crawl_store_saves_images_and_reuses_duplicate_bytes(cloud_database_url, cloud_org, fake_storage_client):
+def test_crawl_store_saves_images_and_reuses_duplicate_bytes(cloud_database_url, cloud_org, cloud_brand,
+                                                             fake_storage_client):
     with cloud_db.connect(cloud_database_url) as conn:
-        site = cloud_db.upsert_site(conn, org_id=cloud_org, url="https://t.test/")
+        site = _site(conn, cloud_org, cloud_brand)
     store = CloudCrawlStore(org_id=cloud_org, site_id=site, database_url=cloud_database_url,
                             storage_client=fake_storage_client)
     page = store.upsert_page("https://t.test/p")
@@ -203,8 +287,12 @@ def test_crawl_store_saves_images_and_reuses_duplicate_bytes(cloud_database_url,
     processed = fetch.process_image(data, "image/jpeg", min_side_px=100, max_pixels=10_000_000)
     first = store.save_image(url="https://t.test/a.jpg", page_id=page, data=data, content_type="image/jpeg",
                              processed=processed, embedding=np.ones(512, dtype=np.float32) / np.sqrt(512))
-    assert ("site-images", f"{cloud_org}/{processed.content_hash}.jpg") in fake_storage_client.store
+    # Only a working copy (JPEG, 1024 px at most) and a thumbnail: the original stays on the site.
+    working = fake_storage_client.store[("site-images", f"{cloud_org}/work/{processed.content_hash}.jpg")]
+    assert working.startswith(bytes([0xFF, 0xD8]))  # JPEG
     assert ("site-images", f"{cloud_org}/thumbs/{processed.content_hash}.jpg") in fake_storage_client.store
+    assert not any(path.endswith(f"{processed.content_hash}.jpg") and "/work/" not in path and "/thumbs/" not in path
+                   for bucket, path in fake_storage_client.store)
 
     existing = store.image_by_content_hash(processed.content_hash)
     second = store.save_duplicate(url="https://t.test/a.jpg?w=600", page_id=page, existing=existing)
@@ -214,16 +302,16 @@ def test_crawl_store_saves_images_and_reuses_duplicate_bytes(cloud_database_url,
     assert store.crawled_urls() == {"https://t.test/p"}
 
 
-def test_match_store_runs_incremental_matching(cloud_database_url, cloud_org):
+def test_match_store_runs_incremental_matching(cloud_database_url, cloud_org, cloud_brand):
     config = load_config()
     with cloud_db.connect(cloud_database_url) as conn:
-        site = cloud_db.upsert_site(conn, org_id=cloud_org, url="https://t.test/")
-        _ref(conn, cloud_org, "a.jpg")
+        site = _site(conn, cloud_org, cloud_brand)
+        _ref(conn, cloud_org, cloud_brand, "a.jpg")
         _site_image(conn, cloud_org, site, "https://t.test/x.jpg")
-    store = CloudMatchStore(org_id=cloud_org, database_url=cloud_database_url)
+    store = CloudMatchStore(org_id=cloud_org, brand_id=cloud_brand, database_url=cloud_database_url)
     assert run_matching(store, config, use_clip=True) == 1
     assert run_matching(store, config, use_clip=True) == 1
     with cloud_db.connect(cloud_database_url) as conn:
         _site_image(conn, cloud_org, site, "https://t.test/y.jpg")
-        _ref(conn, cloud_org, "b.jpg", phash=HASH_B)
+        _ref(conn, cloud_org, cloud_brand, "b.jpg", phash=HASH_B)
     assert run_matching(store, config, use_clip=True) == 2

@@ -61,7 +61,7 @@ read and record decisions.
 ### `cloud-staff`
 
 Grants access to the Nyra team back office (`/interne`: every
-organization's statistics, the job queue, recent failures), inviting the
+brand's statistics, the job queue, recent failures), inviting the
 person if they have no account. `--remove` takes it away. See
 `OBSERVABILITY.md`.
 
