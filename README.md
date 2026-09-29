@@ -72,6 +72,7 @@ See [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md).
 - [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md) — every command
 - [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md) — Postgres and SQLite schemas, job queue
 - [docs/MATCHING.md](docs/MATCHING.md) — the two-level matcher, calibration
+- [docs/COUTS_PRODUCTION.md](docs/COUTS_PRODUCTION.md) — production cost estimate (pilot, N brands)
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — setup, tests, conventions
 - [supabase/README.md](supabase/README.md) — applying the migrations
 
