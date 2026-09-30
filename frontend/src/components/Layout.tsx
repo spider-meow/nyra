@@ -32,46 +32,53 @@ export function Layout() {
     { to: link("images-du-site"), label: "Droits non vérifiés", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
     { to: link("lectures"), label: "Sites et lectures", icon: "scan" },
     { to: link("rapports"), label: "Rapports", icon: "report" },
-    ...(admin ? [{ to: link("statistiques"), label: "Statistiques", icon: "stats" as IconName }] : []),
-    { to: link("reglages"), label: "Réglages", icon: "settings" },
     ...(me.data?.staff ? [{ to: "/interne", label: "Back office Nyra", icon: "backoffice" as IconName }] : []),
   ];
 
+  // Rarely needed pages sit at the bottom, next to the account.
+  const footerItems: typeof items = [
+    ...(admin ? [{ to: link("statistiques"), label: "Stats pour les nerds", icon: "stats" as IconName }] : []),
+    { to: link("reglages"), label: "Réglages", icon: "settings" },
+  ];
+
+  const renderItems = (list: typeof items) =>
+    list.map((item) => (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        onClick={() => setMenuOpen(false)}
+        className={({ isActive }) =>
+          cx(
+            "group flex h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm transition-colors",
+            isActive ? "bg-paper font-medium text-ink shadow-lift" : "text-ink-soft hover:bg-paper/60 hover:text-ink",
+          )
+        }
+      >
+        {({ isActive }) => (
+          <>
+            <Icon name={item.icon} className={isActive ? "text-bark" : "text-muted group-hover:text-ink-soft"} />
+            <span className="flex-1">{item.label}</span>
+            {item.count ? (
+              <span
+                className={cx(
+                  "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11.5px] tabular",
+                  item.tone === "alert" && "bg-expired-soft font-medium text-expired",
+                  item.tone === "neutral" && "bg-ink font-medium text-paper",
+                  item.tone === "muted" && "font-normal text-muted",
+                  item.tone === "warn" && "bg-urgent-soft font-medium text-urgent",
+                )}
+              >
+                {item.count}
+              </span>
+            ) : null}
+          </>
+        )}
+      </NavLink>
+    ));
+
   const nav = (
     <nav aria-label="Navigation principale" className="grid gap-0.5">
-      {items.map((item) => (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          onClick={() => setMenuOpen(false)}
-          className={({ isActive }) =>
-            cx(
-              "group flex h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm transition-colors",
-              isActive ? "bg-paper font-medium text-ink shadow-lift" : "text-ink-soft hover:bg-paper/60 hover:text-ink",
-            )
-          }
-        >
-          {({ isActive }) => (
-            <>
-              <Icon name={item.icon} className={isActive ? "text-bark" : "text-muted group-hover:text-ink-soft"} />
-              <span className="flex-1">{item.label}</span>
-              {item.count ? (
-                <span
-                  className={cx(
-                    "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11.5px] tabular",
-                    item.tone === "alert" && "bg-expired-soft font-medium text-expired",
-                    item.tone === "neutral" && "bg-ink font-medium text-paper",
-                    item.tone === "muted" && "font-normal text-muted",
-                    item.tone === "warn" && "bg-urgent-soft font-medium text-urgent",
-                  )}
-                >
-                  {item.count}
-                </span>
-              ) : null}
-            </>
-          )}
-        </NavLink>
-      ))}
+      {renderItems(items)}
     </nav>
   );
 
@@ -131,7 +138,10 @@ export function Layout() {
         <p className="-mt-4 px-2.5 text-[12.5px] text-muted">{brand.name}</p>
       ) : null}
       {nav}
-      <div className="mt-auto flex items-center gap-2.5 border-t border-[#e2d9cc] px-2.5 pt-3.5">
+      <nav aria-label="Compte et réglages" className="mt-auto -mb-3 grid gap-0.5">
+        {renderItems(footerItems)}
+      </nav>
+      <div className="flex items-center gap-2.5 border-t border-[#e2d9cc] px-2.5 pt-3.5">
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-peach text-xs font-semibold text-bark-800" aria-hidden>
           {initials(auth.email ?? "")}
         </span>
