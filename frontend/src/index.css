@@ -109,3 +109,8 @@ a {
     animation: none;
   }
 }
+
+/* Suggestions come from a <datalist>; the browser's dropdown arrow on those fields is noise. */
+input[list]::-webkit-calendar-picker-indicator {
+  display: none !important;
+}

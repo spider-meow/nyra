@@ -293,6 +293,108 @@ def test_bulk_expiry_and_bulk_delete(client, org_with_users, cloud_brand, fake_s
     assert ("refs", f"{org_id}/{cloud_brand}/thumbs/a.jpg.jpg") not in fake_storage_client.store
 
 
+def _upload(client, base, admin_id, *names):
+    return client.post(f"{base}/library/upload", headers=_headers(admin_id),
+                       files=[("files", (name, _upload_bytes(), "image/jpeg")) for name in names])
+
+
+def _tags(client, base, user_id) -> dict:
+    items = client.get(f"{base}/library", headers=_headers(user_id)).json()["items"]
+    return {item["filename"]: item["tags"] for item in items}
+
+
+def test_tags_are_set_per_reference_normalized_and_left_alone_when_omitted(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg")
+    assert _tags(client, base, client_id) == {"a.jpg": []}
+    url = f"{base}/library/a.jpg"
+    r = client.put(url, headers=_headers(admin_id), json={"tags": ["  Magnum ", "classic", "MAGNUM"]})
+    assert r.json()["tags"] == ["magnum", "classic"]
+    assert _tags(client, base, client_id) == {"a.jpg": ["magnum", "classic"]}
+    # A save that says nothing about tags (dates, CSV...) must not wipe them.
+    client.put(url, headers=_headers(admin_id), json={"expiry_date": "2027-01-01"})
+    assert _tags(client, base, client_id) == {"a.jpg": ["magnum", "classic"]}
+    client.put(url, headers=_headers(admin_id), json={"tags": []})
+    assert _tags(client, base, client_id) == {"a.jpg": []}
+    too_long = client.put(url, headers=_headers(admin_id), json={"tags": ["x" * 41]})
+    assert too_long.status_code == 400 and "trop long" in too_long.json()["detail"]
+    too_many = client.put(url, headers=_headers(admin_id), json={"tags": [f"t{i}" for i in range(21)]})
+    assert too_many.status_code == 400
+
+
+def test_bulk_tags_add_and_remove_only_touch_the_named_references(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg", "b.jpg", "c.jpg")
+    url = f"{base}/library/tags"
+    r = client.post(url, headers=_headers(admin_id), json={"filenames": ["a.jpg", "b.jpg", "none.jpg"], "add": ["Miniature"]})
+    assert r.status_code == 200 and r.json()["updated"] == 2
+    client.post(url, headers=_headers(admin_id), json={"filenames": ["b.jpg"], "add": ["magnum", "miniature"]})
+    assert _tags(client, base, client_id) == {"a.jpg": ["miniature"], "b.jpg": ["miniature", "magnum"], "c.jpg": []}
+    client.post(url, headers=_headers(admin_id), json={"filenames": ["a.jpg", "b.jpg", "c.jpg"], "remove": ["MINIATURE"]})
+    assert _tags(client, base, client_id) == {"a.jpg": [], "b.jpg": ["magnum"], "c.jpg": []}
+    assert client.post(url, headers=_headers(admin_id), json={"filenames": ["a.jpg"]}).status_code == 400
+    assert client.post(url, headers=_headers(admin_id), json={"filenames": ["a.jpg"], "add": ["x" * 41]}).status_code == 400
+
+
+def test_bulk_tags_refuse_to_go_over_the_limit_and_change_nothing(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg", "b.jpg")
+    full = [f"t{i}" for i in range(20)]
+    client.put(f"{base}/library/b.jpg", headers=_headers(admin_id), json={"tags": full})
+    r = client.post(f"{base}/library/tags", headers=_headers(admin_id), json={"filenames": ["a.jpg", "b.jpg"], "add": ["extra"]})
+    assert r.status_code == 400 and "b.jpg" in r.json()["detail"]
+    assert _tags(client, base, client_id) == {"a.jpg": [], "b.jpg": full}
+
+
+def test_only_admins_edit_tags(client, org_with_users):
+    _, base, admin_id, client_id, outsider_id = org_with_users
+    _upload(client, base, admin_id, "a.jpg")
+    assert client.put(f"{base}/library/a.jpg", headers=_headers(client_id), json={"tags": ["x"]}).status_code == 403
+    assert client.post(f"{base}/library/tags", headers=_headers(client_id), json={"filenames": ["a.jpg"], "add": ["x"]}).status_code == 403
+    assert client.post(f"{base}/library/tags", headers=_headers(outsider_id), json={"filenames": ["a.jpg"], "add": ["x"]}).status_code in (403, 404)
+    assert _tags(client, base, client_id) == {"a.jpg": []}
+
+
+def test_replacing_an_image_keeps_its_tags(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg")
+    client.put(f"{base}/library/a.jpg", headers=_headers(admin_id), json={"tags": ["classic"]})
+    assert _upload(client, base, admin_id, "a.jpg").json()["replaced"] == ["a.jpg"]
+    assert _tags(client, base, client_id) == {"a.jpg": ["classic"]}
+
+
+def test_csv_tags_column_replaces_tags_and_no_column_leaves_them(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg", "b.jpg")
+    client.put(f"{base}/library/b.jpg", headers=_headers(admin_id), json={"tags": ["keep"]})
+    url = f"{base}/library/import-csv"
+
+    with_tags = 'filename,expiry_date,tags\na.jpg,2027-01-01,"Miniature, classic"\nb.jpg,2027-01-01,\n'.encode()
+    preview = client.post(url, headers=_headers(admin_id), files={"file": ("m.csv", with_tags, "text/csv")}).json()
+    assert [row["tags"] for row in preview["rows"]] == [["miniature", "classic"], []]
+    assert _tags(client, base, client_id) == {"a.jpg": [], "b.jpg": ["keep"]}  # a preview writes nothing
+    client.post(url + "?apply=true", headers=_headers(admin_id), files={"file": ("m.csv", with_tags, "text/csv")})
+    assert _tags(client, base, client_id) == {"a.jpg": ["miniature", "classic"], "b.jpg": []}
+
+    without = b"filename;expiry_date\na.jpg;2028-02-02\n"
+    client.post(url + "?apply=true", headers=_headers(admin_id), files={"file": ("m.csv", without, "text/csv")})
+    assert _tags(client, base, client_id) == {"a.jpg": ["miniature", "classic"], "b.jpg": []}
+
+    bad = f"filename,tags\na.jpg,{'x' * 41}\n".encode()
+    rows = client.post(url, headers=_headers(admin_id), files={"file": ("m.csv", bad, "text/csv")}).json()["rows"]
+    assert rows[0]["status"] == "bad_tags"
+
+
+def test_csv_export_carries_the_tags(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg")
+    client.put(f"{base}/library/a.jpg", headers=_headers(admin_id), json={"tags": ["miniature", "classic"]})
+    text = client.get(f"{base}/library/export-csv", headers=_headers(client_id)).content.decode("utf-8-sig")
+    lines = text.splitlines()
+    assert lines[0] == "filename,expiry_date,credit,notes,tags"
+    assert lines[1] == 'a.jpg,,,,"miniature, classic"'
+
+
 def test_crawl_is_queued_capped_deduplicated_and_cancellable(client, org_with_users, cloud_brand, cloud_database_url):
     org_id, base, admin_id, client_id, _ = org_with_users
     body = {"site_ids": [], "max_pages": 999999}

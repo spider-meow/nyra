@@ -425,7 +425,7 @@ def upsert_reference_image(
     return row["id"]
 
 
-_REF_LIST_COLUMNS = """id, filename, storage_path, thumb_path, work_path, expiry_date, credit, notes, width, height,
+_REF_LIST_COLUMNS = """id, filename, storage_path, thumb_path, work_path, expiry_date, credit, notes, tags, width, height,
     phash IS NOT NULL AS hashed, embedding IS NOT NULL AS embedded, compared_at, created_at, updated_at"""
 
 
@@ -452,13 +452,35 @@ def existing_filenames(conn: psycopg.Connection, brand_id: uuid.UUID, filenames:
 def update_reference_meta(
     conn: psycopg.Connection, brand_id: uuid.UUID, filename: str, *,
     expiry_date: Optional[str], credit: Optional[str], notes: Optional[str],
+    tags: Optional[list[str]] = None,
 ) -> bool:
+    """`tags=None` leaves the tags as they are (a CSV without a tags column must not wipe them)."""
     result = conn.execute(
-        """UPDATE reference_images SET expiry_date = %s, credit = %s, notes = %s
+        """UPDATE reference_images
+           SET expiry_date = %s, credit = %s, notes = %s, tags = COALESCE(%s::text[], tags)
            WHERE brand_id = %s AND filename = %s""",
-        (expiry_date, credit, notes, brand_id, filename),
+        (expiry_date, credit, notes, tags, brand_id, filename),
     )
     return result.rowcount > 0
+
+
+def get_reference_tags(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str]) -> dict[str, list[str]]:
+    rows = conn.execute(
+        "SELECT filename, tags FROM reference_images WHERE brand_id = %s AND filename = ANY(%s)",
+        (brand_id, filenames),
+    ).fetchall()
+    return {row["filename"]: list(row["tags"]) for row in rows}
+
+
+def set_reference_tags(conn: psycopg.Connection, brand_id: uuid.UUID, tags_by_filename: dict[str, list[str]]) -> int:
+    """Replace the tags of each named reference; returns how many rows exist and were written."""
+    updated = 0
+    for filename, tags in tags_by_filename.items():
+        updated += conn.execute(
+            "UPDATE reference_images SET tags = %s::text[] WHERE brand_id = %s AND filename = %s",
+            (tags, brand_id, filename),
+        ).rowcount
+    return updated
 
 
 def set_expiry_for(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str], expiry_date: Optional[str]) -> int:

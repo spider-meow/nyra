@@ -44,7 +44,7 @@ before September 26, 2026 still point at their original.
 | `brands` | Brands of an organization | `slug` (unique per org) |
 | `org_settings` | Per-organization overrides of `config.yaml`, shared by its brands | `overrides` jsonb (whitelisted keys only) |
 | `sites` | A brand's addresses | `brand_id`, `url` (canonical, unique per org: an address belongs to one brand), `label` (US, FR...) |
-| `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |
+| `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |
 | `pages` | Pages discovered | `url` (canonical, unique per site), `status` pending/done |
 | `site_images` | Images found | `url` (unique per site), `content_hash` (indexed; same bytes are reused), hashes, `embedding`, `storage_path`, `thumb_path`, `compared_at` |
 | `image_pages` | Image ↔ page | composite key |

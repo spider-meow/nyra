@@ -17,6 +17,9 @@ file for debugging and threshold calibration.
 1. **Library.** An admin uploads reference images and their expiry dates
    (one by one, in bulk, or from a CSV). Each image gets a pHash, a dHash,
    the hashes of its mirror image, a thumbnail and a CLIP embedding.
+   Images can carry tags (a product line, a shoot) to search the
+   library, and expired ones move to their own tab: they are still
+   compared to the sites.
 2. **Read the site.** The worker drives headless Chromium through the
    site's sitemaps and internal links, gets past cookie banners and age
    gates, and collects every image (`<img>`/`srcset`, `<picture>`, CSS

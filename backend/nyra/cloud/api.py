@@ -38,7 +38,7 @@ from nyra import match as match_module
 from nyra import report as report_module
 from nyra.config import Config, load_config, validate_overrides, with_overrides
 from nyra.crawl import normalize_url
-from nyra.refs import RefValidationError, parse_expiry, reference_features
+from nyra.refs import RefValidationError, change_tags, normalize_tags, parse_expiry, reference_features
 
 from . import auth as cloud_auth
 from . import db as cloud_db
@@ -105,6 +105,8 @@ class MetaBody(BaseModel):
     expiry_date: str = ""
     credit: str = Field(default="", max_length=500)
     notes: str = Field(default="", max_length=2000)
+    # None leaves the tags as they are; a list replaces them.
+    tags: Optional[list[str]] = Field(default=None, max_length=50)
 
 
 class FilenamesBody(BaseModel):
@@ -113,6 +115,11 @@ class FilenamesBody(BaseModel):
 
 class BulkExpiryBody(FilenamesBody):
     expiry_date: str = ""
+
+
+class BulkTagsBody(FilenamesBody):
+    add: list[str] = Field(default_factory=list, max_length=50)
+    remove: list[str] = Field(default_factory=list, max_length=50)
 
 
 class BrandBody(BaseModel):
@@ -563,6 +570,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
                 "status": report_module.urgency_status(left),
                 "credit": row["credit"] or "",
                 "notes": row["notes"] or "",
+                "tags": list(row["tags"]),
                 "width": row["width"],
                 "height": row["height"],
                 "indexed": bool(row["embedded"]),
@@ -651,14 +659,18 @@ def create_app(settings: CloudSettings) -> FastAPI:
             expiry = parse_expiry(body.expiry_date)
         except RefValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            tags = None if body.tags is None else normalize_tags(body.tags)
+        except RefValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         with cloud_db.connect(settings.database_url) as conn:
             found = cloud_db.update_reference_meta(
                 conn, scope.brand_id, filename, expiry_date=expiry,
-                credit=body.credit.strip() or None, notes=body.notes.strip() or None,
+                credit=body.credit.strip() or None, notes=body.notes.strip() or None, tags=tags,
             )
         if not found:
             raise HTTPException(status_code=404, detail="Référence introuvable.")
-        return {"ok": True, "expiry_date": expiry or ""}
+        return {"ok": True, "expiry_date": expiry or "", "tags": tags}
 
     def delete_filenames(brand_id: uuid.UUID, filenames: list[str]) -> int:
         with cloud_db.connect(settings.database_url) as conn:
@@ -688,6 +700,29 @@ def create_app(settings: CloudSettings) -> FastAPI:
             updated = cloud_db.set_expiry_for(conn, scope.brand_id, names, expiry)
         return {"updated": updated}
 
+    @app.post(f"{BRAND}/library/tags")
+    def bulk_tags(body: BulkTagsBody, scope: BrandScope = Depends(brand_admin_dep)) -> dict:
+        """Add and/or remove tags on several references at once."""
+        try:
+            add, remove = normalize_tags(body.add), normalize_tags(body.remove)
+        except RefValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not add and not remove:
+            raise HTTPException(status_code=400, detail="Aucun tag à ajouter ou à retirer.")
+        names = [safe_filename(name) for name in body.filenames]
+        with cloud_db.connect(settings.database_url) as conn:
+            current = cloud_db.get_reference_tags(conn, scope.brand_id, names)
+            changed: dict[str, list[str]] = {}
+            for name, tags in current.items():
+                try:
+                    new = change_tags(tags, add, remove)
+                except RefValidationError as exc:
+                    raise HTTPException(status_code=400, detail=f"{name} : {exc}") from exc
+                if new != tags:
+                    changed[name] = new
+            updated = cloud_db.set_reference_tags(conn, scope.brand_id, changed)
+        return {"updated": updated}
+
     @app.post(f"{BRAND}/library/import-csv")
     def import_csv(file: UploadFile = File(...), apply: bool = Query(False),
                    scope: BrandScope = Depends(brand_admin_dep)) -> dict:
@@ -706,6 +741,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
         fields = {name.strip().lower() for name in (reader.fieldnames or [])}
         if "filename" not in fields:
             raise HTTPException(status_code=400, detail="Le CSV doit contenir une colonne filename.")
+        has_tags = "tags" in fields  # without the column, the tags stay as they are
         parsed = []
         for line, row in enumerate(reader, start=2):
             row = {(key or "").strip().lower(): (value or "").strip() for key, value in row.items()}
@@ -713,11 +749,17 @@ def create_app(settings: CloudSettings) -> FastAPI:
             if not name:
                 continue
             entry = {"line": line, "filename": name, "expiry_date": "", "credit": row.get("credit", ""),
-                     "notes": row.get("notes", ""), "status": "ok", "message": ""}
+                     "notes": row.get("notes", ""), "tags": None, "status": "ok", "message": ""}
             try:
                 entry["expiry_date"] = parse_expiry(row.get("expiry_date", "")) or ""
             except RefValidationError as exc:
                 entry.update(status="bad_date", message=str(exc))
+            if has_tags:
+                try:
+                    entry["tags"] = normalize_tags(row.get("tags", ""))
+                except RefValidationError as exc:
+                    if entry["status"] == "ok":
+                        entry.update(status="bad_tags", message=str(exc))
             parsed.append(entry)
         with cloud_db.connect(settings.database_url) as conn:
             known = cloud_db.existing_filenames(conn, scope.brand_id, [entry["filename"] for entry in parsed])
@@ -730,7 +772,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
                     if entry["status"] == "ok":
                         cloud_db.update_reference_meta(
                             conn, scope.brand_id, entry["filename"], expiry_date=entry["expiry_date"] or None,
-                            credit=entry["credit"] or None, notes=entry["notes"] or None,
+                            credit=entry["credit"] or None, notes=entry["notes"] or None, tags=entry["tags"],
                         )
                         applied += 1
         return {"rows": parsed, "applied": applied}
@@ -741,9 +783,10 @@ def create_app(settings: CloudSettings) -> FastAPI:
             rows = cloud_db.list_references(conn, scope.brand_id)
         buf = io.StringIO()
         writer = csv.writer(buf)
-        writer.writerow(["filename", "expiry_date", "credit", "notes"])
+        writer.writerow(["filename", "expiry_date", "credit", "notes", "tags"])
         for row in rows:
-            writer.writerow([row["filename"], _iso(row["expiry_date"]) or "", row["credit"] or "", row["notes"] or ""])
+            writer.writerow([row["filename"], _iso(row["expiry_date"]) or "", row["credit"] or "", row["notes"] or "",
+                             ", ".join(row["tags"])])
         return Response(
             content=("﻿" + buf.getvalue()).encode("utf-8"),
             media_type="text/csv; charset=utf-8",

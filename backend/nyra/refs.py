@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterable, Iterator, Optional
 
 from PIL import Image
 
@@ -67,6 +67,40 @@ def parse_expiry(raw: Optional[str]) -> Optional[str]:
             hint = " (le mois vient en second : JJ/MM/AAAA)" if month > 12 and day <= 12 else ""
             raise RefValidationError(f"Date impossible : {raw!r}{hint}") from exc
     raise RefValidationError(f"Date illisible : {raw!r}. Formats acceptés : AAAA-MM-JJ ou JJ/MM/AAAA.")
+
+
+MAX_TAGS_PER_REFERENCE = 20
+MAX_TAG_LENGTH = 40
+_TAG_SEPARATORS = re.compile(r"[,;|]")
+
+
+def normalize_tags(raw: Iterable[str] | str | None) -> list[str]:
+    """Clean list of tags: trimmed, single-spaced, lowercase, no duplicates, order kept.
+
+    A string is split on `,`, `;` and `|` (the CSV cell form). Blank entries
+    are dropped; a tag that is too long, or too many tags, is refused rather
+    than silently cut.
+    """
+    if raw is None:
+        return []
+    parts = _TAG_SEPARATORS.split(raw) if isinstance(raw, str) else list(raw)
+    tags: list[str] = []
+    for part in parts:
+        tag = " ".join(str(part).split()).lower()
+        if not tag or tag in tags:
+            continue
+        if len(tag) > MAX_TAG_LENGTH:
+            raise RefValidationError(f"Tag trop long ({MAX_TAG_LENGTH} caractères au plus) : {tag[:20]!r}…")
+        tags.append(tag)
+    if len(tags) > MAX_TAGS_PER_REFERENCE:
+        raise RefValidationError(f"{MAX_TAGS_PER_REFERENCE} tags au plus par visuel.")
+    return tags
+
+
+def change_tags(current: Iterable[str], add: Iterable[str], remove: Iterable[str]) -> list[str]:
+    """`current` plus `add` minus `remove`, all normalized. Raises if the result is over the limit."""
+    removed = set(normalize_tags(remove))
+    return normalize_tags([tag for tag in [*current, *normalize_tags(add)] if tag not in removed])
 
 
 class CsvRefSource(RefSource):

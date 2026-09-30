@@ -15,7 +15,35 @@ from PIL import Image, ImageDraw, ImageOps
 from nyra import fetch, report
 from nyra.config import Config, validate_overrides, with_overrides
 from nyra.match import compare, compute_flip_hashes, compute_hashes, pack
-from nyra.refs import RefValidationError, parse_expiry
+from nyra.refs import MAX_TAG_LENGTH, MAX_TAGS_PER_REFERENCE, RefValidationError, change_tags, normalize_tags, parse_expiry
+
+# --- tags ---------------------------------------------------------------------
+
+def test_normalize_tags_trims_lowercases_and_dedupes_keeping_order():
+    assert normalize_tags(["  Magnum ", "classic", "MAGNUM", "", "  ", "Édition   limitée"]) == ["magnum", "classic", "édition limitée"]
+    assert normalize_tags(None) == []
+
+
+def test_normalize_tags_splits_a_csv_cell_on_commas_semicolons_and_pipes():
+    assert normalize_tags("Miniature, classic;Magnum | miniature") == ["miniature", "classic", "magnum"]
+    assert normalize_tags("") == []
+
+
+def test_normalize_tags_refuses_instead_of_cutting():
+    with pytest.raises(RefValidationError, match="trop long"):
+        normalize_tags(["x" * (MAX_TAG_LENGTH + 1)])
+    with pytest.raises(RefValidationError, match="au plus"):
+        normalize_tags([f"tag{i}" for i in range(MAX_TAGS_PER_REFERENCE + 1)])
+    assert len(normalize_tags([f"tag{i}" for i in range(MAX_TAGS_PER_REFERENCE)])) == MAX_TAGS_PER_REFERENCE
+
+
+def test_change_tags_adds_and_removes_without_duplicates():
+    assert change_tags(["miniature"], ["Magnum", "miniature"], []) == ["miniature", "magnum"]
+    assert change_tags(["miniature", "magnum"], [], ["MAGNUM", "absent"]) == ["miniature"]
+    assert change_tags([], ["a"], ["a"]) == []
+    with pytest.raises(RefValidationError):
+        change_tags([f"tag{i}" for i in range(MAX_TAGS_PER_REFERENCE)], ["one-too-many"], [])
+
 
 # --- expiry dates -------------------------------------------------------------
 

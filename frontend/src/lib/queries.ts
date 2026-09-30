@@ -344,7 +344,7 @@ export function useLibraryMutations() {
   const done = () => invalidate("library", "overview", "matches", "jobs");
   return {
     updateMeta: useMutation({
-      mutationFn: (input: { filename: string; expiry_date: string; credit: string; notes: string }) =>
+      mutationFn: (input: { filename: string; expiry_date: string; credit: string; notes: string; tags: string[] }) =>
         api.put<{ expiry_date: string }>(apiPath(`/library/${encodeURIComponent(input.filename)}`), input),
       onSuccess: () => invalidate("library", "overview", "matches"),
     }),
@@ -356,6 +356,11 @@ export function useLibraryMutations() {
       mutationFn: (input: { filenames: string[]; expiry_date: string }) =>
         api.post<{ updated: number }>(apiPath("/library/expiry"), input),
       onSuccess: () => invalidate("library", "overview", "matches"),
+    }),
+    setTags: useMutation({
+      mutationFn: (input: { filenames: string[]; add?: string[]; remove?: string[] }) =>
+        api.post<{ updated: number }>(apiPath("/library/tags"), input),
+      onSuccess: () => invalidate("library"),
     }),
     importCsv: useMutation({
       mutationFn: (input: { file: File; apply: boolean }) => {

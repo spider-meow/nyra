@@ -77,6 +77,7 @@ export type LibraryItem = {
   status: Status;
   credit: string;
   notes: string;
+  tags: string[];
   width: number | null;
   height: number | null;
   indexed: boolean;
@@ -170,7 +171,9 @@ export type ImportRow = {
   expiry_date: string;
   credit: string;
   notes: string;
-  status: "ok" | "unknown_file" | "bad_date";
+  /** null when the CSV has no tags column: the tags stay as they are. */
+  tags: string[] | null;
+  status: "ok" | "unknown_file" | "bad_date" | "bad_tags";
   message: string;
 };
 

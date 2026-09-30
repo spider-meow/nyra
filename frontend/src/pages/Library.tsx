@@ -1,9 +1,10 @@
 import { useMemo, useRef, useState, type DragEvent } from "react";
+import { Link } from "react-router";
 import { Modal, useConfirm, useToast } from "../components/feedback";
 import { Icon } from "../components/icons";
 import { Button, Card, Chip, EmptyState, FieldLabel, Input, PageHeader, SearchField, Segmented, Skeleton, Spinner, StatusBadge, cx } from "../components/ui";
 import { downloadFile, errorMessage } from "../lib/api";
-import { daysText, formatDate, plural } from "../lib/format";
+import { MAX_TAGS, daysText, formatDate, plural, splitTags } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useLibrary, useLibraryMutations, useReferenceUpload } from "../lib/queries";
 import type { ImportRow, LibraryItem, Status } from "../types";
@@ -17,9 +18,12 @@ function byReason(failures: { filename: string; reason: string }[]): [string, st
   return [...groups];
 }
 type Sort = "expiry" | "name";
+/** Expired visuals live in their own tab: still compared to the sites, out of the way of the working library. */
+type Tab = "active" | "expired";
+const TAGS_SHOWN = 12;
 
 export function Library() {
-  const { admin, apiPath, brand } = useOrg();
+  const { admin, apiPath, brand, link } = useOrg();
   const library = useLibrary();
   const mutations = useLibraryMutations();
   const uploader = useReferenceUpload();
@@ -27,9 +31,14 @@ export function Library() {
   const toast = useToast();
   const confirm = useConfirm();
   const fileInput = useRef<HTMLInputElement>(null);
+  const [tab, setTab] = useState<Tab>("active");
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<Sort>("expiry");
   const [query, setQuery] = useState("");
+  const [activeTags, setActiveTags] = useState<string[]>([]);
+  const [untagged, setUntagged] = useState(false);
+  const [allTags, setAllTags] = useState(false);
+  const [bulkTag, setBulkTag] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<LibraryItem | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -42,31 +51,55 @@ export function Library() {
   const [replaced, setReplaced] = useState<string[]>([]);
 
   const items = library.data?.items ?? [];
+  const expiredItems = useMemo(() => items.filter((item) => item.status === "expire"), [items]);
+  const activeItems = useMemo(() => items.filter((item) => item.status !== "expire"), [items]);
+  const pool = tab === "expired" ? expiredItems : activeItems;
+  // Tags of the whole library (suggestions) and of the tab being looked at (filters), most used first.
+  const libraryTags = useMemo(() => tagCounts(items), [items]);
+  const poolTags = useMemo(() => tagCounts(pool), [pool]);
+  const untaggedCount = useMemo(() => pool.filter((item) => !item.tags.length).length, [pool]);
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    const list = items.filter((item) => {
-      if (needle && !item.filename.toLowerCase().includes(needle)) return false;
+    const list = pool.filter((item) => {
+      if (needle && !item.filename.toLowerCase().includes(needle) && !item.tags.some((tag) => tag.includes(needle))) return false;
+      if (untagged && item.tags.length) return false;
+      if (activeTags.some((tag) => !item.tags.includes(tag))) return false;
       if (filter === "unindexed") return !item.indexed;
       return filter === "all" || item.status === filter;
     });
+    // Working library: closest deadline first. Expired tab: most recently expired first.
     return [...list].sort((a, b) => {
       if (sort === "name") return a.filename.localeCompare(b.filename, "fr");
       const left = a.days_left ?? Number.MAX_SAFE_INTEGER;
       const right = b.days_left ?? Number.MAX_SAFE_INTEGER;
-      return left - right || a.filename.localeCompare(b.filename, "fr");
+      return (tab === "expired" ? right - left : left - right) || a.filename.localeCompare(b.filename, "fr");
     });
-  }, [items, filter, sort, query]);
+  }, [pool, tab, filter, sort, query, activeTags, untagged]);
 
   const filters: { value: Filter; label: string; dot?: Status; count?: number }[] = [
-    { value: "all", label: "Tous", count: items.length },
-    { value: "expire", label: "Expirés", dot: "expire", count: countStatus(items, "expire") },
-    { value: "<30j", label: "Sous 30 j", dot: "<30j", count: countStatus(items, "<30j") },
-    { value: "<90j", label: "Sous 90 j", dot: "<90j", count: countStatus(items, "<90j") },
+    { value: "all", label: "Tous", count: activeItems.length },
+    { value: "<30j", label: "Sous 30 j", dot: "<30j", count: countStatus(activeItems, "<30j") },
+    { value: "<90j", label: "Sous 90 j", dot: "<90j", count: countStatus(activeItems, "<90j") },
     { value: "ok", label: "Dans les délais", dot: "ok" },
-    { value: "inconnue", label: "Sans échéance", dot: "inconnue", count: countStatus(items, "inconnue") },
-    { value: "unindexed", label: "Pas encore indexés", count: items.filter((item) => !item.indexed).length },
+    { value: "inconnue", label: "Sans échéance", dot: "inconnue", count: countStatus(activeItems, "inconnue") },
+    { value: "unindexed", label: "Pas encore indexés", count: activeItems.filter((item) => !item.indexed).length },
   ];
+  const filtering = filter !== "all" || Boolean(query) || activeTags.length > 0 || untagged;
 
+  function changeTab(next: Tab) {
+    setTab(next);
+    setFilter("all");
+    setActiveTags([]);
+    setUntagged(false);
+    setAllTags(false);
+    setSelected(new Set());
+    setShown(100);
+  }
+
+  function toggleTag(tag: string) {
+    setActiveTags((current) => (current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]));
+    setShown(100);
+  }
 
   function upload(files: File[]) {
     if (!admin || !files.length) return;
@@ -144,6 +177,25 @@ export function Library() {
     );
   }
 
+  function applyTags(mode: "add" | "remove") {
+    const tags = splitTags(bulkTag);
+    if (!tags.length) return;
+    mutations.setTags.mutate(
+      { filenames: [...selected], [mode]: tags },
+      {
+        onSuccess: (result) => {
+          toast.show({
+            tone: "success",
+            message: mode === "add" ? "Tags ajoutés" : "Tags retirés",
+            description: plural(result.updated, "visuel mis à jour", "visuels mis à jour"),
+          });
+          setBulkTag("");
+        },
+        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
+      },
+    );
+  }
+
   const allVisibleSelected = visible.length > 0 && visible.every((item) => selected.has(item.filename));
 
   return (
@@ -161,13 +213,13 @@ export function Library() {
     >
       <PageHeader
         title="Bibliothèque"
-        description="Les visuels sous droits et leur date d'expiration. C'est à eux que chaque page lue est comparée."
+        description="Les visuels sous droits, leur date d'expiration et leurs tags. C'est à eux que chaque page lue est comparée, même une fois expirés."
         actions={
           <>
             <Button variant="ghost" loading={exporting} onClick={() => void exportCsv()}>
               Exporter en CSV
             </Button>
-            {admin ? <Button onClick={() => setImportOpen(true)}>Importer des dates (CSV)</Button> : null}
+            {admin ? <Button onClick={() => setImportOpen(true)}>Importer (CSV)</Button> : null}
             {admin ? (
               <>
                 <Button variant="primary" loading={uploader.uploading} onClick={() => fileInput.current?.click()}>
@@ -262,19 +314,64 @@ export function Library() {
         />
       ) : (
         <>
-          <div className="mb-5 flex flex-wrap items-center gap-2">
-            <SearchField id="lib-search" placeholder="Rechercher un visuel" className="w-full sm:w-72" value={query} onChange={(value) => { setQuery(value); setShown(100); }} />
-            <div className="flex gap-2 overflow-x-auto pb-0.5 [scrollbar-width:none]">
-              {filters.map((item) => (
-                <Chip key={item.value} active={filter === item.value} dot={item.dot} count={item.count} onClick={() => { setFilter(item.value); setShown(100); }}>
-                  {item.label}
-                </Chip>
-              ))}
-            </div>
+          <div className="mb-4">
+            <Segmented
+              label="Bibliothèque"
+              value={tab}
+              onChange={changeTab}
+              options={[
+                { value: "active", label: `Actifs · ${activeItems.length.toLocaleString("fr-FR")}` },
+                { value: "expired", label: `Expirés · ${expiredItems.length.toLocaleString("fr-FR")}` },
+              ]}
+            />
+          </div>
+
+          {tab === "expired" ? (
+            <p className="mb-4 rounded-xl bg-side px-4 py-3 text-sm text-ink-soft">
+              Ces visuels ne sont plus sous droits, mais les sites continuent d'être comparés à eux : ceux qui y sont encore en ligne sont dans « À traiter ».
+              {admin ? " Pour en renouveler un, donnez-lui une nouvelle échéance : il revient dans les visuels actifs." : ""}{" "}
+              <Link to={`${link("a-traiter")}?statut=expire`} className="font-medium text-ink underline underline-offset-2">Voir ce qui est encore en ligne</Link>
+            </p>
+          ) : null}
+
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <SearchField id="lib-search" placeholder="Rechercher un nom ou un tag" className="w-full sm:w-72" value={query} onChange={(value) => { setQuery(value); setShown(100); }} />
+            {tab === "active" ? (
+              <div className="flex gap-2 overflow-x-auto pb-0.5 [scrollbar-width:none]">
+                {filters.map((item) => (
+                  <Chip key={item.value} active={filter === item.value} dot={item.dot} count={item.count} onClick={() => { setFilter(item.value); setShown(100); }}>
+                    {item.label}
+                  </Chip>
+                ))}
+              </div>
+            ) : null}
             <div className="ml-auto">
               <Segmented label="Trier par" value={sort} onChange={setSort} options={[{ value: "expiry", label: "Échéance" }, { value: "name", label: "Nom" }]} />
             </div>
           </div>
+
+          {poolTags.length ? (
+            <div className="mb-5 flex flex-wrap items-center gap-2" role="group" aria-label="Filtrer par tag">
+              <span className="text-[12.5px] text-muted">Tags</span>
+              {(allTags ? poolTags : poolTags.slice(0, TAGS_SHOWN)).map(([tag, count]) => (
+                <Chip key={tag} active={activeTags.includes(tag)} count={count} onClick={() => toggleTag(tag)}>{tag}</Chip>
+              ))}
+              {poolTags.length > TAGS_SHOWN ? (
+                <button type="button" className="text-[13px] text-muted underline underline-offset-2 hover:text-ink" onClick={() => setAllTags((value) => !value)}>
+                  {allTags ? "Moins de tags" : `Voir les ${poolTags.length} tags`}
+                </button>
+              ) : null}
+              {untaggedCount ? (
+                <Chip active={untagged} count={untaggedCount} onClick={() => { setUntagged((value) => !value); setShown(100); }}>Sans tag</Chip>
+              ) : null}
+            </div>
+          ) : (
+            <div className="mb-5" />
+          )}
+
+          <datalist id="library-tags">
+            {libraryTags.map(([tag]) => <option key={tag} value={tag} />)}
+          </datalist>
 
           {admin && selected.size ? (
             <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-2xl bg-ink px-4 py-2.5 text-sm text-paper shadow-float md:left-[calc(256px+3.5rem)]" role="region" aria-label="Actions sur la sélection">
@@ -284,6 +381,25 @@ export function Library() {
                 <input id="bulk-date" type="date" value={bulkDate} onChange={(event) => setBulkDate(event.target.value)} className="h-9 rounded-[10px] border border-white/20 bg-white/10 px-2.5 text-paper [color-scheme:dark]" />
                 <button type="button" className="h-9 rounded-[10px] bg-peach px-3.5 text-[13.5px] font-medium text-bark-800 hover:bg-[#f9bd98] disabled:cursor-progress disabled:opacity-60" onClick={applyBulkDate} disabled={mutations.setExpiry.isPending}>
                   {mutations.setExpiry.isPending ? "Application…" : "Appliquer"}
+                </button>
+              </span>
+              <span className="flex items-center gap-2">
+                <label htmlFor="bulk-tag" className="text-white/70">Tags</label>
+                <input
+                  id="bulk-tag"
+                  list="library-tags"
+                  value={bulkTag}
+                  maxLength={120}
+                  placeholder="magnum, classic"
+                  onChange={(event) => setBulkTag(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") applyTags("add"); }}
+                  className="h-9 w-40 rounded-[10px] border border-white/20 bg-white/10 px-2.5 text-paper placeholder:text-white/40"
+                />
+                <button type="button" className="h-9 rounded-[10px] bg-peach px-3.5 text-[13.5px] font-medium text-bark-800 hover:bg-[#f9bd98] disabled:cursor-not-allowed disabled:opacity-50" onClick={() => applyTags("add")} disabled={mutations.setTags.isPending || !splitTags(bulkTag).length}>
+                  Ajouter
+                </button>
+                <button type="button" className="h-9 rounded-[10px] px-3 text-[13.5px] text-paper hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => applyTags("remove")} disabled={mutations.setTags.isPending || !splitTags(bulkTag).length}>
+                  Retirer
                 </button>
               </span>
               <button type="button" className="h-9 rounded-[10px] px-3 text-[13.5px] text-[#f4b3a8] hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" disabled={mutations.remove.isPending} onClick={() => void removeSelected([...selected])}>
@@ -305,7 +421,7 @@ export function Library() {
             </label>
           ) : null}
           <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {admin && filter === "all" && !query ? (
+            {admin && tab === "active" && !filtering ? (
               <li>
                 <button
                   type="button"
@@ -338,6 +454,14 @@ export function Library() {
                         <StatusBadge status={item.status} label={item.status === "inconnue" ? undefined : daysText(item.days_left)} />
                         {item.expiry_date ? <span className="text-[11.5px] text-muted tabular">{formatDate(item.expiry_date)}</span> : null}
                       </span>
+                      {item.tags.length ? (
+                        <span className="flex flex-wrap gap-1">
+                          {item.tags.slice(0, 3).map((tag) => (
+                            <span key={tag} className="rounded-full bg-side px-2 py-0.5 text-[11px] text-ink-soft">{tag}</span>
+                          ))}
+                          {item.tags.length > 3 ? <span className="px-1 py-0.5 text-[11px] text-muted">+{item.tags.length - 3}</span> : null}
+                        </span>
+                      ) : null}
                       {!item.indexed ? <span className="text-[11.5px] text-urgent">Indexation en attente</span> : null}
                     </span>
                   </button>
@@ -364,7 +488,11 @@ export function Library() {
               <Button onClick={() => setShown((value) => value + 100)}>Afficher plus · {shown}/{visible.length}</Button>
             </div>
           ) : null}
-          {!visible.length ? <p className="py-10 text-center text-sm text-muted">Aucun visuel ne correspond à ces filtres.</p> : null}
+          {!visible.length ? (
+            <p className="py-10 text-center text-sm text-muted">
+              {tab === "expired" && !filtering ? "Aucun visuel expiré : tout ce que vous surveillez est encore sous droits." : "Aucun visuel ne correspond à ces filtres."}
+            </p>
+          ) : null}
         </>
       )}
 
@@ -379,11 +507,11 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
   const { updateMeta } = useLibraryMutations();
   const toast = useToast();
   const item = props.item;
-  const [form, setForm] = useState({ expiry_date: "", credit: "", notes: "" });
+  const [form, setForm] = useState<{ expiry_date: string; credit: string; notes: string; tags: string[] }>({ expiry_date: "", credit: "", notes: "", tags: [] });
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   if (item && loadedFor !== item.id) {
     setLoadedFor(item.id);
-    setForm({ expiry_date: item.expiry_date, credit: item.credit, notes: item.notes });
+    setForm({ expiry_date: item.expiry_date, credit: item.credit, notes: item.notes, tags: item.tags });
   }
   if (!item) return null;
 
@@ -433,6 +561,10 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
             <Input id="edit-credit" disabled={!admin} placeholder="Photographe, agence" value={form.credit} onChange={(event) => setForm({ ...form, credit: event.target.value })} />
           </div>
           <div>
+            <FieldLabel htmlFor="edit-tags" hint="produit, campagne, shooting…">Tags</FieldLabel>
+            <TagEditor id="edit-tags" tags={form.tags} disabled={!admin} onChange={(tags) => setForm({ ...form, tags })} />
+          </div>
+          <div>
             <FieldLabel htmlFor="edit-notes">Notes</FieldLabel>
             <textarea
               id="edit-notes"
@@ -454,10 +586,68 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
   );
 }
 
+/** Tags with the number of visuals carrying each, most used first. */
+function tagCounts(items: LibraryItem[]): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const item of items) for (const tag of item.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr"));
+}
+
+/** Chips plus a text field: Enter or a comma adds a tag, Backspace on an empty field removes the last one. Suggestions come from the library's `#library-tags` list. */
+function TagEditor(props: { id: string; tags: string[]; onChange: (tags: string[]) => void; disabled?: boolean }) {
+  const [text, setText] = useState("");
+
+  function commit(raw: string) {
+    setText("");
+    const added = splitTags(raw).filter((tag) => !props.tags.includes(tag));
+    if (added.length) props.onChange([...props.tags, ...added].slice(0, MAX_TAGS));
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1.5 rounded-[10px] border border-line-strong bg-paper p-2 focus-within:border-focus focus-within:ring-4 focus-within:ring-focus-soft has-[input:disabled]:bg-canvas">
+      {props.tags.map((tag) => (
+        <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-side py-1 pr-1.5 pl-2.5 text-[12.5px]">
+          {tag}
+          {!props.disabled ? (
+            <button type="button" aria-label={`Retirer le tag ${tag}`} className="grid h-4 w-4 place-items-center rounded-full text-muted hover:bg-line hover:text-ink" onClick={() => props.onChange(props.tags.filter((item) => item !== tag))}>
+              ×
+            </button>
+          ) : null}
+        </span>
+      ))}
+      {!props.disabled && props.tags.length < MAX_TAGS ? (
+        <input
+          id={props.id}
+          list="library-tags"
+          value={text}
+          maxLength={120}
+          placeholder={props.tags.length ? "" : "miniature, classic…"}
+          onChange={(event) => (/[,;|]/.test(event.target.value) ? commit(event.target.value) : setText(event.target.value))}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              commit(text);
+            } else if (event.key === "Backspace" && !text && props.tags.length) {
+              props.onChange(props.tags.slice(0, -1));
+            }
+          }}
+          onBlur={() => commit(text)}
+          // The container already shows the focus ring; the global :focus-visible outline would double it.
+          style={{ outline: "none" }}
+          className="min-w-[8rem] flex-1 bg-transparent px-1 py-1 text-sm placeholder:text-faint"
+        />
+      ) : props.disabled && !props.tags.length ? (
+        <span className="px-1 py-1 text-sm text-muted">Aucun tag</span>
+      ) : null}
+    </div>
+  );
+}
+
 const importStatus: Record<ImportRow["status"], string> = {
   ok: "Prêt",
   unknown_file: "Fichier inconnu",
   bad_date: "Date invalide",
+  bad_tags: "Tag invalide",
 };
 
 function ImportCsv(props: { open: boolean; onClose: () => void }) {
@@ -485,7 +675,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
         onSuccess: (data) => {
           toast.show({
             tone: "success",
-            message: `${plural(data.applied, "échéance mise à jour", "échéances mises à jour")}`,
+            message: `${plural(data.applied, "visuel mis à jour", "visuels mis à jour")}`,
             description: "Le tableau de bord en tient compte dès maintenant.",
           });
           close();
@@ -500,7 +690,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
     <Modal
       open={props.open}
       onClose={close}
-      title="Importer des dates depuis un CSV"
+      title="Importer depuis un CSV"
       wide
       footer={
         <>
@@ -512,7 +702,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
       }
     >
       <p className="text-sm text-ink-soft">
-        Colonnes attendues : <code className="rounded bg-canvas px-1">filename</code>, <code className="rounded bg-canvas px-1">expiry_date</code>, et en option <code className="rounded bg-canvas px-1">credit</code>, <code className="rounded bg-canvas px-1">notes</code>. Dates au format AAAA-MM-JJ ou JJ/MM/AAAA. Rien n'est modifié avant de cliquer sur « Appliquer ».
+        Colonnes attendues : <code className="rounded bg-canvas px-1">filename</code>, <code className="rounded bg-canvas px-1">expiry_date</code>, et en option <code className="rounded bg-canvas px-1">credit</code>, <code className="rounded bg-canvas px-1">notes</code>, <code className="rounded bg-canvas px-1">tags</code> (séparés par des virgules). Dates au format AAAA-MM-JJ ou JJ/MM/AAAA. Sans colonne <code className="rounded bg-canvas px-1">tags</code>, les tags existants ne sont pas touchés ; avec, ils sont remplacés. Rien n'est modifié avant de cliquer sur « Appliquer ».
       </p>
       <input
         type="file"
@@ -534,6 +724,7 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
                 <th className="px-3 py-2 font-medium">Ligne</th>
                 <th className="px-3 py-2 font-medium">Fichier</th>
                 <th className="px-3 py-2 font-medium">Échéance</th>
+                <th className="px-3 py-2 font-medium">Tags</th>
                 <th className="px-3 py-2 font-medium">État</th>
               </tr>
             </thead>
@@ -543,9 +734,10 @@ function ImportCsv(props: { open: boolean; onClose: () => void }) {
                   <td className="px-3 py-1.5 text-muted tabular">{row.line}</td>
                   <td className="max-w-[240px] truncate px-3 py-1.5">{row.filename}</td>
                   <td className="px-3 py-1.5 tabular">{row.expiry_date ? formatDate(row.expiry_date) : "·"}</td>
+                  <td className="max-w-[200px] truncate px-3 py-1.5" title={row.tags?.join(", ")}>{row.tags === null ? <span className="text-muted">inchangés</span> : row.tags.length ? row.tags.join(", ") : "·"}</td>
                   <td className={cx("px-3 py-1.5", row.status === "ok" ? "text-ok" : "text-expired")} title={row.message}>
                     {importStatus[row.status]}
-                    {row.message && row.status === "bad_date" ? <span className="block text-xs text-muted">{row.message}</span> : null}
+                    {row.message && row.status !== "ok" && row.status !== "unknown_file" ? <span className="block text-xs text-muted">{row.message}</span> : null}
                   </td>
                 </tr>
               ))}

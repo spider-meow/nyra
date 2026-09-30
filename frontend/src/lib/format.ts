@@ -121,3 +121,16 @@ export function percent(ratio: number | null | undefined, digits = 0): string {
   if (ratio === null || ratio === undefined) return "—";
   return `${num(ratio * 100, digits)} %`;
 }
+
+export const MAX_TAGS = 20;
+export const MAX_TAG_LENGTH = 40;
+
+/** The tags typed in a text field: split on `,` `;` `|`, trimmed, lowercase, without duplicates (as the API stores them). */
+export function splitTags(text: string): string[] {
+  const tags: string[] = [];
+  for (const part of text.split(/[,;|]/)) {
+    const tag = part.trim().replace(/\s+/g, " ").toLowerCase().slice(0, MAX_TAG_LENGTH);
+    if (tag && !tags.includes(tag)) tags.push(tag);
+  }
+  return tags;
+}
