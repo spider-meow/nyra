@@ -16,6 +16,8 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
   const overview = useOverview();
   const pending = overview.data?.dashboard.pending_review ?? 0;
   const expired = overview.data?.dashboard.expired_online ?? 0;
+  const staffItems: NavItem[] = me.data?.staff ? [{ to: "/interne", label: "Back office Nyra", icon: "backoffice" }] : [];
+  const adminFooterItems: NavItem[] = admin ? [{ to: link("statistiques"), label: "Stats pour les nerds", icon: "stats" }] : [];
   return {
     items: [
       { to: link("tableau-de-bord"), label: "Tableau de bord", icon: "dashboard", count: expired, tone: "alert" },
@@ -24,10 +26,10 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
       { to: link("images-du-site"), label: "Droits non vérifiés", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
       { to: link("lectures"), label: "Sites et lectures", icon: "scan" },
       { to: link("rapports"), label: "Rapports", icon: "report" },
-      ...(me.data?.staff ? [{ to: "/interne", label: "Back office Nyra", icon: "backoffice" as IconName }] : []),
+      ...staffItems,
     ],
     footerItems: [
-      ...(admin ? [{ to: link("statistiques"), label: "Stats pour les nerds", icon: "stats" as IconName }] : []),
+      ...adminFooterItems,
       { to: link("reglages"), label: "Réglages", icon: "settings" },
     ],
   };

@@ -80,10 +80,7 @@ function useToastStore() {
       schedule(toast);
       return toast.id;
     };
-    const fn = ((message: string, tone: Exclude<Tone, "loading"> = "info") => show({ message, tone })) as Toaster;
-    fn.show = show;
-    fn.loading = (message, description) => show({ message, description, tone: "loading" });
-    fn.update = (id, input) => {
+    const update = (id: number, input: Partial<ToastInput>) => {
       const existing = current.current.find((toast) => toast.id === id);
       const next: Toast = existing ? { ...existing, ...input } : { message: "", ...input, id, tone: input.tone ?? "info" };
       const list = existing ? current.current.map((toast) => (toast.id === id ? next : toast)) : [...current.current.slice(-3), next];
@@ -92,8 +89,12 @@ function useToastStore() {
       setToasts(list);
       if (!existing || input.tone) schedule(next);
     };
-    fn.dismiss = dismiss;
-    return fn;
+    return Object.assign((message: string, tone: Exclude<Tone, "loading"> = "info") => show({ message, tone }), {
+      show,
+      loading: (message: string, description?: string) => show({ message, description, tone: "loading" }),
+      update,
+      dismiss,
+    });
   }, [dismiss, schedule]);
 
   return { toasts, toaster, dismiss, pause, schedule };
@@ -210,7 +211,7 @@ export function Modal(props: { open: boolean; onClose: () => void; title: string
 
   useEffect(() => {
     if (!props.open) return;
-    const previous = document.activeElement as HTMLElement | null;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const target =
       panel.current?.querySelector<HTMLElement>("[data-autofocus]") ??
       panel.current?.querySelector<HTMLElement>(".overflow-y-auto input, .overflow-y-auto select, .overflow-y-auto button");
