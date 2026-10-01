@@ -194,6 +194,31 @@ def test_upload_is_admin_only_stores_a_thumbnail_and_queues_indexing(client, org
     item = library["items"][0]
     assert item["indexed"] is False
     assert item["thumb_url"].startswith(f"https://fake-storage.test/refs/{org_id}/{cloud_brand}/thumbs/")
+    assert "url" not in item  # the original is signed on demand, see the next test
+
+
+def test_original_url_is_signed_on_demand_for_members_of_the_brand_only(client, org_with_users, cloud_brand,
+                                                                        fake_storage_client):
+    org_id, base, admin_id, client_id, outsider_id = org_with_users
+    brands = f"/api/orgs/{org_id}/brands"
+    other = client.post(brands, headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
+    other_base = f"{brands}/{other['id']}"
+    _upload(client, base, admin_id, "a.jpg")
+    _upload(client, other_base, admin_id, "b.jpg")
+
+    for user in (admin_id, client_id):  # a client-role member can read it too
+        r = client.get(f"{base}/library/a.jpg/url", headers=_headers(user))
+        assert r.status_code == 200
+        assert r.json()["url"].startswith(f"https://fake-storage.test/refs/{org_id}/{cloud_brand}/a.jpg?")
+    assert client.get(f"{base}/library/a.jpg/url", headers=_headers(outsider_id)).status_code == 403
+    assert client.get(f"{base}/library/a.jpg/url").status_code == 401
+    assert client.get(f"{base}/library/none.jpg/url", headers=_headers(client_id)).status_code == 404
+    assert client.get(f"{base}/library/notes.txt/url", headers=_headers(client_id)).status_code == 400
+    # A reference of another brand is not reachable through this one.
+    assert client.get(f"{base}/library/b.jpg/url", headers=_headers(client_id)).status_code == 404
+    assert client.get(f"{other_base}/library/b.jpg/url", headers=_headers(client_id)).status_code == 200
+    # The one-segment routes keep working next to it.
+    assert client.get(f"{base}/library/export-csv", headers=_headers(admin_id)).status_code == 200
 
 
 def test_accented_names_get_a_safe_storage_key_and_one_bad_file_spares_the_others(

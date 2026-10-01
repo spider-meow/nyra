@@ -556,7 +556,9 @@ def create_app(settings: CloudSettings) -> FastAPI:
         with cloud_db.connect(settings.database_url) as conn:
             rows = cloud_db.list_references(conn, scope.brand_id)
             indexing = active_jobs(conn, scope.brand_id, ("index",))
-        urls = sign(cloud_storage.BUCKET_REFS, [row["thumb_path"] for row in rows] + [row["storage_path"] for row in rows])
+        # Thumbnails only: signing each original too would double the work for a big library
+        # (the original's URL comes from `library/{filename}/url`, when the edit modal opens).
+        urls = sign(cloud_storage.BUCKET_REFS, [row["thumb_path"] or row["storage_path"] for row in rows])
         today = datetime.now(timezone.utc).date()
         items = []
         for row in rows:
@@ -575,10 +577,21 @@ def create_app(settings: CloudSettings) -> FastAPI:
                 "height": row["height"],
                 "indexed": bool(row["embedded"]),
                 "compared": row["compared_at"] is not None,
-                "thumb_url": urls.get(row["thumb_path"] or "") or urls.get(row["storage_path"], ""),
-                "url": urls.get(row["storage_path"], ""),
+                "thumb_url": urls.get(row["thumb_path"] or row["storage_path"], ""),
             })
         return {"items": items, "indexing": indexing}
+
+    @app.get(f"{BRAND}/library/{{filename}}/url")
+    def library_original_url(filename: str, scope: BrandScope = Depends(brand_member_dep)) -> dict:
+        """Signed URL of one reference's original, for the edit modal."""
+        with cloud_db.connect(settings.database_url) as conn:
+            row = cloud_db.get_reference_by_filename(conn, scope.brand_id, safe_filename(filename))
+        if row is None:
+            raise HTTPException(status_code=404, detail="Référence introuvable.")
+        url = sign(cloud_storage.BUCKET_REFS, [row["storage_path"]]).get(row["storage_path"])
+        if not url:
+            raise HTTPException(status_code=502, detail="L'image n'est pas disponible pour le moment.")
+        return {"url": url}
 
     @app.post(f"{BRAND}/library/upload")
     def upload(files: list[UploadFile] = File(...), scope: BrandScope = Depends(brand_admin_dep)) -> dict:
