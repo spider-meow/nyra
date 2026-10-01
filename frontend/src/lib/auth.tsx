@@ -1,7 +1,8 @@
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { api, bindSession } from "./api";
+import { bindSession } from "./api";
+import { loadConfig } from "./config";
 import { clearStored } from "./storage";
 
 type Phase = "loading" | "unconfigured" | "signed-out" | "signed-in";
@@ -32,7 +33,7 @@ type Booted = { client: SupabaseClient; session: Session | null } | { problem: s
  * `null`: the provider went away midway, nothing to apply.
  */
 async function connect(stopped: () => boolean): Promise<Booted | null> {
-  const config = await api.get<{ supabaseUrl: string; anonKey: string }>("/auth/config");
+  const config = await loadConfig();
   if (stopped()) return null;
   if (!config.supabaseUrl || !config.anonKey) {
     return { problem: "Le serveur n'a pas de clé publique Supabase (SUPABASE_ANON_KEY). Voir .env.example." };

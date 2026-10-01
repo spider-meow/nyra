@@ -1,0 +1,7 @@
+{
+  "_comment": "Gzip KB (1 KB = 1000 bytes, as in Vite's build output). Set on 1 Oct 2026 from the build with Sentry (first load 191.4, entry 21.9, largest page 9.5, Sentry chunk 61.0) plus about 10%. Raise only on purpose: see docs/DEVELOPMENT.md.",
+  "firstLoadGzipKB": 210,
+  "entryGzipKB": 24,
+  "lazyChunkGzipKB": 10.5,
+  "sentryGzipKB": 67
+}

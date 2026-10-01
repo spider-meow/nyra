@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, Suspense, lazy, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Navigate, RouterProvider, useMatches } from "react-router";
+import { createBrowserRouter, Navigate, RouterProvider, useMatches, useRouteError } from "react-router";
 import { ConfirmProvider, ToastProvider } from "./components/feedback";
 import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
+import { reportError, startMonitoring } from "./lib/monitoring";
 import { isRecord } from "./lib/storage";
 import { BrandShell, FirstBrand, Login, NotFound, OrgHome, OrgShell, RequireSession, SetPassword } from "./pages/Access";
 import { Dashboard } from "./pages/Dashboard";
@@ -52,6 +53,8 @@ function Titled(props: { children: ReactNode }) {
 
 /** A page that cannot load (typically a file replaced by a new deploy): offer a reload instead of the router's developer screen. */
 function PageError() {
+  const error = useRouteError();
+  useEffect(() => reportError(error), [error]);
   return (
     <div className="grid min-h-screen place-items-center p-8 text-center">
       <div>
@@ -107,6 +110,8 @@ const router = createBrowserRouter([
     ],
   },
 ]);
+
+void startMonitoring(router); // after the first render: it waits for the page to load and for the server's configuration
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Racine introuvable.");

@@ -200,7 +200,7 @@ def _cloud_env(*, need_storage: bool = True) -> dict[str, str]:
     load_env_files()
     env = {key: os.environ.get(key, "") for key in (
         "DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_JWT_SECRET", "SUPABASE_ANON_KEY",
-        "NYRA_PUBLIC_URL",
+        "NYRA_PUBLIC_URL", "SENTRY_BROWSER_DSN",
     )}
     required = ["DATABASE_URL"] + (["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"] if need_storage else [])
     missing = [key for key in required if not env[key]]
@@ -229,7 +229,7 @@ def serve_cmd(
     settings = CloudSettings(
         database_url=env["DATABASE_URL"], supabase_url=env["SUPABASE_URL"],
         service_role_key=env["SUPABASE_SERVICE_ROLE_KEY"], jwt_secret=env["SUPABASE_JWT_SECRET"] or None,
-        anon_key=env["SUPABASE_ANON_KEY"], config_path=config,
+        anon_key=env["SUPABASE_ANON_KEY"], sentry_browser_dsn=env["SENTRY_BROWSER_DSN"], config_path=config,
     )
     typer.secho(f"Nyra  ->  http://{host}:{port}", fg=typer.colors.GREEN)
     uvicorn.run(create_app(settings), host=host, port=port, log_level="info", proxy_headers=True, log_config=None)

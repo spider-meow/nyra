@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from ... import observability
 from .. import auth as cloud_auth
 from .. import db as cloud_db
 from .. import insights as cloud_insights
@@ -20,7 +21,12 @@ def healthz(ctx: Ctx = Depends(get_ctx)) -> dict:
 
 @router.get("/api/auth/config")
 def auth_config(ctx: Ctx = Depends(get_ctx)) -> dict:
-    return {"supabaseUrl": ctx.settings.supabase_url, "anonKey": ctx.settings.anon_key}
+    """Public settings of the page: sign-in, and `sentry` (null = no browser reporting)."""
+    return {
+        "supabaseUrl": ctx.settings.supabase_url,
+        "anonKey": ctx.settings.anon_key,
+        "sentry": observability.browser_sentry(ctx.settings.sentry_browser_dsn),
+    }
 
 
 @router.get("/api/me")

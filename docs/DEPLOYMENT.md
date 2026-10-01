@@ -58,7 +58,9 @@ insert into jobs (org_id, kind) select id, 'index' from organizations where slug
 ## Logs and health
 
 Both processes log to stdout (`NYRA_LOG_FORMAT=json` for one JSON object
-per line; `SENTRY_DSN` to report exceptions; see `OBSERVABILITY.md`). `web` exposes `GET /api/healthz` (checks
+per line; `SENTRY_DSN` to report server exceptions, `SENTRY_BROWSER_DSN` to
+measure and report errors in the browser, with `NYRA_ENV`, `NYRA_RELEASE` and
+`SENTRY_TRACES_SAMPLE_RATE`; see `OBSERVABILITY.md`). `web` exposes `GET /api/healthz` (checks
 the database) and the image declares a Docker `HEALTHCHECK`. A job that
 fails shows its error in the interface and in `jobs.error`; the full
 traceback is in the worker's log.

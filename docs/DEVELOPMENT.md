@@ -43,9 +43,43 @@ pytest
   real project.
 
 CI (`.github/workflows/ci.yml`) runs `ruff check backend`, the full test
-suite against a pgvector service container, and the frontend build.
+suite against a pgvector service container, and the frontend build, bundle
+budget and scrub check.
 
-Frontend checks: `npm run build` (runs `tsc --noEmit` first).
+Frontend checks: `npm run build` (runs `tsc --noEmit` first), then
+`npm run size` and `npm run check:scrub` (below).
+
+### Bundle-size budget
+
+`npm run size` (after `npm run build`; not part of `build`, so local builds
+stay fast) measures the JavaScript the browser needs for the first screen and
+fails when it grows past `frontend/size-budget.json`. First load is what
+`dist/index.html` loads up front: its `<script type="module">` and its
+`modulepreload` links. Every other file in `dist/assets` is lazy (a page
+opened later, the Sentry SDK). It prints one line per chunk (raw KB, gzip KB,
+share of its budget) and exits 1 naming the chunk that went over.
+
+| Budget (gzip KB, 1 KB = 1000 bytes) | Limit | Measured on 1 Oct 2026 |
+|---|---|---|
+| `firstLoadGzipKB`: every chunk of `index.html` | 210 | 191.4 |
+| `entryGzipKB`: the entry chunk alone | 24 | 21.9 |
+| `lazyChunkGzipKB`: the largest page chunk | 10.5 | 9.5 |
+| `sentryGzipKB`: the Sentry chunk (lazy, off the critical path) | 67 | 61.0 |
+
+Each limit is the measure plus about 10%. When it fails, first look for what
+grew: a new dependency, a page imported eagerly instead of with `lazy()`, a
+library pulled into the entry chunk. Raise a budget only on purpose, in the
+same pull request as the change that needs it, with the new measure and the
+reason in the description (a library that earns its weight, an SDK upgrade);
+set it to the new measure plus about 10% and update the table above and the
+comment in `size-budget.json`. Never raise it to get a red build green without
+that explanation.
+
+`npm run check:scrub` runs the browser-monitoring scrubbers
+(`src/lib/scrub.ts`) on sample client data and fails if any of it survives;
+run it after touching that file or the Sentry setup (`src/lib/sentry.ts`).
+It compiles the file in memory with the TypeScript already installed, so no
+test framework is needed.
 
 ## Conventions
 

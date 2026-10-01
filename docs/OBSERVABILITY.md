@@ -6,7 +6,7 @@ Three layers, each answering a different question:
 |---|---|---|
 | How does a brand's site and pipeline behave? (image count, average weight, images per second, crawl duration, false positives…) | **Statistiques** page of each brand, `/o/<org>/m/<brand>/statistiques`, organization admins | nothing: built in |
 | How is the whole platform doing? (every brand of every organization side by side, job queue, failures, throughput) | **Back office**, `/interne`, Nyra team only | `nyra cloud-staff --email …` |
-| Is it up? What broke, and when? Trends over months, alerts | **Grafana** (metrics, logs, SQL) + **Sentry** (exceptions) | below |
+| Is it up? What broke, and when? Are pages slow for real users? Trends over months, alerts | **Grafana** (metrics, logs, SQL) + **Sentry** (exceptions on the server and in the browser, page speed) | below |
 
 ## What is measured
 
@@ -66,8 +66,75 @@ Worker errors are tagged with `org_id`, `job_kind` and `job_id`. Request
 bodies and personal data are not sent (reference filenames and client URLs
 are client data).
 
-The frontend doesn't report to Sentry yet: that would need the Sentry
-browser SDK and its ingest host in the Content-Security-Policy.
+### Sentry in the browser (errors and slow pages for real users)
+
+Answers "are pages slow or broken for the people using them?" in a way
+the server cannot: it sees what the browser sees (network, rendering).
+
+1. Create a **JavaScript / React** project in Sentry (EU region if the
+   clients require it; it is a different project from the Python one) and
+   copy its DSN.
+2. Set `SENTRY_BROWSER_DSN` on the `web` process (empty = off). The server
+   hands it to the page in `GET /api/auth/config`, with `NYRA_ENV`,
+   `NYRA_RELEASE` and `SENTRY_TRACES_SAMPLE_RATE` (default 0.1: one page
+   load or navigation in ten is timed; errors are always sent), and opens
+   the Content-Security-Policy to that DSN's ingest host and nothing else.
+   A DSN that is not `https://<key>@<host>/<project>` is ignored: nothing is
+   loaded, nothing is allowed. No key lives in the build: a change of DSN
+   is a restart, not a rebuild.
+3. The SDK is its own file (`assets/sentry-*.js`, ~61 KB gzip), downloaded
+   after the page has loaded and only when a DSN is set. With no DSN the
+   browser never fetches it.
+
+**What is collected:** unhandled errors and errors caught by the page error
+screen; one *transaction* per page load and per navigation, named by route
+pattern (`/o/:slug/m/:brand/bibliotheque`), with the API calls it made
+(`GET /api/orgs/:id/brands/:id/overview`), the files it loaded, and the Web
+Vitals: LCP, CLS and TTFB (FCP too) on the page-load transaction, INP on
+its own span for the slowest interaction. API calls of the same site carry
+trace headers, so the server's own Sentry traces join the browser's.
+No session replay, no profiling, no user, no cookies, no headers, no
+request or response bodies.
+
+**What is scrubbed** (`frontend/src/lib/scrub.ts`, applied in `beforeSend`,
+`beforeSendTransaction`, `beforeSendSpan` and `beforeBreadcrumb`): reference
+file names, site URLs, organization and brand names and slugs, and e-mail
+addresses are client data and never leave the browser.
+
+- page URLs become route patterns, no query string, no fragment (invitation
+  links carry a token in it);
+- API URLs lose ids and file names (`/library/<name>/url` becomes
+  `/library/:file/url`), query strings keep the parameter names only;
+- links to other hosts (signed Storage links, fonts) shrink to their origin;
+- the message of an error from the API (`ApiError`, written for the user,
+  it can name a file) is replaced by `HTTP <status>`; any other error text
+  that still names an image or document is dropped, e-mail addresses and
+  ids are masked;
+- breadcrumbs are limited to navigations and API calls (no console, no
+  clicks: their text can hold file names); element selectors lose their
+  `alt`, `title` and `aria-label`.
+
+To check the scrubbing after a change: `cd frontend && npm run check:scrub`
+(sample data in, nothing private out; it runs in CI).
+
+**Reading slow pages:** *Performance > Web Vitals* lists the routes with
+their LCP, INP, CLS and TTFB scores; *Performance > Transactions* sorts the
+same routes by p75 duration, and a transaction's waterfall shows which API
+call or file made it slow (`GET /api/.../library` taking 2 s, a page file
+arriving late). A route name is a page, not a client: to see whether one
+client's data is slow, use the Statistiques page and the server traces.
+Sampling means few events on a quiet day: look at weeks, not hours.
+
+**Alerts worth having:** LCP p75 per route above 2.5 s (the "good"
+threshold) for 30 minutes; INP p75 per route above 200 ms; the rate of
+JavaScript errors per release (an alert on "new issue" in production, and on
+errors per user session after a deploy).
+
+**Known limits.** Nothing was run against a real Sentry project when this
+was written: the checks used a fake ingest. Source maps are not uploaded,
+so stack traces show minified names. Ad blockers can block the ingest host,
+so numbers are a floor. The SDK (v11) sends classic transactions here
+(`traceLifecycle: "static"`); its newer span streaming mode is not used.
 
 ## Logs
 

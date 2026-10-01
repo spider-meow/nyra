@@ -17,15 +17,17 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.gzip import GZipMiddleware
 
+from ...observability import sentry_ingest_origin
 from .common import log
 
 
-def _content_security_policy(supabase_url: str) -> str:
+def _content_security_policy(supabase_url: str, sentry_dsn: str) -> str:
+    sentry = sentry_ingest_origin(sentry_dsn)  # the browser reports to this one host, if Sentry is on
     supabase = f"{urlparse(supabase_url).scheme}://{urlparse(supabase_url).netloc}" if supabase_url else ""
     return "; ".join([
         "default-src 'self'",
         f"img-src 'self' data: blob: {supabase}".strip(),
-        f"connect-src 'self' {supabase}".strip(),
+        " ".join(origin for origin in ("connect-src 'self'", supabase, sentry) if origin),
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' https://fonts.gstatic.com",
         "script-src 'self'",
@@ -35,9 +37,9 @@ def _content_security_policy(supabase_url: str) -> str:
     ])
 
 
-def add_security(app: FastAPI, supabase_url: str) -> None:
+def add_security(app: FastAPI, supabase_url: str, sentry_dsn: str = "") -> None:
     """Gzip, security headers and error handlers."""
-    csp = _content_security_policy(supabase_url)
+    csp = _content_security_policy(supabase_url, sentry_dsn)
     # Added before `security_headers` so it sits inside it: the router's whole responses reach it
     # (the "http" middleware below streams, and gzip only honours `minimum_size` on unstreamed bodies).
     # Small bodies (errors, health check) stay as they are; Content-Disposition and status codes are untouched.

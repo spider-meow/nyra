@@ -121,7 +121,9 @@ numbers and the report itself are pure functions over plain dicts in
   (`crawl.max_pages_limit`), downloads and uploads are size- and
   pixel-capped.
 - **Headers:** CSP (no inline scripts, only the Supabase origin for
-  connect/img), `X-Frame-Options: DENY`, `nosniff`, strict referrer.
+  connect/img, plus the Sentry ingest origin in connect when
+  `SENTRY_BROWSER_DSN` is set and valid), `X-Frame-Options: DENY`, `nosniff`,
+  strict referrer.
 - **Static files:** `/assets/*` (content-hashed by Vite) is served
   `Cache-Control: public, max-age=31536000, immutable`; `index.html` is
   `no-cache`. Responses over 1 KB are gzipped.

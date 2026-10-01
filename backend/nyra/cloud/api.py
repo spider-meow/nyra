@@ -46,6 +46,7 @@ class CloudSettings:
         service_role_key: str,
         jwt_secret: Optional[str],
         anon_key: str = "",
+        sentry_browser_dsn: str = "",
         config_path: Optional[Path] = None,
     ):
         self.database_url = database_url
@@ -53,6 +54,7 @@ class CloudSettings:
         self.service_role_key = service_role_key
         self.jwt_secret = jwt_secret
         self.anon_key = anon_key
+        self.sentry_browser_dsn = sentry_browser_dsn
         self.config_path = config_path
         self._storage = None
 
@@ -81,6 +83,7 @@ def settings_from_env(config_path: Optional[Path] = None) -> CloudSettings:
         service_role_key=os.environ["SUPABASE_SERVICE_ROLE_KEY"],
         jwt_secret=os.environ.get("SUPABASE_JWT_SECRET") or None,
         anon_key=os.environ.get("SUPABASE_ANON_KEY", ""),
+        sentry_browser_dsn=os.environ.get("SENTRY_BROWSER_DSN", ""),
         config_path=config_path,
     )
 
@@ -91,7 +94,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
     dist = frontend_dir() / "dist"
     # The order is the behavior: middleware and handlers first, `/assets`, then the API routes
     # (the order of `/library/export-csv` against `/library/{filename}` matters), the catch-all page last.
-    interface.add_security(app, settings.supabase_url)
+    interface.add_security(app, settings.supabase_url, settings.sentry_browser_dsn)
     interface.mount_assets(app, dist)
     for module in (session, brands, library, jobs, matches, site_images, reports_settings):
         app.include_router(module.router)

@@ -47,3 +47,6 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run build
+      # First-load JS budget (frontend/size-budget.json) and the browser-monitoring scrubbers.
+      - run: npm run size
+      - run: npm run check:scrub
