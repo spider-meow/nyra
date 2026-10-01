@@ -230,6 +230,57 @@ def test_platform_insights_lists_every_brand(cloud_database_url):
     json.dumps(data)
 
 
+def test_platform_insights_shape_history_running_jobs_and_totals(cloud_database_url):
+    from nyra.cloud import db as cloud_db
+    from nyra.cloud import insights
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        name = f"Maison {uuid.uuid4().hex[:8]}"
+        org = cloud_db.create_organization(conn, name=name, slug=name.lower().replace(" ", "-"))
+        brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (org,)).fetchone()["id"]
+        _seed(conn, org, brand, crawl_seconds=100.0)
+        conn.execute("""INSERT INTO jobs (org_id, brand_id, kind, status, started_at, heartbeat_at, message)
+                        VALUES (%s, %s, 'index', 'running', now(), now(), 'en cours')""", (org, brand))
+        data = insights.platform_insights(conn)
+
+    assert list(data) == ["totals", "brands", "crawls", "jobs", "compare", "matching", "queue", "running", "failures"]
+    assert list(data["totals"]) == ["organizations", "brands", "members", "references", "site_files", "pages_read",
+                                    "matches", "storage_bytes"]
+    brands = data["brands"]
+    totals = data["totals"]
+    assert totals["references"] == sum(row["references_total"] or 0 for row in brands)
+    assert totals["site_files"] == sum(row["distinct_files"] or 0 for row in brands)
+    assert totals["pages_read"] == sum(row["pages_read"] or 0 for row in brands)
+    assert totals["matches"] == sum(row["matches"] for row in brands)
+    assert totals["storage_bytes"] == sum(row["storage_bytes"] for row in brands)
+    assert data["totals"]["brands"] == len(data["brands"])
+    assert data["totals"]["organizations"] == len({row["org_id"] for row in data["brands"]})
+
+    mine = next(row for row in data["brands"] if row["brand_id"] == str(brand))
+    assert {"storage_bytes", "crawls_90d", "last_crawl_at", "last_crawl_status", "last_crawl_seconds",
+            "avg_crawl_seconds", "avg_pages_per_minute", "clip_images_per_second", "false_positive_rate", "jobs_30d",
+            "failed_jobs_30d", "matches", "members", "org_slug", "references_total"} <= set(mine)
+    assert mine["crawls_90d"] == 1 and mine["last_crawl_status"] == "done" and mine["jobs_30d"] == 3
+    assert mine["matches"] == 2 and mine["avg_pages_per_minute"] == pytest.approx(6.0)
+    assert [(row["org_name"], row["name"]) for row in brands] == sorted((row["org_name"], row["name"]) for row in brands)
+
+    history = [row for row in data["crawls"]["history"] if row["org_name"] == name]
+    assert len(history) == 1 and history[0]["pages_visited"] == 10 and history[0]["status"] == "done"
+    assert set(history[0]) == {"org_name", "brand_name", "started_at", "status", "duration_seconds", "pages_visited",
+                               "images_found", "images_new", "pages_per_minute", "images_scanned_per_second",
+                               "clip_images_per_second", "avg_new_image_bytes"}
+    assert data["crawls"]["summary"]["runs"] >= 1 and "phases_seconds" in data["crawls"]["summary"]
+    assert {row["kind"] for row in data["jobs"]} >= {"crawl", "match"}
+    assert data["compare"] is not None and data["matching"]["total"]["matches"] >= 2
+    assert data["queue"]["running"] >= 1 and data["queue"]["jobs_24h"] >= 3
+    assert set(data["queue"]) == {"queued", "running", "oldest_queued_seconds", "last_heartbeat_seconds", "jobs_24h",
+                                  "failed_24h", "last_finished_at"}
+    running = [row for row in data["running"] if row["org_name"] == name]
+    assert [(row["kind"], row["message"]) for row in running] == [("index", "en cours")]
+    assert len(data["failures"]) <= 15
+    json.dumps(data)
+
+
 # --- API -------------------------------------------------------------------------------------
 
 def test_insights_routes_are_gated(cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
