@@ -145,6 +145,41 @@ def compare(a: Optional[Features], b: Optional[Features], config: MatchConfig) -
 ImageLoader = Callable[[str, Any], Optional[Image.Image]]
 
 
+class _ImageFeatures:
+    """Each image is loaded once, and its keypoints are extracted once per orientation."""
+
+    def __init__(self, load_image: ImageLoader):
+        self.load_image = load_image
+        self.grays: dict[tuple[str, Any], Optional[Image.Image]] = {}
+        self.cache: dict[tuple[str, Any, bool], Optional[Features]] = {}
+
+    def gray(self, side: str, image_id: Any) -> Optional[Image.Image]:
+        if (side, image_id) not in self.grays:
+            img = self.load_image(side, image_id)
+            self.grays[(side, image_id)] = None if img is None else working_gray(img)
+        return self.grays[(side, image_id)]
+
+    def features(self, side: str, image_id: Any, mirror: bool = False) -> Optional[Features]:
+        key = (side, image_id, mirror)
+        if key not in self.cache:
+            image = self.gray(side, image_id)
+            self.cache[key] = None if image is None else extract(image, mirror=mirror)
+        return self.cache[key]
+
+
+def _pair_verdict(images: _ImageFeatures, ref_id: Any, site_id: Any, config: MatchConfig) -> Optional[Verdict]:
+    """The keypoint verdict of a pair, the mirrored reference included; None when an image can't be read."""
+    ref, site = images.features("ref", ref_id), images.features("site", site_id)
+    if images.gray("ref", ref_id) is None or images.gray("site", site_id) is None:
+        return None
+    verdict = compare(ref, site, config)
+    if verdict.tier != SAME:
+        mirrored = compare(images.features("ref", ref_id, True), site, config)
+        if mirrored.tier == SAME or (mirrored.tier and not verdict.tier):
+            verdict = mirrored
+    return verdict
+
+
 def verify_hits(
     hits: Sequence[tuple],
     load_image: ImageLoader,
@@ -166,38 +201,18 @@ def verify_hits(
     candidates = [hit for hit in hits if hit[2] == level_clip]
     if not candidates:
         return list(hits)
-    grays: dict[tuple[str, Any], Optional[Image.Image]] = {}
-    cache: dict[tuple[str, Any, bool], Optional[Features]] = {}
-
-    def gray(side: str, image_id: Any) -> Optional[Image.Image]:
-        if (side, image_id) not in grays:
-            img = load_image(side, image_id)
-            grays[(side, image_id)] = None if img is None else working_gray(img)
-        return grays[(side, image_id)]
-
-    def features(side: str, image_id: Any, mirror: bool = False) -> Optional[Features]:
-        key = (side, image_id, mirror)
-        if key not in cache:
-            image = gray(side, image_id)
-            cache[key] = None if image is None else extract(image, mirror=mirror)
-        return cache[key]
-
+    images = _ImageFeatures(load_image)
     out = [hit for hit in hits if hit[2] != level_clip]
     kept = dropped = 0
     for index, hit in enumerate(candidates):
         if should_stop and should_stop():
             break
         ref_id, site_id, level, score, _confidence = hit
-        ref, site = features("ref", ref_id), features("site", site_id)
-        if gray("ref", ref_id) is None or gray("site", site_id) is None:
+        verdict = _pair_verdict(images, ref_id, site_id, config)
+        if verdict is None:
             # Can't look: keep it, but for a person to check.
             out.append((ref_id, site_id, level, score, confidence_to_verify))
             continue
-        verdict = compare(ref, site, config)
-        if verdict.tier != SAME:
-            mirrored = compare(features("ref", ref_id, True), site, config)
-            if mirrored.tier == SAME or (mirrored.tier and not verdict.tier):
-                verdict = mirrored
         if verdict.tier:
             confidence = confidence_high if verdict.tier == SAME else confidence_to_verify
             out.append((ref_id, site_id, level_verified, score, confidence))

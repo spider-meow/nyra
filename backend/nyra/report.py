@@ -25,7 +25,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -258,13 +258,73 @@ def _load_thumbs(keys: set, loader: Callable[[Any], Optional[bytes]]) -> dict[An
         return dict(pool.map(one, keys))
 
 
-def _csv_bytes(fieldnames: list[str], rows: list[dict]) -> bytes:
+def _csv_bytes(fieldnames: Sequence[str], rows: list[dict]) -> bytes:
     buf = io.StringIO()
     writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
     writer.writeheader()
     writer.writerows(rows)
     # BOM so Excel opens accents correctly.
     return ("﻿" + buf.getvalue()).encode("utf-8")
+
+
+MATCHES_COLUMNS = ("filename", "expiry_date", "days_left", "status", "credit", "notes", "confidence", "decision",
+                   "score", "level", "site_url", "pages")
+NOT_FOUND_COLUMNS = ("filename", "expiry_date", "days_left", "status", "credit", "notes", "verification")
+
+
+def _render_html(*, grouped: dict, missing: list[dict], within_days: int, stats: dict, summary: dict, thumbs: dict,
+                 organization: str) -> str:
+    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(["html", "j2"]))
+    return env.get_template("report.html.j2").render(
+        organization=organization,
+        confirmed=grouped["confirmed"],
+        to_verify=grouped["to_verify"],
+        not_found=missing,
+        within_days=within_days,
+        generated_at=datetime.now(timezone.utc).strftime("%d/%m/%Y à %H:%M UTC"),
+        stats=stats,
+        summary=summary,
+        thumbs=thumbs,
+        status_labels=STATUS_LABELS,
+        confidence_labels=CONFIDENCE_LABELS,
+        decision_labels=DECISION_LABELS,
+    )
+
+
+def _occurrence_rows(groups: list[dict]) -> list[dict]:
+    return [
+        {
+            "filename": group["filename"],
+            "expiry_date": group["expiry_date"] or "",
+            "days_left": "" if group["days_left"] is None else group["days_left"],
+            "status": STATUS_LABELS[group["status"]],
+            "credit": group["credit"],
+            "notes": group["notes"],
+            "confidence": CONFIDENCE_LABELS.get(hit["confidence"], hit["confidence"]),
+            "decision": DECISION_LABELS.get(hit.get("decision") or "", ""),
+            "score": f"{hit['score']:.2f}",
+            "level": hit["level"],
+            "site_url": hit["site_url"],
+            "pages": " | ".join(hit["pages"]),
+        }
+        for group in groups
+        for hit in group["hits"]
+    ]
+
+
+def _not_found_rows(missing: list[dict]) -> list[dict]:
+    return [
+        {
+            "filename": item["filename"],
+            "expiry_date": item.get("expiry_date") or "",
+            "days_left": "" if item["days_left"] is None else item["days_left"],
+            "status": STATUS_LABELS[item["status"]],
+            "credit": item.get("credit") or "",
+            "notes": item.get("notes") or "",
+            "verification": "Comparée, rien trouvé" if item.get("compared") else "Pas encore comparée",
+        }
+        for item in missing
+    ]
 
 
 def build_report(
@@ -293,62 +353,12 @@ def build_report(
         "to_verify": len(grouped["to_verify"]),
         "not_found": len(missing),
     })
-
-    env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(["html", "j2"]))
-    html = env.get_template("report.html.j2").render(
-        organization=organization,
-        confirmed=grouped["confirmed"],
-        to_verify=grouped["to_verify"],
-        not_found=missing,
-        within_days=within_days,
-        generated_at=datetime.now(timezone.utc).strftime("%d/%m/%Y à %H:%M UTC"),
-        stats=stats,
-        summary=summary,
-        thumbs=thumbs,
-        status_labels=STATUS_LABELS,
-        confidence_labels=CONFIDENCE_LABELS,
-        decision_labels=DECISION_LABELS,
-    )
-
-    occurrence_rows = []
-    for group in groups:
-        for hit in group["hits"]:
-            occurrence_rows.append({
-                "filename": group["filename"],
-                "expiry_date": group["expiry_date"] or "",
-                "days_left": "" if group["days_left"] is None else group["days_left"],
-                "status": STATUS_LABELS[group["status"]],
-                "credit": group["credit"],
-                "notes": group["notes"],
-                "confidence": CONFIDENCE_LABELS.get(hit["confidence"], hit["confidence"]),
-                "decision": DECISION_LABELS.get(hit.get("decision") or "", ""),
-                "score": f"{hit['score']:.2f}",
-                "level": hit["level"],
-                "site_url": hit["site_url"],
-                "pages": " | ".join(hit["pages"]),
-            })
-    not_found_rows = [
-        {
-            "filename": item["filename"],
-            "expiry_date": item.get("expiry_date") or "",
-            "days_left": "" if item["days_left"] is None else item["days_left"],
-            "status": STATUS_LABELS[item["status"]],
-            "credit": item.get("credit") or "",
-            "notes": item.get("notes") or "",
-            "verification": "Comparée, rien trouvé" if item.get("compared") else "Pas encore comparée",
-        }
-        for item in missing
-    ]
+    html = _render_html(grouped=grouped, missing=missing, within_days=within_days, stats=stats, summary=summary,
+                        thumbs=thumbs, organization=organization)
     return ReportFiles(
         html=html.encode("utf-8"),
-        matches_csv=_csv_bytes(
-            ["filename", "expiry_date", "days_left", "status", "credit", "notes", "confidence", "decision",
-             "score", "level", "site_url", "pages"],
-            occurrence_rows,
-        ),
-        not_found_csv=_csv_bytes(
-            ["filename", "expiry_date", "days_left", "status", "credit", "notes", "verification"], not_found_rows
-        ),
+        matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(groups)),
+        not_found_csv=_csv_bytes(NOT_FOUND_COLUMNS, _not_found_rows(missing)),
         summary=summary,
     )
 

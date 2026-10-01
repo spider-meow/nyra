@@ -419,6 +419,66 @@ def excluded_site_ids(sites: Sequence[dict], exclusions: Sequence[tuple[str, str
     return {packed.ids[index] for index in np.nonzero(hit)[0].tolist()}
 
 
+def _can_verify(config: MatchConfig, use_clip: bool, loader) -> bool:
+    """Whether CLIP candidates get the keypoint check this pass (option on, store can load images, OpenCV there)."""
+    if not (use_clip and config.verify_clip_matches and loader is not None):
+        return False
+    from nyra import verify
+
+    if verify.available():
+        return True
+    log.warning("OpenCV is missing: CLIP matches are kept without geometric verification")
+    return False
+
+
+def _rectangles(refs: list[dict], sites: list[dict], all_sites: list[dict], full: bool) -> tuple[list, list, list]:
+    """What to compare (pairs of row lists) and which rows' old matches to clear, for a full or incremental pass."""
+    if full:
+        return [(refs, sites)], [row["id"] for row in refs], [row["id"] for row in all_sites]
+    new_refs = [row for row in refs if row["compared_at"] is None]
+    new_sites = [row for row in sites if row["compared_at"] is None]
+    old_refs = [row for row in refs if row["compared_at"] is not None]
+    return [(new_refs, sites), (old_refs, new_sites)], [row["id"] for row in new_refs], [row["id"] for row in new_sites]
+
+
+def _compare_all(prepared: list[tuple[Packed, Packed]], config: MatchConfig, use_clip: bool, progress, should_stop) -> list[tuple]:
+    """Every rectangle's hits, one per (reference, site image) pair, in comparison order."""
+    total_steps = sum(max(1, (len(site_pack.ids) + _CHUNK - 1) // _CHUNK) for _, site_pack in prepared)
+    done_steps = 0
+
+    def on_chunk(_done: int, _total: int) -> None:
+        nonlocal done_steps
+        done_steps += 1
+        if progress:
+            progress(done_steps, max(total_steps, 1))
+
+    hits: list[tuple] = []
+    seen: set[tuple] = set()
+    for ref_pack, site_pack in prepared:
+        for hit in compare(ref_pack, site_pack, config, use_clip, progress=on_chunk, should_stop=should_stop):
+            key = (hit[0], hit[1])
+            if key not in seen:
+                seen.add(key)
+                hits.append(hit)
+    return hits
+
+
+def _verify_candidates(hits: list[tuple], loader, config: MatchConfig, info: dict, progress, should_stop) -> list[tuple]:
+    """Keypoint check of the CLIP hits (nyra/verify.py); fills the stats."""
+    from nyra import verify
+
+    info["verified_candidates"] = sum(1 for hit in hits if hit[2] == LEVEL_CLIP)
+    verify_started = time.perf_counter()
+    hits = verify.verify_hits(
+        hits, loader, config, level_clip=LEVEL_CLIP, level_verified=LEVEL_GEOMETRY, confidence_high=CONFIDENCE_HIGH,
+        confidence_to_verify=CONFIDENCE_TO_VERIFY, progress=progress, should_stop=should_stop,
+    )
+    if should_stop and should_stop():
+        raise MatchStopped()
+    info["verify_seconds"] = round(time.perf_counter() - verify_started, 3)
+    return hits
+
+
 def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: bool = True, progress=None, should_stop=None,
                  verify_progress=None, stats: Optional[dict] = None) -> int:
     """Match references against site images and persist hits.
@@ -440,13 +500,7 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
 
     exclusions = list(store.load_exclusions()) if hasattr(store, "load_exclusions") else []
     loader = getattr(store, "load_image", None)
-    verifying = False
-    if use_clip and config.match.verify_clip_matches and loader is not None:
-        from nyra import verify
-
-        verifying = verify.available()
-        if not verifying:
-            log.warning("OpenCV is missing: CLIP matches are kept without geometric verification")
+    verifying = _can_verify(config.match, use_clip, loader)
     sig = signature(config.match, use_clip, exclusions, verified=verifying)
     refs, all_sites = store.load_features(use_clip)
     excluded = excluded_site_ids(all_sites, exclusions, config.match)
@@ -457,61 +511,24 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
                  "pairs": 0, "hits": 0, "hits_by_level": {}, "verified_candidates": 0,
                  "compare_seconds": 0.0, "verify_seconds": 0.0})
 
-    if full:
-        rectangles = [(refs, sites)]
-        clear_ref_ids = [row["id"] for row in refs]
-        clear_site_ids = [row["id"] for row in all_sites]
-    else:
-        new_refs = [row for row in refs if row["compared_at"] is None]
-        new_sites = [row for row in sites if row["compared_at"] is None]
-        old_refs = [row for row in refs if row["compared_at"] is not None]
-        rectangles = [(new_refs, sites), (old_refs, new_sites)]
-        clear_ref_ids = [row["id"] for row in new_refs]
-        clear_site_ids = [row["id"] for row in new_sites]
-        if not clear_ref_ids and not clear_site_ids:
-            return store.save_matches(full=False, clear_ref_ids=[], clear_site_ids=[], hits=[], signature=sig)
+    rectangles, clear_ref_ids, clear_site_ids = _rectangles(refs, sites, all_sites, full)
+    if not full and not clear_ref_ids and not clear_site_ids:
+        return store.save_matches(full=False, clear_ref_ids=[], clear_site_ids=[], hits=[], signature=sig)
 
     prepared = [
         (pack(ref_part, use_clip, with_flip=True), pack(site_part, use_clip))
         for ref_part, site_part in rectangles
         if ref_part and site_part
     ]
-    total_steps = sum(max(1, (len(site_pack.ids) + _CHUNK - 1) // _CHUNK) for _, site_pack in prepared)
-    done_steps = 0
-
-    def on_chunk(_done: int, _total: int) -> None:
-        nonlocal done_steps
-        done_steps += 1
-        if progress:
-            progress(done_steps, max(total_steps, 1))
-
     info["pairs"] = sum(len(ref_pack.ids) * len(site_pack.ids) for ref_pack, site_pack in prepared)
     compare_started = time.perf_counter()
-    hits: list[tuple] = []
-    seen: set[tuple] = set()
-    for ref_pack, site_pack in prepared:
-        for hit in compare(ref_pack, site_pack, config.match, use_clip, progress=on_chunk, should_stop=should_stop):
-            key = (hit[0], hit[1])
-            if key not in seen:
-                seen.add(key)
-                hits.append(hit)
-
+    hits = _compare_all(prepared, config.match, use_clip, progress, should_stop)
     if should_stop and should_stop():
         raise MatchStopped()
     info["compare_seconds"] = round(time.perf_counter() - compare_started, 3)
 
     if verifying:
-        from nyra import verify
-
-        info["verified_candidates"] = sum(1 for hit in hits if hit[2] == LEVEL_CLIP)
-        verify_started = time.perf_counter()
-        hits = verify.verify_hits(
-            hits, loader, config.match, level_clip=LEVEL_CLIP, level_verified=LEVEL_GEOMETRY, confidence_high=CONFIDENCE_HIGH,
-            confidence_to_verify=CONFIDENCE_TO_VERIFY, progress=verify_progress, should_stop=should_stop,
-        )
-        if should_stop and should_stop():
-            raise MatchStopped()
-        info["verify_seconds"] = round(time.perf_counter() - verify_started, 3)
+        hits = _verify_candidates(hits, loader, config.match, info, verify_progress, should_stop)
 
     info["hits"] = len(hits)
     for hit in hits:
