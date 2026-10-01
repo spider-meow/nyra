@@ -1,9 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
 import { useMemo, useRef, useState, type DragEvent } from "react";
 import { Link } from "react-router";
 import { Modal, useConfirm, useToast } from "../components/feedback";
 import { Icon } from "../components/icons";
 import { Button, Card, Chip, EmptyState, FieldLabel, Input, PageHeader, SearchField, Segmented, Skeleton, Spinner, StatusBadge, cx } from "../components/ui";
-import { downloadFile, errorMessage } from "../lib/api";
+import { api, downloadFile, errorMessage } from "../lib/api";
 import { MAX_TAGS, daysText, formatDate, plural, splitTags } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useLibrary, useLibraryMutations, useReferenceUpload } from "../lib/queries";
@@ -548,9 +549,7 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
       }
     >
       <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <a href={item.url} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-2xl bg-side">
-          <img src={item.url || item.thumb_url} alt="" className="aspect-square w-full object-contain" />
-        </a>
+        <OriginalImage item={item} />
         <div className="grid content-start gap-4">
           <div>
             <FieldLabel htmlFor="edit-expiry">Date d'expiration des droits</FieldLabel>
@@ -583,6 +582,28 @@ function EditReference(props: { item: LibraryItem | null; onClose: () => void; o
         </div>
       </div>
     </Modal>
+  );
+}
+
+/** The thumbnail at once, then the original once its signed URL (fetched only now, the list doesn't carry it) arrives. */
+function OriginalImage({ item }: { item: LibraryItem }) {
+  const { apiPath, brand } = useOrg();
+  const original = useQuery({
+    queryKey: ["library-url", brand.id, item.filename],
+    queryFn: () => api.get<{ url: string }>(apiPath(`/library/${encodeURIComponent(item.filename)}/url`)),
+    staleTime: 30 * 60_000, // signed URLs live 1 h
+  });
+  const url = original.data?.url;
+  const image = <img src={url || item.thumb_url} alt="" className="aspect-square w-full object-contain" />;
+  return (
+    <div>
+      {url ? (
+        <a href={url} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-2xl bg-side">{image}</a>
+      ) : (
+        <div className="overflow-hidden rounded-2xl bg-side">{image}</div>
+      )}
+      {original.isError ? <p className="mt-2 text-xs text-muted">L'image en pleine taille n'a pas pu être chargée.</p> : null}
+    </div>
   );
 }
 
