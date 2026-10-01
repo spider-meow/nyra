@@ -25,6 +25,69 @@ const AuthContext = createContext<AuthState | null>(null);
 // links it e-mails. Read it before the client consumes the fragment.
 const arrivedToSetPassword = /type=(invite|recovery)/.test(window.location.hash);
 
+type Booted = { client: SupabaseClient; session: Session | null } | { problem: string };
+
+/**
+ * Reads the public config, creates the Supabase client and restores the session.
+ * `null`: the provider went away midway, nothing to apply.
+ */
+async function connect(stopped: () => boolean): Promise<Booted | null> {
+  const config = await api.get<{ supabaseUrl: string; anonKey: string }>("/auth/config");
+  if (stopped()) return null;
+  if (!config.supabaseUrl || !config.anonKey) {
+    return { problem: "Le serveur n'a pas de clé publique Supabase (SUPABASE_ANON_KEY). Voir .env.example." };
+  }
+  const supabase = createClient(config.supabaseUrl, config.anonKey, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  });
+  // Bind before any render can fire a request: child effects run before
+  // this provider's own effects, so binding in an effect would be too late.
+  bindSession(
+    async () => (await supabase.auth.getSession()).data.session?.access_token ?? null,
+    () => void supabase.auth.signOut(),
+  );
+  const { data } = await supabase.auth.getSession();
+  if (stopped()) return null;
+  return { client: supabase, session: data.session };
+}
+
+/** `connect`, with a failure turned into the problem to show. */
+async function bootstrap(stopped: () => boolean): Promise<Booted | null> {
+  try {
+    return await connect(stopped);
+  } catch (error) {
+    return stopped() ? null : { problem: error instanceof Error ? error.message : "Configuration illisible." };
+  }
+}
+
+type Actions = Pick<AuthState, "signIn" | "signOut" | "requestReset" | "setPassword">;
+
+function authActions(client: SupabaseClient | null, onPasswordSet: () => void): Actions {
+  return {
+    async signIn(email, password) {
+      if (!client) return;
+      const { error } = await client.auth.signInWithPassword({ email, password });
+      if (error) throw new Error(error.message === "Invalid login credentials" ? "Email ou mot de passe incorrect." : error.message);
+    },
+    async signOut() {
+      await client?.auth.signOut();
+    },
+    async requestReset(email) {
+      if (!client) return;
+      const { error } = await client.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/mot-de-passe`,
+      });
+      if (error) throw new Error(error.message);
+    },
+    async setPassword(password) {
+      if (!client) return;
+      const { error } = await client.auth.updateUser({ password });
+      if (error) throw new Error(error.message);
+      onPasswordSet();
+    },
+  };
+}
+
 export function AuthProvider(props: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [client, setClient] = useState<SupabaseClient | null>(null);
@@ -35,36 +98,17 @@ export function AuthProvider(props: { children: ReactNode }) {
 
   useEffect(() => {
     let stopped = false;
-    void (async () => {
-      try {
-        const config = await api.get<{ supabaseUrl: string; anonKey: string }>("/auth/config");
-        if (stopped) return;
-        if (!config.supabaseUrl || !config.anonKey) {
-          setProblem("Le serveur n'a pas de clé publique Supabase (SUPABASE_ANON_KEY). Voir .env.example.");
-          setPhase("unconfigured");
-          return;
-        }
-        const supabase = createClient(config.supabaseUrl, config.anonKey, {
-          auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-        });
-        // Bind before any render can fire a request: child effects run before
-        // this provider's own effects, so binding in an effect would be too late.
-        bindSession(
-          async () => (await supabase.auth.getSession()).data.session?.access_token ?? null,
-          () => void supabase.auth.signOut(),
-        );
-        const { data } = await supabase.auth.getSession();
-        if (stopped) return;
-        setClient(supabase);
-        setSession(data.session);
-        setPhase(data.session ? "signed-in" : "signed-out");
-      } catch (error) {
-        if (!stopped) {
-          setProblem(error instanceof Error ? error.message : "Configuration illisible.");
-          setPhase("unconfigured");
-        }
+    void bootstrap(() => stopped).then((booted) => {
+      if (!booted) return;
+      if ("problem" in booted) {
+        setProblem(booted.problem);
+        setPhase("unconfigured");
+        return;
       }
-    })();
+      setClient(booted.client);
+      setSession(booted.session);
+      setPhase(booted.session ? "signed-in" : "signed-out");
+    });
     return () => {
       stopped = true;
     };
@@ -92,27 +136,7 @@ export function AuthProvider(props: { children: ReactNode }) {
       email: session?.user.email ?? "",
       mustSetPassword,
       problem,
-      async signIn(email, password) {
-        if (!client) return;
-        const { error } = await client.auth.signInWithPassword({ email, password });
-        if (error) throw new Error(error.message === "Invalid login credentials" ? "Email ou mot de passe incorrect." : error.message);
-      },
-      async signOut() {
-        await client?.auth.signOut();
-      },
-      async requestReset(email) {
-        if (!client) return;
-        const { error } = await client.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/mot-de-passe`,
-        });
-        if (error) throw new Error(error.message);
-      },
-      async setPassword(password) {
-        if (!client) return;
-        const { error } = await client.auth.updateUser({ password });
-        if (error) throw new Error(error.message);
-        setMustSetPassword(false);
-      },
+      ...authActions(client, () => setMustSetPassword(false)),
     }),
     [client, phase, session, mustSetPassword, problem],
   );

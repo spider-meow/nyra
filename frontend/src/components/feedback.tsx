@@ -40,7 +40,8 @@ function defaultDuration(toast: Toast): number | null {
   return toast.action ? 7000 : 4500;
 }
 
-export function ToastProvider(props: { children: ReactNode }) {
+/** The toasts on screen, their auto-dismiss timers and the `toast()` function handed to the app. */
+function useToastStore() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const nextId = useRef(1);
   const timers = useRef(new Map<number, number>());
@@ -53,6 +54,8 @@ export function ToastProvider(props: { children: ReactNode }) {
     current.current = current.current.filter((toast) => toast.id !== id);
     setToasts(current.current);
   }, []);
+
+  const pause = useCallback((id: number) => window.clearTimeout(timers.current.get(id)), []);
 
   const schedule = useCallback(
     (toast: Toast) => {
@@ -93,6 +96,11 @@ export function ToastProvider(props: { children: ReactNode }) {
     return fn;
   }, [dismiss, schedule]);
 
+  return { toasts, toaster, dismiss, pause, schedule };
+}
+
+export function ToastProvider(props: { children: ReactNode }) {
+  const { toasts, toaster, dismiss, pause, schedule } = useToastStore();
   return (
     <ToastContext.Provider value={toaster}>
       {props.children}
@@ -101,60 +109,75 @@ export function ToastProvider(props: { children: ReactNode }) {
         aria-live="polite"
       >
         {toasts.map((toast) => (
-          <div
+          <ToastCard
             key={toast.id}
-            role={toast.tone === "error" ? "alert" : "status"}
-            onMouseEnter={() => window.clearTimeout(timers.current.get(toast.id))}
-            onMouseLeave={() => schedule(toast)}
-            className={cx(
-              "toast-in pointer-events-auto w-full max-w-sm overflow-hidden rounded-xl text-sm shadow-float",
-              toast.tone === "error" ? "border border-expired/20 bg-expired-soft text-expired" : "bg-ink text-paper",
-            )}
-          >
-            <div className="flex items-start gap-3 px-4 py-3">
-              <ToastIcon tone={toast.tone} />
-              <div className="min-w-0 flex-1">
-                <p className="font-medium leading-5">{toast.message}</p>
-                {toast.description ? <p className="mt-0.5 text-[13px] leading-5 opacity-75">{toast.description}</p> : null}
-                {toast.action ? (
-                  <button
-                    type="button"
-                    className="mt-1.5 text-[13px] font-medium underline underline-offset-2 hover:opacity-80 disabled:cursor-default disabled:no-underline disabled:opacity-60"
-                    disabled={toast.action.disabled}
-                    onClick={() => {
-                      toast.action?.onClick();
-                      if (!toast.action?.keep) dismiss(toast.id);
-                    }}
-                  >
-                    {toast.action.label}
-                  </button>
-                ) : null}
-              </div>
-              {toast.tone !== "loading" ? (
-                <button type="button" className="mt-0.5 opacity-60 hover:opacity-100" aria-label="Fermer" onClick={() => dismiss(toast.id)}>
-                  <Icon name="close" size={14} strokeWidth={2} />
-                </button>
-              ) : null}
-            </div>
-            {toast.progress === null ? (
-              <div className="h-1 overflow-hidden bg-paper/10" role="progressbar" aria-valuemin={0} aria-valuemax={100}>
-                <div className="progress-indeterminate h-full w-1/4 bg-peach" />
-              </div>
-            ) : toast.progress !== undefined ? (
-              <div
-                className="h-1 bg-paper/10"
-                role="progressbar"
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(toast.progress * 100)}
-              >
-                <div className="h-full bg-peach transition-[width] duration-300" style={{ width: `${Math.max(3, Math.min(100, toast.progress * 100))}%` }} />
-              </div>
-            ) : null}
-          </div>
+            toast={toast}
+            onDismiss={() => dismiss(toast.id)}
+            onPause={() => pause(toast.id)}
+            onResume={() => schedule(toast)}
+          />
         ))}
       </div>
     </ToastContext.Provider>
+  );
+}
+
+function ToastCard(props: { toast: Toast; onDismiss: () => void; onPause: () => void; onResume: () => void }) {
+  const { toast, onDismiss } = props;
+  return (
+    <div
+      role={toast.tone === "error" ? "alert" : "status"}
+      onMouseEnter={props.onPause}
+      onMouseLeave={props.onResume}
+      className={cx(
+        "toast-in pointer-events-auto w-full max-w-sm overflow-hidden rounded-xl text-sm shadow-float",
+        toast.tone === "error" ? "border border-expired/20 bg-expired-soft text-expired" : "bg-ink text-paper",
+      )}
+    >
+      <div className="flex items-start gap-3 px-4 py-3">
+        <ToastIcon tone={toast.tone} />
+        <div className="min-w-0 flex-1">
+          <p className="font-medium leading-5">{toast.message}</p>
+          {toast.description ? <p className="mt-0.5 text-[13px] leading-5 opacity-75">{toast.description}</p> : null}
+          {toast.action ? (
+            <button
+              type="button"
+              className="mt-1.5 text-[13px] font-medium underline underline-offset-2 hover:opacity-80 disabled:cursor-default disabled:no-underline disabled:opacity-60"
+              disabled={toast.action.disabled}
+              onClick={() => {
+                toast.action?.onClick();
+                if (!toast.action?.keep) onDismiss();
+              }}
+            >
+              {toast.action.label}
+            </button>
+          ) : null}
+        </div>
+        {toast.tone !== "loading" ? (
+          <button type="button" className="mt-0.5 opacity-60 hover:opacity-100" aria-label="Fermer" onClick={onDismiss}>
+            <Icon name="close" size={14} strokeWidth={2} />
+          </button>
+        ) : null}
+      </div>
+      <ToastProgress progress={toast.progress} />
+    </div>
+  );
+}
+
+function ToastProgress(props: { progress: ToastInput["progress"] }) {
+  const { progress } = props;
+  if (progress === null) {
+    return (
+      <div className="h-1 overflow-hidden bg-paper/10" role="progressbar" aria-valuemin={0} aria-valuemax={100}>
+        <div className="progress-indeterminate h-full w-1/4 bg-peach" />
+      </div>
+    );
+  }
+  if (progress === undefined) return null;
+  return (
+    <div className="h-1 bg-paper/10" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
+      <div className="h-full bg-peach transition-[width] duration-300" style={{ width: `${Math.max(3, Math.min(100, progress * 100))}%` }} />
+    </div>
   );
 }
 

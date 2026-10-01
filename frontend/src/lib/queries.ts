@@ -19,11 +19,11 @@ import type {
   SiteImage,
   Status,
 } from "../types";
-import { ApiError, api, errorMessage } from "./api";
+import { api } from "./api";
 import { useAuth } from "./auth";
-import { plural } from "./format";
 import { useOrg } from "./org";
 import { isRecord, oneOf, readStored, removeStored, storageKey, writeStored } from "./storage";
+import { batches, reportUnanswered, sendBatch, summary, withoutDuplicates, type UploadResult } from "./upload";
 
 // Copies of the Library and Overview answers in localStorage, so those pages open at once.
 // Older than this, a copy is ignored: the server reuses a signed thumbnail URL while it has at least 10 minutes left,
@@ -280,33 +280,7 @@ export function useReview(withinDays: number) {
   });
 }
 
-// A serverless host refuses request bodies above ~4.5 MB: send a few files at a time.
-const BATCH_BYTES = 3_500_000;
-const BATCH_FILES = 8;
-
-function batches(files: File[]): File[][] {
-  const out: File[][] = [];
-  let current: File[] = [];
-  let size = 0;
-  for (const file of files) {
-    if (current.length && (size + file.size > BATCH_BYTES || current.length >= BATCH_FILES)) {
-      out.push(current);
-      current = [];
-      size = 0;
-    }
-    current.push(file);
-    size += file.size;
-  }
-  if (current.length) out.push(current);
-  return out;
-}
-
-export type UploadResult = {
-  saved: string[];
-  /** Also in `saved`: a visual of that name was already in the library and has been replaced. */
-  replaced: string[];
-  failed: { filename: string; reason: string }[];
-};
+export type { UploadResult } from "./upload";
 
 /**
  * Adds references a few at a time, with a progress toast that stays while
@@ -319,20 +293,9 @@ export function useReferenceUpload() {
   const toast = useToast();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
-  async function run(files: File[]): Promise<UploadResult> {
+  async function run(sent: File[]): Promise<UploadResult> {
     const result: UploadResult = { saved: [], replaced: [], failed: [] };
-    // Two files with the same name would overwrite each other: send the first, say so for the others.
-    const seen = new Set<string>();
-    const unique: File[] = [];
-    for (const file of files) {
-      if (seen.has(file.name)) {
-        result.failed.push({ filename: file.name, reason: "Même nom qu'un autre fichier de cet envoi : un seul exemplaire a été gardé." });
-      } else {
-        seen.add(file.name);
-        unique.push(file);
-      }
-    }
-    files = unique;
+    const files = withoutDuplicates(sent, result);
     const total = files.length;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
@@ -346,20 +309,7 @@ export function useReferenceUpload() {
     let done = 0;
     try {
       for (const batch of batches(files)) {
-        const body = new FormData();
-        for (const file of batch) body.append("files", file);
-        try {
-          const data = await api.post<UploadResult>(apiPath("/library/upload"), body);
-          result.saved.push(...data.saved);
-          result.replaced.push(...(data.replaced ?? []));
-          result.failed.push(...data.failed);
-        } catch (error) {
-          const reason =
-            error instanceof ApiError && error.status === 413
-              ? "Fichier trop lourd pour être envoyé (4 Mo au plus par fichier sur ce serveur)."
-              : errorMessage(error);
-          result.failed.push(...batch.map((file) => ({ filename: file.name, reason })));
-        }
+        await sendBatch(apiPath("/library/upload"), batch, result);
         done += batch.length;
         setProgress({ done, total });
         if (total > 1) toast.update(id, { message: `Envoi des visuels · ${done} sur ${total}`, progress: done / total });
@@ -370,43 +320,8 @@ export function useReferenceUpload() {
       setProgress(null);
       invalidate("library", "overview", "matches", "jobs");
     }
-
-    // Every file sent must come back as saved or refused; anything else is reported, never dropped silently.
-    const answered = new Set([...result.saved, ...result.failed.map((item) => item.filename)]);
-    for (const file of files) {
-      if (!answered.has(file.name)) result.failed.push({ filename: file.name, reason: "Le serveur n'a rien répondu pour ce fichier." });
-    }
-
-    const saved = result.saved.length;
-    const replaced = result.replaced.length;
-    const failed = result.failed.length;
-    const added = saved - replaced;
-    if (saved && !failed && !replaced) {
-      toast.update(id, {
-        tone: "success",
-        message: saved > 1 ? `${saved} visuels ajoutés` : "Visuel ajouté",
-        description: "L'indexation démarre, puis la comparaison avec les sites de la marque se fait toute seule.",
-        progress: undefined,
-      });
-    } else if (saved) {
-      toast.update(id, {
-        tone: failed ? "info" : "success",
-        message: `${saved} sur ${saved + failed} ${saved + failed > 1 ? "fichiers enregistrés" : "fichier enregistré"}`,
-        description: [
-          added ? plural(added, "nouveau", "nouveaux") : "",
-          replaced ? `${replaced} ${replaced > 1 ? "remplacés" : "remplacé"} (même nom déjà présent)` : "",
-          failed ? plural(failed, "refusé", "refusés") : "",
-        ].filter(Boolean).join(" · ") + ". Le détail est en haut de la bibliothèque.",
-        progress: undefined,
-      });
-    } else {
-      toast.update(id, {
-        tone: "error",
-        message: failed > 1 ? "Aucun visuel n'a pu être ajouté" : "Le visuel n'a pas pu être ajouté",
-        description: failed > 1 ? "Le détail est affiché en haut de la bibliothèque." : result.failed[0]?.reason,
-        progress: undefined,
-      });
-    }
+    reportUnanswered(files, result);
+    toast.update(id, summary(result));
     return result;
   }
 
