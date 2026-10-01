@@ -159,17 +159,21 @@ class _Reference:
 
 
 # A reference meets many site images, so its decoded grayscale (~1 MB) and its two keypoint sets
-# (~1 MB each) are kept; the hits come reference by reference, so a few dozen entries are enough.
-# 32 references hold about 100 MB at most. A site image is read, used for its pair, and dropped.
+# (~1 MB each: 2000 keypoints x 128 float32) are kept; the hits come reference by reference, so a few
+# dozen entries are enough. 32 references hold about 100 MB at most.
 REFERENCE_CACHE = 32
+# A site image is a candidate of several references, so its keypoints (~1 MB, its grayscale is dropped
+# once read) are kept too, unreadable ones as a memo: 64 sites hold about 65 MB at most.
+SITE_CACHE = 64
 
 
 class _ImageFeatures:
-    """The reference side is cached in a small LRU; the site side is read again for each pair."""
+    """Reference and site keypoints, each in a small LRU, so an image is read once while it stays in it."""
 
     def __init__(self, load_image: ImageLoader):
         self.load_image = load_image
         self.reference = lru_cache(maxsize=REFERENCE_CACHE)(self._load_reference)
+        self.site = lru_cache(maxsize=SITE_CACHE)(self._load_site)
 
     def gray(self, side: str, image_id: Any) -> Optional[Image.Image]:
         img = self.load_image(side, image_id)
@@ -178,14 +182,24 @@ class _ImageFeatures:
     def _load_reference(self, ref_id: Any) -> _Reference:
         return _Reference(self.gray("ref", ref_id))
 
+    def _load_site(self, site_id: Any) -> Optional[tuple[Optional[Features]]]:
+        """None: unreadable. Otherwise a 1-tuple, as an image without keypoints (`(None,)`) is not an unreadable one."""
+        gray = self.gray("site", site_id)
+        return None if gray is None else (extract(gray),)
+
+    def clear(self) -> None:
+        # The caches and their owner reference each other: free the images now, not at the next GC.
+        self.reference.cache_clear()
+        self.site.cache_clear()
+
 
 def _pair_verdict(images: _ImageFeatures, ref_id: Any, site_id: Any, config: MatchConfig) -> Optional[Verdict]:
     """The keypoint verdict of a pair, the mirrored reference included; None when an image can't be read."""
     ref = images.reference(ref_id)
-    site_gray = None if ref.gray is None else images.gray("site", site_id)
-    if site_gray is None:
+    loaded = None if ref.gray is None else images.site(site_id)
+    if loaded is None:
         return None
-    site = extract(site_gray)
+    (site,) = loaded
     verdict = compare(ref.plain, site, config)
     if verdict.tier != SAME:
         mirrored = compare(ref.mirrored, site, config)
@@ -235,6 +249,6 @@ def verify_hits(
             dropped += 1
         if progress:
             progress(index + 1, len(candidates))
-    images.reference.cache_clear()  # the cache and its owner reference each other: free the images now, not at the next GC
+    images.clear()
     log.info("geometric verification: %d CLIP candidate(s) kept, %d dropped", kept, dropped)
     return out

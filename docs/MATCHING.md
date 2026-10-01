@@ -54,6 +54,8 @@ dusk, score 0.8–0.9. So no CLIP candidate is kept on its score alone
 | 5–20 % | kept, `a_verifier` | the same product cut-out in another composition, a special edition shot on the same template |
 | ≥ `geometric_confirm_coverage` (20 %) | kept, `haut` | the same photo: cropped, resized, recolored, mirrored, text over it, set in a banner |
 
+Each image is decoded and its keypoints extracted once while it stays in a small LRU cache (32 references, 64 site images, about 165 MB at most; an unreadable image is remembered, not retried), and the caches are freed at the end of the pass.
+
 Kept candidates get level `geo`. A candidate whose images can't be read
 stays at level `clip`, `a_verifier`.
 

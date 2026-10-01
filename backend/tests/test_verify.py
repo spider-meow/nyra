@@ -99,21 +99,43 @@ def test_verify_hits_drops_other_pictures_confirms_copies_and_keeps_level_one_hi
 
 
 def test_the_image_caches_stay_bounded_and_verdicts_do_not_change(monkeypatch):
-    """More references than the cache holds: its size never passes the limit, and each verdict is
-    the one of a pair checked alone (nothing cached)."""
+    """More references and sites than the caches hold: their sizes never pass the limits, and each verdict is
+    the one of a pair checked alone (nothing cached), an unreadable site image included."""
     monkeypatch.setattr(verify, "REFERENCE_CACHE", 3)
+    monkeypatch.setattr(verify, "SITE_CACHE", 2)
     size = (360, 260)
     refs = {i: scene(30 + i, size) for i in range(8)}
-    sites = {0: jpeg(refs[0].resize((300, 216))), 1: scene(60, size), 2: jpeg(ImageOps.mirror(refs[5]))}
+    sites = {0: jpeg(refs[0].resize((300, 216))), 1: scene(60, size), 2: jpeg(ImageOps.mirror(refs[5])), 3: None}
     load = lambda side, image_id: (refs if side == "ref" else sites)[image_id]  # noqa: E731
-    pairs = [(r, s) for r in refs for s in sites]  # 24 distinct pairs, reference by reference
+    pairs = [(r, s) for r in refs for s in sites]  # 32 distinct pairs, reference by reference
 
     shared = verify._ImageFeatures(load)
     for ref_id, site_id in pairs:
         got = verify._pair_verdict(shared, ref_id, site_id, CONFIG)
-        assert shared.reference.cache_info().currsize <= 3
+        assert shared.reference.cache_info().currsize <= 3 and shared.site.cache_info().currsize <= 2
         assert got == verify._pair_verdict(verify._ImageFeatures(load), ref_id, site_id, CONFIG)
+        assert (got is None) == (site_id == 3)  # unreadable: nothing to say, not a "different picture"
     assert {verify._pair_verdict(shared, r, s, CONFIG).tier for r, s in [(0, 0), (5, 2), (1, 1)]} == {verify.SAME, None}
+    shared.clear()
+    assert shared.reference.cache_info().currsize == shared.site.cache_info().currsize == 0
+
+
+def test_a_site_image_is_read_once_for_all_the_references_it_is_a_candidate_of():
+    """Each site id is loaded at most once while cached, an unreadable one too (it is not retried)."""
+    size = (360, 260)
+    refs = {i: scene(70 + i, size) for i in range(6)}
+    sites = {0: jpeg(refs[2].resize((300, 216))), 1: scene(90, size), 2: None}
+    loads: dict = {}
+
+    def load(side, image_id):
+        loads[side, image_id] = loads.get((side, image_id), 0) + 1
+        return (refs if side == "ref" else sites)[image_id]
+
+    hits = [(r, s, "clip", 0.9, "haut") for r in refs for s in sites]
+    names = dict(level_clip="clip", level_verified="geo", confidence_high="haut", confidence_to_verify="a_verifier")
+    kept = verify.verify_hits(hits, load, CONFIG, **names)
+    assert {key: n for key, n in loads.items() if key[0] == "site"} == {("site", 0): 1, ("site", 1): 1, ("site", 2): 1}
+    assert (2, 0, "geo", 0.9, "haut") in kept and (2, 2, "clip", 0.9, "a_verifier") in kept  # copy confirmed; unreadable kept for a person
 
 
 def test_the_offline_store_gives_the_verifier_its_images(tmp_path):

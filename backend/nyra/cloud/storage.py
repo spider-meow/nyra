@@ -207,28 +207,48 @@ def signed_url(client: Client, bucket: str, path: str, *, expires_in: int = SIGN
 # (every download is billed egress).
 SIGNED_URL_REUSE_MARGIN_SECONDS = 600
 
-# At most this many URLs are remembered (a few hundred bytes each).
-SIGNED_URL_CACHE_MAX = 10_000
+# The bound is per scope (bucket, organization: the first path segment), so a large
+# tenant only evicts its own entries and never defeats the browser cache of the others.
+# An entry is the path, the URL (~300 characters) and a tuple: ~700 bytes measured, so a
+# full scope is ~2 MB and the 64 scopes together stay under ~140 MB. Known degenerate
+# case: one tenant listing more than SIGNED_URL_CACHE_MAX paths again and again walks
+# them in a cycle and re-signs them all, as there is no room to keep them (upgrade: LRU).
+SIGNED_URL_CACHE_MAX = 3_000
+SIGNED_URL_SCOPES_MAX = 64  # dormant tenants are dropped, least recently used first
 
-_signed: dict[tuple[str, str], tuple[str, float]] = {}
+_signed: dict[tuple[str, str], dict[str, tuple[str, float]]] = {}
 _signed_lock = threading.Lock()
 
 
+def _scope(bucket: str, path: str) -> dict[str, tuple[str, float]]:
+    """The entries of a path's scope, now the most recently used one (call under `_signed_lock`)."""
+    key = (bucket, path.split("/", 1)[0])
+    scope = _signed.pop(key, None) or {}
+    _signed[key] = scope
+    while len(_signed) > SIGNED_URL_SCOPES_MAX:
+        del _signed[next(iter(_signed))]  # dicts iterate in insertion order: least recently used first
+    return scope
+
+
 def _remember_signed(bucket: str, path: str, url: str, expires_at: float) -> None:
-    """Keep a URL for reuse; when full, drop the oldest (every URL lives as long as the others, so oldest = first to expire)."""
+    """Keep a URL for reuse; when its scope is full, drop its oldest (every URL lives as long as the others, so oldest = first to expire)."""
     with _signed_lock:
-        _signed.pop((bucket, path), None)  # a refreshed URL goes to the back of the line and evicts nobody
-        while len(_signed) >= SIGNED_URL_CACHE_MAX:
-            del _signed[next(iter(_signed))]  # dicts iterate in insertion order: oldest first
-        _signed[(bucket, path)] = (url, expires_at)
+        scope = _scope(bucket, path)
+        scope.pop(path, None)  # a refreshed URL goes to the back of the line and evicts nobody
+        while len(scope) >= SIGNED_URL_CACHE_MAX:
+            del scope[next(iter(scope))]
+        scope[path] = (url, expires_at)
 
 
 def forget_signed(bucket: str, paths: Iterable[Optional[str]]) -> None:
     """An object changed or went away: its next URL must be a fresh one."""
     with _signed_lock:
         for path in paths:
-            if path:
-                _signed.pop((bucket, path), None)
+            key = (bucket, path.split("/", 1)[0]) if path else None
+            if key in _signed:
+                _signed[key].pop(path, None)
+                if not _signed[key]:
+                    del _signed[key]
 
 
 def signed_urls(
@@ -245,7 +265,7 @@ def signed_urls(
     out: dict[str, str] = {}
     with _signed_lock:
         for path in unique:
-            cached = _signed.get((bucket, path))
+            cached = _scope(bucket, path).get(path)
             if cached and cached[1] - now > SIGNED_URL_REUSE_MARGIN_SECONDS:
                 out[path] = cached[0]
     missing = [path for path in unique if path not in out]
