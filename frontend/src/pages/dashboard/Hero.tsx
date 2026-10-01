@@ -34,7 +34,8 @@ export function Hero(props: { overview: Overview }) {
             : "D'après la dernière lecture. Les faux positifs et les visuels déjà retirés ne sont pas comptés."}
         </p>
         {hero ? (
-          <LinkButton to={`${link("a-traiter")}?statut=expire`} variant="primary" size="lg" className="mt-6">
+          // The dashboard counts every deadline, so the list it opens does too (fenetre=3650).
+          <LinkButton to={`${link("a-traiter")}?statut=expire&fenetre=3650`} variant="primary" size="lg" className="mt-6">
             Commencer le tri
             <Icon name="arrow" size={16} strokeWidth={2} />
           </LinkButton>

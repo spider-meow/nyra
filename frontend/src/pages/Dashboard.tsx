@@ -59,6 +59,7 @@ function today(): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/** The numbers count every deadline, not a window: the links to "À traiter" ask for all of them (fenetre=3650), whatever window was remembered there. */
 function Stats(props: { dashboard: Overview["dashboard"]; stats: Overview["stats"] }) {
   const { link } = useOrg();
   const { dashboard, stats } = props;
@@ -68,9 +69,9 @@ function Stats(props: { dashboard: Overview["dashboard"]; stats: Overview["stats
         value={dashboard.urgent_online}
         label="expirent sous 30 jours et sont en ligne"
         tone={dashboard.urgent_online ? "warn" : undefined}
-        hint={dashboard.urgent_online ? <Link className="text-bark-700 hover:underline" to={`${link("a-traiter")}?statut=%3C30j`}>Anticiper</Link> : undefined}
+        hint={dashboard.urgent_online ? <Link className="text-bark-700 hover:underline" to={`${link("a-traiter")}?statut=%3C30j&fenetre=3650`}>Anticiper</Link> : undefined}
       />
-      <Stat value={dashboard.pending_review} label="occurrences attendent une décision" hint={dashboard.pending_review ? <Link className="text-bark-700 hover:underline" to={link("a-traiter")}>Les traiter</Link> : "Tout est décidé."} />
+      <Stat value={dashboard.pending_review} label="occurrences attendent une décision" hint={dashboard.pending_review ? <Link className="text-bark-700 hover:underline" to={`${link("a-traiter")}?fenetre=3650`}>Les traiter</Link> : "Tout est décidé."} />
       <Stat
         value={dashboard.unreferenced_online}
         label="images en ligne dont les droits n'ont jamais été vérifiés"

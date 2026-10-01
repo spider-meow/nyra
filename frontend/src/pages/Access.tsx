@@ -82,33 +82,61 @@ export function Login() {
       title={mode === "password" ? "Connexion" : "Mot de passe oublié"}
       body={mode === "password" ? "L'accès se fait sur invitation de votre administrateur." : "Nous vous envoyons un lien pour en choisir un nouveau."}
     >
-      <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
-        <div>
-          <FieldLabel htmlFor="email">Adresse e-mail</FieldLabel>
-          <Input id="email" type="email" autoComplete="username" required value={email} onChange={(event) => setEmail(event.target.value)} />
-        </div>
-        {mode === "password" ? (
-          <div>
-            <FieldLabel htmlFor="password">Mot de passe</FieldLabel>
-            <Input id="password" type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
-          </div>
-        ) : null}
-        {error ? <p className="text-sm text-expired" role="alert">{error}</p> : null}
-        <Button type="submit" variant="primary" size="lg" disabled={pending || auth.phase === "loading"}>
-          {pending ? "Un instant…" : mode === "password" ? "Se connecter" : "Envoyer le lien"}
-        </Button>
-        <button
-          type="button"
-          className="text-sm text-muted underline-offset-2 hover:text-ink hover:underline"
-          onClick={() => {
-            setError("");
-            setMode(mode === "password" ? "reset" : "password");
-          }}
-        >
-          {mode === "password" ? "Mot de passe oublié ?" : "Retour à la connexion"}
-        </button>
-      </form>
+      <LoginForm
+        mode={mode}
+        email={email}
+        password={password}
+        error={error}
+        pending={pending}
+        disabled={pending || auth.phase === "loading"}
+        onEmail={setEmail}
+        onPassword={setPassword}
+        onSubmit={(event) => void submit(event)}
+        onToggle={() => {
+          setError("");
+          setMode(mode === "password" ? "reset" : "password");
+        }}
+      />
     </Centered>
+  );
+}
+
+type LoginFormProps = {
+  mode: "password" | "reset";
+  email: string;
+  password: string;
+  error: string;
+  pending: boolean;
+  disabled: boolean;
+  onEmail: (value: string) => void;
+  onPassword: (value: string) => void;
+  onSubmit: (event: FormEvent) => void;
+  onToggle: () => void;
+};
+
+/** The e-mail (and password) fields, the submit button and the link that switches between sign-in and reset. */
+function LoginForm(props: LoginFormProps) {
+  const { mode } = props;
+  return (
+    <form className="mt-6 grid gap-4" onSubmit={props.onSubmit}>
+      <div>
+        <FieldLabel htmlFor="email">Adresse e-mail</FieldLabel>
+        <Input id="email" type="email" autoComplete="username" required value={props.email} onChange={(event) => props.onEmail(event.target.value)} />
+      </div>
+      {mode === "password" ? (
+        <div>
+          <FieldLabel htmlFor="password">Mot de passe</FieldLabel>
+          <Input id="password" type="password" autoComplete="current-password" required value={props.password} onChange={(event) => props.onPassword(event.target.value)} />
+        </div>
+      ) : null}
+      {props.error ? <p className="text-sm text-expired" role="alert">{props.error}</p> : null}
+      <Button type="submit" variant="primary" size="lg" disabled={props.disabled}>
+        {props.pending ? "Un instant…" : mode === "password" ? "Se connecter" : "Envoyer le lien"}
+      </Button>
+      <button type="button" className="text-sm text-muted underline-offset-2 hover:text-ink hover:underline" onClick={props.onToggle}>
+        {mode === "password" ? "Mot de passe oublié ?" : "Retour à la connexion"}
+      </button>
+    </form>
   );
 }
 

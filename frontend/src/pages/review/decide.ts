@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useToast } from "../../components/feedback";
 import { errorMessage } from "../../lib/api";
 import { decisionLabel, plural } from "../../lib/format";
@@ -49,22 +49,28 @@ export function useDecide(view: ReviewView) {
 
 /** J/K to move, R/F/T/U to decide on the selected row. */
 export function useShortcuts(view: ReviewView, decide: ReturnType<typeof useDecide>) {
-  const { move, selected } = view;
+  // The listener is added once; it reads the latest move, selection and decide through this ref.
+  const latest = useRef({ view, decide });
+  useEffect(() => {
+    latest.current = { view, decide };
+  });
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      const target = event.target as HTMLElement;
-      if (target.closest("input, select, textarea, [role=dialog]") || event.metaKey || event.ctrlKey || event.altKey) return;
+      const { target } = event;
+      if ((target instanceof Element && target.closest("input, select, textarea, [role=dialog]")) || event.metaKey || event.ctrlKey || event.altKey) return;
+      const { move, selected } = latest.current.view;
+      const decideRow = latest.current.decide;
       const key = event.key.toLowerCase();
       if (key === "j" || key === "arrowdown") move(1);
       else if (key === "k" || key === "arrowup") move(-1);
-      else if (selected && key === "r") decide(selected, selected.hit.decision === "retenu" ? "" : "retenu");
-      else if (selected && key === "f") decide(selected, selected.hit.decision === "ecarte" ? "" : "ecarte");
-      else if (selected && key === "t") decide(selected, selected.hit.decision === "traite" ? "" : "traite");
-      else if (selected && key === "u") decide(selected, "");
+      else if (selected && key === "r") decideRow(selected, selected.hit.decision === "retenu" ? "" : "retenu");
+      else if (selected && key === "f") decideRow(selected, selected.hit.decision === "ecarte" ? "" : "ecarte");
+      else if (selected && key === "t") decideRow(selected, selected.hit.decision === "traite" ? "" : "traite");
+      else if (selected && key === "u") decideRow(selected, "");
       else return;
       event.preventDefault();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  });
+  }, []);
 }

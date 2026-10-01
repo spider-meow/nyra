@@ -4,9 +4,11 @@ import { Button, Card, Checkbox, FieldLabel, Input } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useOrg } from "../../lib/org";
 import { useSaveSettings } from "../../lib/queries";
-import type { Settings as SettingsData, SettingsSection } from "../../types";
+import type { Settings as SettingsData } from "../../types";
 
-type Field = { section: "crawl" | "match" | "report"; key: string; label: string; hint: string; step?: string };
+const SECTIONS = ["crawl", "match", "report"] as const;
+
+type Field = { section: (typeof SECTIONS)[number]; key: string; label: string; hint: string; step?: string };
 
 const numericFields: { title: string; description: string; fields: Field[] }[] = [
   {
@@ -42,7 +44,7 @@ type Draft = Record<string, string>;
 
 function draftFrom(settings: SettingsData): Draft {
   const draft: Draft = {};
-  for (const section of ["crawl", "match", "report"] as const) {
+  for (const section of SECTIONS) {
     for (const [key, value] of Object.entries(settings.overrides[section] ?? {})) {
       draft[`${section}.${key}`] = Array.isArray(value) ? value.join("\n") : String(value);
     }
@@ -53,8 +55,9 @@ function draftFrom(settings: SettingsData): Draft {
 function overridesFrom(current: Draft): SettingsData["overrides"] {
   const overrides: SettingsData["overrides"] = { crawl: {}, match: {}, report: {} };
   for (const [name, value] of Object.entries(current)) {
-    const [section, key] = name.split(".") as [Field["section"], string];
-    if (value.trim() === "") continue;
+    const [head, key] = name.split(".");
+    const section = SECTIONS.find((item) => item === head);
+    if (!section || value.trim() === "") continue;
     if (key === "pre_actions") overrides.crawl![key] = value.split("\n").map((line) => line.trim()).filter(Boolean);
     else if (value === "true" || value === "false") overrides[section]![key] = value === "true";
     else overrides[section]![key] = Number(value.replace(",", "."));
@@ -71,7 +74,7 @@ export function SettingsForm(props: { data: SettingsData }) {
   const [draft, setDraft] = useState<Draft | null>(null);
 
   const current = draft ?? draftFrom(data);
-  const defaultOf = (section: Field["section"], key: string) => (data.defaults[section] as SettingsSection)[key];
+  const defaultOf = (section: Field["section"], key: string) => data.defaults[section][key];
   const set = (name: string, value: string) => setDraft({ ...current, [name]: value });
   const bool = (key: "respect_robots_txt" | "dismiss_overlays") => {
     const value = current[`crawl.${key}`];
