@@ -1,7 +1,8 @@
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Modal, useToast } from "../../components/feedback";
 import { Button, FieldLabel, Input } from "../../components/ui";
-import { errorMessage } from "../../lib/api";
+import { api, errorMessage } from "../../lib/api";
 import { MAX_TAGS, splitTags } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { useLibraryMutations } from "../../lib/queries";
@@ -63,9 +64,7 @@ function ReferenceFields({ item, form, setForm }: { item: LibraryItem; form: For
   const { admin } = useOrg();
   return (
     <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <a href={item.url} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-2xl bg-side">
-        <img src={item.url || item.thumb_url} alt="" className="aspect-square w-full object-contain" />
-      </a>
+      <OriginalImage item={item} />
       <div className="grid content-start gap-4">
         <div>
           <FieldLabel htmlFor="edit-expiry">Date d'expiration des droits</FieldLabel>
@@ -146,6 +145,28 @@ function TagEditor(props: { id: string; tags: string[]; onChange: (tags: string[
       ) : props.disabled && !props.tags.length ? (
         <span className="px-1 py-1 text-sm text-muted">Aucun tag</span>
       ) : null}
+    </div>
+  );
+}
+
+/** The thumbnail at once, then the original once its signed URL (fetched only now, the list doesn't carry it) arrives. */
+function OriginalImage({ item }: { item: LibraryItem }) {
+  const { apiPath, brand } = useOrg();
+  const original = useQuery({
+    queryKey: ["library-url", brand.id, item.filename],
+    queryFn: () => api.get<{ url: string }>(apiPath(`/library/${encodeURIComponent(item.filename)}/url`)),
+    staleTime: 30 * 60_000, // signed URLs live 1 h
+  });
+  const url = original.data?.url;
+  const image = <img src={url || item.thumb_url} alt="" className="aspect-square w-full object-contain" />;
+  return (
+    <div>
+      {url ? (
+        <a href={url} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-2xl bg-side">{image}</a>
+      ) : (
+        <div className="overflow-hidden rounded-2xl bg-side">{image}</div>
+      )}
+      {original.isError ? <p className="mt-2 text-xs text-muted">L'image en pleine taille n'a pas pu être chargée.</p> : null}
     </div>
   );
 }

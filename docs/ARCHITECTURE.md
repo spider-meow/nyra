@@ -133,7 +133,9 @@ and history (`jobs`, `crawl_runs`) is queryable.
 
 **Thumbnails stored next to originals.** Lists and reports never load a
 full-size image; the browser gets short-lived signed URLs, signed in one
-request per list.
+request per list. The library list signs thumbnails only; the original's
+URL is fetched on demand (`GET .../library/{filename}/url`) when the edit
+modal opens.
 
 **Incremental matching.** A finished pass is remembered with a signature
 of the thresholds and model; the next pass only compares what's new,
