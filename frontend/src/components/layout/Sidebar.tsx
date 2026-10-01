@@ -166,7 +166,7 @@ export function Sidebar(props: { nav: ReturnType<typeof useNavItems>; orgs: Orga
   return (
     <div className="flex h-full flex-col gap-6 px-3.5 py-5">
       <div className="flex items-center gap-2.5 px-2.5">
-        <Logo size={26} />
+        <Logo size={36} />
         <p className="font-display text-[26px] leading-none">Nyra</p>
       </div>
       <OrgSwitcher orgs={props.orgs} />

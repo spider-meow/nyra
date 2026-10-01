@@ -15,7 +15,7 @@ function Centered(props: { title: string; body?: ReactNode; children?: ReactNode
       <div className="w-full max-w-[400px]">
         <div className="mb-8 flex flex-col items-center gap-1.5">
           <div className="flex items-center gap-2.5">
-            <Logo size={28} />
+            <Logo size={44} />
             <p className="font-display text-[30px] leading-none">Nyra</p>
           </div>
           <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">by Axel Project</p>

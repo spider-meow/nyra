@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import { confidenceHelp, confidenceLabel, decisionLabel, statusLabel } from "../lib/format";
 import type { Confidence, Decision, Status } from "../types";
 import { Icon } from "./icons";
+import { Logo } from "./Logo";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
@@ -260,7 +261,7 @@ export function Checkbox(props: { checked: boolean; onChange: (value: boolean) =
 export function EmptyState(props: { title: string; body?: ReactNode; action?: ReactNode }) {
   return (
     <div className="rounded-2xl border border-dashed border-line-strong bg-sunk px-6 py-12 text-center">
-      <img src="/nyra-logo.png" alt="" width={32} height={32} className="mx-auto mb-3 opacity-90" />
+      <Logo size={48} className="mx-auto mb-3 opacity-90" />
       <p className="font-display text-2xl">{props.title}</p>
       {props.body ? <p className="mx-auto mt-1 max-w-md text-sm text-muted">{props.body}</p> : null}
       {props.action ? <div className="mt-4 flex justify-center">{props.action}</div> : null}

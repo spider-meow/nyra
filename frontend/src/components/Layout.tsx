@@ -19,7 +19,7 @@ export function Layout() {
       <aside className="sticky top-0 hidden h-screen border-r border-line bg-side md:block">{sidebar}</aside>
       <div className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-side px-4 py-2 md:hidden">
         <div className="flex min-w-0 items-center gap-2">
-          <Logo size={22} />
+          <Logo size={30} />
           <p className="font-display text-[22px] leading-none">Nyra</p>
           <p className="truncate text-sm text-muted">· {org.brands.length > 1 ? brand.name : org.name}</p>
         </div>
