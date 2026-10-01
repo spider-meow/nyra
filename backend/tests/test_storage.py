@@ -70,26 +70,51 @@ def test_signed_urls_are_reused_so_the_browser_can_cache_images():
     assert client.signings == 2
 
 
-def test_signed_urls_cache_is_bounded_and_keeps_urls_while_valid(monkeypatch):
+def test_signed_urls_cache_is_bounded_per_tenant_and_keeps_urls_while_valid(monkeypatch):
     monkeypatch.setattr(storage, "SIGNED_URL_CACHE_MAX", 3)
     storage._signed.clear()
     try:
         client = CountingClient()
-        first = storage.signed_urls(client, "refs", ["a"])
-        assert storage.signed_urls(client, "refs", ["a"]) == first and client.signings == 1  # same URL while valid
-        storage.signed_urls(client, "refs", ["b", "c", "d", "e"])
-        assert len(storage._signed) == 3
-        assert ("refs", "a") not in storage._signed and ("refs", "e") in storage._signed  # oldest dropped first
-        # A refreshed entry goes to the back and evicts nobody, even when the cache is full.
-        storage._remember_signed("refs", "c", "fresh", 1e12)
-        assert len(storage._signed) == 3 and list(storage._signed)[-1] == ("refs", "c")
-        assert ("refs", "d") in storage._signed and ("refs", "e") in storage._signed
+        small = storage.signed_urls(client, "refs", ["o2/x"])
+        first = storage.signed_urls(client, "refs", ["o1/a"])
+        assert storage.signed_urls(client, "refs", ["o1/a"]) == first and client.signings == 2  # same URL while valid
+        storage.signed_urls(client, "refs", [f"o1/{name}" for name in "bcde"])
+        scope = storage._signed[("refs", "o1")]
+        assert len(scope) == 3 and "o1/a" not in scope and "o1/e" in scope  # oldest of that tenant dropped first
+        assert storage.signed_urls(client, "refs", ["o2/x"]) == small  # the other tenant keeps its URL
+        # A refreshed entry goes to the back and evicts nobody, even when the scope is full.
+        storage._remember_signed("refs", "o1/c", "fresh", 1e12)
+        assert len(scope) == 3 and list(scope)[-1] == "o1/c" and "o1/d" in scope and "o1/e" in scope
+        storage.forget_signed("refs", ["o2/x", "o1/c", None])
+        assert ("refs", "o2") not in storage._signed and "o1/c" not in scope  # an emptied scope is dropped
     finally:
         storage._signed.clear()
-    client = CountingClient()
-    first = storage.signed_urls(client, "refs", ["a"])
-    assert storage.signed_urls(client, "refs", ["a"]) == first and client.signings == 1  # same URL while valid
-    storage.signed_urls(client, "refs", ["b", "c", "d", "e"])
-    assert len(storage._signed) == 3
-    assert ("refs", "a") not in storage._signed and ("refs", "e") in storage._signed  # oldest dropped first
+
+
+def test_a_tenant_over_its_cap_does_not_evict_the_others_and_a_cyclic_walk_resigns_only_itself(monkeypatch):
+    monkeypatch.setattr(storage, "SIGNED_URL_CACHE_MAX", 4)
     storage._signed.clear()
+    try:
+        client = CountingClient()
+        urls = {path: storage.signed_urls(client, "refs", [path])[path] for path in ("o2/p", "o3/p")}
+        big = [f"o1/{i}" for i in range(5)]  # cap + 1 paths of one tenant, walked in the same order each time
+        for _ in range(3):
+            for path in big:
+                storage.signed_urls(client, "refs", [path])
+        assert client.signings == 2 + 15  # known degenerate case: the cycle never finds its URL, only for that tenant
+        assert all(storage.signed_urls(client, "refs", [path])[path] == url for path, url in urls.items())
+        assert client.signings == 2 + 15  # the others were served from the cache
+    finally:
+        storage._signed.clear()
+
+
+def test_signed_url_scopes_are_bounded_too(monkeypatch):
+    monkeypatch.setattr(storage, "SIGNED_URL_SCOPES_MAX", 2)
+    storage._signed.clear()
+    try:
+        client = CountingClient()
+        for org in ("o1", "o2", "o1", "o3"):  # o1 is used again, so o2 is the least recently used
+            storage.signed_urls(client, "refs", [f"{org}/p"])
+        assert list(storage._signed) == [("refs", "o1"), ("refs", "o3")]
+    finally:
+        storage._signed.clear()

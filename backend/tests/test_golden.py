@@ -198,8 +198,8 @@ def test_run_matching_with_the_keypoint_check_is_pinned(tmp_path, monkeypatch):
 # --- verify_hits ------------------------------------------------------------------------
 
 def run_verify_hits(monkeypatch) -> tuple:
-    """A reference is loaded and its keypoints read once while it stays in the LRU (the mirror once); a site image
-    is read again for each pair, never kept; results keep their order."""
+    """A reference and a site image are loaded and their keypoints read once while they stay in their LRU (the
+    reference mirror once); an unreadable image is remembered; results keep their order."""
     log: list = []
 
     def load(side, image_id):
@@ -348,8 +348,6 @@ EXPECTED_VERIFY_HITS = ([(1, 2, 'phash', 0.99, 'haut'),
   ('compare', (11, True), (111, False)),
   ('load', 'ref', 2),
   ('extract', 12, False),
-  ('load', 'site', 1),
-  ('extract', 111, False),
   ('compare', (12, False), (111, False)),
   ('load', 'site', 2),
   ('extract', 112, False),
@@ -365,8 +363,6 @@ EXPECTED_VERIFY_HITS = ([(1, 2, 'phash', 0.99, 'haut'),
   ('compare', (13, False), (113, False)),
   ('extract', 13, True),
   ('compare', (13, True), (113, False)),
-  ('load', 'site', 3),
-  ('extract', 113, False),
   ('compare', (11, False), (113, False)),
   ('compare', (11, True), (113, False)),
   ('load', 'ref', 1),
