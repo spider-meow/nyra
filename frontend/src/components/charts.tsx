@@ -29,6 +29,54 @@ function niceMax(value: number): number {
   return step * power;
 }
 
+/** One bar of the history chart; hover and focus make it the active one. */
+function BarColumn(props: { bar: Bar; index: number; max: number; active: number | null; format: (value: number) => string; setActive: (index: number | null) => void }) {
+  const { bar, index, max, active, setActive } = props;
+  const ratio = bar.value === null ? 0 : bar.value / max;
+  return (
+    <button
+      type="button"
+      role="listitem"
+      aria-label={`${bar.label} : ${bar.value === null ? "non mesuré" : props.format(bar.value)}`}
+      className="group relative flex h-full min-w-0 flex-1 items-end justify-center outline-none"
+      onMouseEnter={() => setActive(index)}
+      onFocus={() => setActive(index)}
+      onBlur={() => setActive(null)}
+    >
+      <span
+        className={cx("block w-full max-w-7 rounded-t-[4px] transition-opacity", active !== null && active !== index && "opacity-45")}
+        style={{ height: `${Math.max(bar.value ? 1.5 : 0, ratio * 100)}%`, background: bar.value === null ? "var(--color-line-strong)" : SERIES[0] }}
+      />
+    </button>
+  );
+}
+
+/** The hover card of the active bar, on the side with room for it. */
+function BarTooltip(props: { bar: Bar; index: number; count: number; format: (value: number) => string }) {
+  const { bar, index, count } = props;
+  return (
+    <div
+      className="pointer-events-none absolute top-0 z-10 w-max max-w-60 rounded-lg border border-line bg-paper px-3 py-2 text-xs shadow-lg"
+      style={{
+        left: `${((index + 0.5) / count) * 100}%`,
+        transform: index > count / 2 ? "translateX(calc(-100% - 8px))" : "translateX(8px)",
+      }}
+      role="status"
+    >
+      <p className="font-semibold text-ink tabular">{bar.value === null ? "Non mesuré" : props.format(bar.value)}</p>
+      <p className="text-muted">{bar.longLabel ?? bar.label}</p>
+      <dl className="mt-1.5 grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5">
+        {bar.details.map((detail) => (
+          <div key={detail.label} className="contents">
+            <dt className="text-muted">{detail.label}</dt>
+            <dd className="text-right font-medium text-ink tabular">{detail.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 /** One series over time: a bar per run, a crosshair-style tooltip on hover and focus. */
 export function BarHistory(props: { bars: Bar[]; format: (value: number) => string; title: string; height?: number }) {
   const [active, setActive] = useState<number | null>(null);
@@ -56,48 +104,11 @@ export function BarHistory(props: { bars: Bar[]; format: (value: number) => stri
             <div key={tick} className={cx("absolute inset-x-0 border-t", tick === 0 ? "border-line-strong" : "border-line")} style={{ top: `${100 - (tick / max) * 100}%` }} aria-hidden />
           ))}
           <div className="absolute inset-0 flex items-end gap-[2px]" role="list" aria-label={props.title} onMouseLeave={() => setActive(null)}>
-            {props.bars.map((bar, index) => {
-              const ratio = bar.value === null ? 0 : bar.value / max;
-              return (
-                <button
-                  key={bar.key}
-                  type="button"
-                  role="listitem"
-                  aria-label={`${bar.label} : ${bar.value === null ? "non mesuré" : props.format(bar.value)}`}
-                  className="group relative flex h-full min-w-0 flex-1 items-end justify-center outline-none"
-                  onMouseEnter={() => setActive(index)}
-                  onFocus={() => setActive(index)}
-                  onBlur={() => setActive(null)}
-                >
-                  <span
-                    className={cx("block w-full max-w-7 rounded-t-[4px] transition-opacity", active !== null && active !== index && "opacity-45")}
-                    style={{ height: `${Math.max(bar.value ? 1.5 : 0, ratio * 100)}%`, background: bar.value === null ? "var(--color-line-strong)" : SERIES[0] }}
-                  />
-                </button>
-              );
-            })}
+            {props.bars.map((bar, index) => (
+              <BarColumn key={bar.key} bar={bar} index={index} max={max} active={active} format={props.format} setActive={setActive} />
+            ))}
           </div>
-          {current ? (
-            <div
-              className="pointer-events-none absolute top-0 z-10 w-max max-w-60 rounded-lg border border-line bg-paper px-3 py-2 text-xs shadow-lg"
-              style={{
-                left: `${((active! + 0.5) / props.bars.length) * 100}%`,
-                transform: active! > props.bars.length / 2 ? "translateX(calc(-100% - 8px))" : "translateX(8px)",
-              }}
-              role="status"
-            >
-              <p className="font-semibold text-ink tabular">{current.value === null ? "Non mesuré" : props.format(current.value)}</p>
-              <p className="text-muted">{current.longLabel ?? current.label}</p>
-              <dl className="mt-1.5 grid grid-cols-[auto_auto] gap-x-3 gap-y-0.5">
-                {current.details.map((detail) => (
-                  <div key={detail.label} className="contents">
-                    <dt className="text-muted">{detail.label}</dt>
-                    <dd className="text-right font-medium text-ink tabular">{detail.value}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          ) : null}
+          {current && active !== null ? <BarTooltip bar={current} index={active} count={props.bars.length} format={props.format} /> : null}
         </div>
       </div>
       <div className="ml-14 mt-1.5 flex justify-between text-[11px] text-muted" aria-hidden>
