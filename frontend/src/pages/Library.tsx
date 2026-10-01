@@ -7,6 +7,7 @@ import { downloadFile, errorMessage } from "../lib/api";
 import { MAX_TAGS, daysText, formatDate, plural, splitTags } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useLibrary, useLibraryMutations, useReferenceUpload } from "../lib/queries";
+import { isBoolean, isShortText, isStrings, oneOf, usePersistedState } from "../lib/storage";
 import type { ImportRow, LibraryItem, Status } from "../types";
 
 type Filter = "all" | Status | "unindexed";
@@ -20,6 +21,9 @@ function byReason(failures: { filename: string; reason: string }[]): [string, st
 type Sort = "expiry" | "name";
 /** Expired visuals live in their own tab: still compared to the sites, out of the way of the working library. */
 type Tab = "active" | "expired";
+const isTab = oneOf<Tab>(["active", "expired"]);
+const isSort = oneOf<Sort>(["expiry", "name"]);
+const isFilter = oneOf<Filter>(["all", "expire", "<30j", "<90j", "ok", "inconnue", "unindexed"]);
 const TAGS_SHOWN = 12;
 
 export function Library() {
@@ -31,12 +35,13 @@ export function Library() {
   const toast = useToast();
   const confirm = useConfirm();
   const fileInput = useRef<HTMLInputElement>(null);
-  const [tab, setTab] = useState<Tab>("active");
-  const [filter, setFilter] = useState<Filter>("all");
-  const [sort, setSort] = useState<Sort>("expiry");
-  const [query, setQuery] = useState("");
-  const [activeTags, setActiveTags] = useState<string[]>([]);
-  const [untagged, setUntagged] = useState(false);
+  // Tab and sort are kept in this browser; search and filters only for the browser tab (reload, come back later).
+  const [tab, setTab] = usePersistedState<Tab>("library.tab", "active", "local", isTab);
+  const [sort, setSort] = usePersistedState<Sort>("library.sort", "expiry", "local", isSort);
+  const [filter, setFilter] = usePersistedState<Filter>("library.filter", "all", "session", isFilter);
+  const [query, setQuery] = usePersistedState("library.query", "", "session", isShortText);
+  const [activeTags, setActiveTags] = usePersistedState<string[]>("library.tags", [], "session", isStrings);
+  const [untagged, setUntagged] = usePersistedState("library.untagged", false, "session", isBoolean);
   const [allTags, setAllTags] = useState(false);
   const [bulkTag, setBulkTag] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -58,14 +63,18 @@ export function Library() {
   const libraryTags = useMemo(() => tagCounts(items), [items]);
   const poolTags = useMemo(() => tagCounts(pool), [pool]);
   const untaggedCount = useMemo(() => pool.filter((item) => !item.tags.length).length, [pool]);
+  // A remembered filter can outlive what it points at (tag removed, other tab): only apply what the screen can show and undo.
+  const tagsOn = useMemo(() => activeTags.filter((tag) => poolTags.some(([name]) => name === tag)), [activeTags, poolTags]);
+  const untaggedOn = untagged && untaggedCount > 0;
+  const statusFilter = tab === "active" ? filter : "all";
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
     const list = pool.filter((item) => {
       if (needle && !item.filename.toLowerCase().includes(needle) && !item.tags.some((tag) => tag.includes(needle))) return false;
-      if (untagged && item.tags.length) return false;
-      if (activeTags.some((tag) => !item.tags.includes(tag))) return false;
-      if (filter === "unindexed") return !item.indexed;
-      return filter === "all" || item.status === filter;
+      if (untaggedOn && item.tags.length) return false;
+      if (tagsOn.some((tag) => !item.tags.includes(tag))) return false;
+      if (statusFilter === "unindexed") return !item.indexed;
+      return statusFilter === "all" || item.status === statusFilter;
     });
     // Working library: closest deadline first. Expired tab: most recently expired first.
     return [...list].sort((a, b) => {
@@ -74,7 +83,9 @@ export function Library() {
       const right = b.days_left ?? Number.MAX_SAFE_INTEGER;
       return (tab === "expired" ? right - left : left - right) || a.filename.localeCompare(b.filename, "fr");
     });
-  }, [pool, tab, filter, sort, query, activeTags, untagged]);
+  }, [pool, tab, statusFilter, sort, query, tagsOn, untaggedOn]);
+  // Bulk actions only touch what is on screen: a card hidden by the search, a tag or a status filter is never acted on.
+  const selectedNames = useMemo(() => visible.filter((item) => selected.has(item.filename)).map((item) => item.filename), [visible, selected]);
 
   const filters: { value: Filter; label: string; dot?: Status; count?: number }[] = [
     { value: "all", label: "Tous", count: activeItems.length },
@@ -84,7 +95,7 @@ export function Library() {
     { value: "inconnue", label: "Sans échéance", dot: "inconnue", count: countStatus(activeItems, "inconnue") },
     { value: "unindexed", label: "Pas encore indexés", count: activeItems.filter((item) => !item.indexed).length },
   ];
-  const filtering = filter !== "all" || Boolean(query) || activeTags.length > 0 || untagged;
+  const filtering = statusFilter !== "all" || Boolean(query) || tagsOn.length > 0 || untaggedOn;
 
   function changeTab(next: Tab) {
     setTab(next);
@@ -97,7 +108,7 @@ export function Library() {
   }
 
   function toggleTag(tag: string) {
-    setActiveTags((current) => (current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]));
+    setActiveTags(tagsOn.includes(tag) ? tagsOn.filter((item) => item !== tag) : [...tagsOn, tag]);
     setShown(100);
   }
 
@@ -160,9 +171,8 @@ export function Library() {
   }
 
   function applyBulkDate() {
-    const names = [...selected];
     mutations.setExpiry.mutate(
-      { filenames: names, expiry_date: bulkDate },
+      { filenames: selectedNames, expiry_date: bulkDate },
       {
         onSuccess: (result) => {
           toast.show({
@@ -181,7 +191,7 @@ export function Library() {
     const tags = splitTags(bulkTag);
     if (!tags.length) return;
     mutations.setTags.mutate(
-      { filenames: [...selected], [mode]: tags },
+      { filenames: selectedNames, [mode]: tags },
       {
         onSuccess: (result) => {
           toast.show({
@@ -196,7 +206,7 @@ export function Library() {
     );
   }
 
-  const allVisibleSelected = visible.length > 0 && visible.every((item) => selected.has(item.filename));
+  const allVisibleSelected = visible.length > 0 && selectedNames.length === visible.length;
 
   return (
     <div
@@ -209,7 +219,7 @@ export function Library() {
         if (event.currentTarget === event.target) setDragging(false);
       }}
       onDrop={onDrop}
-      className={cx("relative", admin && selected.size > 0 && "pb-20", dragging && "after:pointer-events-none after:absolute after:inset-0 after:rounded-xl after:border-2 after:border-dashed after:border-focus after:bg-focus-soft/40")}
+      className={cx("relative", admin && selectedNames.length > 0 && "pb-20", dragging && "after:pointer-events-none after:absolute after:inset-0 after:rounded-xl after:border-2 after:border-dashed after:border-focus after:bg-focus-soft/40")}
     >
       <PageHeader
         title="Bibliothèque"
@@ -339,7 +349,7 @@ export function Library() {
             {tab === "active" ? (
               <div className="flex gap-2 overflow-x-auto pb-0.5 [scrollbar-width:none]">
                 {filters.map((item) => (
-                  <Chip key={item.value} active={filter === item.value} dot={item.dot} count={item.count} onClick={() => { setFilter(item.value); setShown(100); }}>
+                  <Chip key={item.value} active={statusFilter === item.value} dot={item.dot} count={item.count} onClick={() => { setFilter(item.value); setShown(100); }}>
                     {item.label}
                   </Chip>
                 ))}
@@ -354,7 +364,7 @@ export function Library() {
             <div className="mb-5 flex flex-wrap items-center gap-2" role="group" aria-label="Filtrer par tag">
               <span className="text-[12.5px] text-muted">Tags</span>
               {(allTags ? poolTags : poolTags.slice(0, TAGS_SHOWN)).map(([tag, count]) => (
-                <Chip key={tag} active={activeTags.includes(tag)} count={count} onClick={() => toggleTag(tag)}>{tag}</Chip>
+                <Chip key={tag} active={tagsOn.includes(tag)} count={count} onClick={() => toggleTag(tag)}>{tag}</Chip>
               ))}
               {poolTags.length > TAGS_SHOWN ? (
                 <button type="button" className="text-[13px] text-muted underline underline-offset-2 hover:text-ink" onClick={() => setAllTags((value) => !value)}>
@@ -362,7 +372,7 @@ export function Library() {
                 </button>
               ) : null}
               {untaggedCount ? (
-                <Chip active={untagged} count={untaggedCount} onClick={() => { setUntagged((value) => !value); setShown(100); }}>Sans tag</Chip>
+                <Chip active={untaggedOn} count={untaggedCount} onClick={() => { setUntagged(!untaggedOn); setShown(100); }}>Sans tag</Chip>
               ) : null}
             </div>
           ) : (
@@ -373,9 +383,9 @@ export function Library() {
             {libraryTags.map(([tag]) => <option key={tag} value={tag} />)}
           </datalist>
 
-          {admin && selected.size ? (
+          {admin && selectedNames.length ? (
             <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-2xl bg-ink px-4 py-2.5 text-sm text-paper shadow-float md:left-[calc(256px+3.5rem)]" role="region" aria-label="Actions sur la sélection">
-              <span className="font-medium">{plural(selected.size, "sélectionné")}</span>
+              <span className="font-medium">{plural(selectedNames.length, "sélectionné")}</span>
               <span className="flex items-center gap-2">
                 <label htmlFor="bulk-date" className="text-white/70">Échéance</label>
                 <input id="bulk-date" type="date" value={bulkDate} onChange={(event) => setBulkDate(event.target.value)} className="h-9 rounded-[10px] border border-white/20 bg-white/10 px-2.5 text-paper [color-scheme:dark]" />
@@ -402,7 +412,7 @@ export function Library() {
                   Retirer
                 </button>
               </span>
-              <button type="button" className="h-9 rounded-[10px] px-3 text-[13.5px] text-[#f4b3a8] hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" disabled={mutations.remove.isPending} onClick={() => void removeSelected([...selected])}>
+              <button type="button" className="h-9 rounded-[10px] px-3 text-[13.5px] text-[#f4b3a8] hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" disabled={mutations.remove.isPending} onClick={() => void removeSelected(selectedNames)}>
                 {mutations.remove.isPending ? "Suppression…" : "Supprimer"}
               </button>
               <button type="button" className="ml-auto text-white/70 hover:text-white" onClick={() => setSelected(new Set())}>Tout désélectionner</button>
@@ -468,11 +478,11 @@ export function Library() {
                   {admin ? (
                     <input
                       type="checkbox"
-                      className={cx("absolute top-2.5 left-2.5 h-5 w-5 accent-ink transition-opacity", checked || selected.size ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
+                      className={cx("absolute top-2.5 left-2.5 h-5 w-5 accent-ink transition-opacity", checked || selectedNames.length ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}
                       aria-label={`Sélectionner ${item.filename}`}
                       checked={checked}
                       onChange={(event) => {
-                        const next = new Set(selected);
+                        const next = new Set(selectedNames);
                         if (event.target.checked) next.add(item.filename);
                         else next.delete(item.filename);
                         setSelected(next);
