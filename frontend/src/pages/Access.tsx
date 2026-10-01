@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useState, type FormEvent, type ReactNode } from "react";
-import { Link, Navigate, Outlet, useNavigate, useParams } from "react-router";
+import { Link, Navigate, Outlet, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
 import { Logo } from "../components/Logo";
 import { Button, Card, FieldLabel, Input, Spinner } from "../components/ui";
@@ -329,6 +329,26 @@ export function NotFound(props: { message?: string }) {
   return (
     <Centered title="Page introuvable" body={props.message ?? "L'adresse ne correspond à aucune page."}>
       <Link to="/" className="mt-5 block text-sm underline">Revenir à l'accueil</Link>
+    </Centered>
+  );
+}
+
+/** The router's errorElement: a page crashed. Plain words first, the technical detail folded away. */
+export function ErrorScreen() {
+  const error = useRouteError();
+  const detail = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return (
+    <Centered title="Quelque chose s'est mal passé" body="Cette page n'a pas pu s'afficher. Vos données ne sont pas touchées : rechargez la page, et si le problème revient, prévenez l'équipe Nyra.">
+      <div className="mt-6 flex items-center gap-3">
+        <Button variant="primary" onClick={() => window.location.reload()}>Recharger la page</Button>
+        <a href="/" className="text-sm underline">Revenir à l'accueil</a>
+      </div>
+      {detail ? (
+        <details className="mt-6 text-xs text-muted">
+          <summary className="cursor-pointer select-none">Détail technique</summary>
+          <p className="mt-2 font-mono break-words">{detail}</p>
+        </details>
+      ) : null}
     </Centered>
   );
 }
