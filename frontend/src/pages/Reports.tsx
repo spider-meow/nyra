@@ -9,7 +9,6 @@ import { useJobs, useOverview, useReports, useStartJob } from "../lib/queries";
 export function Reports() {
   const { admin } = useOrg();
   const overview = useOverview();
-  const reports = useReports();
   const jobs = useJobs();
   const start = useStartJob();
   const toast = useToast();
@@ -52,36 +51,39 @@ export function Reports() {
         </Card>
       ) : null}
 
-      {reports.isLoading ? (
-        <Skeleton className="h-40" />
-      ) : reports.error ? (
-        <EmptyState title="Rapports indisponibles" body={errorMessage(reports.error)} />
-      ) : !reports.data?.reports.length ? (
-        <EmptyState title="Aucun rapport" body={admin ? "Générez le premier rapport ci-dessus." : "Aucun rapport n'a encore été généré."} />
-      ) : (
-        <Card padded={false}>
-          <ul className="divide-y divide-line">
-            {reports.data.reports.map((report) => (
-              <li key={report.id} className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3.5">
-                <div className="min-w-0 flex-1">
-                  <p className="font-medium">{formatDateTime(report.generated_at)}</p>
-                  <p className="text-[13px] text-muted">
-                    {report.within_days >= 3650 ? "Toutes les échéances" : `Expirés ou sous ${report.within_days} jours`}
-                    {typeof report.stats.expired_online === "number" ? ` · ${report.stats.expired_online} expiré(s) en ligne` : ""}
-                    {typeof report.stats.to_verify === "number" ? ` · ${report.stats.to_verify} à vérifier` : ""}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2 text-sm">
-                  <FileLink href={report.files["report.html"]} label="Ouvrir le rapport" primary open />
-                  <FileLink href={report.files["matches.csv"]} label="CSV des occurrences" filename="occurrences.csv" />
-                  <FileLink href={report.files["not_found.csv"]} label="CSV des non trouvés" filename="non-trouves.csv" />
-                </div>
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
+      <ReportList />
     </>
+  );
+}
+
+function ReportList() {
+  const { admin } = useOrg();
+  const reports = useReports();
+  if (reports.isLoading) return <Skeleton className="h-40" />;
+  if (reports.error) return <EmptyState title="Rapports indisponibles" body={errorMessage(reports.error)} />;
+  if (!reports.data?.reports.length) return <EmptyState title="Aucun rapport" body={admin ? "Générez le premier rapport ci-dessus." : "Aucun rapport n'a encore été généré."} />;
+  return (
+    <Card padded={false}>
+      <ul className="divide-y divide-line">
+        {reports.data.reports.map((report) => (
+          <li key={report.id} className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3.5">
+            <div className="min-w-0 flex-1">
+              <p className="font-medium">{formatDateTime(report.generated_at)}</p>
+              <p className="text-[13px] text-muted">
+                {report.within_days >= 3650 ? "Toutes les échéances" : `Expirés ou sous ${report.within_days} jours`}
+                {typeof report.stats.expired_online === "number" ? ` · ${report.stats.expired_online} expiré(s) en ligne` : ""}
+                {typeof report.stats.to_verify === "number" ? ` · ${report.stats.to_verify} à vérifier` : ""}
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2 text-sm">
+              <FileLink href={report.files["report.html"]} label="Ouvrir le rapport" primary open />
+              <FileLink href={report.files["matches.csv"]} label="CSV des occurrences" filename="occurrences.csv" />
+              <FileLink href={report.files["not_found.csv"]} label="CSV des non trouvés" filename="non-trouves.csv" />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 
