@@ -14,10 +14,12 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // Libraries change far less often than the app: separate files cache separately.
-        manualChunks: {
-          react: ["react", "react-dom", "react-router"],
-          supabase: ["@supabase/supabase-js"],
-          query: ["@tanstack/react-query"],
+        // A path test, not a list of package names: `react-dom/client` (the part that
+        // matters, ~180 KB) is another entry point of its package and a name list misses it.
+        manualChunks(id) {
+          if (/node_modules\/(react|react-dom|react-router|scheduler)\//.test(id)) return "react";
+          if (id.includes("node_modules/@supabase/")) return "supabase";
+          if (id.includes("node_modules/@tanstack/")) return "query";
         },
       },
     },
