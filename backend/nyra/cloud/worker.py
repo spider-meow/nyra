@@ -116,7 +116,7 @@ class Worker:
                         reaped = cloud_jobs.reap_stale(conn)
                     if reaped:
                         log.warning("marked %d stale job(s) as failed", reaped)
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001 - housekeeping must not stop the worker loop
                     log.exception("reaping failed")
             try:
                 ran = self.run_once()
@@ -159,7 +159,7 @@ class Worker:
         except JobFailed as exc:
             with cloud_db.connect(self.database_url) as conn:
                 cloud_jobs.finish(conn, job["id"], status="error", message=str(exc), error=str(exc))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 - any job bug is logged, reported and recorded as the job's error
             log.error("job %s failed:\n%s", job["id"], traceback.format_exc())
             _capture(exc)
             with cloud_db.connect(self.database_url) as conn:
@@ -357,6 +357,7 @@ class Worker:
                 else:
                     img = fetch.decode(data, config.crawl.max_image_pixels)
             except Exception:  # noqa: BLE001 - a missing object must not stop the others
+                log.warning("reading %s/%s failed; image skipped", bucket, path, exc_info=True)
                 return None
             finally:
                 timing["load_seconds"] += time.perf_counter() - started

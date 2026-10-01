@@ -50,7 +50,7 @@ def test_verify_jwt_hs256_expired():
 def test_verify_jwt_hs256_wrong_secret():
     token = _token(uuid.uuid4())
     with pytest.raises(auth.AuthError):
-        auth.verify_jwt(token, supabase_url=SUPABASE_URL, jwt_secret="a-completely-different-secret!!")
+        auth.verify_jwt(token, supabase_url=SUPABASE_URL, jwt_secret="a-completely-different-secret-of-32-bytes!!")
 
 
 def test_verify_jwt_hs256_wrong_audience():

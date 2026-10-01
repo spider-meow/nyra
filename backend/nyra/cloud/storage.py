@@ -207,8 +207,23 @@ def signed_url(client: Client, bucket: str, path: str, *, expires_in: int = SIGN
 # (every download is billed egress).
 SIGNED_URL_REUSE_MARGIN_SECONDS = 600
 
+# At most this many URLs are remembered (a few hundred bytes each).
+SIGNED_URL_CACHE_MAX = 10_000
+
 _signed: dict[tuple[str, str], tuple[str, float]] = {}
 _signed_lock = threading.Lock()
+
+
+def _remember_signed(bucket: str, path: str, url: str, expires_at: float) -> None:
+    """Keep a URL for reuse; when full, drop the expired ones, then the oldest."""
+    with _signed_lock:
+        if len(_signed) >= SIGNED_URL_CACHE_MAX:
+            now = time.monotonic()
+            for key in [key for key, (_, until) in _signed.items() if until <= now]:
+                del _signed[key]
+        while len(_signed) >= SIGNED_URL_CACHE_MAX:
+            del _signed[next(iter(_signed))]  # dicts iterate in insertion order: oldest first
+        _signed[(bucket, path)] = (url, expires_at)
 
 
 def forget_signed(bucket: str, paths: Iterable[Optional[str]]) -> None:
@@ -243,6 +258,5 @@ def signed_urls(
             url = item.get("signedURL") or item.get("signedUrl")
             if url and item.get("path") and not item.get("error"):
                 out[item["path"]] = url
-                with _signed_lock:
-                    _signed[(bucket, item["path"])] = (url, now + expires_in)
+                _remember_signed(bucket, item["path"], url, now + expires_in)
     return out

@@ -58,6 +58,10 @@ nyra = ["templates/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]
+filterwarnings = [
+    # starlette's TestClient now prefers `httpx2`; the project depends on `httpx`, which still works (only the TestClient import warns).
+    "ignore:Using .httpx. with .starlette.testclient. is deprecated",
+]
 
 [tool.ruff]
 line-length = 130

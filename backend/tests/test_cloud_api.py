@@ -609,3 +609,31 @@ def test_site_images_without_a_reference_are_listed_and_can_join_the_library(
     # Adding the same image again gets its own name instead of replacing the first visual.
     again = client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json={"site_image_ids": [campaign["id"]]}).json()
     assert again["added"][0]["filename"] == "Campagne été (2).jpg"
+
+
+@pytest.fixture()
+def static_client(tmp_path, monkeypatch):
+    """The app serving a fake built interface (no database needed for these routes)."""
+    (tmp_path / "dist" / "assets").mkdir(parents=True)
+    (tmp_path / "dist" / "index.html").write_text("<html></html>", encoding="utf-8")
+    (tmp_path / "dist" / "assets" / "app-abc123.js").write_text("console.log(1);\n" * 500, encoding="utf-8")
+    monkeypatch.setattr("nyra.cloud.api.frontend_dir", lambda: tmp_path)
+    settings = CloudSettings(
+        database_url="postgresql://unused", supabase_url="https://x.supabase.co", service_role_key="key", jwt_secret=SECRET
+    )
+    return TestClient(create_app(settings))
+
+
+def test_hashed_assets_are_cached_for_a_year_and_index_is_not(static_client):
+    asset = static_client.get("/assets/app-abc123.js")
+    assert asset.headers["Cache-Control"] == "public, max-age=31536000, immutable"
+    assert static_client.get("/").headers["Cache-Control"] == "no-cache"
+    assert "immutable" not in static_client.get("/assets/missing.js").headers.get("Cache-Control", "")
+
+
+def test_big_responses_are_gzipped_and_small_ones_are_not(static_client):
+    big = static_client.get("/assets/app-abc123.js", headers={"Accept-Encoding": "gzip"})
+    assert big.headers["Content-Encoding"] == "gzip"
+    assert big.text == "console.log(1);\n" * 500  # the client decompresses transparently
+    assert "Content-Encoding" not in static_client.get("/api/nope", headers={"Accept-Encoding": "gzip"}).headers
+    assert "Content-Encoding" not in static_client.get("/assets/app-abc123.js", headers={"Accept-Encoding": "identity"}).headers

@@ -32,6 +32,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, Uploa
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
+from starlette.middleware.gzip import GZipMiddleware
 
 from nyra import fetch, netguard
 from nyra import match as match_module
@@ -292,6 +293,10 @@ def settings_from_env(config_path: Optional[Path] = None) -> CloudSettings:
 def create_app(settings: CloudSettings) -> FastAPI:
     app = FastAPI(title="Nyra", docs_url=None, redoc_url=None, openapi_url=None)
     csp = _content_security_policy(settings.supabase_url)
+    # Added before `security_headers` so it sits inside it: the router's whole responses reach it
+    # (the "http" middleware below streams, and gzip only honours `minimum_size` on unstreamed bodies).
+    # Small bodies (errors, health check) stay as they are; Content-Disposition and status codes are untouched.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -302,6 +307,9 @@ def create_app(settings: CloudSettings) -> FastAPI:
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         if not request.url.path.startswith("/api/"):
             response.headers.setdefault("Content-Security-Policy", csp)
+        if request.url.path.startswith("/assets/") and response.status_code == 200:
+            # Vite puts a content hash in every file name under /assets: a given URL never changes.
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
     @app.exception_handler(psycopg.OperationalError)
@@ -349,13 +357,14 @@ def create_app(settings: CloudSettings) -> FastAPI:
         try:
             return cloud_storage.signed_urls(settings.storage_client(), bucket, paths)
         except Exception:  # noqa: BLE001 - missing thumbnails must not break a page
+            log.warning("signing URLs in bucket %s failed; the page is served without them", bucket, exc_info=True)
             return {}
 
     def remove_files(bucket: str, paths: list[str]) -> None:
         try:
             cloud_storage.delete(settings.storage_client(), bucket, paths)
         except Exception:  # noqa: BLE001 - rows are gone; an orphan file is harmless
-            pass
+            log.warning("removing %d file(s) from bucket %s failed; orphans left behind", len(paths), bucket, exc_info=True)
 
     def original_from_site(url: str, config: Config) -> Optional[bytes]:
         """The image as the site serves it (Storage only keeps a working copy of crawled images)."""
@@ -363,6 +372,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
             with netguard.client(headers={"User-Agent": config.crawl.user_agent}) as http:
                 got = fetch.download(url, http, timeout=20.0, max_bytes=MAX_UPLOAD_BYTES)
         except Exception:  # noqa: BLE001 - the stored working copy is the fallback
+            log.warning("fetching the original of %s failed; using the stored working copy", url, exc_info=True)
             return None
         return got[0] if got else None
 
