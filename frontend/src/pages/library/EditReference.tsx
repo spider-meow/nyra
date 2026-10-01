@@ -130,7 +130,7 @@ function TagEditor(props: { id: string; tags: string[]; onChange: (tags: string[
           list="library-tags"
           value={text}
           maxLength={120}
-          disabled={props.tags.length >= MAX_TAGS}
+          readOnly={props.tags.length >= MAX_TAGS} // not disabled: a disabled field would drop the keyboard focus
           placeholder={props.tags.length >= MAX_TAGS ? `${MAX_TAGS} tags au maximum` : props.tags.length ? "" : "miniature, classic…"}
           onChange={(event) => (/[,;|]/.test(event.target.value) ? commit(event.target.value) : setText(event.target.value))}
           onKeyDown={(event) => {
