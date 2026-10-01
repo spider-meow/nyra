@@ -89,7 +89,7 @@ function AdoptFields(props: { items: SiteImage[]; fields: Fields; onChange: (fie
     <form id="adopt-form" className="grid gap-4" onSubmit={props.onSubmit}>
       <div className="flex gap-2 overflow-x-auto">
         {items.slice(0, 8).map((item) => (
-          <img key={item.id} src={item.thumb} alt="" className="h-16 w-16 shrink-0 rounded-md border border-line bg-canvas object-cover" />
+          <img key={item.id} src={item.thumb || undefined} alt="" className="h-16 w-16 shrink-0 rounded-md border border-line bg-canvas object-cover" />
         ))}
         {items.length > 8 ? <span className="self-center text-sm text-muted">+{items.length - 8}</span> : null}
       </div>

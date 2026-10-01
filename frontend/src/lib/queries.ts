@@ -19,7 +19,7 @@ import type {
   SiteImage,
   Status,
 } from "../types";
-import { api } from "./api";
+import { api, errorMessage } from "./api";
 import { useAuth } from "./auth";
 import { useOrg } from "./org";
 import { isRecord, oneOf, readStored, removeStored, storageKey, writeStored } from "./storage";
@@ -276,7 +276,6 @@ export function useReview() {
   });
 }
 
-export type { UploadResult } from "./upload";
 
 /**
  * Adds references a few at a time, with a progress toast that stays while
@@ -434,13 +433,21 @@ export function useExclusionMutations() {
         api.post<{ matches_removed: number }>(apiPath("/exclusions"), { site_image_id: input.siteImageId, reason: input.reason }),
       onSuccess: done,
     }),
-    // Several images at once: the requests go together and the lists are refreshed once, not once per image.
+    // Several images at once, ten requests at a time; the lists are refreshed once at the end, not once per image.
     addMany: useMutation({
       mutationFn: async (input: { siteImageIds: string[]; reason: string }) => {
-        const results = await Promise.allSettled(
-          input.siteImageIds.map((id) => api.post(apiPath("/exclusions"), { site_image_id: id, reason: input.reason })),
-        );
-        return { failed: results.filter((result) => result.status === "rejected").length };
+        const failedIds: string[] = [];
+        let firstError = "";
+        for (let start = 0; start < input.siteImageIds.length; start += 10) {
+          const ids = input.siteImageIds.slice(start, start + 10);
+          const results = await Promise.allSettled(ids.map((id) => api.post(apiPath("/exclusions"), { site_image_id: id, reason: input.reason })));
+          results.forEach((result, index) => {
+            if (result.status === "fulfilled") return;
+            failedIds.push(ids[index]);
+            firstError ||= errorMessage(result.reason);
+          });
+        }
+        return { failedIds, firstError };
       },
       onSettled: done,
     }),

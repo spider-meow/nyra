@@ -59,7 +59,7 @@ export function SiteImages() {
         </>
       )}
       {admin && selected.size ? (
-        <SelectionBar count={selected.size} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, () => setSelected(new Set()))} onClear={() => setSelected(new Set())} />
+        <SelectionBar count={selected.size} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => setSelected(new Set(failedIds)))} onClear={() => setSelected(new Set())} />
       ) : null}
       <AddToLibrary
         items={adding}
@@ -203,12 +203,13 @@ function SelectionBar(props: { count: number; onAdd: () => void; onIgnore: () =>
 function useIgnore() {
   const { addMany } = useExclusionMutations();
   const toast = useToast();
-  return (items: SiteImage[], done: () => void) => {
+  // `done` receives the ids that could not be ignored, so a caller can keep them selected for a retry.
+  return (items: SiteImage[], done: (failedIds: string[]) => void) => {
     const pending = toast.loading(items.length > 1 ? `${items.length} images ignorées…` : "Image ignorée…");
-    void addMany.mutateAsync({ siteImageIds: items.map((item) => item.id), reason: "Pas sous droits" }).then(({ failed }) => {
-      done();
-      toast.update(pending, failed
-        ? { tone: "error", message: `${plural(failed, "image n'a pas pu être ignorée", "images n'ont pas pu être ignorées")}`, description: "Réessayez dans un instant." }
+    void addMany.mutateAsync({ siteImageIds: items.map((item) => item.id), reason: "Pas sous droits" }).then(({ failedIds, firstError }) => {
+      done(failedIds);
+      toast.update(pending, failedIds.length
+        ? { tone: "error", message: `${plural(failedIds.length, "image n'a pas pu être ignorée", "images n'ont pas pu être ignorées")}`, description: firstError || "Réessayez dans un instant." }
         : {
             tone: "success",
             message: items.length > 1 ? `${items.length} images ignorées` : "Image ignorée",

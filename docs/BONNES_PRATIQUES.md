@@ -109,32 +109,30 @@ exécutable, le plus petit qui échoue si la logique casse. Pas de framework
 ajouté, pas de jeu de données lourd. Une fonction d'une ligne n'en a pas
 besoin.
 
-## Dette connue (mesurée le 1er octobre 2026)
+## Dette connue (mesurée le 2 octobre 2026)
 
 Ces règles s'appliquent au code qu'on écrit ou qu'on modifie. On ne réécrit
 pas l'existant d'un bloc : on corrige ce qu'on touche (règle du scout).
 
-- **Fonctions longues, Python** : 8 fonctions sur 449 (tests exclus)
-  dépassent 60 lignes. La plus grosse est `create_app` dans
-  `backend/nyra/cloud/api.py` (892 lignes, toutes les routes dans une seule
-  fonction), puis `_index` (142), `run_matching` (100), `platform_insights`
-  (94), `build_report` (84), `upload` (70), `adopt_site_images` (64) et
-  `verify_hits` (63).
-- **Composants longs, TypeScript** (la page Bibliothèque est découpée : plus
-  aucune fonction de `pages/library/` ne dépasse 60 lignes) : `Review` (265),
-  `Scans` (178), `Dashboard` (166), `Layout` (166), `CompareView` (165),
-  `BackOfficeContent` (153), `StatisticsContent` (144), `Settings` (126),
-  `SiteImages` (124), `ToastProvider` (116), `JobToasts` (112), `Brands`
-  (110), `AddToLibrary` (100), `useReferenceUpload` (98, dont `run` 89),
-  `AuthProvider` (89), `Reports` (77), `BarHistory` (76), `SiteRow` (72),
-  `Login` (70).
+- **Fonctions longues** : plus aucune en Python (492 fonctions, la plus longue
+  fait 58 lignes). En TypeScript, une seule dépasse 60 lignes : `Login`
+  (71) dans `frontend/src/pages/Access.tsx`, à découper à la prochaine
+  modification de ce fichier. L'API est répartie par domaine dans
+  `backend/nyra/cloud/routes/`, les pages lourdes dans des sous-dossiers de
+  `frontend/src/pages/`.
 - **Erreurs larges** : les 21 `except Exception` de `backend/nyra` sont
   soit journalisés, soit justifiés par un commentaire, soit relancés.
-- **Cache** : `_signed` (`backend/nyra/cloud/storage.py`) est borné à
-  `SIGNED_URL_CACHE_MAX` entrées (les plus anciennes sortent d'abord). Reste
-  un dictionnaire de module partagé, protégé par `_signed_lock` (règle 9).
+- **Ressources bornées** : le cache d'URL signées (`storage.py`) et le cache
+  de caractéristiques de référence du contrôle de points clés (`verify.py`,
+  32 entrées) ont une taille maximale. Restent des limites à surveiller :
+  la liste des visuels renvoyée d'un bloc (pas de pagination côté serveur) et
+  la page du back office, qui affiche toutes les marques de la plateforme.
 - **Avertissements de tests** : aucun. Celui du client de test (httpx) est
   filtré nommément dans `pyproject.toml`.
+- **Couverture** : le contrôle de points clés (OpenCV) et les embeddings CLIP
+  ne tournent pas en CI sans leurs dépendances (le test `test_match.py` qui
+  demande torch est ignoré) ; les pages du front ne sont vérifiées que par des
+  scénarios de navigateur écrits à la main, pas par des tests automatiques.
 
 ## Pour un agent IA qui travaille ici
 

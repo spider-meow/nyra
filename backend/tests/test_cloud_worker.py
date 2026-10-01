@@ -246,8 +246,11 @@ def _site_images_sharing_a_hash(conn, storage, org_id, brand_id, count):
     """`count` site images with the same bytes (so the same content_hash) and one different image."""
     site = cloud_db.create_site(conn, org_id=org_id, brand_id=brand_id, url="https://t.test/")
     ids = [_add_site_image(conn, storage, org_id, site, f"https://t.test/{i}.jpg", _image_bytes(0)) for i in range(count)]
-    digest = conn.execute("SELECT content_hash FROM site_images WHERE id = %s", (ids[0],)).fetchone()["content_hash"]
-    conn.execute("UPDATE site_images SET content_hash = %s WHERE id = ANY(%s)", (digest, ids))
+    first = conn.execute("SELECT content_hash, storage_path FROM site_images WHERE id = %s", (ids[0],)).fetchone()
+    digest = first["content_hash"]
+    # As the crawler stores a duplicate: same bytes, same hash, same stored file.
+    conn.execute("UPDATE site_images SET content_hash = %s, storage_path = %s WHERE id = ANY(%s)",
+                 (digest, first["storage_path"], ids))
     _add_site_image(conn, storage, org_id, site, "https://t.test/other.jpg", _image_bytes(60))
     return ids, digest
 
@@ -281,6 +284,23 @@ def test_index_job_embeds_a_hash_when_only_one_of_its_rows_lacks_an_embedding(
         missing = conn.execute("SELECT COUNT(*) AS c FROM site_images WHERE org_id = %s AND embedding IS NULL",
                                (cloud_org,)).fetchone()["c"]
     assert missing == 0
+
+
+def test_index_job_still_indexes_a_twin_whose_file_differs_from_an_unreadable_one(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
+    """Same hash but two files (legacy rows): losing one file must not keep the other from being indexed."""
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        a = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/a.jpg", _image_bytes(0))
+        b = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/b.jpg", _image_bytes(0))
+        digest = conn.execute("SELECT content_hash FROM site_images WHERE id = %s", (a,)).fetchone()["content_hash"]
+        conn.execute("UPDATE site_images SET content_hash = %s WHERE id = ANY(%s)", (digest, [a, b]))
+        lost = conn.execute("SELECT storage_path FROM site_images WHERE id = %s", (a,)).fetchone()["storage_path"]
+    del fake_storage_client.store[("site-images", lost)]
+    _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    with cloud_db.connect(cloud_database_url) as conn:
+        done = conn.execute("SELECT id FROM site_images WHERE embedding IS NOT NULL").fetchall()
+    assert {row["id"] for row in done} >= {b}
 
 
 def test_report_job_stores_files_without_false_positives(worker, cloud_database_url, cloud_org, cloud_brand,

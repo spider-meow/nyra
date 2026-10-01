@@ -4,8 +4,8 @@ import { useMatches, useOverview, useReview } from "../../lib/queries";
 import { isShortText, usePersistedState } from "../../lib/storage";
 import type { Decision, Hit, Matches, MatchGroup, Status } from "../../types";
 
-export type Tab = "found" | "verify" | "missing" | "later";
-export type DecisionFilter = "open" | "undecided" | Decision | "all";
+type Tab = "found" | "verify" | "missing" | "later";
+type DecisionFilter = "open" | "undecided" | Decision | "all";
 
 export const decisionFilters: { value: DecisionFilter; label: string }[] = [
   { value: "open", label: "À traiter" },
@@ -43,7 +43,7 @@ function useFilters() {
   const pick = <T extends string>(name: string, allowed: readonly T[], fallback: T): T => allowed.find((item) => item === params.get(name)) ?? fallback;
   const urlWindow = Number(params.get("fenetre"));
   const withinDays = Number.isInteger(urlWindow) && urlWindow > 0 && urlWindow <= 3650 ? urlWindow : savedWindow || defaultWindow;
-  const statusFilter = pick<Status | "all">("statut", ["all", "expire", "<30j", "<90j", "ok", "inconnue"], "all");
+  const statusFilter = pick<Status | "all">("statut", ["all", "expire", "<30j", "<90j", "inconnue"], "all");
   const decisionFilter = pick("decision", decisionFilters.map((item) => item.value), "open");
   const tab = pick<Tab>("onglet", ["found", "verify", "missing", "later"], "found");
   const [query, setQuery] = usePersistedState("review.query", "", "session", isShortText);

@@ -63,7 +63,7 @@ function Incidents(props: { scan: Scan }) {
           {[scan.error_count ? plural(scan.error_count, "page en erreur", "pages en erreur") : "", scan.blocked_by_robots ? `${scan.blocked_by_robots} bloquée(s) par robots.txt` : ""].filter(Boolean).join(" · ")}
         </summary>
         <ul className="mt-1 grid gap-1">
-          {scan.errors.map((line) => <li key={line} className="break-all">{line}</li>)}
+          {scan.errors.map((line, index) => <li key={`${index}:${line}`} className="break-all">{line}</li>)}
         </ul>
       </details>
     );

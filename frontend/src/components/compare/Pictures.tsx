@@ -24,8 +24,8 @@ export function Pictures(props: { group: MatchGroup; hit: Hit; mode: Mode; onZoo
   return (
     <div>
       <div className="relative aspect-[4/3] overflow-hidden rounded-2xl bg-side">
-        <img src={refSrc} alt="Référence" className="absolute inset-0 h-full w-full object-contain" />
-        <img src={siteSrc} alt="Image trouvée" className="absolute inset-0 h-full w-full object-contain" style={{ opacity: mix / 100 }} />
+        <img src={refSrc || undefined} alt="Référence" className="absolute inset-0 h-full w-full object-contain" />
+        <img src={siteSrc || undefined} alt="Image trouvée" className="absolute inset-0 h-full w-full object-contain" style={{ opacity: mix / 100 }} />
       </div>
       <label className="mt-2 flex items-center gap-3 text-[13px] text-muted">
         Référence

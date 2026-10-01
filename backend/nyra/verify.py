@@ -235,5 +235,6 @@ def verify_hits(
             dropped += 1
         if progress:
             progress(index + 1, len(candidates))
+    images.reference.cache_clear()  # the cache and its owner reference each other: free the images now, not at the next GC
     log.info("geometric verification: %d CLIP candidate(s) kept, %d dropped", kept, dropped)
     return out

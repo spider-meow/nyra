@@ -9,6 +9,7 @@ export function ReviewFilters(props: { view: ReviewView }) {
       <div>
         <FieldLabel htmlFor="window">Échéance</FieldLabel>
         <Select id="window" value={String(withinDays)} onChange={(event) => setParam("fenetre", event.target.value)}>
+          {!WINDOWS.includes(withinDays) ? <option value={withinDays}>Expirés ou sous {withinDays} jours</option> : null}
           {WINDOWS.slice(0, -1).map((days) => <option key={days} value={days}>Expirés ou sous {days} jours</option>)}
           <option value="3650">Toutes les échéances</option>
         </Select>

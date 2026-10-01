@@ -65,7 +65,7 @@ export function Zoom(props: { item: SiteImage | null; onClose: () => void }) {
       {item ? (
         <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
           <a href={item.image || item.thumb} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-lg border border-line bg-canvas">
-            <img src={item.image || item.thumb} alt="" className="max-h-[60vh] w-full object-contain" />
+            <img src={item.image || item.thumb || undefined} alt="" className="max-h-[60vh] w-full object-contain" />
           </a>
           <div className="grid content-start gap-3 text-sm">
             <p className="text-muted">

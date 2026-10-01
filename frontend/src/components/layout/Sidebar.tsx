@@ -7,7 +7,7 @@ import { Icon, type IconName } from "../icons";
 import { Logo } from "../Logo";
 import { cx } from "../ui";
 
-export type NavItem = { to: string; label: string; icon: IconName; count?: number; tone?: "alert" | "neutral" | "muted" | "warn" };
+type NavItem = { to: string; label: string; icon: IconName; count?: number; tone?: "alert" | "neutral" | "muted" | "warn" };
 
 /** The main entries (with their counters) and the rarely needed ones that sit at the bottom, next to the account. */
 export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {

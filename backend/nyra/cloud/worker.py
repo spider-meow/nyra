@@ -92,17 +92,19 @@ class JobContext:
 
 
 def _one_per_hash(rows: list[dict]) -> list[dict]:
-    """One row per content_hash: `_save_site` gives the embedding and the thumbnail to every row of the
-    hash, so the image is read and embedded once. `twins` counts the rows it stands for (progress, `indexed`)."""
-    heads: dict[str, dict] = {}
+    """One row per (content_hash, file): `_save_site` gives the embedding and the thumbnail to every row of the
+    hash, so a file is read and embedded once. Rows of one hash that live in different files stay apart, so an
+    unreadable file cannot keep its twin from being indexed. `twins` counts the rows a kept row stands for."""
+    heads: dict[tuple, dict] = {}
     out = []
     for row in rows:
-        head = heads.get(row["content_hash"])  # a NULL hash is never a key: those rows stay apart
+        key = (row["content_hash"], row["storage_path"])
+        head = heads.get(key)  # a NULL hash is never a key: those rows stay apart
         if head is None:
             head = {**row, "twins": 0}
             out.append(head)
             if row["content_hash"] is not None:
-                heads[row["content_hash"]] = head
+                heads[key] = head
         else:
             head["twins"] += 1
             head["needs_embedding"] = head["needs_embedding"] or row["needs_embedding"]
