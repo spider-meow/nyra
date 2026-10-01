@@ -7,6 +7,7 @@ in-memory fake Storage.
 
 from __future__ import annotations
 
+import csv
 import io
 import time
 import uuid
@@ -408,6 +409,29 @@ def test_csv_tags_column_replaces_tags_and_no_column_leaves_them(client, org_wit
     bad = f"filename,tags\na.jpg,{'x' * 41}\n".encode()
     rows = client.post(url, headers=_headers(admin_id), files={"file": ("m.csv", bad, "text/csv")}).json()["rows"]
     assert rows[0]["status"] == "bad_tags"
+
+
+def test_csv_export_neutralizes_formulas_and_imports_back_to_the_same_text(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg", "b.jpg")
+    cases = {"a.jpg": ('=HYPERLINK("http://x.test","go")', "@SUM(A1)"), "b.jpg": ("-sale", "+33 6 12")}
+    for name, (credit, notes) in cases.items():
+        tags = ["=cmd"] if name == "b.jpg" else []
+        client.put(f"{base}/library/{name}", headers=_headers(admin_id), json={"credit": credit, "notes": notes, "tags": tags})
+    raw = client.get(f"{base}/library/export-csv", headers=_headers(client_id)).content.decode("utf-8-sig")
+    cells = {row[0]: row for row in csv.reader(io.StringIO(raw))}
+    assert cells["a.jpg"][2] == "'=HYPERLINK(\"http://x.test\",\"go\")" and cells["a.jpg"][3] == "'@SUM(A1)"
+    assert cells["b.jpg"][2] == "'-sale" and cells["b.jpg"][3] == "+33 6 12"  # a number after + stays as it is
+    assert cells["b.jpg"][4] == "'=cmd"
+    assert not any(cell[:1] in "=@" for row in cells.values() for cell in row if cell)
+    # Importing the exported file restores the original text, apostrophes included only where they were not added.
+    for name in cases:
+        client.put(f"{base}/library/{name}", headers=_headers(admin_id), json={"credit": "x", "notes": "x", "tags": []})
+    client.post(f"{base}/library/import-csv?apply=true", headers=_headers(admin_id), files={"file": ("e.csv", raw.encode(), "text/csv")})
+    items = {item["filename"]: item for item in client.get(f"{base}/library", headers=_headers(client_id)).json()["items"]}
+    for name, (credit, notes) in cases.items():
+        assert (items[name]["credit"], items[name]["notes"]) == (credit, notes)
+    assert items["b.jpg"]["tags"] == ["=cmd"]
 
 
 def test_csv_import_ignores_cells_beyond_the_header(client, org_with_users):

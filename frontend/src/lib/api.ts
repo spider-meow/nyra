@@ -51,19 +51,6 @@ export const api = {
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 
-/** Download an authenticated file (the browser can't add the bearer token to a plain link). */
-export async function downloadFile(path: string, filename: string): Promise<void> {
-  const token = await tokenProvider();
-  const response = await fetch(`/api${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-  if (!response.ok) throw new ApiError("Le téléchargement a échoué.", response.status);
-  const url = URL.createObjectURL(await response.blob());
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "La requête a échoué.";
 }

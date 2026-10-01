@@ -1,7 +1,6 @@
 import { useRef, useState, type DragEvent } from "react";
 import { useToast } from "../../components/feedback";
 import { Button, Card } from "../../components/ui";
-import { downloadFile, errorMessage } from "../../lib/api";
 import { plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { useReferenceUpload } from "../../lib/queries";
@@ -71,29 +70,13 @@ export function useUpload() {
 
 type Upload = ReturnType<typeof useUpload>;
 
-/** Header buttons: CSV export and import, and the upload button with its hidden file input. */
+/** Header buttons: CSV import, and the upload button with its hidden file input. */
 export function LibraryActions({ up, onImport }: { up: Upload; onImport: () => void }) {
-  const { admin, apiPath } = useOrg();
-  const toast = useToast();
-  const [exporting, setExporting] = useState(false);
+  const { admin } = useOrg();
   const { uploader } = up;
-
-  async function exportCsv() {
-    setExporting(true);
-    try {
-      await downloadFile(apiPath("/library/export-csv"), "references.csv");
-    } catch (error) {
-      toast.show({ tone: "error", message: "L'export n'a pas abouti", description: errorMessage(error) });
-    } finally {
-      setExporting(false);
-    }
-  }
 
   return (
     <>
-      <Button variant="ghost" loading={exporting} onClick={() => void exportCsv()}>
-        Exporter en CSV
-      </Button>
       {admin ? <Button onClick={onImport}>Importer (CSV)</Button> : null}
       {admin ? (
         <>

@@ -263,10 +263,26 @@ def bulk_tags(body: BulkTagsBody, scope: BrandScope = Depends(brand_admin_dep), 
     return {"updated": updated}
 
 
+def _csv_cell(value: str) -> str:
+    """Spreadsheets run a cell that starts like a formula: such a cell gets a leading apostrophe, which makes it text.
+
+    `=` and `@` always; `+` and `-` unless a number or a space follows ("-20 %" and "+33 6" stay as they are).
+    """
+    first = value[:1]
+    if first in ("=", "@", "\t", "\r") or (first in ("+", "-") and len(value) > 1 and value[1] not in "0123456789 ."):
+        return "'" + value
+    return value
+
+
+def _csv_text(value: str) -> str:
+    """The reverse of `_csv_cell`, so an exported file imports back to the same text."""
+    return value[1:] if value.startswith("'") and _csv_cell(value[1:]) != value[1:] else value
+
+
 def _csv_entry(line: int, row: dict, has_tags: bool) -> Optional[dict]:
     """One CSV row as an import entry with its status; None for a row without a file name."""
     # A row with more cells than the header comes with a None key and a list: ignore the extra cells.
-    row = {key.strip().lower(): (value or "").strip() for key, value in row.items() if key is not None}
+    row = {key.strip().lower(): _csv_text((value or "").strip()) for key, value in row.items() if key is not None}
     name = Path(row.get("filename", "")).name
     if not name:
         return None
@@ -335,8 +351,8 @@ def export_csv(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends
     writer = csv.writer(buf)
     writer.writerow(["filename", "expiry_date", "credit", "notes", "tags"])
     for row in rows:
-        writer.writerow([row["filename"], iso(row["expiry_date"]) or "", row["credit"] or "", row["notes"] or "",
-                         ", ".join(row["tags"])])
+        writer.writerow([_csv_cell(row["filename"]), iso(row["expiry_date"]) or "", _csv_cell(row["credit"] or ""),
+                         _csv_cell(row["notes"] or ""), _csv_cell(", ".join(row["tags"]))])
     return Response(
         content=("﻿" + buf.getvalue()).encode("utf-8"),
         media_type="text/csv; charset=utf-8",
