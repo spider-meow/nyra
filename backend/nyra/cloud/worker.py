@@ -357,7 +357,7 @@ class Worker:
                 else:
                     img = fetch.decode(data, config.crawl.max_image_pixels)
             except Exception:  # noqa: BLE001 - a missing object must not stop the others
-                log.warning("reading %s/%s failed; image skipped", bucket, path, exc_info=True)
+                log.warning("reading %s/%s failed; image skipped", bucket, path)
                 return None
             finally:
                 timing["load_seconds"] += time.perf_counter() - started

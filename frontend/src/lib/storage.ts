@@ -11,7 +11,7 @@ import { useOrg } from "./org";
  */
 const PREFIX = "nyra:";
 const KINDS = ["local", "session"] as const;
-export type StorageKind = (typeof KINDS)[number];
+type StorageKind = (typeof KINDS)[number];
 const area = (kind: StorageKind) => (kind === "local" ? window.localStorage : window.sessionStorage);
 
 /** Key scoped to the signed-in user and the brand on screen. */

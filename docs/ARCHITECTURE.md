@@ -95,7 +95,7 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/jobs.py` | The queue (enqueue, claim, heartbeat, cancel, reap). |
 | `cloud/store.py` | Postgres + Storage behind the store interfaces. |
 | `cloud/db.py` | Pooled Postgres access, one query per screen (no N+1). |
-| `cloud/storage.py` | Supabase Storage; signs URLs in batches. |
+| `cloud/storage.py` | Supabase Storage; signs URLs in batches and remembers a bounded number of them, so an image keeps the same URL while it is valid. |
 | `cloud/auth.py` | JWT verification (HS256 or JWKS) and membership/role checks. |
 | `cloud/insights.py` | Statistics for the Statistiques page and the back office, from the `insights` views. |
 | `observability.py` | JSON logs tagged with the job in progress, optional Sentry. |
@@ -119,6 +119,9 @@ numbers and the report itself are pure functions over plain dicts in
   pixel-capped.
 - **Headers:** CSP (no inline scripts, only the Supabase origin for
   connect/img), `X-Frame-Options: DENY`, `nosniff`, strict referrer.
+- **Static files:** `/assets/*` (content-hashed by Vite) is served
+  `Cache-Control: public, max-age=31536000, immutable`; `index.html` is
+  `no-cache`. Responses over 1 KB are gzipped.
 
 ## Why it's built this way
 
@@ -133,9 +136,9 @@ and history (`jobs`, `crawl_runs`) is queryable.
 
 **Thumbnails stored next to originals.** Lists and reports never load a
 full-size image; the browser gets short-lived signed URLs, signed in one
-request per list. The library list signs thumbnails only; the original's
-URL is fetched on demand (`GET .../library/{filename}/url`) when the edit
-modal opens.
+request per list. The library list signs each reference's thumbnail (its working image
+while it has none yet); the original's URL is fetched on demand
+(`GET .../library/{filename}/url`) when the edit modal opens.
 
 **Incremental matching.** A finished pass is remembered with a signature
 of the thresholds and model; the next pass only compares what's new,

@@ -410,6 +410,14 @@ def test_csv_tags_column_replaces_tags_and_no_column_leaves_them(client, org_wit
     assert rows[0]["status"] == "bad_tags"
 
 
+def test_csv_import_ignores_cells_beyond_the_header(client, org_with_users):
+    _, base, admin_id, _, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg")
+    ragged = b"filename,tags\na.jpg,x,extra,cells\n"
+    r = client.post(f"{base}/library/import-csv", headers=_headers(admin_id), files={"file": ("m.csv", ragged, "text/csv")})
+    assert r.status_code == 200 and r.json()["rows"][0]["tags"] == ["x"]
+
+
 def test_csv_export_carries_the_tags(client, org_with_users):
     _, base, admin_id, client_id, _ = org_with_users
     _upload(client, base, admin_id, "a.jpg")

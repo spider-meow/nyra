@@ -25,7 +25,10 @@ export function Library() {
   const [importOpen, setImportOpen] = useState(false);
   const clear = () => setPicked(new Set());
   const bulk = useBulkEdit(selected, clear);
-  const { removeNames, removing } = useRemoveReferences(() => { clear(); setEditing(null); });
+  const { removeNames, removing } = useRemoveReferences((names) => {
+    setPicked((current) => new Set([...current].filter((name) => !names.includes(name)))); // keep the picks that were not deleted
+    setEditing(null);
+  });
 
   function changeTab(next: Tab) {
     view.changeTab(next);

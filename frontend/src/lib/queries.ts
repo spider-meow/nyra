@@ -26,8 +26,9 @@ import { useOrg } from "./org";
 import { isRecord, oneOf, readStored, removeStored, storageKey, writeStored } from "./storage";
 
 // Copies of the Library and Overview answers in localStorage, so those pages open at once.
-// Older than this, a copy is ignored: the signed thumbnail URLs it holds last one hour.
-const COPY_MAX_AGE_MS = 10 * 60_000;
+// Older than this, a copy is ignored: the server reuses a signed thumbnail URL while it has at least 10 minutes left,
+// so a URL in a copy is still valid 5 minutes after the copy was made.
+const COPY_MAX_AGE_MS = 5 * 60_000;
 
 /**
  * The last server answer for `name`, per user and brand, to hand to `initialData`.
@@ -73,7 +74,7 @@ const isLibraryItem = (value: unknown): value is LibraryItem =>
   typeof value.credit === "string" && typeof value.notes === "string" &&
   Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string") &&
   typeof value.indexed === "boolean" && typeof value.compared === "boolean" &&
-  typeof value.thumb_url === "string" && typeof value.url === "string";
+  typeof value.thumb_url === "string";
 
 type LibraryAnswer = { items: LibraryItem[]; indexing: boolean };
 const isLibraryAnswer = (value: unknown): value is LibraryAnswer =>
@@ -84,9 +85,9 @@ export function useOverview() {
   const copy = useAnswerCopy("overview", isOverview, 100_000);
   return useQuery({
     queryKey: ["overview", brand.id],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const answer = await api.get<Overview>(apiPath("/overview"));
-      copy.write(answer);
+      if (!signal.aborted) copy.write(answer); // aborted = signed out meanwhile: leave nothing behind
       return answer;
     },
     initialData: copy.read,
@@ -104,7 +105,7 @@ export function useJobs() {
   });
 }
 
-// ~1,000 references weigh ~0.7 MB once the full-size signed `url` is left out; above this cap nothing is stored.
+// ~1,000 references weigh ~0.7 MB; above this cap nothing is stored.
 const LIBRARY_COPY_MAX_CHARS = 1_500_000;
 
 export function useLibrary() {
@@ -112,10 +113,9 @@ export function useLibrary() {
   const copy = useAnswerCopy("library", isLibraryAnswer, LIBRARY_COPY_MAX_CHARS);
   return useQuery({
     queryKey: ["library", brand.id],
-    queryFn: async () => {
+    queryFn: async ({ signal }) => {
       const answer = await api.get<LibraryAnswer>(apiPath("/library"));
-      // The full-size image URL is only for the edit window (it falls back to the thumbnail): keep the copy small.
-      copy.write({ ...answer, items: answer.items.map((item) => ({ ...item, url: "" })) });
+      if (!signal.aborted) copy.write(answer); // aborted = signed out meanwhile: leave nothing behind
       return answer;
     },
     initialData: copy.read,

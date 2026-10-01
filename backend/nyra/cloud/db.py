@@ -34,6 +34,7 @@ from urllib.parse import quote
 import psycopg
 from pgvector.psycopg import register_vector
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
 Row = dict[str, Any]
@@ -466,21 +467,24 @@ def update_reference_meta(
 
 def get_reference_tags(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str]) -> dict[str, list[str]]:
     rows = conn.execute(
-        "SELECT filename, tags FROM reference_images WHERE brand_id = %s AND filename = ANY(%s)",
+        # FOR UPDATE: two bulk edits of the same references wait for each other instead of losing one.
+        "SELECT filename, tags FROM reference_images WHERE brand_id = %s AND filename = ANY(%s) FOR UPDATE",
         (brand_id, filenames),
     ).fetchall()
     return {row["filename"]: list(row["tags"]) for row in rows}
 
 
 def set_reference_tags(conn: psycopg.Connection, brand_id: uuid.UUID, tags_by_filename: dict[str, list[str]]) -> int:
-    """Replace the tags of each named reference; returns how many rows exist and were written."""
-    updated = 0
-    for filename, tags in tags_by_filename.items():
-        updated += conn.execute(
-            "UPDATE reference_images SET tags = %s::text[] WHERE brand_id = %s AND filename = %s",
-            (tags, brand_id, filename),
-        ).rowcount
-    return updated
+    """Replace the tags of each named reference in one statement; returns how many rows were written."""
+    if not tags_by_filename:
+        return 0
+    rows = [{"filename": filename, "tags": tags} for filename, tags in tags_by_filename.items()]
+    return conn.execute(
+        """UPDATE reference_images r SET tags = ARRAY(SELECT jsonb_array_elements_text(v.tags))
+           FROM jsonb_to_recordset(%s) AS v(filename text, tags jsonb)
+           WHERE r.brand_id = %s AND r.filename = v.filename""",
+        (Jsonb(rows), brand_id),
+    ).rowcount
 
 
 def set_expiry_for(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str], expiry_date: Optional[str]) -> int:

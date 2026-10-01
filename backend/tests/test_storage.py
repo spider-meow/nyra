@@ -73,6 +73,19 @@ def test_signed_urls_are_reused_so_the_browser_can_cache_images():
 def test_signed_urls_cache_is_bounded_and_keeps_urls_while_valid(monkeypatch):
     monkeypatch.setattr(storage, "SIGNED_URL_CACHE_MAX", 3)
     storage._signed.clear()
+    try:
+        client = CountingClient()
+        first = storage.signed_urls(client, "refs", ["a"])
+        assert storage.signed_urls(client, "refs", ["a"]) == first and client.signings == 1  # same URL while valid
+        storage.signed_urls(client, "refs", ["b", "c", "d", "e"])
+        assert len(storage._signed) == 3
+        assert ("refs", "a") not in storage._signed and ("refs", "e") in storage._signed  # oldest dropped first
+        # A refreshed entry goes to the back and evicts nobody, even when the cache is full.
+        storage._remember_signed("refs", "c", "fresh", 1e12)
+        assert len(storage._signed) == 3 and list(storage._signed)[-1] == ("refs", "c")
+        assert ("refs", "d") in storage._signed and ("refs", "e") in storage._signed
+    finally:
+        storage._signed.clear()
     client = CountingClient()
     first = storage.signed_urls(client, "refs", ["a"])
     assert storage.signed_urls(client, "refs", ["a"]) == first and client.signings == 1  # same URL while valid

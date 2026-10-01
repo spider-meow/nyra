@@ -178,7 +178,7 @@ def load_robots(site_url: str, client: httpx.Client) -> urllib.robotparser.Robot
 def is_allowed(parser: urllib.robotparser.RobotFileParser, url: str, user_agent: str) -> bool:
     try:
         return parser.can_fetch(user_agent, url)
-    except Exception:
+    except Exception:  # noqa: BLE001 - robots.txt unreadable or malformed: treated as "no restriction", like crawlers do
         return True
 
 
@@ -377,7 +377,7 @@ async def click_load_more(page, max_clicks: int = 5, pause_ms: int = 400) -> int
     for _ in range(max_clicks):
         try:
             found = await page.evaluate(CLICK_LOAD_MORE_JS)
-        except Exception:
+        except Exception:  # noqa: BLE001 - the page navigated or closed under us: stop clicking, keep what was read
             break
         if not found:
             break
@@ -392,7 +392,7 @@ async def dismiss_overlays(page, *, extra_selectors: Sequence[str] = (), rounds:
     for _ in range(rounds):
         try:
             clicked = await page.evaluate(DISMISS_OVERLAYS_JS)
-        except Exception:
+        except Exception:  # noqa: BLE001 - same: the page is gone or navigating
             break
         total += int(clicked or 0)
         if not clicked:
@@ -403,7 +403,7 @@ async def dismiss_overlays(page, *, extra_selectors: Sequence[str] = (), rounds:
             await page.click(selector, timeout=2000)
             total += 1
             await page.wait_for_timeout(400)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a configured selector that is absent on this page is normal: next one (the list is finite)
             continue
     return total
 
@@ -624,7 +624,7 @@ class _Crawl:
             html = await page.content()
             try:
                 background_urls = await page.evaluate(BACKGROUND_IMAGE_JS)
-            except Exception:
+            except Exception:  # noqa: BLE001 - CSS backgrounds are a bonus; the page's <img> tags were already read
                 background_urls = []
             http_status = response.status if response else 0
             final_url = page.url

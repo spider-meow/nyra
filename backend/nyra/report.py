@@ -239,7 +239,7 @@ def _data_uri(data: Optional[bytes], max_size: int = 240) -> Optional[str]:
             buf = io.BytesIO()
             img.save(buf, format="JPEG", quality=80)
         return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
-    except Exception:
+    except Exception:  # noqa: BLE001 - an unreadable thumbnail leaves a gap in the report, not a failed report
         return None
 
 
@@ -251,7 +251,7 @@ def _load_thumbs(keys: set, loader: Callable[[Any], Optional[bytes]]) -> dict[An
     def one(key):
         try:
             return key, _data_uri(loader(key))
-        except Exception:
+        except Exception:  # noqa: BLE001 - same: one missing image must not sink the report
             return key, None
 
     with ThreadPoolExecutor(max_workers=8) as pool:

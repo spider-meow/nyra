@@ -215,12 +215,9 @@ _signed_lock = threading.Lock()
 
 
 def _remember_signed(bucket: str, path: str, url: str, expires_at: float) -> None:
-    """Keep a URL for reuse; when full, drop the expired ones, then the oldest."""
+    """Keep a URL for reuse; when full, drop the oldest (every URL lives as long as the others, so oldest = first to expire)."""
     with _signed_lock:
-        if len(_signed) >= SIGNED_URL_CACHE_MAX:
-            now = time.monotonic()
-            for key in [key for key, (_, until) in _signed.items() if until <= now]:
-                del _signed[key]
+        _signed.pop((bucket, path), None)  # a refreshed URL goes to the back of the line and evicts nobody
         while len(_signed) >= SIGNED_URL_CACHE_MAX:
             del _signed[next(iter(_signed))]  # dicts iterate in insertion order: oldest first
         _signed[(bucket, path)] = (url, expires_at)

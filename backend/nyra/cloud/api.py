@@ -296,7 +296,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
     # Added before `security_headers` so it sits inside it: the router's whole responses reach it
     # (the "http" middleware below streams, and gzip only honours `minimum_size` on unstreamed bodies).
     # Small bodies (errors, health check) stay as they are; Content-Disposition and status codes are untouched.
-    app.add_middleware(GZipMiddleware, minimum_size=1024)
+    app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)  # 9 blocks the event loop for little gain
 
     @app.middleware("http")
     async def security_headers(request: Request, call_next):
@@ -372,7 +372,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
             with netguard.client(headers={"User-Agent": config.crawl.user_agent}) as http:
                 got = fetch.download(url, http, timeout=20.0, max_bytes=MAX_UPLOAD_BYTES)
         except Exception:  # noqa: BLE001 - the stored working copy is the fallback
-            log.warning("fetching the original of %s failed; using the stored working copy", url, exc_info=True)
+            log.warning("fetching the original of %s failed; using the stored working copy", url.split("?")[0], exc_info=True)
             return None
         return got[0] if got else None
 
@@ -767,7 +767,8 @@ def create_app(settings: CloudSettings) -> FastAPI:
         has_tags = "tags" in fields  # without the column, the tags stay as they are
         parsed = []
         for line, row in enumerate(reader, start=2):
-            row = {(key or "").strip().lower(): (value or "").strip() for key, value in row.items()}
+            # A row with more cells than the header comes with a None key and a list: ignore the extra cells.
+            row = {key.strip().lower(): (value or "").strip() for key, value in row.items() if key is not None}
             name = Path(row.get("filename", "")).name
             if not name:
                 continue

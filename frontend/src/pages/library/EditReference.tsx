@@ -21,7 +21,10 @@ export function EditReference(props: { item: LibraryItem | null; onClose: () => 
     setLoadedFor(item.id);
     setForm({ expiry_date: item.expiry_date, credit: item.credit, notes: item.notes, tags: item.tags });
   }
-  if (!item) return null;
+  if (!item) {
+    if (loadedFor !== null) setLoadedFor(null); // closed: the next opening starts from the current data, not from an abandoned draft
+    return null;
+  }
 
   function save() {
     if (!item) return;
@@ -121,15 +124,17 @@ function TagEditor(props: { id: string; tags: string[]; onChange: (tags: string[
           ) : null}
         </span>
       ))}
-      {!props.disabled && props.tags.length < MAX_TAGS ? (
+      {!props.disabled ? (
         <input
           id={props.id}
           list="library-tags"
           value={text}
           maxLength={120}
-          placeholder={props.tags.length ? "" : "miniature, classic…"}
+          disabled={props.tags.length >= MAX_TAGS}
+          placeholder={props.tags.length >= MAX_TAGS ? `${MAX_TAGS} tags au maximum` : props.tags.length ? "" : "miniature, classic…"}
           onChange={(event) => (/[,;|]/.test(event.target.value) ? commit(event.target.value) : setText(event.target.value))}
           onKeyDown={(event) => {
+            if (event.nativeEvent.isComposing) return; // Enter that validates an IME composition is not a tag
             if (event.key === "Enter") {
               event.preventDefault();
               commit(text);
@@ -155,14 +160,14 @@ function OriginalImage({ item }: { item: LibraryItem }) {
   const original = useQuery({
     queryKey: ["library-url", brand.id, item.filename],
     queryFn: () => api.get<{ url: string }>(apiPath(`/library/${encodeURIComponent(item.filename)}/url`)),
-    staleTime: 30 * 60_000, // signed URLs live 1 h
+    staleTime: 5 * 60_000, // the server may hand out a URL with only 10 minutes left
   });
   const url = original.data?.url;
   const image = <img src={url || item.thumb_url} alt="" className="aspect-square w-full object-contain" />;
   return (
     <div>
       {url ? (
-        <a href={url} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-2xl bg-side">{image}</a>
+        <a href={url} target="_blank" rel="noreferrer noopener" aria-label="Ouvrir l'image en taille réelle" className="block overflow-hidden rounded-2xl bg-side">{image}</a>
       ) : (
         <div className="overflow-hidden rounded-2xl bg-side">{image}</div>
       )}

@@ -1,4 +1,5 @@
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, bindSession } from "./api";
 import { clearStored } from "./storage";
@@ -25,6 +26,7 @@ const AuthContext = createContext<AuthState | null>(null);
 const arrivedToSetPassword = /type=(invite|recovery)/.test(window.location.hash);
 
 export function AuthProvider(props: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [client, setClient] = useState<SupabaseClient | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [session, setSession] = useState<Session | null>(null);
@@ -73,12 +75,15 @@ export function AuthProvider(props: { children: ReactNode }) {
     const { data } = client.auth.onAuthStateChange((event, next) => {
       if (event === "PASSWORD_RECOVERY") setMustSetPassword(true);
       // Signed out (button, expired session, another tab): forget this browser's saved preferences and list copies.
-      if (!next) clearStored();
+      if (!next) {
+        clearStored();
+        queryClient.clear(); // the next person to sign in on this page must not see this one's lists
+      }
       setSession(next);
       setPhase(next ? "signed-in" : "signed-out");
     });
     return () => data.subscription.unsubscribe();
-  }, [client]);
+  }, [client, queryClient]);
 
   const value = useMemo<AuthState>(
     () => ({

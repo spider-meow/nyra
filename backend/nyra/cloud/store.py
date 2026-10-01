@@ -194,7 +194,7 @@ class CloudMatchStore:
         try:
             data = cloud_storage.cached_download(self.storage, bucket, path, version=version or "")
         except Exception:  # noqa: BLE001 - a missing object leaves the pair "to verify"
-            log.warning("reading %s/%s failed; the pair is left to verify", bucket, path, exc_info=True)
+            log.warning("reading %s/%s failed; the pair is left to verify", bucket, path)
             return None
         if side == "ref":
             return fetch.decode_reference(data, self.max_image_pixels)[0]

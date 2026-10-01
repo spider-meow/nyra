@@ -114,21 +114,27 @@ besoin.
 Ces règles s'appliquent au code qu'on écrit ou qu'on modifie. On ne réécrit
 pas l'existant d'un bloc : on corrige ce qu'on touche (règle du scout).
 
-- **Fonctions longues, Python** : 8 fonctions sur 447 dépassent 60 lignes. La
-  plus grosse est `create_app` dans `backend/nyra/cloud/api.py` (870 lignes,
-  toutes les routes dans une seule fonction), puis `_index` (141),
-  `run_matching` (100), `platform_insights` (94), `build_report` (84),
-  `upload` (70).
-- **Composants longs, TypeScript** : `Library` (478 lignes), `Review` (262),
-  `Dashboard` (166), `BackOfficeContent` (153), `ImportCsv` (97), `Reports`
-  (77), `EditReference` (82), `Login` (70).
-- **Erreurs larges** : 21 `except Exception`, dont 12 marqués `noqa` ou
-  suivis d'un `pass`. À passer en revue un par un (le but est de vérifier que
-  chacun est justifié, pas de tous les supprimer).
-- **Cache non borné** : `_signed` dans `backend/nyra/cloud/storage.py` est un
-  dictionnaire de module sans taille maximale (règle 3 et 9).
-- **Avertissements de tests** : deux avertissements (taille de clé JWT dans un
-  test, dépréciation du client de test) sont à filtrer ou corriger (règle 10).
+- **Fonctions longues, Python** : 8 fonctions sur 449 (tests exclus)
+  dépassent 60 lignes. La plus grosse est `create_app` dans
+  `backend/nyra/cloud/api.py` (892 lignes, toutes les routes dans une seule
+  fonction), puis `_index` (142), `run_matching` (100), `platform_insights`
+  (94), `build_report` (84), `upload` (70), `adopt_site_images` (64) et
+  `verify_hits` (63).
+- **Composants longs, TypeScript** (la page Bibliothèque est découpée : plus
+  aucune fonction de `pages/library/` ne dépasse 60 lignes) : `Review` (265),
+  `Scans` (178), `Dashboard` (166), `Layout` (166), `CompareView` (165),
+  `BackOfficeContent` (153), `StatisticsContent` (144), `Settings` (126),
+  `SiteImages` (124), `ToastProvider` (116), `JobToasts` (112), `Brands`
+  (110), `AddToLibrary` (100), `useReferenceUpload` (98, dont `run` 89),
+  `AuthProvider` (89), `Reports` (77), `BarHistory` (76), `SiteRow` (72),
+  `Login` (70).
+- **Erreurs larges** : les 21 `except Exception` de `backend/nyra` sont
+  soit journalisés, soit justifiés par un commentaire, soit relancés.
+- **Cache** : `_signed` (`backend/nyra/cloud/storage.py`) est borné à
+  `SIGNED_URL_CACHE_MAX` entrées (les plus anciennes sortent d'abord). Reste
+  un dictionnaire de module partagé, protégé par `_signed_lock` (règle 9).
+- **Avertissements de tests** : aucun. Celui du client de test (httpx) est
+  filtré nommément dans `pyproject.toml`.
 
 ## Pour un agent IA qui travaille ici
 

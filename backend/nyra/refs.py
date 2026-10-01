@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import csv
 import re
+import unicodedata
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import date
@@ -72,21 +73,24 @@ def parse_expiry(raw: Optional[str]) -> Optional[str]:
 MAX_TAGS_PER_REFERENCE = 20
 MAX_TAG_LENGTH = 40
 _TAG_SEPARATORS = re.compile(r"[,;|]")
+_INVISIBLE = re.compile("[\u200b-\u200d\u2060\ufeff]")  # zero-width characters make a tag that looks like another one
 
 
 def normalize_tags(raw: Iterable[str] | str | None) -> list[str]:
     """Clean list of tags: trimmed, single-spaced, lowercase, no duplicates, order kept.
 
-    A string is split on `,`, `;` and `|` (the CSV cell form). Blank entries
-    are dropped; a tag that is too long, or too many tags, is refused rather
-    than silently cut.
+    Every entry (a string, or each item of a list) is split on `,`, `;` and `|`
+    (the CSV cell form), so a tag never contains a separator and survives an
+    export and re-import. Text is NFC-normalized, so `é` typed two ways is one
+    tag. Blank entries are dropped; a tag that is too long, or too many tags,
+    is refused rather than silently cut.
     """
     if raw is None:
         return []
-    parts = _TAG_SEPARATORS.split(raw) if isinstance(raw, str) else list(raw)
+    entries = [raw] if isinstance(raw, str) else list(raw)
     tags: list[str] = []
-    for part in parts:
-        tag = " ".join(str(part).split()).lower()
+    for part in (piece for entry in entries for piece in _TAG_SEPARATORS.split(str(entry))):
+        tag = " ".join(unicodedata.normalize("NFC", _INVISIBLE.sub("", part)).split()).lower()
         if not tag or tag in tags:
             continue
         if len(tag) > MAX_TAG_LENGTH:

@@ -78,6 +78,7 @@ See [docs/CLI_REFERENCE.md](docs/CLI_REFERENCE.md).
 - [docs/COUTS_PRODUCTION.md](docs/COUTS_PRODUCTION.md) — production cost estimate (pilot, N brands)
 - [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — statistics pages, back office, Sentry, logs, Grafana
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) — setup, tests, conventions
+- [docs/BONNES_PRATIQUES.md](docs/BONNES_PRATIQUES.md) — the 10 code-quality rules and the known debt (agents read it through `CLAUDE.md`)
 - [supabase/README.md](supabase/README.md) — applying the migrations
 
 ## Layout

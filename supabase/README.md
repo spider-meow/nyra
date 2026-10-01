@@ -20,6 +20,7 @@ supabase/migrations/
   20260925000013_brands_constraints.sql          marques (étape 2, après déploiement du code)
   20260926000014_reference_working_copies.sql   copie de travail des références (work_path)
   20260929000015_insights.sql                    mesures des lectures, poids et format des images, équipe Nyra, vues `insights`
+  20260930000016_reference_tags.sql              tags libres des références (colonne `tags text[]`, index GIN ; jamais lus par le matching)
 ```
 
 ## Marques (012 puis 013)
@@ -51,7 +52,7 @@ supabase migration repair --status applied 20260920000001 20260920000002 2026092
 supabase db push
 ```
 
-Ou collez simplement 008 à 011 dans le SQL Editor.
+Ou collez simplement 008 à 016 dans l'ordre dans le SQL Editor (012 et 013 en deux temps, voir « Marques » ci-dessus).
 
 Après 008, les références et images existantes n'ont ni vignette ni hash
 miroir : le worker les complète via une tâche `index` (voir

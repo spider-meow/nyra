@@ -7,7 +7,7 @@ import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
 import { BrandShell, FirstBrand, Login, NotFound, OrgHome, OrgShell, RequireSession, SetPassword } from "./pages/Access";
 import { Dashboard } from "./pages/Dashboard";
-import { Spinner } from "./components/ui";
+import { Button, Spinner } from "./components/ui";
 import "./index.css";
 
 // Dashboard (the landing page) and the access screens stay in the entry chunk;
@@ -49,44 +49,62 @@ function Titled(props: { children: ReactNode }) {
   );
 }
 
+/** A page that cannot load (typically a file replaced by a new deploy): offer a reload instead of the router's developer screen. */
+function PageError() {
+  return (
+    <div className="grid min-h-screen place-items-center p-8 text-center">
+      <div>
+        <p className="font-display text-2xl">Cette page n'a pas pu se charger</p>
+        <p className="mt-2 text-sm text-muted">Nyra a peut-être été mis à jour. Rechargez pour continuer.</p>
+        <Button variant="primary" className="mt-5" onClick={() => window.location.reload()}>Recharger</Button>
+      </div>
+    </div>
+  );
+}
+
 const page = (element: ReactNode) => <Titled>{element}</Titled>;
 
 const router = createBrowserRouter([
-  { path: "/connexion", element: page(<Login />), handle: { title: "Connexion" } },
-  { path: "/mot-de-passe", element: page(<SetPassword />), handle: { title: "Mot de passe" } },
   {
-    element: <RequireSession />,
+    errorElement: <PageError />,
     children: [
-      { path: "/", element: page(<OrgHome />) },
-      { path: "/interne", element: page(<BackOffice />), handle: { title: "Back office" } },
+      { path: "/connexion", element: page(<Login />), handle: { title: "Connexion" } },
+      { path: "/mot-de-passe", element: page(<SetPassword />), handle: { title: "Mot de passe" } },
       {
-        path: "/o/:slug",
-        element: <OrgShell />,
+        element: <RequireSession />,
         children: [
-          { index: true, element: <FirstBrand /> },
+          { path: "/", element: page(<OrgHome />) },
+          { path: "/interne", element: page(<BackOffice />), handle: { title: "Back office" } },
           {
-            path: "m/:brand",
-            element: <BrandShell />,
+            path: "/o/:slug",
+            element: <OrgShell />,
             children: [
-              { index: true, element: <Navigate to="tableau-de-bord" replace /> },
-              { path: "tableau-de-bord", element: page(<Dashboard />), handle: { title: "Tableau de bord" } },
-              { path: "a-traiter", element: page(<Review />), handle: { title: "À traiter" } },
-              { path: "bibliotheque", element: page(<Library />), handle: { title: "Bibliothèque" } },
-              { path: "images-du-site", element: page(<SiteImages />), handle: { title: "Droits non vérifiés" } },
-              { path: "lectures", element: page(<Scans />), handle: { title: "Sites et lectures" } },
-              { path: "rapports", element: page(<Reports />), handle: { title: "Rapports" } },
-              { path: "statistiques", element: page(<Statistics />), handle: { title: "Statistiques" } },
-              { path: "reglages", element: page(<Settings />), handle: { title: "Réglages" } },
-              { path: "*", element: page(<NotFound />), handle: { title: "Page introuvable" } },
+              { index: true, element: <FirstBrand /> },
+              {
+                path: "m/:brand",
+                element: <BrandShell />,
+                children: [
+                  { index: true, element: <Navigate to="tableau-de-bord" replace /> },
+                  { path: "tableau-de-bord", element: page(<Dashboard />), handle: { title: "Tableau de bord" } },
+                  { path: "a-traiter", element: page(<Review />), handle: { title: "À traiter" } },
+                  { path: "bibliotheque", element: page(<Library />), handle: { title: "Bibliothèque" } },
+                  { path: "images-du-site", element: page(<SiteImages />), handle: { title: "Droits non vérifiés" } },
+                  { path: "lectures", element: page(<Scans />), handle: { title: "Sites et lectures" } },
+                  { path: "rapports", element: page(<Reports />), handle: { title: "Rapports" } },
+                  { path: "statistiques", element: page(<Statistics />), handle: { title: "Statistiques" } },
+                  { path: "reglages", element: page(<Settings />), handle: { title: "Réglages" } },
+                  { path: "*", element: page(<NotFound />), handle: { title: "Page introuvable" } },
+                ],
+              },
+              // Links from before brands: /o/:slug/bibliotheque -> the first brand's library.
+              { path: "*", element: <FirstBrand /> },
             ],
           },
-          // Links from before brands: /o/:slug/bibliotheque -> the first brand's library.
-          { path: "*", element: <FirstBrand /> },
         ],
       },
+      { path: "*", element: page(<NotFound />), handle: { title: "Page introuvable" } },
     ],
   },
-  { path: "*", element: page(<NotFound />), handle: { title: "Page introuvable" } },
 ]);
 
 const root = document.getElementById("root");

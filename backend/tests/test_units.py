@@ -29,6 +29,11 @@ def test_normalize_tags_splits_a_csv_cell_on_commas_semicolons_and_pipes():
     assert normalize_tags("") == []
 
 
+def test_normalize_tags_makes_one_tag_of_look_alikes_and_never_keeps_a_separator():
+    assert normalize_tags(["e\u0301", "\u00e9", "zero\u200bwidth", "zerowidth"]) == ["\u00e9", "zerowidth"]
+    assert normalize_tags(["a,b", "c;d"]) == ["a", "b", "c", "d"]  # same as the CSV cell "a,b"
+
+
 def test_normalize_tags_refuses_instead_of_cutting():
     with pytest.raises(RefValidationError, match="trop long"):
         normalize_tags(["x" * (MAX_TAG_LENGTH + 1)])

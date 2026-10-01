@@ -51,7 +51,7 @@ export function useBulkEdit(selected: Set<string>, clear: () => void) {
 }
 
 /** Asks for confirmation, then deletes visuels by filename. `onRemoved` runs once they are gone. */
-export function useRemoveReferences(onRemoved: () => void) {
+export function useRemoveReferences(onRemoved: (names: string[]) => void) {
   const { remove } = useLibraryMutations();
   const toast = useToast();
   const confirm = useConfirm();
@@ -73,7 +73,7 @@ export function useRemoveReferences(onRemoved: () => void) {
     remove.mutate(names, {
       onSuccess: (result) => {
         toast.update(pending, { tone: "success", message: result.deleted > 1 ? `${result.deleted} visuels supprimés` : "Visuel supprimé" });
-        onRemoved();
+        onRemoved(names);
       },
       onError: (error) => toast.update(pending, { tone: "error", message: "La suppression n'a pas abouti", description: errorMessage(error) }),
     });

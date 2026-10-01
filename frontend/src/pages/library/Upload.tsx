@@ -69,7 +69,7 @@ export function useUpload() {
   };
 }
 
-export type Upload = ReturnType<typeof useUpload>;
+type Upload = ReturnType<typeof useUpload>;
 
 /** Header buttons: CSV export and import, and the upload button with its hidden file input. */
 export function LibraryActions({ up, onImport }: { up: Upload; onImport: () => void }) {
