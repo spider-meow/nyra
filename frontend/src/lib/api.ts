@@ -3,6 +3,7 @@ export class ApiError extends Error {
 
   constructor(message: string, status: number) {
     super(message);
+    this.name = "ApiError"; // the SDK reads the error's name: scrubbing recognizes an ApiError wherever it is wrapped
     this.status = status;
   }
 }

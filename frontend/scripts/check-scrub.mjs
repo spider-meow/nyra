@@ -150,6 +150,18 @@ assert.equal(chain.contexts.trace.description, "/o/:slug/m/:brand/x");
 const other = scrub.scrubEvent(event([{ type: "Remy Martin Error", value: "x is undefined in Louis XIII.jpg" }, { type: "TypeError", value: "Failed to fetch (www.remymartin-secret-site.com)" }]), scope);
 assert.deepEqual(other.exception.values, [{ type: "[name] Error", value: "[text naming a file]" }, { type: "TypeError", value: "Failed to fetch ([external])" }]);
 
-const everything = JSON.stringify([spans, crumbs, chain, other]);
+// An ApiError inside an AggregateError (not on the cause chain): recognized by its name, not by the caller's search.
+const aggregate = scrub.scrubEvent(event([{ type: "AggregateError", value: "x" }, { type: "ApiError", value: "Fichier Cognac Hors Age introuvable (Louis XIII)" }]), scope);
+assert.deepEqual(aggregate.exception.values[1], { type: "ApiError", value: "HTTP error" });
+
+// A name cut in half by the length limit was already replaced: no partial identifier survives at the boundary.
+const edge = text("x".repeat(480) + " jean.dupont@remymartin.com and Remy Martin " + "y".repeat(100));
+assert.ok(!/remymarti|Remy/.test(edge), `a partial identifier survived at the limit: ${edge.slice(470)}`);
+
+// Stack frames: an extension or a client script named in a frame does not leave.
+const stacked = scrub.scrubEvent(event([{ type: "Error", value: "x", stacktrace: { frames: [{ filename: `${SITE}/assets/Remy-Martin.js?tok=SECRETTOKEN`, abs_path: `chrome-extension://abcdef/Louis XIII.js` }] } }]), scope);
+assert.ok(!/secret-site|SECRETTOKEN|Louis XIII|Remy/.test(JSON.stringify(stacked.exception.values[0].stacktrace)), JSON.stringify(stacked.exception.values[0].stacktrace));
+
+const everything = JSON.stringify([spans, crumbs, chain, other, aggregate, edge, stacked]);
 for (const word of PRIVATE) assert.ok(!everything.includes(word), `"${word}" survived scrubbing: ${everything}`);
 console.log("scrub: every sample passes, none of the client data survives");

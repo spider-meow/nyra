@@ -125,7 +125,8 @@ function cleanText(text: string, scope: Scope): string {
  * spaces, so there is no telling where it starts.
  */
 export function scrubText(text: string, scope: Scope): string {
-  return named(cleanText(text.slice(0, MAX_TEXT), scope), scope);
+  // Cut twice: a long input first (linear time), the result last, so a name cut in half at the limit was replaced before it.
+  return named(cleanText(text.slice(0, MAX_TEXT * 4), scope), scope).slice(0, MAX_TEXT);
 }
 
 const scrubString = (value: string, scope: Scope) => (URL_OR_PATH.test(value) ? scrubRef(value, scope) : scrubText(value, scope));
@@ -170,8 +171,14 @@ export function scrubEvent(event: ErrorEvent, scope: Scope, apiStatus?: number):
   if (trace?.data) scrubData(trace.data, scope);
   if (typeof trace?.description === "string") trace.description = scrubString(trace.description, scope);
   for (const exception of event.exception?.values ?? []) {
-    exception.type = apiStatus === undefined ? exception.type && scrubText(exception.type, scope) : "ApiError";
-    exception.value = apiStatus === undefined ? exception.value && scrubText(exception.value, scope) : `HTTP ${apiStatus}`;
+    // An ApiError can sit anywhere (a cause, an AggregateError's list): wherever one is found, its server text goes.
+    const fromServer = apiStatus !== undefined || exception.type === "ApiError";
+    exception.type = fromServer ? "ApiError" : exception.type && scrubText(exception.type, scope);
+    exception.value = fromServer ? `HTTP ${apiStatus ?? "error"}` : exception.value && scrubText(exception.value, scope);
+    for (const frame of exception.stacktrace?.frames ?? []) {
+      if (frame.filename) frame.filename = scrubString(frame.filename, scope);
+      if (frame.abs_path) frame.abs_path = scrubString(frame.abs_path, scope);
+    }
   }
   return event;
 }
