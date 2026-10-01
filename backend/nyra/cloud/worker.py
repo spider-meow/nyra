@@ -91,8 +91,40 @@ class JobContext:
         self._done.set()
 
 
+# An index job reads its candidates `INDEX_CHUNK_BATCHES` embedding batches at a time (keyset on `id`), so only one
+# chunk of light rows is ever in memory, however many images the brand has. A row that can never be indexed
+# (unreadable image) stays pending: it is passed once, never fetched again, so the job always ends.
+INDEX_CHUNK_BATCHES = 32
+_FIRST_ID = uuid.UUID(int=0)  # sorts before every id
+
+_REFERENCES_PENDING = """FROM reference_images
+    WHERE brand_id = %s AND (embedding IS NULL OR phash_flip IS NULL OR thumb_path IS NULL OR work_path IS NULL)"""
+_SITES_PENDING = """FROM site_images si JOIN sites s ON s.id = si.site_id
+    WHERE s.brand_id = %s AND si.storage_path IS NOT NULL AND (si.embedding IS NULL OR si.thumb_path IS NULL)"""
+_REFERENCE_CHUNK = f"""SELECT id, filename, storage_path, thumb_path, work_path, phash, phash_flip IS NULL AS needs_flip,
+        embedding IS NULL AS needs_embedding
+    {_REFERENCES_PENDING} AND id > %s ORDER BY id LIMIT %s"""
+_SITE_CHUNK = f"""SELECT si.id, si.storage_path, si.content_hash, si.phash, si.thumb_path,
+        si.embedding IS NULL AS needs_embedding
+    {_SITES_PENDING} AND si.id > %s ORDER BY si.id LIMIT %s"""
+_PENDING_COUNT = f"""SELECT (SELECT COUNT(*) {_REFERENCES_PENDING}) + (SELECT COUNT(*) {_SITES_PENDING}) AS total,
+        EXISTS (SELECT 1 {_REFERENCES_PENDING} AND embedding IS NULL)
+        OR EXISTS (SELECT 1 {_SITES_PENDING} AND si.embedding IS NULL) AS needs_embedding"""
+_UPDATE_REFERENCE = """UPDATE reference_images SET
+        embedding = COALESCE(%s, embedding),
+        phash_flip = COALESCE(%s, phash_flip),
+        dhash_flip = COALESCE(%s, dhash_flip),
+        thumb_path = %s,
+        work_path = %s,
+        compared_at = CASE WHEN %s OR %s THEN NULL ELSE compared_at END
+    WHERE org_id = %s AND id = %s"""
+_UPDATE_SITE = """UPDATE site_images SET embedding = COALESCE(%s, embedding), thumb_path = %s,
+        compared_at = CASE WHEN %s THEN NULL ELSE compared_at END
+    WHERE org_id = %s AND (id = %s OR (content_hash = %s AND %s::text IS NOT NULL))"""
+
+
 def _one_per_hash(rows: list[dict]) -> list[dict]:
-    """One row per (content_hash, file): `_save_site` gives the embedding and the thumbnail to every row of the
+    """One row per (content_hash, file): `_UPDATE_SITE` gives the embedding and the thumbnail to every row of the
     hash, so a file is read and embedded once. Rows of one hash that live in different files stay apart, so an
     unreadable file cannot keep its twin from being indexed. `twins` counts the rows a kept row stands for."""
     heads: dict[tuple, dict] = {}
@@ -115,7 +147,7 @@ class _IndexRun:
     """One index job: the images still missing something, the timings, and the progress made."""
 
     def __init__(self, ctx: JobContext, database_url: str, storage: Any, org_id: uuid.UUID, brand_id: uuid.UUID,
-                 config: Config, refs: list[dict], sites: list[dict]):
+                 config: Config, total: int, needs_model: bool):
         self.ctx = ctx
         self.database_url = database_url
         self.storage = storage
@@ -123,9 +155,9 @@ class _IndexRun:
         self.brand_id = brand_id
         self.config = config
         self.batch = max(1, config.match.embedding_batch_size)
-        self.refs = refs
-        self.sites = sites
-        self.total = len(refs) + len(sites)
+        self.chunk = self.batch * INDEX_CHUNK_BATCHES
+        self.total = total
+        self.needs_model = needs_model
         self.done = 0
         self.updated = 0
         self.timing = {"embedded": 0, "embed_seconds": 0.0, "load_seconds": 0.0, "model_load_seconds": 0.0}
@@ -133,7 +165,7 @@ class _IndexRun:
 
     def warm_model(self) -> None:
         # Say what's happening before the first batch: loading the model can take minutes the first time.
-        if any(row["needs_embedding"] for row in (*self.refs, *self.sites)):
+        if self.needs_model:
             self.ctx.report(
                 f"Chargement du modèle d'analyse ({self.total} image(s) à indexer ; plus long la toute première fois)…",
                 {"phase": "index", "done": 0, "total": self.total}, force=True)
@@ -142,16 +174,16 @@ class _IndexRun:
 
     def process_references(self) -> None:
         self._process(
-            self.refs,
+            _REFERENCE_CHUNK, list,
             # The working copy is enough; the original only to make a missing working copy.
             lambda row: (cloud_storage.BUCKET_REFS, row["work_path"] or row["storage_path"], row["phash"]),
-            self._save_reference)
+            self._prepare_reference, _UPDATE_REFERENCE)
 
     def process_sites(self) -> None:
         self._process(
-            _one_per_hash(self.sites),
+            _SITE_CHUNK, _one_per_hash,
             lambda row: (cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"], row["content_hash"] or row["phash"]),
-            self._save_site)
+            self._prepare_site, _UPDATE_SITE)
 
     def result(self) -> dict[str, Any]:
         return {"indexed": self.updated, "metrics": {
@@ -159,21 +191,37 @@ class _IndexRun:
             "duration_seconds": round(time.perf_counter() - self.started, 3),
         }}
 
-    def _process(self, rows: list[dict], source: Callable[[dict], tuple], save: Callable[..., None]) -> None:
-        """Batch by batch: stop if asked, read the images, embed the ones that need it, save each, report."""
-        for start in range(0, len(rows), self.batch):
-            if self.ctx.should_stop():
-                break
-            part = rows[start : start + self.batch]
-            chunk = [(row, self._load(*source(row))) for row in part]
-            chunk = [(row, img) for row, img in chunk if img is not None]
-            embeddings = iter(self._embed([img for row, img in chunk if row["needs_embedding"]]))
-            for row, img in chunk:
-                save(row, img, next(embeddings) if row["needs_embedding"] else None)
-                self.updated += 1 + row.get("twins", 0)
-            self.done += sum(1 + row.get("twins", 0) for row in part)
-            self.ctx.report(f"Analyse des images · {self.done}/{self.total}",
-                            {"phase": "index", "done": self.done, "total": self.total})
+    def _process(self, select: str, group: Callable[[list[dict]], list[dict]], source: Callable[[dict], tuple],
+                 prepare: Callable[..., tuple], update: str) -> None:
+        """Chunk by chunk (keyset on `id`), then batch by batch: stop if asked, read, embed, save, report.
+        Twins of a site image that fall in a later chunk are already filled by their head's UPDATE, so they are
+        not fetched again (and not counted again)."""
+        after = _FIRST_ID
+        while True:  # `after` moves forward on every pass, so this ends once a chunk comes back short
+            with cloud_db.connect(self.database_url) as conn:
+                fetched = conn.execute(select, (self.brand_id, after, self.chunk)).fetchall()
+            rows = group(fetched)
+            for start in range(0, len(rows), self.batch):
+                if self.ctx.should_stop():
+                    return
+                self._process_batch(rows[start : start + self.batch], source, prepare, update)
+            if len(fetched) < self.chunk:
+                return
+            after = fetched[-1]["id"]
+
+    def _process_batch(self, part: list[dict], source: Callable[[dict], tuple], prepare: Callable[..., tuple],
+                       update: str) -> None:
+        loaded = [(row, self._load(*source(row))) for row in part]
+        loaded = [(row, img) for row, img in loaded if img is not None]
+        embeddings = iter(self._embed([img for row, img in loaded if row["needs_embedding"]]))
+        params = [prepare(row, img, next(embeddings) if row["needs_embedding"] else None) for row, img in loaded]
+        if params:  # one transaction for the whole batch
+            with cloud_db.connect(self.database_url) as conn, conn.cursor() as cur:
+                cur.executemany(update, params)
+        self.updated += sum(1 + row.get("twins", 0) for row, _ in loaded)
+        self.done += sum(1 + row.get("twins", 0) for row in part)
+        self.ctx.report(f"Analyse des images · {self.done}/{self.total}",
+                        {"phase": "index", "done": self.done, "total": self.total})
 
     def _embed(self, images: list) -> list:
         started = time.perf_counter()
@@ -200,7 +248,8 @@ class _IndexRun:
             self.timing["load_seconds"] += time.perf_counter() - started
         return None if img is None else img.convert("RGB")
 
-    def _save_reference(self, row: dict, img: Any, embedding: Any) -> None:
+    def _prepare_reference(self, row: dict, img: Any, embedding: Any) -> tuple:
+        """Make what is missing (flip hashes, thumbnail, working copy) and return the `_UPDATE_REFERENCE` values."""
         phash_flip = dhash_flip = None
         if row["needs_flip"]:
             phash_flip, dhash_flip = compute_flip_hashes(img)
@@ -214,34 +263,18 @@ class _IndexRun:
             work_path = cloud_storage.ref_work_path(self.org_id, self.brand_id, row["filename"])
             cloud_storage.upload(self.storage, cloud_storage.BUCKET_REFS, work_path, fetch.make_working_copy(img),
                                  content_type="image/jpeg")
-        with cloud_db.connect(self.database_url) as conn:
-            conn.execute(
-                """UPDATE reference_images SET
-                       embedding = COALESCE(%s, embedding),
-                       phash_flip = COALESCE(%s, phash_flip),
-                       dhash_flip = COALESCE(%s, dhash_flip),
-                       thumb_path = %s,
-                       work_path = %s,
-                       compared_at = CASE WHEN %s OR %s THEN NULL ELSE compared_at END
-                   WHERE id = %s""",
-                (embedding, phash_flip, dhash_flip, thumb_path, work_path, embedding is not None,
-                 phash_flip is not None, row["id"]),
-            )
+        return (embedding, phash_flip, dhash_flip, thumb_path, work_path, embedding is not None,
+                phash_flip is not None, self.org_id, row["id"])
 
-    def _save_site(self, row: dict, img: Any, embedding: Any) -> None:
+    def _prepare_site(self, row: dict, img: Any, embedding: Any) -> tuple:
+        """Make the thumbnail if missing and return the `_UPDATE_SITE` values."""
         thumb_path = row["thumb_path"]
         if not thumb_path:
             thumb_path = cloud_storage.site_thumb_path(self.org_id, row["content_hash"] or str(row["id"]))
             cloud_storage.upload(self.storage, cloud_storage.BUCKET_SITE_IMAGES, thumb_path,
                                  fetch.make_thumbnail(img), content_type="image/jpeg")
-        with cloud_db.connect(self.database_url) as conn:
-            conn.execute(
-                """UPDATE site_images SET embedding = COALESCE(%s, embedding), thumb_path = %s,
-                       compared_at = CASE WHEN %s THEN NULL ELSE compared_at END
-                   WHERE org_id = %s AND (id = %s OR (content_hash = %s AND %s::text IS NOT NULL))""",
-                (embedding, thumb_path, embedding is not None, self.org_id, row["id"], row["content_hash"],
-                 row["content_hash"]),
-            )
+        return (embedding, thumb_path, embedding is not None, self.org_id, row["id"], row["content_hash"],
+                row["content_hash"])
 
 
 class Worker:
@@ -462,8 +495,8 @@ class Worker:
     def _index(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         config = self.config_for(org_id)
         storage = self.storage_client_factory()
-        refs, sites = self._index_candidates(brand_id)
-        run = _IndexRun(ctx, self.database_url, storage, org_id, brand_id, config, refs, sites)
+        total, needs_model = self._index_pending(brand_id)
+        run = _IndexRun(ctx, self.database_url, storage, org_id, brand_id, config, total, needs_model)
         run.warm_model()
         run.process_references()
         run.process_sites()
@@ -476,26 +509,12 @@ class Worker:
         result["matches"] = self._compare(ctx, org_id, brand_id, config, result["match_metrics"])
         return f"{run.updated} image(s) indexée(s), comparaison à jour.", result
 
-    def _index_candidates(self, brand_id: uuid.UUID) -> tuple[list[dict], list[dict]]:
-        """The reference and site images that are still missing an embedding, hashes or a thumbnail."""
+    def _index_pending(self, brand_id: uuid.UUID) -> tuple[int, bool]:
+        """How many reference and site images are still missing an embedding, hashes or a thumbnail, and whether
+        any of them needs the model. Counted, not loaded: the rows are read chunk by chunk by `_IndexRun`."""
         with cloud_db.connect(self.database_url) as conn:
-            refs = conn.execute(
-                """SELECT id, filename, storage_path, thumb_path, work_path, phash, phash_flip IS NULL AS needs_flip,
-                          embedding IS NULL AS needs_embedding
-                   FROM reference_images
-                   WHERE brand_id = %s
-                     AND (embedding IS NULL OR phash_flip IS NULL OR thumb_path IS NULL OR work_path IS NULL)""",
-                (brand_id,),
-            ).fetchall()
-            sites = conn.execute(
-                """SELECT si.id, si.storage_path, si.content_hash, si.phash, si.thumb_path,
-                          si.embedding IS NULL AS needs_embedding
-                   FROM site_images si JOIN sites s ON s.id = si.site_id
-                   WHERE s.brand_id = %s AND si.storage_path IS NOT NULL
-                     AND (si.embedding IS NULL OR si.thumb_path IS NULL)""",
-                (brand_id,),
-            ).fetchall()
-        return refs, sites
+            row = conn.execute(_PENDING_COUNT, (brand_id,) * 4).fetchone()
+        return row["total"], row["needs_embedding"]
 
     def _has_site_images(self, brand_id: uuid.UUID) -> bool:
         with cloud_db.connect(self.database_url) as conn:
