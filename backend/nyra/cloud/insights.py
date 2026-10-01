@@ -197,8 +197,8 @@ def brand_insights(conn: psycopg.Connection, brand_id: uuid.UUID) -> Row:
 
 # --- every brand ------------------------------------------------------------------------
 
-def platform_insights(conn: psycopg.Connection) -> Row:
-    brands = _all(conn, """
+def _platform_brands(conn: psycopg.Connection) -> list[Row]:
+    return _all(conn, """
         SELECT b.id AS brand_id, b.name, b.slug, o.id AS org_id, o.name AS org_name, o.slug AS org_slug,
                s.distinct_files, s.total_bytes AS site_bytes, s.avg_bytes AS avg_image_bytes,
                s.stored_bytes AS site_stored_bytes, s.pages_read, s.sites,
@@ -211,8 +211,15 @@ def platform_insights(conn: psycopg.Connection) -> Row:
         LEFT JOIN insights.site_images s ON s.brand_id = b.id
         LEFT JOIN insights.library l ON l.brand_id = b.id
         ORDER BY o.name, b.name""")
-    runs = _all(conn, f"""SELECT {_RUN_COLUMNS} FROM insights.crawl_runs
+
+
+def _platform_runs(conn: psycopg.Connection) -> list[Row]:
+    return _all(conn, f"""SELECT {_RUN_COLUMNS} FROM insights.crawl_runs
                           WHERE started_at > now() - interval '90 days' ORDER BY started_at DESC""")
+
+
+def _add_brand_figures(conn: psycopg.Connection, brands: list[Row], runs: list[Row]) -> None:
+    """Add to each brand its crawl, review and job figures (the last 90 days of crawls, 30 of jobs)."""
     runs_by_brand: dict[str, list[Row]] = {}
     for run in runs:
         runs_by_brand.setdefault(run["brand_id"], []).append(run)
@@ -245,8 +252,10 @@ def platform_insights(conn: psycopg.Connection) -> Row:
             "jobs_30d": errors.get("jobs_30d", 0),
             "failed_jobs_30d": errors.get("failed_30d", 0),
         })
-    organizations = {brand["org_id"] for brand in brands}
 
+
+def _queue_health(conn: psycopg.Connection) -> Row:
+    """The job queue: counts and ages, the running jobs, the latest failures."""
     queue = _one(conn, """
         SELECT COUNT(*) FILTER (WHERE status = 'queued') AS queued,
                COUNT(*) FILTER (WHERE status = 'running') AS running,
@@ -264,13 +273,12 @@ def platform_insights(conn: psycopg.Connection) -> Row:
     failures = _all(conn, """
         SELECT id, org_name, brand_name, kind, error, finished_at FROM insights.jobs
         WHERE status = 'error' ORDER BY finished_at DESC NULLS LAST LIMIT 15""")
+    return {"queue": queue, "running": running, "failures": failures}
 
-    history = [{key: run[key] for key in (
-        "org_name", "brand_name", "started_at", "status", "duration_seconds", "pages_visited", "images_found", "images_new",
-        "pages_per_minute", "images_scanned_per_second", "clip_images_per_second", "avg_new_image_bytes",
-    )} for run in reversed(runs[:60])]
 
-    totals = {
+def _platform_totals(conn: psycopg.Connection, brands: list[Row]) -> Row:
+    organizations = {brand["org_id"] for brand in brands}
+    return {
         "organizations": len(organizations),
         "brands": len(brands),
         "members": _one(conn, "SELECT COUNT(DISTINCT user_id) AS c FROM memberships")["c"],
@@ -280,14 +288,23 @@ def platform_insights(conn: psycopg.Connection) -> Row:
         "matches": sum(brand["matches"] or 0 for brand in brands),
         "storage_bytes": sum(brand["storage_bytes"] for brand in brands),
     }
+
+
+def platform_insights(conn: psycopg.Connection) -> Row:
+    brands = _platform_brands(conn)
+    runs = _platform_runs(conn)
+    _add_brand_figures(conn, brands, runs)
+    health = _queue_health(conn)
+    history = [{key: run[key] for key in (
+        "org_name", "brand_name", "started_at", "status", "duration_seconds", "pages_visited", "images_found", "images_new",
+        "pages_per_minute", "images_scanned_per_second", "clip_images_per_second", "avg_new_image_bytes",
+    )} for run in reversed(runs[:60])]
     return {
-        "totals": totals,
+        "totals": _platform_totals(conn, brands),
         "brands": brands,
         "crawls": {"summary": _crawl_summary(runs), "history": history},
         "jobs": _jobs_by_kind(conn, "created_at > now() - interval '30 days'", None),
         "compare": _last_compare(conn, "TRUE", None),
         "matching": _matching(conn, None),
-        "queue": queue,
-        "running": running,
-        "failures": failures,
+        **health,
     }

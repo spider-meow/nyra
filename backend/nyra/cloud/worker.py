@@ -91,6 +91,139 @@ class JobContext:
         self._done.set()
 
 
+class _IndexRun:
+    """One index job: the images still missing something, the timings, and the progress made."""
+
+    def __init__(self, ctx: JobContext, database_url: str, storage: Any, org_id: uuid.UUID, brand_id: uuid.UUID,
+                 config: Config, refs: list[dict], sites: list[dict]):
+        self.ctx = ctx
+        self.database_url = database_url
+        self.storage = storage
+        self.org_id = org_id
+        self.brand_id = brand_id
+        self.config = config
+        self.batch = max(1, config.match.embedding_batch_size)
+        self.refs = refs
+        self.sites = sites
+        self.total = len(refs) + len(sites)
+        self.done = 0
+        self.updated = 0
+        self.timing = {"embedded": 0, "embed_seconds": 0.0, "load_seconds": 0.0, "model_load_seconds": 0.0}
+        self.started = time.perf_counter()
+
+    def warm_model(self) -> None:
+        # Say what's happening before the first batch: loading the model can take minutes the first time.
+        if any(row["needs_embedding"] for row in (*self.refs, *self.sites)):
+            self.ctx.report(
+                f"Chargement du modèle d'analyse ({self.total} image(s) à indexer ; plus long la toute première fois)…",
+                {"phase": "index", "done": 0, "total": self.total}, force=True)
+            warm_clip(self.config.match)
+            self.timing["model_load_seconds"] = time.perf_counter() - self.started
+
+    def process_references(self) -> None:
+        self._process(
+            self.refs,
+            # The working copy is enough; the original only to make a missing working copy.
+            lambda row: (cloud_storage.BUCKET_REFS, row["work_path"] or row["storage_path"], row["phash"]),
+            self._save_reference)
+
+    def process_sites(self) -> None:
+        self._process(
+            self.sites,
+            lambda row: (cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"], row["content_hash"] or row["phash"]),
+            self._save_site)
+
+    def result(self) -> dict[str, Any]:
+        return {"indexed": self.updated, "metrics": {
+            **{key: round(value, 3) if isinstance(value, float) else value for key, value in self.timing.items()},
+            "duration_seconds": round(time.perf_counter() - self.started, 3),
+        }}
+
+    def _process(self, rows: list[dict], source: Callable[[dict], tuple], save: Callable[..., None]) -> None:
+        """Batch by batch: stop if asked, read the images, embed the ones that need it, save each, report."""
+        for start in range(0, len(rows), self.batch):
+            if self.ctx.should_stop():
+                break
+            part = rows[start : start + self.batch]
+            chunk = [(row, self._load(*source(row))) for row in part]
+            chunk = [(row, img) for row, img in chunk if img is not None]
+            embeddings = iter(self._embed([img for row, img in chunk if row["needs_embedding"]]))
+            for row, img in chunk:
+                save(row, img, next(embeddings) if row["needs_embedding"] else None)
+                self.updated += 1
+            self.done += len(part)
+            self.ctx.report(f"Analyse des images · {self.done}/{self.total}",
+                            {"phase": "index", "done": self.done, "total": self.total})
+
+    def _embed(self, images: list) -> list:
+        started = time.perf_counter()
+        vectors = compute_clip_embeddings(images, self.config.match)
+        if images:
+            self.timing["embed_seconds"] += time.perf_counter() - started
+            self.timing["embedded"] += len(images)
+        return vectors
+
+    def _load(self, bucket: str, path: str, version: str):
+        self.ctx.report(f"Lecture des images · {self.done}/{self.total}",
+                        {"phase": "index", "done": self.done, "total": self.total})
+        started = time.perf_counter()
+        try:
+            data = cloud_storage.cached_download(self.storage, bucket, path, version=version or "")
+            if bucket == cloud_storage.BUCKET_REFS:
+                img, _ = fetch.decode_reference(data, self.config.crawl.max_image_pixels)
+            else:
+                img = fetch.decode(data, self.config.crawl.max_image_pixels)
+        except Exception:  # noqa: BLE001 - a missing object must not stop the others
+            log.warning("reading %s/%s failed; image skipped", bucket, path)
+            return None
+        finally:
+            self.timing["load_seconds"] += time.perf_counter() - started
+        return None if img is None else img.convert("RGB")
+
+    def _save_reference(self, row: dict, img: Any, embedding: Any) -> None:
+        phash_flip = dhash_flip = None
+        if row["needs_flip"]:
+            phash_flip, dhash_flip = compute_flip_hashes(img)
+        thumb_path = row["thumb_path"]
+        if not thumb_path:
+            thumb_path = cloud_storage.ref_thumb_path(self.org_id, self.brand_id, row["filename"])
+            cloud_storage.upload(self.storage, cloud_storage.BUCKET_REFS, thumb_path, fetch.make_thumbnail(img),
+                                 content_type="image/jpeg")
+        work_path = row["work_path"]
+        if not work_path:
+            work_path = cloud_storage.ref_work_path(self.org_id, self.brand_id, row["filename"])
+            cloud_storage.upload(self.storage, cloud_storage.BUCKET_REFS, work_path, fetch.make_working_copy(img),
+                                 content_type="image/jpeg")
+        with cloud_db.connect(self.database_url) as conn:
+            conn.execute(
+                """UPDATE reference_images SET
+                       embedding = COALESCE(%s, embedding),
+                       phash_flip = COALESCE(%s, phash_flip),
+                       dhash_flip = COALESCE(%s, dhash_flip),
+                       thumb_path = %s,
+                       work_path = %s,
+                       compared_at = CASE WHEN %s OR %s THEN NULL ELSE compared_at END
+                   WHERE id = %s""",
+                (embedding, phash_flip, dhash_flip, thumb_path, work_path, embedding is not None,
+                 phash_flip is not None, row["id"]),
+            )
+
+    def _save_site(self, row: dict, img: Any, embedding: Any) -> None:
+        thumb_path = row["thumb_path"]
+        if not thumb_path:
+            thumb_path = cloud_storage.site_thumb_path(self.org_id, row["content_hash"] or str(row["id"]))
+            cloud_storage.upload(self.storage, cloud_storage.BUCKET_SITE_IMAGES, thumb_path,
+                                 fetch.make_thumbnail(img), content_type="image/jpeg")
+        with cloud_db.connect(self.database_url) as conn:
+            conn.execute(
+                """UPDATE site_images SET embedding = COALESCE(%s, embedding), thumb_path = %s,
+                       compared_at = CASE WHEN %s THEN NULL ELSE compared_at END
+                   WHERE org_id = %s AND (id = %s OR (content_hash = %s AND %s::text IS NOT NULL))""",
+                (embedding, thumb_path, embedding is not None, self.org_id, row["id"], row["content_hash"],
+                 row["content_hash"]),
+            )
+
+
 class Worker:
     def __init__(self, *, database_url: str, storage_client_factory: Callable[[], Any],
                  config_path: Optional[Path] = None, poll_seconds: float = 2.0):
@@ -309,7 +442,22 @@ class Worker:
     def _index(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         config = self.config_for(org_id)
         storage = self.storage_client_factory()
-        batch = max(1, config.match.embedding_batch_size)
+        refs, sites = self._index_candidates(brand_id)
+        run = _IndexRun(ctx, self.database_url, storage, org_id, brand_id, config, refs, sites)
+        run.warm_model()
+        run.process_references()
+        run.process_sites()
+        result = run.result()
+        if ctx.cancelled:
+            return "Indexation arrêtée.", result
+        if not self._has_site_images(brand_id):
+            return f"{run.updated} image(s) indexée(s).", result
+        result["match_metrics"] = {}
+        result["matches"] = self._compare(ctx, org_id, brand_id, config, result["match_metrics"])
+        return f"{run.updated} image(s) indexée(s), comparaison à jour.", result
+
+    def _index_candidates(self, brand_id: uuid.UUID) -> tuple[list[dict], list[dict]]:
+        """The reference and site images that are still missing an embedding, hashes or a thumbnail."""
         with cloud_db.connect(self.database_url) as conn:
             refs = conn.execute(
                 """SELECT id, filename, storage_path, thumb_path, work_path, phash, phash_flip IS NULL AS needs_flip,
@@ -327,127 +475,15 @@ class Worker:
                      AND (si.embedding IS NULL OR si.thumb_path IS NULL)""",
                 (brand_id,),
             ).fetchall()
-        total = len(refs) + len(sites)
-        done = 0
-        updated = 0
-        timing = {"embedded": 0, "embed_seconds": 0.0, "load_seconds": 0.0, "model_load_seconds": 0.0}
-        index_started = time.perf_counter()
-        # Say what's happening before the first batch: loading the model can take minutes the first time.
-        if any(row["needs_embedding"] for row in (*refs, *sites)):
-            ctx.report(f"Chargement du modèle d'analyse ({total} image(s) à indexer ; plus long la toute première fois)…",
-                       {"phase": "index", "done": 0, "total": total}, force=True)
-            warm_clip(config.match)
-            timing["model_load_seconds"] = time.perf_counter() - index_started
+        return refs, sites
 
-        def embed(images: list) -> list:
-            started = time.perf_counter()
-            vectors = compute_clip_embeddings(images, config.match)
-            if images:
-                timing["embed_seconds"] += time.perf_counter() - started
-                timing["embedded"] += len(images)
-            return vectors
-
-        def load(bucket: str, path: str, version: str):
-            ctx.report(f"Lecture des images · {done}/{total}", {"phase": "index", "done": done, "total": total})
-            started = time.perf_counter()
-            try:
-                data = cloud_storage.cached_download(storage, bucket, path, version=version or "")
-                if bucket == cloud_storage.BUCKET_REFS:
-                    img, _ = fetch.decode_reference(data, config.crawl.max_image_pixels)
-                else:
-                    img = fetch.decode(data, config.crawl.max_image_pixels)
-            except Exception:  # noqa: BLE001 - a missing object must not stop the others
-                log.warning("reading %s/%s failed; image skipped", bucket, path)
-                return None
-            finally:
-                timing["load_seconds"] += time.perf_counter() - started
-            return None if img is None else img.convert("RGB")
-
-        for start in range(0, len(refs), batch):
-            if ctx.should_stop():
-                break
-            # The working copy is enough; the original only to make a missing working copy.
-            chunk = [(row, load(cloud_storage.BUCKET_REFS, row["work_path"] or row["storage_path"], row["phash"]))
-                     for row in refs[start : start + batch]]
-            chunk = [(row, img) for row, img in chunk if img is not None]
-            to_embed = [img for row, img in chunk if row["needs_embedding"]]
-            embeddings = iter(embed(to_embed))
-            for row, img in chunk:
-                embedding = next(embeddings) if row["needs_embedding"] else None
-                phash_flip = dhash_flip = None
-                if row["needs_flip"]:
-                    phash_flip, dhash_flip = compute_flip_hashes(img)
-                thumb_path = row["thumb_path"]
-                if not thumb_path:
-                    thumb_path = cloud_storage.ref_thumb_path(org_id, brand_id, row["filename"])
-                    cloud_storage.upload(storage, cloud_storage.BUCKET_REFS, thumb_path, fetch.make_thumbnail(img),
-                                         content_type="image/jpeg")
-                work_path = row["work_path"]
-                if not work_path:
-                    work_path = cloud_storage.ref_work_path(org_id, brand_id, row["filename"])
-                    cloud_storage.upload(storage, cloud_storage.BUCKET_REFS, work_path, fetch.make_working_copy(img),
-                                         content_type="image/jpeg")
-                with cloud_db.connect(self.database_url) as conn:
-                    conn.execute(
-                        """UPDATE reference_images SET
-                               embedding = COALESCE(%s, embedding),
-                               phash_flip = COALESCE(%s, phash_flip),
-                               dhash_flip = COALESCE(%s, dhash_flip),
-                               thumb_path = %s,
-                               work_path = %s,
-                               compared_at = CASE WHEN %s OR %s THEN NULL ELSE compared_at END
-                           WHERE id = %s""",
-                        (embedding, phash_flip, dhash_flip, thumb_path, work_path, embedding is not None,
-                         phash_flip is not None, row["id"]),
-                    )
-                updated += 1
-            done += len(refs[start : start + batch])
-            ctx.report(f"Analyse des images · {done}/{total}", {"phase": "index", "done": done, "total": total})
-
-        for start in range(0, len(sites), batch):
-            if ctx.should_stop():
-                break
-            chunk = [(row, load(cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"], row["content_hash"] or row["phash"]))
-                     for row in sites[start : start + batch]]
-            chunk = [(row, img) for row, img in chunk if img is not None]
-            to_embed = [img for row, img in chunk if row["needs_embedding"]]
-            embeddings = iter(embed(to_embed))
-            for row, img in chunk:
-                embedding = next(embeddings) if row["needs_embedding"] else None
-                thumb_path = row["thumb_path"]
-                if not thumb_path:
-                    thumb_path = cloud_storage.site_thumb_path(org_id, row["content_hash"] or str(row["id"]))
-                    cloud_storage.upload(storage, cloud_storage.BUCKET_SITE_IMAGES, thumb_path,
-                                         fetch.make_thumbnail(img), content_type="image/jpeg")
-                with cloud_db.connect(self.database_url) as conn:
-                    conn.execute(
-                        """UPDATE site_images SET embedding = COALESCE(%s, embedding), thumb_path = %s,
-                               compared_at = CASE WHEN %s THEN NULL ELSE compared_at END
-                           WHERE org_id = %s AND (id = %s OR (content_hash = %s AND %s::text IS NOT NULL))""",
-                        (embedding, thumb_path, embedding is not None, org_id, row["id"], row["content_hash"],
-                         row["content_hash"]),
-                    )
-                updated += 1
-            done += len(sites[start : start + batch])
-            ctx.report(f"Analyse des images · {done}/{total}", {"phase": "index", "done": done, "total": total})
-
-        result: dict[str, Any] = {"indexed": updated, "metrics": {
-            **{key: round(value, 3) if isinstance(value, float) else value for key, value in timing.items()},
-            "duration_seconds": round(time.perf_counter() - index_started, 3),
-        }}
-        if ctx.cancelled:
-            return "Indexation arrêtée.", result
+    def _has_site_images(self, brand_id: uuid.UUID) -> bool:
         with cloud_db.connect(self.database_url) as conn:
-            has_sites = conn.execute(
+            return conn.execute(
                 """SELECT EXISTS (SELECT 1 FROM site_images si JOIN sites s ON s.id = si.site_id
                                   WHERE s.brand_id = %s) AS e""",
                 (brand_id,),
             ).fetchone()["e"]
-        if has_sites:
-            result["match_metrics"] = {}
-            result["matches"] = self._compare(ctx, org_id, brand_id, config, result["match_metrics"])
-            return f"{updated} image(s) indexée(s), comparaison à jour.", result
-        return f"{updated} image(s) indexée(s).", result
 
     def _report(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         config = self.config_for(org_id)
