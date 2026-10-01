@@ -37,6 +37,7 @@ from .common import (
 )
 
 MAX_FILES_PER_UPLOAD = 100
+MAX_THUMBS_PER_REQUEST = 200  # the interface shows 100 cards at a time
 MAX_CSV_BYTES = 2_000_000
 
 router = APIRouter()
@@ -54,6 +55,10 @@ class FilenamesBody(BaseModel):
     filenames: list[str] = Field(default_factory=list, max_length=5000)
 
 
+class ThumbsBody(BaseModel):
+    filenames: list[str] = Field(default_factory=list, max_length=MAX_THUMBS_PER_REQUEST)
+
+
 class BulkExpiryBody(FilenamesBody):
     expiry_date: str = ""
 
@@ -65,12 +70,12 @@ class BulkTagsBody(FilenamesBody):
 
 @router.get(f"{BRAND}/library")
 def library(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    # ponytail: the whole library's metadata (~10,000 references, ~7 MB) goes out in one response so that the filters,
+    # tags, tabs and counters stay client-side. Upgrade path: server-side filtering and cursor pagination.
+    # Nothing is signed here: thumbnails come from `library/thumbs`, only for the cards on screen.
     with cloud_db.connect(ctx.settings.database_url) as conn:
         rows = cloud_db.list_references(conn, scope.brand_id)
         indexing = active_jobs(conn, scope.brand_id, ("index",))
-    # Thumbnails only: signing each original too would double the work for a big library
-    # (the original's URL comes from `library/{filename}/url`, when the edit modal opens).
-    urls = ctx.sign(cloud_storage.BUCKET_REFS, [row["thumb_path"] or row["storage_path"] for row in rows])
     today = datetime.now(timezone.utc).date()
     items = []
     for row in rows:
@@ -89,9 +94,27 @@ def library(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
             "height": row["height"],
             "indexed": bool(row["embedded"]),
             "compared": row["compared_at"] is not None,
-            "thumb_url": urls.get(row["thumb_path"] or row["storage_path"], ""),
         })
     return {"items": items, "indexing": indexing}
+
+
+@router.post(f"{BRAND}/library/thumbs")
+def library_thumbs(body: ThumbsBody, scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Signed thumbnail URLs of the named references (the cards on screen), one signing per reference.
+
+    A reference whose thumbnail object is missing falls back to its working copy, then its original;
+    one with nothing to show has no entry.
+    """
+    names = sorted({safe_filename(name) for name in body.filenames})
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        rows = cloud_db.reference_paths(conn, scope.brand_id, names)
+    chains = {row["filename"]: [row[key] for key in ("thumb_path", "work_path", "storage_path") if row[key]] for row in rows}
+    urls: dict[str, str] = {}
+    for rank in range(3):  # thumbnail, working copy, original
+        wanted = {name: chain[rank] for name, chain in chains.items() if name not in urls and rank < len(chain)}
+        signed = ctx.sign(cloud_storage.BUCKET_REFS, wanted.values()) if wanted else {}
+        urls.update({name: signed[path] for name, path in wanted.items() if path in signed})
+    return {"urls": urls}
 
 
 @router.get(f"{BRAND}/library/{{filename}}/url")

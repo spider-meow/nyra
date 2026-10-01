@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Modal, useToast } from "../../components/feedback";
+import { Icon } from "../../components/icons";
 import { Button, FieldLabel, Input } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { MAX_TAGS, splitTags } from "../../lib/format";
@@ -10,7 +11,7 @@ import type { LibraryItem } from "../../types";
 
 type Form = { expiry_date: string; credit: string; notes: string; tags: string[] };
 
-export function EditReference(props: { item: LibraryItem | null; onClose: () => void; onDelete: (item: LibraryItem) => void }) {
+export function EditReference(props: { item: LibraryItem | null; thumbUrl: string | undefined; onClose: () => void; onDelete: (item: LibraryItem) => void }) {
   const { admin } = useOrg();
   const { updateMeta } = useLibraryMutations();
   const toast = useToast();
@@ -58,16 +59,16 @@ export function EditReference(props: { item: LibraryItem | null; onClose: () => 
         )
       }
     >
-      <ReferenceFields item={item} form={form} setForm={setForm} />
+      <ReferenceFields item={item} thumbUrl={props.thumbUrl} form={form} setForm={setForm} />
     </Modal>
   );
 }
 
-function ReferenceFields({ item, form, setForm }: { item: LibraryItem; form: Form; setForm: (form: Form) => void }) {
+function ReferenceFields({ item, thumbUrl, form, setForm }: { item: LibraryItem; thumbUrl: string | undefined; form: Form; setForm: (form: Form) => void }) {
   const { admin } = useOrg();
   return (
     <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      <OriginalImage item={item} />
+      <OriginalImage item={item} thumbUrl={thumbUrl} />
       <div className="grid content-start gap-4">
         <div>
           <FieldLabel htmlFor="edit-expiry">Date d'expiration des droits</FieldLabel>
@@ -154,8 +155,8 @@ function TagEditor(props: { id: string; tags: string[]; onChange: (tags: string[
   );
 }
 
-/** The thumbnail at once, then the original once its signed URL (fetched only now, the list doesn't carry it) arrives. */
-function OriginalImage({ item }: { item: LibraryItem }) {
+/** The thumbnail at once (when the grid already has it), then the original once its signed URL (fetched only now) arrives. */
+function OriginalImage({ item, thumbUrl }: { item: LibraryItem; thumbUrl: string | undefined }) {
   const { apiPath, brand } = useOrg();
   const original = useQuery({
     queryKey: ["library-url", brand.id, item.filename],
@@ -163,7 +164,8 @@ function OriginalImage({ item }: { item: LibraryItem }) {
     staleTime: 5 * 60_000, // the server may hand out a URL with only 10 minutes left
   });
   const url = original.data?.url;
-  const image = <img src={url || item.thumb_url} alt="" className="aspect-square w-full object-contain" />;
+  const shown = url || thumbUrl;
+  const image = shown ? <img src={shown} alt="" className="aspect-square w-full object-contain" /> : <span className="flex aspect-square w-full items-center justify-center text-faint"><Icon name="library" size={48} strokeWidth={1.4} /></span>;
   return (
     <div>
       {url ? (

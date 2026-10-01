@@ -82,7 +82,6 @@ export type LibraryItem = {
   height: number | null;
   indexed: boolean;
   compared: boolean;
-  thumb_url: string;
 };
 
 export type Hit = {

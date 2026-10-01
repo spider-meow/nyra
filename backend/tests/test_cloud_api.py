@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from nyra.cloud import db as cloud_db
 from nyra.cloud import jobs as cloud_jobs
+from nyra.cloud import storage as cloud_storage
 from nyra.cloud.api import CloudSettings, create_app
 
 SECRET = "test-secret-at-least-32-bytes-long-enough!!"
@@ -194,8 +195,9 @@ def test_upload_is_admin_only_stores_a_thumbnail_and_queues_indexing(client, org
     assert library["indexing"] is True
     item = library["items"][0]
     assert item["indexed"] is False
-    assert item["thumb_url"].startswith(f"https://fake-storage.test/refs/{org_id}/{cloud_brand}/thumbs/")
-    assert "url" not in item  # the original is signed on demand, see the next test
+    assert "thumb_url" not in item and "url" not in item  # signed on demand, see the next tests
+    thumbs = client.post(f"{base}/library/thumbs", headers=_headers(client_id), json={"filenames": ["a.jpg"]})
+    assert thumbs.json()["urls"]["a.jpg"].startswith(f"https://fake-storage.test/refs/{org_id}/{cloud_brand}/thumbs/")
 
 
 def test_original_url_is_signed_on_demand_for_members_of_the_brand_only(client, org_with_users, cloud_brand,
@@ -222,12 +224,87 @@ def test_original_url_is_signed_on_demand_for_members_of_the_brand_only(client, 
     assert client.get(f"{base}/library/export-csv", headers=_headers(admin_id)).status_code == 200
 
 
+@pytest.fixture()
+def signed_paths(fake_storage_client, monkeypatch):
+    """The paths Storage was asked to sign. Like Supabase, it gives no URL for an object that is not there."""
+    monkeypatch.setattr(cloud_storage, "_signed", {})  # a fresh URL cache
+    proxy = type(fake_storage_client.from_("refs"))
+    asked: list[str] = []
+    real = proxy.create_signed_urls
+
+    def strict(self, paths, expires_in, options=None):
+        asked.extend(paths)
+        return [item if (self.bucket, item["path"]) in self.store else {**item, "signedURL": None, "error": "Object not found"}
+                for item in real(self, paths, expires_in, options)]
+
+    monkeypatch.setattr(proxy, "create_signed_urls", strict)
+    return asked
+
+
+def _put_references(conn, store, org_id, brand_id, count: int) -> None:
+    for number in range(count):
+        name = f"r{number:04d}.jpg"
+        paths = {key: f"{org_id}/{brand_id}/{key}/{name}" for key in ("thumbs", "work")}
+        for path in paths.values():
+            store[("refs", path)] = b"x"
+        cloud_db.upsert_reference_image(
+            conn, org_id=org_id, brand_id=brand_id, filename=name, storage_path=f"{org_id}/{brand_id}/{name}",
+            thumb_path=paths["thumbs"], work_path=paths["work"], expiry_date=None, credit=None, notes=None,
+        )
+
+
+def test_library_list_signs_nothing_and_thumbs_sign_only_what_is_asked(
+        client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client, signed_paths):
+    org_id, base, admin_id, client_id, outsider_id = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        _put_references(conn, fake_storage_client.store, org_id, cloud_brand, 1000)  # was: 1,000 signings per list load
+
+    items = client.get(f"{base}/library", headers=_headers(client_id)).json()["items"]
+    assert len(items) == 1000 and all("thumb_url" not in item for item in items)
+    assert signed_paths == []
+
+    names = [item["filename"] for item in items[:100]]
+    r = client.post(f"{base}/library/thumbs", headers=_headers(client_id), json={"filenames": names})
+    assert set(r.json()["urls"]) == set(names)
+    assert all(f"/thumbs/{name}?" in url for name, url in r.json()["urls"].items())
+    assert len(signed_paths) == 100
+
+    assert client.post(f"{base}/library/thumbs", headers=_headers(client_id),
+                       json={"filenames": [f"r{n:04d}.jpg" for n in range(201)]}).status_code == 422
+    assert client.post(f"{base}/library/thumbs", headers=_headers(client_id), json={"filenames": ["notes.txt"]}).status_code == 400
+    assert client.post(f"{base}/library/thumbs", headers=_headers(outsider_id), json={"filenames": names}).status_code == 403
+    assert client.post(f"{base}/library/thumbs", json={"filenames": names}).status_code == 401
+
+
+def test_thumbs_are_scoped_to_the_brand_and_fall_back_when_the_thumbnail_object_is_missing(
+        client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client, signed_paths):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
+    _upload(client, base, admin_id, "gone.jpg", "bare.jpg", "ok.jpg")
+    _upload(client, f"/api/orgs/{org_id}/brands/{other['id']}", admin_id, "elsewhere.jpg")
+    store = fake_storage_client.store
+    del store[("refs", f"{org_id}/{cloud_brand}/thumbs/gone.jpg.jpg")]  # thumbnail object missing, working copy there
+    for kind in ("thumbs", "work"):
+        del store[("refs", f"{org_id}/{cloud_brand}/{kind}/bare.jpg.jpg")]  # only the original is left
+
+    r = client.post(f"{base}/library/thumbs", headers=_headers(client_id),
+                    json={"filenames": ["gone.jpg", "bare.jpg", "ok.jpg", "elsewhere.jpg", "unknown.jpg"]})
+    urls = r.json()["urls"]
+    assert set(urls) == {"gone.jpg", "bare.jpg", "ok.jpg"}  # another brand's file and an unknown one: no entry
+    assert f"/refs/{org_id}/{cloud_brand}/work/gone.jpg.jpg?" in urls["gone.jpg"]
+    assert f"/refs/{org_id}/{cloud_brand}/bare.jpg?" in urls["bare.jpg"]
+    assert "/thumbs/ok.jpg.jpg?" in urls["ok.jpg"]
+
+    del store[("refs", f"{org_id}/{cloud_brand}/bare.jpg")]  # nothing left at all: no entry, no crash
+    cloud_storage.forget_signed("refs", [f"{org_id}/{cloud_brand}/bare.jpg"])  # (a URL already handed out is reused)
+    r = client.post(f"{base}/library/thumbs", headers=_headers(client_id), json={"filenames": ["bare.jpg", "ok.jpg"]})
+    assert r.status_code == 200 and list(r.json()["urls"]) == ["ok.jpg"]
+
+
 def test_accented_names_get_a_safe_storage_key_and_one_bad_file_spares_the_others(
     client, org_with_users, cloud_brand, fake_storage_client, monkeypatch
 ):
     org_id, base, admin_id, client_id, _ = org_with_users
-    from nyra.cloud import storage as cloud_storage
-
     real_upload = cloud_storage.upload
 
     def flaky(client_, bucket, path, data, *, content_type=None):

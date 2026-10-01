@@ -7,6 +7,7 @@ import type { LibraryView } from "./view";
 
 type Props = {
   view: LibraryView;
+  thumbs: Record<string, string>;
   selected: Set<string>;
   setSelected: (selected: Set<string>) => void;
   onEdit: (item: LibraryItem) => void;
@@ -14,7 +15,7 @@ type Props = {
 };
 
 /** "Select all" box, the visuels (first page of them), "show more" and the empty-result message. */
-export function LibraryGrid({ view, selected, setSelected, onEdit, onPick }: Props) {
+export function LibraryGrid({ view, thumbs, selected, setSelected, onEdit, onPick }: Props) {
   const { admin } = useOrg();
   const { visible, shown, tab, filtering } = view;
   const allVisibleSelected = visible.length > 0 && visible.every((item) => selected.has(item.filename));
@@ -42,7 +43,7 @@ export function LibraryGrid({ view, selected, setSelected, onEdit, onPick }: Pro
       <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {admin && tab === "active" && !filtering ? <DropTile onPick={onPick} /> : null}
         {visible.slice(0, shown).map((item) => (
-          <ReferenceCard key={item.id} item={item} checked={selected.has(item.filename)} anySelected={selected.size > 0} onEdit={onEdit} onToggle={toggle} />
+          <ReferenceCard key={item.id} item={item} thumbUrl={thumbs[item.filename]} checked={selected.has(item.filename)} anySelected={selected.size > 0} onEdit={onEdit} onToggle={toggle} />
         ))}
       </ul>
       {visible.length > shown ? (
@@ -77,13 +78,15 @@ function DropTile({ onPick }: { onPick: () => void }) {
 
 type CardProps = {
   item: LibraryItem;
+  /** Undefined until the signed URL arrives, and for good when the reference has no image to show. */
+  thumbUrl: string | undefined;
   checked: boolean;
   anySelected: boolean;
   onEdit: (item: LibraryItem) => void;
   onToggle: (filename: string, checked: boolean) => void;
 };
 
-function ReferenceCard({ item, checked, anySelected, onEdit, onToggle }: CardProps) {
+function ReferenceCard({ item, thumbUrl, checked, anySelected, onEdit, onToggle }: CardProps) {
   const { admin } = useOrg();
   return (
     <li
@@ -94,7 +97,11 @@ function ReferenceCard({ item, checked, anySelected, onEdit, onToggle }: CardPro
     >
       <button type="button" onClick={() => onEdit(item)} className="block text-left" aria-label={`${admin ? "Modifier" : "Voir"} ${item.filename}`}>
         <span className="block aspect-[4/3] overflow-hidden bg-side">
-          {item.thumb_url ? <img src={item.thumb_url} alt="" loading="lazy" className="h-full w-full object-cover" /> : null}
+          {thumbUrl ? (
+            <img src={thumbUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+          ) : (
+            <span className="flex h-full w-full items-center justify-center text-faint"><Icon name="library" size={32} strokeWidth={1.4} /></span>
+          )}
         </span>
         <span className="flex flex-col gap-2 px-3.5 pt-3 pb-3.5">
           <span className="truncate text-[13.5px] font-medium" title={item.filename}>{item.filename}</span>

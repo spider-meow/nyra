@@ -437,6 +437,14 @@ def list_references(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     ).fetchall()
 
 
+def reference_paths(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str]) -> list[Row]:
+    """Where the images of the named references are stored (for their thumbnails): no other column."""
+    return conn.execute(
+        "SELECT filename, storage_path, thumb_path, work_path FROM reference_images"
+        " WHERE brand_id = %s AND filename = ANY(%s)", (brand_id, filenames)
+    ).fetchall()
+
+
 def get_reference_by_filename(conn: psycopg.Connection, brand_id: uuid.UUID, filename: str) -> Optional[Row]:
     return conn.execute(
         "SELECT * FROM reference_images WHERE brand_id = %s AND filename = %s", (brand_id, filename)

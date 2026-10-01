@@ -1,5 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRef, useState } from "react";
 import { useToast } from "../components/feedback";
 import type {
   Brand,
@@ -22,18 +22,18 @@ import type {
 import { api, errorMessage } from "./api";
 import { useAuth } from "./auth";
 import { useOrg } from "./org";
-import { isRecord, oneOf, readStored, removeStored, storageKey, writeStored } from "./storage";
+import { isRecord, oneOf, readStored, removeOtherBrands, removeStored, storageKey, writeStored } from "./storage";
 import { batches, reportUnanswered, sendBatch, summary, withoutDuplicates, type UploadResult } from "./upload";
 
 // Copies of the Library and Overview answers in localStorage, so those pages open at once.
-// Older than this, a copy is ignored: the server reuses a signed thumbnail URL while it has at least 10 minutes left,
-// so a URL in a copy is still valid 5 minutes after the copy was made.
+// They hold no signed URL (thumbnails come from `useLibraryThumbs`). Older than this, a copy is ignored.
 const COPY_MAX_AGE_MS = 5 * 60_000;
 
 /**
  * The last server answer for `name`, per user and brand, to hand to `initialData`.
  * `initialDataUpdatedAt: 0` (at the call sites) makes TanStack treat it as stale,
  * so the page shows the copy and refetches immediately.
+ * Only the latest brand keeps a copy per user and `name`: a user going through many large brands cannot fill the storage.
  */
 function useAnswerCopy<T>(name: string, isAnswer: (value: unknown) => value is T, maxChars: number) {
   const { session } = useAuth();
@@ -50,7 +50,9 @@ function useAnswerCopy<T>(name: string, isAnswer: (value: unknown) => value is T
       return undefined;
     },
     write(answer: T): void {
-      if (key) writeStored("local", key, { savedAt: Date.now(), answer }, maxChars);
+      if (!key || !session) return;
+      removeOtherBrands("local", session.user.id, key, `copy.${name}`);
+      writeStored("local", key, { savedAt: Date.now(), answer }, maxChars);
     },
   };
 }
@@ -73,8 +75,7 @@ const isLibraryItem = (value: unknown): value is LibraryItem =>
   isStatus(value.status) &&
   typeof value.credit === "string" && typeof value.notes === "string" &&
   Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string") &&
-  typeof value.indexed === "boolean" && typeof value.compared === "boolean" &&
-  typeof value.thumb_url === "string";
+  typeof value.indexed === "boolean" && typeof value.compared === "boolean";
 
 type LibraryAnswer = { items: LibraryItem[]; indexing: boolean };
 const isLibraryAnswer = (value: unknown): value is LibraryAnswer =>
@@ -105,7 +106,7 @@ export function useJobs() {
   });
 }
 
-// ~1,000 references weigh ~0.7 MB; above this cap nothing is stored.
+// ~1,000 references weigh ~0.2 MB (metadata only); above this cap nothing is stored.
 const LIBRARY_COPY_MAX_CHARS = 1_500_000;
 
 export function useLibrary() {
@@ -120,10 +121,38 @@ export function useLibrary() {
     },
     initialData: copy.read,
     initialDataUpdatedAt: 0,
-    // Signed image URLs last an hour; refresh well before that.
     staleTime: 60_000,
-    refetchInterval: 30 * 60_000,
   });
+}
+
+/** Cards shown at a time in the library, and the size of the slice of thumbnails fetched in one request. */
+export const LIBRARY_PAGE = 100;
+
+/**
+ * Signed thumbnail URLs (filename -> URL) of the cards on screen, one request per slice of `LIBRARY_PAGE`:
+ * "show more" only asks for the next slice. A card without an entry has no thumbnail to show.
+ */
+export function useLibraryThumbs(filenames: string[]): Record<string, string> {
+  const { apiPath, brand } = useOrg();
+  const kept = useRef<Record<string, string>>({});
+  const slices = Array.from({ length: Math.ceil(filenames.length / LIBRARY_PAGE) }, (_, index) =>
+    filenames.slice(index * LIBRARY_PAGE, (index + 1) * LIBRARY_PAGE),
+  );
+  const { urls, loading } = useQueries({
+    queries: slices.map((slice) => ({
+      queryKey: ["library-thumbs", brand.id, slice],
+      queryFn: () => api.post<{ urls: Record<string, string> }>(apiPath("/library/thumbs"), { filenames: slice }),
+      staleTime: 5 * 60_000, // the server may hand out a URL with only 10 minutes left
+    })),
+    combine: (results) => ({
+      urls: Object.fromEntries(results.flatMap((result) => Object.entries(result.data?.urls ?? {}))),
+      loading: results.some((result) => result.isPending),
+    }),
+  });
+  // A new slice (filter change) is loading: the cards that stay keep the URL they had instead of flashing.
+  // (`keepPreviousData` does not carry over between the keys of `useQueries`.)
+  if (!loading) kept.current = urls;
+  return loading ? { ...kept.current, ...urls } : urls;
 }
 
 export function useMatches(withinDays: number) {

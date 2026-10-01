@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { Button, EmptyState, PageHeader, Skeleton, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useOrg } from "../lib/org";
-import { useLibrary } from "../lib/queries";
+import { useLibrary, useLibraryThumbs } from "../lib/queries";
 import type { LibraryItem } from "../types";
 import { EditReference } from "./library/EditReference";
 import { ImportCsv } from "./library/ImportCsv";
@@ -21,19 +21,18 @@ export function Library() {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   // Bulk actions only touch what is on screen: a card hidden by the search, a tag or a status filter is never acted on.
   const selected = useMemo(() => new Set(view.visible.filter((item) => picked.has(item.filename)).map((item) => item.filename)), [view.visible, picked]);
+  // A card that leaves the screen also leaves the selection, so it does not come back checked once the filters are cleared.
+  if (selected.size !== picked.size) setPicked(selected);
+  const thumbs = useLibraryThumbs(view.visible.slice(0, view.shown).map((item) => item.filename));
   const [editing, setEditing] = useState<LibraryItem | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const clear = () => setPicked(new Set());
+  const changeTab = (next: Tab) => { view.changeTab(next); clear(); };
   const bulk = useBulkEdit(selected, clear);
   const { removeNames, removing } = useRemoveReferences((names) => {
     setPicked((current) => new Set([...current].filter((name) => !names.includes(name)))); // keep the picks that were not deleted
     setEditing(null);
   });
-
-  function changeTab(next: Tab) {
-    view.changeTab(next);
-    clear();
-  }
 
   return (
     <div
@@ -61,11 +60,11 @@ export function Library() {
         <>
           <LibraryToolbar view={view} onTab={changeTab} />
           {admin && selected.size ? <SelectionBar selected={selected} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
-          <LibraryGrid view={view} selected={selected} setSelected={setPicked} onEdit={setEditing} onPick={up.pick} />
+          <LibraryGrid view={view} thumbs={thumbs} selected={selected} setSelected={setPicked} onEdit={setEditing} onPick={up.pick} />
         </>
       )}
 
-      <EditReference item={editing} onClose={() => setEditing(null)} onDelete={(item) => void removeNames([item.filename])} />
+      <EditReference item={editing} thumbUrl={editing ? thumbs[editing.filename] : undefined} onClose={() => setEditing(null)} onDelete={(item) => void removeNames([item.filename])} />
       <ImportCsv open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );

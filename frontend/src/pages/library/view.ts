@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { LIBRARY_PAGE } from "../../lib/queries";
 import { isBoolean, isShortText, isStrings, oneOf, usePersistedState } from "../../lib/storage";
 import type { LibraryItem, Status } from "../../types";
 
@@ -10,7 +11,6 @@ const isFilter = oneOf<Filter>(["all", "expire", "<30j", "<90j", "ok", "inconnue
 /** Expired visuals live in their own tab: still compared to the sites, out of the way of the working library. */
 export type Tab = "active" | "expired";
 export const TAGS_SHOWN = 12;
-const PAGE = 100;
 
 /** Tags with the number of visuals carrying each, most used first. */
 function tagCounts(items: LibraryItem[]): [string, number][] {
@@ -49,7 +49,7 @@ export function useLibraryView(items: LibraryItem[]) {
   const [tagsSaved, setActiveTags] = usePersistedState<string[]>("library.tags", [], "session", isStrings);
   const [untaggedSaved, setUntagged] = usePersistedState("library.untagged", false, "session", isBoolean);
   const [allTags, setAllTags] = useState(false);
-  const [shown, setShown] = useState(PAGE);
+  const [shown, setShown] = useState(LIBRARY_PAGE);
 
   const expiredItems = useMemo(() => items.filter((item) => item.status === "expire"), [items]);
   const activeItems = useMemo(() => items.filter((item) => item.status !== "expire"), [items]);
@@ -70,12 +70,12 @@ export function useLibraryView(items: LibraryItem[]) {
     setActiveTags([]);
     setUntagged(false);
     setAllTags(false);
-    setShown(PAGE);
+    setShown(LIBRARY_PAGE);
   }
 
   function toggleTag(tag: string) {
     setActiveTags(activeTags.includes(tag) ? activeTags.filter((item) => item !== tag) : [...activeTags, tag]);
-    setShown(PAGE);
+    setShown(LIBRARY_PAGE);
   }
 
   return {
@@ -84,10 +84,10 @@ export function useLibraryView(items: LibraryItem[]) {
     filtering: filter !== "all" || Boolean(query) || activeTags.length > 0 || untagged,
     changeTab, toggleTag, setSort,
     toggleAllTags: () => setAllTags((value) => !value),
-    toggleUntagged: () => { setUntagged(!untagged); setShown(PAGE); },
-    setFilter: (value: Filter) => { setFilter(value); setShown(PAGE); },
-    setQuery: (value: string) => { setQuery(value); setShown(PAGE); },
-    showMore: () => setShown((value) => value + PAGE),
+    toggleUntagged: () => { setUntagged(!untagged); setShown(LIBRARY_PAGE); },
+    setFilter: (value: Filter) => { setFilter(value); setShown(LIBRARY_PAGE); },
+    setQuery: (value: string) => { setQuery(value); setShown(LIBRARY_PAGE); },
+    showMore: () => setShown((value) => value + LIBRARY_PAGE),
   };
 }
 

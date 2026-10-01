@@ -46,21 +46,30 @@ export function removeStored(kind: StorageKind, key: string): void {
   }
 }
 
+/** Remove every key of `kind` that `match` accepts (collected first: removing while walking skips keys). */
+function removeMatching(kind: StorageKind, match: (key: string) => boolean): void {
+  try {
+    const store = area(kind);
+    const found: string[] = [];
+    for (let index = 0; index < store.length; index++) {
+      const key = store.key(index);
+      if (key && match(key)) found.push(key);
+    }
+    for (const key of found) store.removeItem(key);
+  } catch {
+    // blocked storage: nothing was written
+  }
+}
+
 /** Sign-out: remove every `nyra:` key (Supabase's own session key is left to Supabase). */
 export function clearStored(): void {
-  for (const kind of KINDS) {
-    try {
-      const store = area(kind);
-      const ours: string[] = [];
-      for (let index = 0; index < store.length; index++) {
-        const key = store.key(index);
-        if (key?.startsWith(PREFIX)) ours.push(key);
-      }
-      for (const key of ours) store.removeItem(key);
-    } catch {
-      // blocked storage: nothing was written
-    }
-  }
+  for (const kind of KINDS) removeMatching(kind, (key) => key.startsWith(PREFIX));
+}
+
+/** Remove this user's copies of `name` for every brand but the one of `keepKey`: only the latest brand keeps one. */
+export function removeOtherBrands(kind: StorageKind, userId: string, keepKey: string, name: string): void {
+  const head = `${PREFIX}${userId}:`;
+  removeMatching(kind, (key) => key !== keepKey && key.startsWith(head) && key.endsWith(`:${name}`));
 }
 
 export const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
