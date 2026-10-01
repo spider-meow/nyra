@@ -1,11 +1,12 @@
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { skipToken, useMutation, useQuery, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import { useToast } from "../components/feedback";
 import type {
   Brand,
   CurrentJobs,
   Decision,
   Exclusion,
+  Hit,
   ImportRow,
   Job,
   LibraryItem,
@@ -125,34 +126,66 @@ export function useLibrary() {
   });
 }
 
-/** Cards shown at a time in the library, and the size of the slice of thumbnails fetched in one request. */
+/** Cards shown at a time in the library, and the most thumbnail names asked of the server in one request. */
 export const LIBRARY_PAGE = 100;
 
+/** Thumbnail URL of a visual (undefined: it has none) and when the server gave it. Signed URLs last an hour, the server may reuse one with 10 minutes left. */
+type Thumbs = Record<string, { url: string | undefined; fetchedAt: number }>;
+const noThumbs: Thumbs = {};
+const THUMB_MAX_AGE_MS = 25 * 60_000;
+const CLOCK_TICK_MS = 5 * 60_000;
+
 /**
- * Signed thumbnail URLs (filename -> URL) of the cards on screen, one request per slice of `LIBRARY_PAGE`:
- * "show more" only asks for the next slice. A card without an entry has no thumbnail to show.
+ * Signed thumbnail URLs (filename -> URL) of the cards on screen. The URLs known for the brand are kept in the query cache;
+ * only the displayed names missing from it (or older than 25 minutes) are asked for, `LIBRARY_PAGE` at a time and one request after the other.
+ * A list shift or a filter that reveals known cards therefore costs nothing. A card without a URL shows a placeholder.
  */
-export function useLibraryThumbs(filenames: string[]): Record<string, string> {
+export function useLibraryThumbs(shown: string[]): { urls: Record<string, string>; failed: boolean } {
   const { apiPath, brand } = useOrg();
-  const kept = useRef<Record<string, string>>({});
-  const slices = Array.from({ length: Math.ceil(filenames.length / LIBRARY_PAGE) }, (_, index) =>
-    filenames.slice(index * LIBRARY_PAGE, (index + 1) * LIBRARY_PAGE),
-  );
-  const { urls, loading } = useQueries({
-    queries: slices.map((slice) => ({
-      queryKey: ["library-thumbs", brand.id, slice],
-      queryFn: () => api.post<{ urls: Record<string, string> }>(apiPath("/library/thumbs"), { filenames: slice }),
-      staleTime: 5 * 60_000, // the server may hand out a URL with only 10 minutes left
-    })),
-    combine: (results) => ({
-      urls: Object.fromEntries(results.flatMap((result) => Object.entries(result.data?.urls ?? {}))),
-      loading: results.some((result) => result.isPending),
-    }),
+  const client = useQueryClient();
+  const mapKey = ["library-thumbs", brand.id];
+  const known = useQuery({ queryKey: mapKey, queryFn: skipToken, initialData: noThumbs }).data ?? noThumbs;
+  // Re-evaluate the ages from time to time: a tab left open for hours must renew its URLs.
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), CLOCK_TICK_MS);
+    return () => clearInterval(timer);
+  }, []);
+  const batch = shown.filter((name) => !known[name] || now - known[name].fetchedAt > THUMB_MAX_AGE_MS).slice(0, LIBRARY_PAGE);
+  const request = useQuery({
+    queryKey: [...mapKey, batch],
+    queryFn: async () => {
+      const { urls } = await api.post<{ urls: Record<string, string> }>(apiPath("/library/thumbs"), { filenames: batch });
+      const fetchedAt = Date.now();
+      // Only names still in the library are kept, so the map stays as small as the library.
+      const present = new Set(client.getQueryData<{ items: LibraryItem[] }>(["library", brand.id])?.items.map((item) => item.filename));
+      client.setQueryData<Thumbs>(mapKey, (old) => {
+        const next = { ...old, ...Object.fromEntries(batch.map((name) => [name, { url: urls[name], fetchedAt }])) };
+        return present.size ? Object.fromEntries(Object.entries(next).filter(([name]) => present.has(name))) : next;
+      });
+      return urls;
+    },
+    enabled: batch.length > 0,
+    gcTime: 0, // a batch is only worth asking again once its names are missing again (replaced file): never serve it from the cache
+    refetchInterval: 30 * 60_000, // retries a failed batch; a succeeded one is replaced by the next batch at once
   });
-  // A new slice (filter change) is loading: the cards that stay keep the URL they had instead of flashing.
-  // (`keepPreviousData` does not carry over between the keys of `useQueries`.)
-  if (!loading) kept.current = urls;
-  return loading ? { ...kept.current, ...urls } : urls;
+  const urls: Record<string, string> = {};
+  for (const name of shown) {
+    const url = known[name]?.url;
+    if (url) urls[name] = url;
+  }
+  return { urls, failed: request.isError };
+}
+
+/** Visuals just saved over an existing or deleted name: forget their thumbnail and original URL so the next display asks the server again. */
+export function useForgetImages() {
+  const client = useQueryClient();
+  const { brand } = useOrg();
+  return (filenames: string[]) => {
+    const gone = new Set(filenames);
+    client.setQueryData<Thumbs>(["library-thumbs", brand.id], (old) => old && Object.fromEntries(Object.entries(old).filter(([name]) => !gone.has(name))));
+    for (const name of gone) void client.invalidateQueries({ queryKey: ["library-url", brand.id, name] });
+  };
 }
 
 export function useMatches(withinDays: number) {
@@ -265,7 +298,20 @@ export function useCancelJob() {
 
 type ReviewInput = { referenceId: string; siteImageIds: string[]; decision: Decision | "" };
 
-/** Decisions apply instantly on screen and roll back if the server refuses. */
+/** Sets the decision of the occurrences `next` answers for (undefined: leave as is), in every time window of the brand. */
+function patchHits(client: QueryClient, key: QueryKey, referenceId: string, next: (hit: Hit) => Decision | null | undefined) {
+  const patch = (groups: Matches["confirmed"]) =>
+    groups.map((group) =>
+      group.reference_id !== referenceId
+        ? group
+        : { ...group, hits: group.hits.map((hit) => { const decision = next(hit); return decision === undefined ? hit : { ...hit, decision }; }) },
+    );
+  client.setQueriesData<Matches>({ queryKey: key }, (data) =>
+    data && { ...data, confirmed: patch(data.confirmed), to_verify: patch(data.to_verify), later: patch(data.later) },
+  );
+}
+
+/** Decisions apply instantly on screen and roll back, occurrence by occurrence, if the server refuses. */
 export function useReview() {
   const { apiPath, brand } = useOrg();
   const client = useQueryClient();
@@ -280,26 +326,20 @@ export function useReview() {
       }),
     onMutate: async (input) => {
       await client.cancelQueries({ queryKey: key });
-      const previous = client.getQueriesData<Matches>({ queryKey: key });
       const ids = new Set(input.siteImageIds);
-      const patch = (groups: Matches["confirmed"]) =>
-        groups.map((group) =>
-          group.reference_id !== input.referenceId
-            ? group
-            : {
-                ...group,
-                hits: group.hits.map((hit) =>
-                  hit.site_image_ids.some((id) => ids.has(id)) ? { ...hit, decision: input.decision || null } : hit,
-                ),
-              },
-        );
-      client.setQueriesData<Matches>({ queryKey: key }, (data) =>
-        data && { ...data, confirmed: patch(data.confirmed), to_verify: patch(data.to_verify), later: patch(data.later) },
-      );
-      return { previous };
+      const touched = (hit: Hit) => hit.site_image_ids.some((id) => ids.has(id));
+      // Only what this decision changes is put back on failure: decisions made meanwhile on other rows stay.
+      const before = new Map<string, Decision | null>();
+      for (const [, data] of client.getQueriesData<Matches>({ queryKey: key })) {
+        for (const group of [...(data?.confirmed ?? []), ...(data?.to_verify ?? []), ...(data?.later ?? [])]) {
+          if (group.reference_id === input.referenceId) for (const hit of group.hits) if (touched(hit)) before.set(hit.site_image_id, hit.decision);
+        }
+      }
+      patchHits(client, key, input.referenceId, (hit) => (touched(hit) ? input.decision || null : undefined));
+      return { before };
     },
-    onError: (_error, _input, context) => {
-      for (const [queryKey, data] of context?.previous ?? []) client.setQueryData(queryKey, data);
+    onError: (_error, input, context) => {
+      patchHits(client, key, input.referenceId, (hit) => context?.before.get(hit.site_image_id));
     },
     onSettled: () => void client.invalidateQueries({ queryKey: ["overview", brand.id] }),
   });
@@ -314,6 +354,7 @@ export function useReview() {
 export function useReferenceUpload() {
   const { apiPath, brand } = useOrg();
   const invalidate = useInvalidate();
+  const forgetImages = useForgetImages();
   const toast = useToast();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
@@ -343,6 +384,7 @@ export function useReferenceUpload() {
       window.removeEventListener("beforeunload", warn);
       setProgress(null);
       invalidate("library", "overview", "matches", "jobs");
+      forgetImages(result.saved); // same name, new picture (replaced, or deleted before): the old thumbnail and original must not stay
     }
     reportUnanswered(files, result);
     toast.update(id, summary(result));

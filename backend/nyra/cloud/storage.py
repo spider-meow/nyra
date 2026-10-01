@@ -205,16 +205,19 @@ def signed_url(client: Client, bucket: str, path: str, *, expires_in: int = SIGN
 # The same image then keeps the same URL across page loads and list refreshes,
 # so the browser serves it from its cache instead of downloading it again
 # (every download is billed egress).
-SIGNED_URL_REUSE_MARGIN_SECONDS = 600
+SIGNED_URL_REUSE_MARGIN_SECONDS = 2400
+# ...but only while it has at least this long to live: the interface keeps a thumbnail URL up to
+# ~30 minutes before it asks again, so a URL handed out must outlive that.
 
 # The bound is per scope (bucket, organization: the first path segment), so a large
 # tenant only evicts its own entries and never defeats the browser cache of the others.
-# An entry is the path, the URL (~300 characters) and a tuple: ~700 bytes measured, so a
-# full scope is ~2 MB and the 64 scopes together stay under ~140 MB. Known degenerate
-# case: one tenant listing more than SIGNED_URL_CACHE_MAX paths again and again walks
-# them in a cycle and re-signs them all, as there is no room to keep them (upgrade: LRU).
+# An entry is the path, the URL (~480 characters) and a tuple: ~800 bytes measured, so a
+# full scope is ~2.4 MB and the 16 scopes together stay under ~40 MB (the web container
+# has 256-512 MB). Within a scope the least recently used entry goes first. Known
+# degenerate case: one tenant listing more than SIGNED_URL_CACHE_MAX paths again and again
+# walks them in a cycle and re-signs them all, as there is no room to keep them.
 SIGNED_URL_CACHE_MAX = 3_000
-SIGNED_URL_SCOPES_MAX = 64  # dormant tenants are dropped, least recently used first
+SIGNED_URL_SCOPES_MAX = 16  # dormant tenants are dropped, least recently used first
 
 _signed: dict[tuple[str, str], dict[str, tuple[str, float]]] = {}
 _signed_lock = threading.Lock()
@@ -231,7 +234,7 @@ def _scope(bucket: str, path: str) -> dict[str, tuple[str, float]]:
 
 
 def _remember_signed(bucket: str, path: str, url: str, expires_at: float) -> None:
-    """Keep a URL for reuse; when its scope is full, drop its oldest (every URL lives as long as the others, so oldest = first to expire)."""
+    """Keep a URL for reuse; when its scope is full, drop its least recently used one."""
     with _signed_lock:
         scope = _scope(bucket, path)
         scope.pop(path, None)  # a refreshed URL goes to the back of the line and evicts nobody
@@ -268,6 +271,8 @@ def signed_urls(
             cached = _scope(bucket, path).get(path)
             if cached and cached[1] - now > SIGNED_URL_REUSE_MARGIN_SECONDS:
                 out[path] = cached[0]
+                scope = _scope(bucket, path)
+                scope[path] = scope.pop(path)  # used: it goes to the back, so a hot thumbnail is the last to be evicted
     missing = [path for path in unique if path not in out]
     for start in range(0, len(missing), 1000):
         chunk = missing[start : start + 1000]

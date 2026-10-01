@@ -5,6 +5,7 @@ import { createBrowserRouter, Navigate, RouterProvider, useMatches } from "react
 import { ConfirmProvider, ToastProvider } from "./components/feedback";
 import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
+import { isRecord } from "./lib/storage";
 import { BrandShell, FirstBrand, Login, NotFound, OrgHome, OrgShell, RequireSession, SetPassword } from "./pages/Access";
 import { Dashboard } from "./pages/Dashboard";
 import { Button, Spinner } from "./components/ui";
@@ -30,7 +31,7 @@ const queryClient = new QueryClient({
   },
 });
 
-type Handle = { title: string };
+const hasTitle = (handle: unknown): handle is { title: string } => isRecord(handle) && typeof handle.title === "string";
 
 /**
  * Sets the tab title from the deepest route's `handle.title`. The Suspense sits
@@ -38,9 +39,9 @@ type Handle = { title: string };
  */
 function Titled(props: { children: ReactNode }) {
   const matches = useMatches();
-  const title = [...matches].reverse().find((match) => (match.handle as Handle | undefined)?.title)?.handle as Handle | undefined;
+  const title = [...matches].reverse().map((match) => match.handle).find(hasTitle)?.title;
   useEffect(() => {
-    document.title = title ? `${title.title} · Nyra` : "Nyra";
+    document.title = title ? `${title} · Nyra` : "Nyra";
   }, [title]);
   return (
     <Suspense fallback={<div className="p-8"><Spinner label="Chargement de la page…" /></div>}>

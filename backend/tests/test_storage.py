@@ -118,3 +118,17 @@ def test_signed_url_scopes_are_bounded_too(monkeypatch):
         assert list(storage._signed) == [("refs", "o1"), ("refs", "o3")]
     finally:
         storage._signed.clear()
+
+
+def test_a_url_in_use_is_the_last_to_be_evicted(monkeypatch):
+    monkeypatch.setattr(storage, "SIGNED_URL_CACHE_MAX", 3)
+    storage._signed.clear()
+    try:
+        client = CountingClient()
+        storage.signed_urls(client, "refs", ["org/a", "org/b", "org/c"])
+        storage.signed_urls(client, "refs", ["org/a"])  # a hit: "a" is now the most recently used
+        storage.signed_urls(client, "refs", ["org/d"])  # full: the least recently used ("b") goes, not "a"
+        kept = set(storage._signed[("refs", "org")])
+        assert kept == {"org/a", "org/c", "org/d"}
+    finally:
+        storage._signed.clear()

@@ -19,28 +19,25 @@ export function useDecide(view: ReviewView) {
     for (const hit of hits) before.set(hit.decision ?? "", [...(before.get(hit.decision ?? "") ?? []), ...hit.site_image_ids]);
     const undo = () => {
       for (const [previous, siteImageIds] of before) {
-        review.mutate(
-          { referenceId: row.group.reference_id, siteImageIds, decision: previous },
-          { onError: (error) => toast.show({ tone: "error", message: "L'annulation n'a pas abouti", description: errorMessage(error) }) },
-        );
+        void review
+          .mutateAsync({ referenceId: row.group.reference_id, siteImageIds, decision: previous })
+          .catch((error) => toast.show({ tone: "error", message: "L'annulation n'a pas abouti", description: errorMessage(error) }));
       }
     };
-    review.mutate(
-      { referenceId: row.group.reference_id, siteImageIds: ids, decision },
-      {
-        onSuccess: () =>
-          toast.show({
-            tone: "success",
-            message: decision
-              ? `${decisionLabel[decision]}${hits.length > 1 ? ` · ${plural(hits.length, "occurrence")}` : ""}`
-              : "Décision retirée",
-            description: row.group.filename,
-            action: { label: "Annuler", onClick: undo },
-            duration: 5000,
-          }),
-        onError: (error) =>
-          toast.show({ tone: "error", message: "La décision n'a pas été enregistrée", description: `${errorMessage(error)} Elle a été annulée à l'écran.` }),
-      },
+    // `mutateAsync`, not `mutate(…, { onSuccess })`: per-call callbacks only run for the latest call, and decisions come in fast with the keyboard.
+    void review.mutateAsync({ referenceId: row.group.reference_id, siteImageIds: ids, decision }).then(
+      () =>
+        toast.show({
+          tone: "success",
+          message: decision
+            ? `${decisionLabel[decision]}${hits.length > 1 ? ` · ${plural(hits.length, "occurrence")}` : ""}`
+            : "Décision retirée",
+          description: row.group.filename,
+          action: { label: "Annuler", onClick: undo },
+          duration: 5000,
+        }),
+      (error) =>
+        toast.show({ tone: "error", message: "La décision n'a pas été enregistrée", description: `${errorMessage(error)} Elle a été annulée à l'écran.` }),
     );
     // Move on when the decided row will leave the current filter.
     if (decision && !keep({ ...row.hit, decision }, decisionFilter)) setSelectedKey(nextKey);

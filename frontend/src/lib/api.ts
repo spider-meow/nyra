@@ -37,10 +37,10 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (!response.ok) {
     // An expired or revoked session: send the user back to the login page.
     if (response.status === 401 && token) onUnauthorized();
-    const detail = data && typeof data === "object" && "detail" in data ? (data as { detail: unknown }).detail : null;
+    const detail = data && typeof data === "object" && "detail" in data ? data.detail : null;
     throw new ApiError(typeof detail === "string" ? detail : "La requête a échoué.", response.status);
   }
-  return data as T;
+  return data as T; // trust boundary: the shape of the answer is the API contract, only the caller knows T
 }
 
 export const api = {

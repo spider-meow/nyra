@@ -3,6 +3,13 @@
 All commands are subcommands of `nyra` (`pip install -e ".[worker]"`).
 `nyra --help` and `nyra <command> --help` mirror this page.
 
+The commands under "Hosted product" are the ones that run the product. The
+offline commands further down (`ingest-refs`, `crawl`, `match`, `run-all`,
+`calibrate`...) work on a local SQLite file and exist for debugging and for the
+test suite: they are not extended any more, and a local database made before
+the keypoint check received its images keeps its old "to verify" results until a
+full recomputation is forced (change a threshold or recreate the file).
+
 ## Hosted product
 
 These read `DATABASE_URL` and `SUPABASE_*` from the environment or a

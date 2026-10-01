@@ -7,7 +7,7 @@ import io
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
@@ -56,7 +56,8 @@ class FilenamesBody(BaseModel):
 
 
 class ThumbsBody(BaseModel):
-    filenames: list[str] = Field(default_factory=list, max_length=MAX_THUMBS_PER_REQUEST)
+    # No name validation: they are matched exactly against this brand's references, so an unknown name just has no entry.
+    filenames: list[Annotated[str, Field(max_length=200)]] = Field(default_factory=list, max_length=MAX_THUMBS_PER_REQUEST)
 
 
 class BulkExpiryBody(FilenamesBody):
@@ -105,14 +106,20 @@ def library_thumbs(body: ThumbsBody, scope: BrandScope = Depends(brand_member_de
     A reference whose thumbnail object is missing falls back to its working copy, then its original;
     one with nothing to show has no entry.
     """
-    names = sorted({safe_filename(name) for name in body.filenames})
+    names = sorted(set(body.filenames))
     with cloud_db.connect(ctx.settings.database_url) as conn:
         rows = cloud_db.reference_paths(conn, scope.brand_id, names)
     chains = {row["filename"]: [row[key] for key in ("thumb_path", "work_path", "storage_path") if row[key]] for row in rows}
     urls: dict[str, str] = {}
     for rank in range(3):  # thumbnail, working copy, original
         wanted = {name: chain[rank] for name, chain in chains.items() if name not in urls and rank < len(chain)}
-        signed = ctx.sign(cloud_storage.BUCKET_REFS, wanted.values()) if wanted else {}
+        if not wanted:
+            break
+        try:
+            signed = cloud_storage.signed_urls(ctx.settings.storage_client(), cloud_storage.BUCKET_REFS, wanted.values())
+        except Exception as exc:  # noqa: BLE001 - a 502, not an empty 200: the interface retries instead of keeping blank cards
+            log.warning("signing thumbnails failed", exc_info=True)
+            raise HTTPException(status_code=502, detail="Les vignettes ne sont pas disponibles pour le moment.") from exc
         urls.update({name: signed[path] for name, path in wanted.items() if path in signed})
     return {"urls": urls}
 

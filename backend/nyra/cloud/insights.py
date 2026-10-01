@@ -154,13 +154,13 @@ def _last_compare(conn: psycopg.Connection, where: str, params: Any) -> Optional
 
 def _matching(conn: psycopg.Connection, brand_id: Optional[uuid.UUID]) -> Row:
     if brand_id:
-        rows = _all(conn, "SELECT * FROM insights.matching WHERE brand_id = %s", (brand_id,))
+        rows = _all(conn, "SELECT * FROM insights.matching WHERE brand_id = %s ORDER BY confidence, level", (brand_id,))
     else:  # the whole platform: summed per band and level here, so the rows don't grow with the brands
         rows = _all(conn, """
             SELECT confidence, level, SUM(matches)::bigint AS matches, SUM(reviewed)::bigint AS reviewed,
                    SUM(to_remove)::bigint AS to_remove, SUM(removed)::bigint AS removed,
                    SUM(false_positives)::bigint AS false_positives
-            FROM insights.matching GROUP BY confidence, level""")
+            FROM insights.matching GROUP BY confidence, level ORDER BY confidence, level""")
     by_confidence: dict[str, Row] = {}
     by_level: dict[str, Row] = {}
     for row in rows:

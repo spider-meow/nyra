@@ -271,9 +271,29 @@ def test_library_list_signs_nothing_and_thumbs_sign_only_what_is_asked(
 
     assert client.post(f"{base}/library/thumbs", headers=_headers(client_id),
                        json={"filenames": [f"r{n:04d}.jpg" for n in range(201)]}).status_code == 422
-    assert client.post(f"{base}/library/thumbs", headers=_headers(client_id), json={"filenames": ["notes.txt"]}).status_code == 400
+    # Names are matched exactly against this brand's references: an unknown or odd one has no entry, it is not an error.
+    odd = client.post(f"{base}/library/thumbs", headers=_headers(client_id), json={"filenames": ["notes.txt", "../x.jpg", names[0]]})
+    assert odd.status_code == 200 and set(odd.json()["urls"]) == {names[0]}
+    assert client.post(f"{base}/library/thumbs", headers=_headers(client_id), json={"filenames": ["x" * 201]}).status_code == 422
     assert client.post(f"{base}/library/thumbs", headers=_headers(outsider_id), json={"filenames": names}).status_code == 403
     assert client.post(f"{base}/library/thumbs", json={"filenames": names}).status_code == 401
+
+
+def test_thumbs_answer_502_once_when_storage_fails_instead_of_an_empty_200(
+        client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client, monkeypatch):
+    org_id, base, _, client_id, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        _put_references(conn, fake_storage_client.store, org_id, cloud_brand, 3)
+    calls = []
+
+    def broken(self, paths, expires_in, options=None):
+        calls.append(len(paths))
+        raise RuntimeError("storage down")
+
+    monkeypatch.setattr(cloud_storage, "_signed", {})  # a fresh URL cache, so nothing is served from it
+    monkeypatch.setattr(type(fake_storage_client.from_("refs")), "create_signed_urls", broken)
+    r = client.post(f"{base}/library/thumbs", headers=_headers(client_id), json={"filenames": ["r0000.jpg", "r0001.jpg"]})
+    assert r.status_code == 502 and calls == [2]  # one attempt, an error the interface retries: not a cached blank
 
 
 def test_thumbs_are_scoped_to_the_brand_and_fall_back_when_the_thumbnail_object_is_missing(

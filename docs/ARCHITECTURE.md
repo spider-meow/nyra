@@ -139,9 +139,20 @@ and history (`jobs`, `crawl_runs`) is queryable.
 
 **Thumbnails stored next to originals.** Lists and reports never load a
 full-size image; the browser gets short-lived signed URLs, signed in one
-request per list. The library list signs each reference's thumbnail (its working image
-while it has none yet); the original's URL is fetched on demand
-(`GET .../library/{filename}/url`) when the edit modal opens.
+request per list. The library list returns metadata only and signs nothing;
+the interface asks `POST .../library/thumbs` for the thumbnails of the cards on
+screen (200 names at most per call, 100 sent by the interface: thumbnail, else working image, else
+original), and `GET .../library/{filename}/url` for an original when the edit
+modal opens. Signed URLs are remembered per organization (bounded) and handed
+out again only while they have at least 40 minutes left, so a browser keeps an
+image in its cache and never holds an expired link. Ceiling: metadata for about
+10,000 references in one response; beyond that, filter and paginate on the
+server.
+
+**Bounded jobs.** The index job reads its candidates in chunks (keyset on `id`,
+so an image that can never be read cannot loop the job) and writes each batch
+in one transaction; the back office totals are SQL aggregates and its brand
+table is capped.
 
 **Incremental matching.** A finished pass is remembered with a signature
 of the thresholds and model; the next pass only compares what's new,

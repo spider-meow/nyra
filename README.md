@@ -9,8 +9,9 @@ matching is perceptual hashing plus CLIP embeddings, deterministic given
 the same inputs and thresholds.
 
 It is a hosted, multi-organization product (Supabase for Postgres, Auth
-and Storage), plus a CLI that runs the same pipeline on a local SQLite
-file for debugging and threshold calibration.
+and Storage), plus a CLI whose offline commands run the same pipeline on a local SQLite
+file. That path is for debugging and tests, not for the product (see
+`docs/CLI_REFERENCE.md`).
 
 ## How it works
 

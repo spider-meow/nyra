@@ -19,4 +19,8 @@ cd frontend && npx tsc --noEmit && npm run build
 pytest -q    # les tests cloud demandent TEST_DATABASE_URL (voir backend/tests/conftest.py)
 ```
 
+Pour une tâche complexe (plusieurs fichiers, risque, optimisation, sécurité),
+ne pas hésiter à déléguer à des sous-agents et à se faire relire : voir
+« Sous-agents : déléguer et se challenger » dans `docs/BONNES_PRATIQUES.md`.
+
 Dire ce qui n'a pas été vérifié.

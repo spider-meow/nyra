@@ -21,7 +21,7 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
   return {
     items: [
       { to: link("tableau-de-bord"), label: "Tableau de bord", icon: "dashboard", count: expired, tone: "alert" },
-      { to: link("a-traiter"), label: "À traiter", icon: "review", count: pending, tone: "neutral" },
+      { to: `${link("a-traiter")}?fenetre=3650`, label: "À traiter", icon: "review", count: pending, tone: "neutral" },
       { to: link("bibliotheque"), label: "Bibliothèque", icon: "library", count: overview.data?.stats.reference_images, tone: "muted" },
       { to: link("images-du-site"), label: "Droits non vérifiés", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
       { to: link("lectures"), label: "Sites et lectures", icon: "scan" },

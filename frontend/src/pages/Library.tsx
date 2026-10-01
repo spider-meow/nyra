@@ -60,11 +60,12 @@ export function Library() {
         <>
           <LibraryToolbar view={view} onTab={changeTab} />
           {admin && selected.size ? <SelectionBar selected={selected} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
-          <LibraryGrid view={view} thumbs={thumbs} selected={selected} setSelected={setPicked} onEdit={setEditing} onPick={up.pick} />
+          {thumbs.failed ? <p role="status" className="mb-3 text-[13px] text-muted">Vignettes indisponibles pour le moment.</p> : null}
+          <LibraryGrid view={view} thumbs={thumbs.urls} selected={selected} setSelected={setPicked} onEdit={setEditing} onPick={up.pick} />
         </>
       )}
 
-      <EditReference item={editing} thumbUrl={editing ? thumbs[editing.filename] : undefined} onClose={() => setEditing(null)} onDelete={(item) => void removeNames([item.filename])} />
+      <EditReference item={editing} thumbUrl={editing ? thumbs.urls[editing.filename] : undefined} onClose={() => setEditing(null)} onDelete={(item) => void removeNames([item.filename])} />
       <ImportCsv open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );

@@ -70,7 +70,8 @@ function dayLabel(iso: string): string {
 
 type HistoryRun = Pick<CrawlRun, "started_at" | "status" | "duration_seconds" | "pages_visited" | "images_found" | "images_new" | "pages_per_minute" | "images_scanned_per_second" | "clip_images_per_second"> & { org_name?: string; brand_name?: string | null; site_url?: string };
 
-export type HistoryMetric = "duration_seconds" | "pages_per_minute" | "images_scanned_per_second" | "clip_images_per_second" | "images_new";
+const historyMetricKeys = ["duration_seconds", "pages_per_minute", "images_scanned_per_second", "clip_images_per_second", "images_new"] as const;
+export type HistoryMetric = (typeof historyMetricKeys)[number];
 
 export const historyMetrics: Record<HistoryMetric, { label: string; format: (value: number) => string }> = {
   duration_seconds: { label: "Durée", format: duration },
@@ -111,7 +112,7 @@ export function historyBars(runs: HistoryRun[], metric: HistoryMetric, withOrg =
 export function MetricTabs(props: { value: HistoryMetric; onChange: (metric: HistoryMetric) => void }) {
   return (
     <div className="flex flex-wrap gap-1" role="tablist" aria-label="Mesure affichée">
-      {(Object.keys(historyMetrics) as HistoryMetric[]).map((metric) => (
+      {historyMetricKeys.map((metric) => (
         <button
           key={metric}
           type="button"

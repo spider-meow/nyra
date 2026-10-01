@@ -220,8 +220,8 @@ class _IndexRun:
                 cur.executemany(update, params)
         self.updated += sum(1 + row.get("twins", 0) for row, _ in loaded)
         self.done += sum(1 + row.get("twins", 0) for row in part)
-        self.ctx.report(f"Analyse des images · {self.done}/{self.total}",
-                        {"phase": "index", "done": self.done, "total": self.total})
+        done = min(self.done, self.total)  # rows a crawl added during the job can push `done` past `total`
+        self.ctx.report(f"Analyse des images · {done}/{self.total}", {"phase": "index", "done": done, "total": self.total})
 
     def _embed(self, images: list) -> list:
         started = time.perf_counter()
@@ -232,8 +232,8 @@ class _IndexRun:
         return vectors
 
     def _load(self, bucket: str, path: str, version: str):
-        self.ctx.report(f"Lecture des images · {self.done}/{self.total}",
-                        {"phase": "index", "done": self.done, "total": self.total})
+        done = min(self.done, self.total)
+        self.ctx.report(f"Lecture des images · {done}/{self.total}", {"phase": "index", "done": done, "total": self.total})
         started = time.perf_counter()
         try:
             data = cloud_storage.cached_download(self.storage, bucket, path, version=version or "")
