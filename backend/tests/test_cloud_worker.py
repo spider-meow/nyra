@@ -18,6 +18,8 @@ from PIL import Image, ImageDraw
 
 pytest.importorskip("psycopg")
 
+import psycopg
+
 from nyra.cloud import db as cloud_db
 from nyra.cloud import jobs as cloud_jobs
 from nyra.cloud import worker as worker_module
@@ -301,6 +303,108 @@ def test_index_job_still_indexes_a_twin_whose_file_differs_from_an_unreadable_on
     with cloud_db.connect(cloud_database_url) as conn:
         done = conn.execute("SELECT id FROM site_images WHERE embedding IS NOT NULL").fetchall()
     assert {row["id"] for row in done} >= {b}
+
+
+def _chunks_of(worker, monkeypatch, rows):
+    """Candidates read `rows` at a time (one row per batch, so a chunk is `rows` batches)."""
+    _batches_of_one(worker, monkeypatch)
+    monkeypatch.setattr(worker_module, "INDEX_CHUNK_BATCHES", rows)
+
+
+@pytest.mark.parametrize(("rows", "fetches"), [(1, 8), (3, 4), (100, 2)], ids=["one-row", "boundary-at-count", "one-chunk"])
+def test_index_job_reads_its_candidates_chunk_by_chunk(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                       fake_storage_client, monkeypatch, rows, fetches):
+    """3 references + 3 site images. A chunk the size of the row count costs one more (empty) query; a short one ends."""
+    _chunks_of(worker, monkeypatch, rows)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        for i in range(3):
+            _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, f"r{i}.jpg", _image_bytes(i * 40))
+            _add_site_image(conn, fake_storage_client, cloud_org, site, f"https://t.test/{i}.jpg", _image_bytes(i * 40))
+    queries, messages = [], []
+    real_execute, real_report = psycopg.Cursor.execute, worker_module.JobContext.report
+    monkeypatch.setattr(psycopg.Cursor, "execute",
+                        lambda self, query, *args, **kwargs: queries.append(query) or real_execute(self, query, *args, **kwargs))
+    monkeypatch.setattr(worker_module.JobContext, "report",
+                        lambda self, message, *args, **kwargs: messages.append(message) or real_report(self, message, *args, **kwargs))
+    finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert finished["message"] == "6 image(s) indexée(s), comparaison à jour."
+    assert finished["result"]["indexed"] == 6 and finished["result"]["metrics"]["embedded"] == 6
+    assert sum("id > %s ORDER BY" in query for query in queries if isinstance(query, str)) == fetches
+    assert [m for m in messages if m.startswith("Analyse")][-1] == "Analyse des images · 6/6"
+    with cloud_db.connect(cloud_database_url) as conn:
+        missing = conn.execute("""SELECT (SELECT COUNT(*) FROM reference_images WHERE org_id = %(o)s AND embedding IS NULL)
+                                       + (SELECT COUNT(*) FROM site_images WHERE org_id = %(o)s AND embedding IS NULL) AS c""",
+                               {"o": cloud_org}).fetchone()["c"]
+    assert missing == 0
+
+
+def test_index_job_ends_when_images_can_never_be_indexed_and_chunks_are_small(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client, monkeypatch):
+    """Unreadable images stay pending for ever: the chunks must move past them (keyset on id), not re-read them."""
+    _chunks_of(worker, monkeypatch, 2)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        for i in range(6):
+            _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, f"r{i}.jpg", _image_bytes(i * 10))
+        site_ids = [_add_site_image(conn, fake_storage_client, cloud_org, site, f"https://t.test/{i}.jpg",
+                                    _image_bytes(i * 10)) for i in range(5)]
+        for name in ("r1.jpg", "r4.jpg"):
+            fake_storage_client.store.pop(("refs", f"{cloud_org}/{cloud_brand}/{name}"))
+        lost_site = conn.execute("SELECT storage_path FROM site_images WHERE id = %s", (site_ids[2],)).fetchone()
+        fake_storage_client.store.pop(("site-images", lost_site["storage_path"]))
+    checks = []
+
+    def guard(self):  # a job that loops would run for ever: fail instead
+        checks.append(1)
+        assert len(checks) < 100, "the index job does not end"
+        return False
+
+    monkeypatch.setattr(worker_module.JobContext, "should_stop", guard)
+    finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert finished["status"] == "done", finished
+    assert finished["result"]["indexed"] == 4 + 4 and finished["result"]["metrics"]["embedded"] == 8
+    with cloud_db.connect(cloud_database_url) as conn:
+        left = {row["filename"] for row in conn.execute(
+            "SELECT filename FROM reference_images WHERE org_id = %s AND embedding IS NULL", (cloud_org,)).fetchall()}
+        left_sites = conn.execute("SELECT id FROM site_images WHERE org_id = %s AND embedding IS NULL",
+                                  (cloud_org,)).fetchall()
+    assert left == {"r1.jpg", "r4.jpg"} and [row["id"] for row in left_sites] == [site_ids[2]]
+
+
+@pytest.mark.parametrize("rows", [1, 2, 100])
+def test_index_job_indexes_twins_whatever_the_chunk_boundary(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                             fake_storage_client, monkeypatch, rows):
+    """Twins (same hash and file) in different chunks: the head's UPDATE fills the later ones, so they are not
+    fetched again and the file is embedded once. The reported count only includes the twins that shared the
+    head's chunk; the rows themselves are all indexed."""
+    _chunks_of(worker, monkeypatch, rows)
+    with cloud_db.connect(cloud_database_url) as conn:
+        _, digest = _site_images_sharing_a_hash(conn, fake_storage_client, cloud_org, cloud_brand, 3)
+    finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert finished["status"] == "done" and finished["result"]["metrics"]["embedded"] == 2
+    indexed = finished["result"]["indexed"]
+    assert indexed >= 2 and (rows < 100 or indexed == 4)
+    with cloud_db.connect(cloud_database_url) as conn:
+        found = conn.execute("SELECT content_hash, embedding, thumb_path FROM site_images WHERE org_id = %s",
+                             (cloud_org,)).fetchall()
+    assert len(found) == 4 and all(row["embedding"] is not None and row["thumb_path"] for row in found)
+    assert {row["thumb_path"] for row in found if row["content_hash"] == digest} == {f"{cloud_org}/thumbs/{digest}.jpg"}
+
+
+@pytest.mark.parametrize("rows", [1, 2, 100])
+def test_index_job_embeds_the_twin_lacking_an_embedding_whatever_the_chunk_boundary(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client, monkeypatch, rows):
+    """A twin that already has its embedding is no reason to skip the one that has none, in any chunk order."""
+    _chunks_of(worker, monkeypatch, rows)
+    with cloud_db.connect(cloud_database_url) as conn:
+        ids, _ = _site_images_sharing_a_hash(conn, fake_storage_client, cloud_org, cloud_brand, 2)
+        conn.execute("UPDATE site_images SET embedding = %s WHERE id = %s", (np.ones(512, dtype=np.float32), ids[0]))
+    assert _run_index(worker, cloud_database_url, cloud_org, cloud_brand)["status"] == "done"
+    with cloud_db.connect(cloud_database_url) as conn:
+        missing = conn.execute("SELECT COUNT(*) AS c FROM site_images WHERE org_id = %s AND (embedding IS NULL "
+                               "OR thumb_path IS NULL)", (cloud_org,)).fetchone()["c"]
+    assert missing == 0
 
 
 def test_report_job_stores_files_without_false_positives(worker, cloud_database_url, cloud_org, cloud_brand,
