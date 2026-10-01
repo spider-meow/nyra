@@ -63,10 +63,12 @@ share of its budget) and exits 1 naming the chunk that went over.
 |---|---|---|
 | `firstLoadGzipKB`: every chunk of `index.html` | 210 | 191.4 |
 | `entryGzipKB`: the entry chunk alone | 24 | 21.9 |
-| `lazyChunkGzipKB`: the largest page chunk | 10.5 | 9.5 |
-| `sentryGzipKB`: the Sentry chunk (lazy, off the critical path) | 67 | 61.0 |
+| `lazyChunkGzipKB`: the largest page chunk | 11.5 | 9.5 |
+| `sentryGzipKB`: the Sentry chunk (lazy, off the critical path) | 68 | 61.7 |
 
-Each limit is the measure plus about 10%. When it fails, first look for what
+Each limit is the measure plus about 10%, except the page budget (about 20%:
+the largest page, the Library, is the one that grows with features, and 10%
+is a single new component). When it fails, first look for what
 grew: a new dependency, a page imported eagerly instead of with `lazy()`, a
 library pulled into the entry chunk. Raise a budget only on purpose, in the
 same pull request as the change that needs it, with the new measure and the
@@ -75,11 +77,57 @@ set it to the new measure plus about 10% and update the table above and the
 comment in `size-budget.json`. Never raise it to get a red build green without
 that explanation.
 
+The script also exits 1, with its own message, when `dist/` is missing ("run
+`npm run build` first"), and when there is no lazy `sentry-<hash>.js` chunk
+(the SDK was bundled into another file, or `index.html` loads it up front):
+a budget on a file that is not there would pass with 0 KB. It reads every
+`<script type="module">` and `modulepreload` tag of `index.html`, not only the
+first.
+
+### Browser monitoring: scrubbing
+
 `npm run check:scrub` runs the browser-monitoring scrubbers
-(`src/lib/scrub.ts`) on sample client data and fails if any of it survives;
-run it after touching that file or the Sentry setup (`src/lib/sentry.ts`).
-It compiles the file in memory with the TypeScript already installed, so no
-test framework is needed.
+(`src/lib/scrub.ts`) on sample client data (URLs, file names, organization and
+brand names, e-mail addresses, the span shapes the SDK streams, error
+chains) and fails if any of it survives. Run it after touching that file or the
+Sentry setup (`src/lib/sentry.ts`). It compiles the file in memory with the
+TypeScript already installed, so no test framework is needed. When you add a
+rule to `scrub.ts`, add the sample that needs it, and check the sample is
+really what fails: switch the rule off and the script must go red.
+
+**Upgrading `@sentry/react`.** `package.json` pins it to an exact version (no
+`^`) on purpose: a new SDK version can add span or event attributes the
+scrubbers do not know, and a string attribute nobody scrubs goes to Sentry as is.
+Bump it by hand (`npm install --save-exact @sentry/react@<version>`), then, in
+the same pull request:
+
+1. `npm run build && npm run size && npm run check:scrub`.
+2. Re-run the browser proof (a manual step: it needs a browser, which CI does
+   not install, and the repository has no browser-test dependency). Build a
+   copy (`cp -r frontend /tmp/fe && cd /tmp/fe && npm ci && npm run build`),
+   serve it (`npx vite preview`) and drive it with Playwright from outside the
+   repository: mock `/api/auth/config` with a `sentry` block (DSN
+   `https://abc123@o1.ingest.de.sentry.io/42`, `tracesSampleRate: 1`),
+   `/api/me`, `/api/orgs` and a brand's `/overview` and `/library`, and
+   intercept `https://*.ingest.de.sentry.io/**` (register it so that it wins
+   over the `**/api/**` mock: the ingest path ends in `/api/42/envelope/`),
+   recording every envelope body (gunzip it if needed).
+3. In that run: open a page with client-looking data (a reference called
+   `bouteille-secrete-2026.jpg`, an organization and a brand with names and
+   slugs, a signed thumbnail link with `?token=SECRETTOKEN`), inject a large
+   image loaded from a signed link, force a layout shift, click something
+   slow, navigate between pages, throw errors whose message names the
+   organization, the brand and a client site, and an `ApiError` as the `cause`
+   of another error; hide the page so the Web Vitals are sent.
+4. Grep all recorded bytes for the names, ids, the e-mail address, `.jpg`,
+   `SECRETTOKEN` and the client site's host: zero matches. Also list the
+   string attributes of every span (`attributes` of each item of the `span`
+   envelope items) and look for any new key that carries a name, a path or a
+   URL: if there is one, give it a rule in `scrub.ts` and a sample in
+   `check-scrub.mjs`.
+5. As a control, replace the functions of `scrub.ts` by identity functions in
+   the copy: the same grep must now find matches. A proof that cannot fail
+   proves nothing.
 
 ## Conventions
 

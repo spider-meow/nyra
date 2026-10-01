@@ -65,6 +65,9 @@ def test_config_defaults_follow_the_server_defaults(monkeypatch):
     "https://abc@evil.com; script-src *@o1.ingest.sentry.io/42",  # would inject into the header
     "https://abc@o1.ingest.sentry.io/42\r\nX-Evil: 1",
     "https://abc@*.sentry.io/42",
+    "https://k@o1.ingest.\u017fentry.io/42",  # U+017F "long s" matches [a-z] under IGNORECASE: cannot go in a header
+    "https://k@o1.ingest.sentry.io:\u0668\u0660/42",  # Arabic-Indic digits
+    "https://k@o1.ingest.sentry.io:99999/42",  # not a port
 ])
 def test_malformed_dsn_is_ignored(dsn):
     client = _client(dsn)
@@ -76,3 +79,22 @@ def test_ingest_origin_keeps_host_and_port_only():
     assert sentry_ingest_origin("https://k@Sentry.Example.com:9000/prefix/7") == "https://sentry.example.com:9000"
     assert sentry_ingest_origin("https://k:legacy@o1.ingest.sentry.io/42") == "https://o1.ingest.sentry.io"
     assert sentry_ingest_origin("") == ""
+
+
+def test_the_legacy_secret_of_a_dsn_is_never_published():
+    config = _client("https://k:legacysecret@o1.ingest.sentry.io/42").get("/api/auth/config").json()["sentry"]
+    assert config["dsn"] == "https://k@o1.ingest.sentry.io/42"
+
+
+def test_an_unusable_setting_is_logged_once_at_startup(caplog, monkeypatch):
+    monkeypatch.setenv("SENTRY_TRACES_SAMPLE_RATE", "2")
+    with caplog.at_level("WARNING", logger="nyra"):
+        _client("https://k@o1.ingest.sentry.io/42/")  # a trailing slash is not a DSN
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("SENTRY_BROWSER_DSN is set but is not a usable DSN" in message for message in messages)
+    assert any("SENTRY_TRACES_SAMPLE_RATE='2'" in message for message in messages)
+    caplog.clear()
+    with caplog.at_level("WARNING", logger="nyra"):
+        monkeypatch.delenv("SENTRY_TRACES_SAMPLE_RATE")
+        _client(DSN)  # a good DSN and the default rate say nothing
+    assert not [record for record in caplog.records if record.name == "nyra"]

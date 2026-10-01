@@ -10,7 +10,7 @@
     "check:scrub": "node scripts/check-scrub.mjs"
   },
   "dependencies": {
-    "@sentry/react": "^11.2.0",
+    "@sentry/react": "11.2.0",
     "@supabase/supabase-js": "^2.117.0",
     "@tanstack/react-query": "^5.103.2",
     "react": "^19.1.0",

@@ -82,59 +82,117 @@ the server cannot: it sees what the browser sees (network, rendering).
    A DSN that is not `https://<key>@<host>/<project>` is ignored: nothing is
    loaded, nothing is allowed. No key lives in the build: a change of DSN
    is a restart, not a rebuild.
-3. The SDK is its own file (`assets/sentry-*.js`, ~61 KB gzip), downloaded
+3. The SDK is its own file (`assets/sentry-*.js`, ~62 KB gzip), downloaded
    after the page has loaded and only when a DSN is set. With no DSN the
-   browser never fetches it.
+   browser never fetches it and the list of requests is the same as without
+   the feature.
+4. In the Sentry project settings, set **Allowed Domains** to the host(s)
+   serving Nyra and add **inbound rate limits** (per key): the DSN's public
+   key is in the page, so anyone can read it and send events with it. That
+   is how browser SDKs work, not something Nyra can hide. Set `NYRA_RELEASE`
+   (a commit or version) too: without it, release health and "errors per
+   release" alerts have nothing to group by.
 
-**What is collected:** unhandled errors and errors caught by the page error
-screen; one *transaction* per page load and per navigation, named by route
-pattern (`/o/:slug/m/:brand/bibliotheque`), with the API calls it made
-(`GET /api/orgs/:id/brands/:id/overview`), the files it loaded, and the Web
-Vitals: LCP, CLS and TTFB (FCP too) on the page-load transaction, INP on
-its own span for the slowest interaction. API calls of the same site carry
-trace headers, so the server's own Sentry traces join the browser's.
+**What is collected:**
+
+- unhandled errors, and errors caught by the page error screen (one raised
+  before the SDK has finished downloading is kept, up to 10, and sent when it
+  starts);
+- *spans*, streamed by the SDK (its default mode): one per page load and per
+  navigation, named by route pattern (`/o/:slug/m/:brand/bibliotheque`), the
+  page-load timeline (`browser.dns`, `.connect`, `.request`, `.response`,
+  DOMContentLoaded, load event, first paint), long animation frames
+  (`ui.long_animation_frame`), and each API call (`http.client`: the span
+  is named `GET <host>`, the path is in its `url.full` attribute, as
+  `/api/orgs/:id/brands/:id/library`);
+- **Web Vitals**, which are spans of their own, sent once final: LCP
+  (`ui.webvital.lcp`, with the element, as a selector without its text
+  attributes, and the origin of the image) at the visitor's first
+  interaction, CLS (`ui.webvital.cls`) and INP (`ui.interaction.<type>`, the
+  slowest interaction) when the page is hidden or left (tab switch, close).
+  TTFB, FCP and FP are attributes of the page-load span
+  (`browser.web_vital.ttfb.value`...). FID is not collected;
+- one *session* per page load (release health: crash-free sessions and
+  users, per release). It is sent for every page load, **even when the
+  trace sample rate is 0**: it holds the release, the environment and the
+  browser's user agent, no user and no page;
+- fonts loaded from other hosts (`resource.link`); not our own files (cached
+  and hashed) and not images (one per library thumbnail).
+
+A page view sends about 15 to 25 spans (20-30 KB) once those are left out
+(measured with a library of 5 and of 60 references: 18 spans, 29 KB; without
+ignoring images and our own files it was 64 spans, 135 KB for 60 references).
+Trace headers (`sentry-trace`, `baggage`) go on API calls only, so the
+server's own Sentry traces join the browser's, and only on calls made after
+the SDK has started: the first requests of a page (configuration, session) run
+before it is downloaded and carry none.
 No session replay, no profiling, no user, no cookies, no headers, no
 request or response bodies.
 
-**What is scrubbed** (`frontend/src/lib/scrub.ts`, applied in `beforeSend`,
-`beforeSendTransaction`, `beforeSendSpan` and `beforeBreadcrumb`): reference
+**What is scrubbed** (`frontend/src/lib/scrub.ts`, applied to every error
+(`beforeSend`), span (`beforeSendSpan`: all of them, the Web Vitals and
+interaction spans included) and breadcrumb (`beforeBreadcrumb`)). Reference
 file names, site URLs, organization and brand names and slugs, and e-mail
-addresses are client data and never leave the browser.
+addresses are client data and are not meant to leave the browser. Two layers:
 
-- page URLs become route patterns, no query string, no fragment (invitation
-  links carry a token in it);
-- API URLs lose ids and file names (`/library/<name>/url` becomes
-  `/library/:file/url`), query strings keep the parameter names only;
-- links to other hosts (signed Storage links, fonts) shrink to their origin;
-- the message of an error from the API (`ApiError`, written for the user,
-  it can name a file) is replaced by `HTTP <status>`; any other error text
-  that still names an image or document is dropped, e-mail addresses and
-  ids are masked;
-- breadcrumbs are limited to navigations and API calls (no console, no
-  clicks: their text can hold file names); element selectors lose their
-  `alt`, `title` and `aria-label`.
+- *what client data looks like*: page URLs become route patterns, no query
+  string, no fragment (invitation links carry a token in it); API URLs lose
+  ids and file names (`/library/<name>/url` becomes `/library/:file/url`),
+  query strings keep the parameter names only; built files
+  (`/assets/index-<hash>.js`) keep their name and any other `/assets/...`
+  path becomes a route pattern; breadcrumbs are limited to navigations and API
+  calls (no console, no clicks: their text can hold file names); element
+  selectors lose their `alt`, `title` and `aria-label`; URLs, ids, e-mail
+  addresses and selector attributes are masked in free text, and a text that
+  still names an image or document is dropped. Any attribute whose name says
+  query, fragment, header, body or cookie is dropped;
+- *what this client calls its own*: the names and slugs of the organizations
+  and brands, and the e-mail address of the signed-in account, as the app
+  already holds them (the `orgs` and `me` queries), are replaced
+  (`[name]`) in every string, whatever the case or the punctuation between
+  words (`Remy Martin`, `remy-martin`). Names shorter than 3 characters are
+  ignored. A link or a host that is not this page, Supabase or the font hosts
+  becomes `[external]`, so a client site URL does not survive, nor the
+  `(host)` that Sentry appends to "Failed to fetch";
+- the message of an error from the API (`ApiError`, written for the user, it
+  can name a file) is replaced by `HTTP <status>`, and so is the whole chain
+  when an `ApiError` is the `cause` of another error; any other error text is
+  cut at 500 characters.
+
+What the page shows of the **deployment** is not scrubbed: the app's own host
+name (`server.address`, the origin in `url.full`), the release and the
+environment. The scrubbing is a list plus the names the app knows: free text
+written by third parties (browser extensions, the browser's own messages)
+is cleaned on a best-effort basis, so assume a message of that kind can still
+carry something nobody anticipated.
 
 To check the scrubbing after a change: `cd frontend && npm run check:scrub`
-(sample data in, nothing private out; it runs in CI).
+(sample data in, nothing private out, and every rule fails the script when
+switched off; it runs in CI). After a change of SDK version
+(`@sentry/react` is pinned to an exact version), also re-run the browser
+proof described in `docs/DEVELOPMENT.md`: new SDK versions add attributes.
 
-**Reading slow pages:** *Performance > Web Vitals* lists the routes with
-their LCP, INP, CLS and TTFB scores; *Performance > Transactions* sorts the
-same routes by p75 duration, and a transaction's waterfall shows which API
-call or file made it slow (`GET /api/.../library` taking 2 s, a page file
-arriving late). A route name is a page, not a client: to see whether one
-client's data is slow, use the Statistiques page and the server traces.
-Sampling means few events on a quiet day: look at weeks, not hours.
+**Reading slow pages:** *Performance* lists the page-load and navigation
+spans by route; the Web Vitals spans carry the value (`browser.web_vital.lcp.value`,
+in milliseconds; CLS has no unit) and the route they happened on
+(`sentry.transaction`). The waterfall of a page load shows which API call
+(`GET /api/.../library` taking 2 s) made it slow. API calls that start after
+a page has settled appear as spans of their own. A route name is a page, not a
+client: to see whether one client's data is slow, use the Statistiques page
+and the server traces. Sampling means few events on a quiet day: look at
+weeks, not hours.
 
 **Alerts worth having:** LCP p75 per route above 2.5 s (the "good"
 threshold) for 30 minutes; INP p75 per route above 200 ms; the rate of
 JavaScript errors per release (an alert on "new issue" in production, and on
-errors per user session after a deploy).
+crash-free sessions after a deploy, which needs `NYRA_RELEASE`).
 
 **Known limits.** Nothing was run against a real Sentry project when this
-was written: the checks used a fake ingest. Source maps are not uploaded,
-so stack traces show minified names. Ad blockers can block the ingest host,
-so numbers are a floor. The SDK (v11) sends classic transactions here
-(`traceLifecycle: "static"`); its newer span streaming mode is not used.
+was written: the checks used a fake ingest, so how the Sentry interface
+presents these spans (its Web Vitals and Performance pages) was not seen.
+Source maps are not uploaded, so stack traces show minified names. Ad
+blockers can block the ingest host: numbers are a floor, and the browser
+logs one console error per blocked attempt (about one per envelope; harmless).
 
 ## Logs
 

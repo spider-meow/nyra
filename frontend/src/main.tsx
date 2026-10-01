@@ -111,7 +111,7 @@ const router = createBrowserRouter([
   },
 ]);
 
-void startMonitoring(router); // after the first render: it waits for the page to load and for the server's configuration
+void startMonitoring(router, queryClient); // starts before the first render but waits for the page to load and for the server's configuration
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Racine introuvable.");

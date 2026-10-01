@@ -79,23 +79,47 @@ def traces_sample_rate() -> float:
     return rate if 0 <= rate <= 1 else 0.1
 
 
-# https://<public key>@<host>[:port]/[<path>/]<project id>. The host is the only part used for the
-# Content-Security-Policy, so it is held to hostname characters: nothing else can reach the header.
-_DSN = re.compile(r"https://[^@/\s:]+(?::[^@/\s]*)?@([a-z0-9.-]+(?::\d{1,5})?)/(?:[\w.~-]+/)*\d+", re.IGNORECASE)
+# https://<public key>[:<legacy secret>]@<host>[:port]/[<path>/]<project id>. The host is the only part used for
+# the Content-Security-Policy, so it is held to ASCII hostname characters (`re.ASCII`: without it IGNORECASE
+# and `\d` accept look-alike Unicode that cannot be written in a header): nothing else can reach the header.
+_DSN = re.compile(
+    r"https://([^@/\s:]+)(?::[^@/\s]*)?@([a-z0-9.-]+)(?::([0-9]{1,5}))?/((?:[\w.~-]+/)*[0-9]+)", re.IGNORECASE | re.ASCII
+)
+
+
+def _parse_dsn(dsn: str) -> Optional[tuple[str, str, str]]:
+    """(public key, host[:port], path and project id) of a usable DSN, else None."""
+    match = _DSN.fullmatch(dsn.strip())
+    if not match or (match.group(3) and not 0 < int(match.group(3)) <= 65535):
+        return None
+    key, host, port, rest = match.groups()
+    return key, host.lower() + (f":{port}" if port else ""), rest
 
 
 def sentry_ingest_origin(dsn: str) -> str:
     """`https://<host>` that receives events for a Sentry DSN, or "" when the DSN is empty or malformed."""
-    match = _DSN.fullmatch(dsn.strip())
-    return f"https://{match.group(1).lower()}" if match else ""
+    parsed = _parse_dsn(dsn)
+    return f"https://{parsed[1]}" if parsed else ""
+
+
+def warn_if_sentry_env_is_wrong(browser_dsn: str) -> None:
+    """Say so at startup when a Sentry setting is present but unusable (it would otherwise be ignored silently)."""
+    if browser_dsn.strip() and not _parse_dsn(browser_dsn):
+        logging.getLogger("nyra").warning(
+            "SENTRY_BROWSER_DSN is set but is not a usable DSN (https://<key>@<host>/<project id>): browser monitoring is off.")
+    raw = os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "")
+    if raw.strip() and traces_sample_rate() == 0.1 and raw.strip() != "0.1":
+        logging.getLogger("nyra").warning("SENTRY_TRACES_SAMPLE_RATE=%r is not a number from 0 to 1: using 0.1.", raw)
 
 
 def browser_sentry(dsn: str) -> Optional[dict]:
     """What the page needs to start Sentry, or None (feature off) without a usable `SENTRY_BROWSER_DSN`."""
-    if not sentry_ingest_origin(dsn):
+    parsed = _parse_dsn(dsn)
+    if not parsed:
         return None
+    key, host, rest = parsed
     return {
-        "dsn": dsn.strip(),
+        "dsn": f"https://{key}@{host}/{rest}",  # rebuilt: a legacy secret in the DSN is never published
         "environment": os.environ.get("NYRA_ENV", "production"),
         "release": os.environ.get("NYRA_RELEASE", ""),
         "tracesSampleRate": traces_sample_rate(),

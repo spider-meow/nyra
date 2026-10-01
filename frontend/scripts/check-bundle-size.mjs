@@ -1,23 +1,31 @@
 // Fails when the JavaScript the browser needs for the first screen grows past frontend/size-budget.json.
-// First load = what dist/index.html loads up front: its <script type="module"> and its modulepreload links.
+// First load = what dist/index.html loads up front: all its <script type="module"> and its modulepreload links.
 // Every other .js file in dist/assets is lazy (a page opened later, the Sentry SDK). Sizes are gzip, 1 KB = 1000 bytes
 // like Vite's build output. Run after `npm run build`: `npm run size`. See docs/DEVELOPMENT.md to change a budget.
-import { readFileSync, readdirSync } from "node:fs";
+// It also fails when the Sentry SDK is not a lazy `sentry-<hash>.js` chunk: a budget on a file that is not there proves nothing.
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { gzipSync } from "node:zlib";
 
 const dist = new URL("../dist/", import.meta.url);
+if (!existsSync(new URL("index.html", dist)) || !existsSync(new URL("assets/", dist))) {
+  console.error("dist/ is missing or incomplete: run `npm run build` first.");
+  process.exit(1);
+}
 const budget = JSON.parse(readFileSync(new URL("../size-budget.json", import.meta.url), "utf8"));
 
 const kb = (bytes) => bytes / 1000;
-const attribute = (tag, name) => new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1];
+const attribute = (tag, name) => new RegExp(`\\s${name}=(["'])(.*?)\\1`).exec(tag)?.[2]; // single or double quotes
 
-/** The files index.html loads up front, entry first. */
+/** The files index.html loads up front: every module script (the entry first) and every modulepreload link. */
 function firstLoadFiles(html) {
   const tags = html.match(/<(?:script|link)\b[^>]*>/g) ?? [];
-  const entry = tags.find((tag) => tag.startsWith("<script") && attribute(tag, "type") === "module");
-  if (!entry) throw new Error("dist/index.html has no <script type=\"module\">: run `npm run build` first.");
+  const scripts = tags.filter((tag) => tag.startsWith("<script") && attribute(tag, "type") === "module").map((tag) => attribute(tag, "src"));
+  if (!scripts.length) {
+    console.error("dist/index.html has no <script type=\"module\">: run `npm run build` first.");
+    process.exit(1);
+  }
   const preloaded = tags.filter((tag) => attribute(tag, "rel") === "modulepreload").map((tag) => attribute(tag, "href"));
-  return [attribute(entry, "src"), ...preloaded].map((url) => url.replace(/^\//, ""));
+  return [...scripts, ...preloaded].map((url) => url.replace(/^\//, ""));
 }
 
 function measure(file) {
@@ -31,8 +39,13 @@ const firstLoadNames = new Set(firstLoad.map((chunk) => chunk.file));
 const lazy = readdirSync(new URL("assets/", dist))
   .filter((name) => name.endsWith(".js") && !firstLoadNames.has(name))
   .map((name) => measure(`assets/${name}`));
-const sentry = lazy.filter((chunk) => chunk.file.startsWith("sentry-"));
-const otherLazy = lazy.filter((chunk) => !chunk.file.startsWith("sentry-"));
+const isSentry = (chunk) => /^sentry-[\w-]{8}\.js$/.test(chunk.file);
+const sentry = lazy.filter(isSentry);
+const otherLazy = lazy.filter((chunk) => !isSentry(chunk));
+if (!sentry.length) {
+  console.error("No lazy `sentry-<hash>.js` chunk in dist/assets: the Sentry SDK must be its own chunk, loaded after the page (src/lib/sentry.ts, imported only by src/lib/monitoring.ts), and it is either missing or loaded up front by index.html.");
+  process.exit(1);
+}
 
 const sum = (chunks) => chunks.reduce((total, chunk) => total + chunk.gzip, 0);
 const largest = (chunks) => chunks.reduce((top, chunk) => (chunk.gzip > top.gzip ? chunk : top), { file: "(none)", gzip: 0 });
