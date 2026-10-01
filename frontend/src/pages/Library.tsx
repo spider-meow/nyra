@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button, EmptyState, PageHeader, Skeleton, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useOrg } from "../lib/org";
@@ -18,10 +18,12 @@ export function Library() {
   const items = library.data?.items ?? [];
   const view = useLibraryView(items);
   const up = useUpload();
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  // Bulk actions only touch what is on screen: a card hidden by the search, a tag or a status filter is never acted on.
+  const selected = useMemo(() => new Set(view.visible.filter((item) => picked.has(item.filename)).map((item) => item.filename)), [view.visible, picked]);
   const [editing, setEditing] = useState<LibraryItem | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const clear = () => setSelected(new Set());
+  const clear = () => setPicked(new Set());
   const bulk = useBulkEdit(selected, clear);
   const { removeNames, removing } = useRemoveReferences(() => { clear(); setEditing(null); });
 
@@ -56,7 +58,7 @@ export function Library() {
         <>
           <LibraryToolbar view={view} onTab={changeTab} />
           {admin && selected.size ? <SelectionBar selected={selected} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
-          <LibraryGrid view={view} selected={selected} setSelected={setSelected} onEdit={setEditing} onPick={up.pick} />
+          <LibraryGrid view={view} selected={selected} setSelected={setPicked} onEdit={setEditing} onPick={up.pick} />
         </>
       )}
 

@@ -1,8 +1,12 @@
 import { useMemo, useState } from "react";
+import { isBoolean, isShortText, isStrings, oneOf, usePersistedState } from "../../lib/storage";
 import type { LibraryItem, Status } from "../../types";
 
 export type Filter = "all" | Status | "unindexed";
 type Sort = "expiry" | "name";
+const isTab = oneOf<Tab>(["active", "expired"]);
+const isSort = oneOf<Sort>(["expiry", "name"]);
+const isFilter = oneOf<Filter>(["all", "expire", "<30j", "<90j", "ok", "inconnue", "unindexed"]);
 /** Expired visuals live in their own tab: still compared to the sites, out of the way of the working library. */
 export type Tab = "active" | "expired";
 export const TAGS_SHOWN = 12;
@@ -37,12 +41,13 @@ function visibleItems(pool: LibraryItem[], { tab, filter, sort, query, activeTag
 
 /** Tab, status filter, sort, search and tag filters of the library, and the visuals they leave. Every filter change goes back to the first page. */
 export function useLibraryView(items: LibraryItem[]) {
-  const [tab, setTab] = useState<Tab>("active");
-  const [filter, setFilter] = useState<Filter>("all");
-  const [sort, setSort] = useState<Sort>("expiry");
-  const [query, setQuery] = useState("");
-  const [activeTags, setActiveTags] = useState<string[]>([]);
-  const [untagged, setUntagged] = useState(false);
+  // Tab and sort are kept in this browser; search and filters only for the browser tab (reload, come back later).
+  const [tab, setTab] = usePersistedState<Tab>("library.tab", "active", "local", isTab);
+  const [sort, setSort] = usePersistedState<Sort>("library.sort", "expiry", "local", isSort);
+  const [filterSaved, setFilter] = usePersistedState<Filter>("library.filter", "all", "session", isFilter);
+  const [query, setQuery] = usePersistedState("library.query", "", "session", isShortText);
+  const [tagsSaved, setActiveTags] = usePersistedState<string[]>("library.tags", [], "session", isStrings);
+  const [untaggedSaved, setUntagged] = usePersistedState("library.untagged", false, "session", isBoolean);
   const [allTags, setAllTags] = useState(false);
   const [shown, setShown] = useState(PAGE);
 
@@ -53,6 +58,10 @@ export function useLibraryView(items: LibraryItem[]) {
   const libraryTags = useMemo(() => tagCounts(items), [items]);
   const poolTags = useMemo(() => tagCounts(pool), [pool]);
   const untaggedCount = useMemo(() => pool.filter((item) => !item.tags.length).length, [pool]);
+  // A remembered filter can outlive what it points at (tag removed, other tab): only apply what the screen can show and undo.
+  const activeTags = useMemo(() => tagsSaved.filter((tag) => poolTags.some(([name]) => name === tag)), [tagsSaved, poolTags]);
+  const untagged = untaggedSaved && untaggedCount > 0;
+  const filter = tab === "active" ? filterSaved : "all";
   const visible = useMemo(() => visibleItems(pool, { tab, filter, sort, query, activeTags, untagged }), [pool, tab, filter, sort, query, activeTags, untagged]);
 
   function changeTab(next: Tab) {
@@ -65,7 +74,7 @@ export function useLibraryView(items: LibraryItem[]) {
   }
 
   function toggleTag(tag: string) {
-    setActiveTags((current) => (current.includes(tag) ? current.filter((item) => item !== tag) : [...current, tag]));
+    setActiveTags(activeTags.includes(tag) ? activeTags.filter((item) => item !== tag) : [...activeTags, tag]);
     setShown(PAGE);
   }
 
@@ -75,7 +84,7 @@ export function useLibraryView(items: LibraryItem[]) {
     filtering: filter !== "all" || Boolean(query) || activeTags.length > 0 || untagged,
     changeTab, toggleTag, setSort,
     toggleAllTags: () => setAllTags((value) => !value),
-    toggleUntagged: () => { setUntagged((value) => !value); setShown(PAGE); },
+    toggleUntagged: () => { setUntagged(!untagged); setShown(PAGE); },
     setFilter: (value: Filter) => { setFilter(value); setShown(PAGE); },
     setQuery: (value: string) => { setQuery(value); setShown(PAGE); },
     showMore: () => setShown((value) => value + PAGE),
