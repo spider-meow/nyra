@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import uuid
+from dataclasses import replace
 
 import numpy as np
 import pytest
@@ -109,6 +110,154 @@ def test_index_job_backfills_references_and_site_images_then_compares(worker, cl
     assert site_row["embedding"] is not None and site_row["thumb_path"]
     assert ("refs", ref["thumb_path"]) in fake_storage_client.store
     assert ref["thumb_path"] == f"{cloud_org}/{cloud_brand}/thumbs/hero.jpg.jpg"
+
+
+def _run_index(worker, url, org_id, brand_id):
+    with cloud_db.connect(url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=org_id, brand_id=brand_id, kind="index")
+    assert worker.run_once()
+    return _job(url, brand_id, job["id"])
+
+
+def _reference_row(url, brand_id, name):
+    with cloud_db.connect(url) as conn:
+        return cloud_db.get_reference_by_filename(conn, brand_id, name)
+
+
+def test_index_job_of_a_library_without_site_images_skips_the_comparison(worker, cloud_database_url, cloud_org,
+                                                                        cloud_brand, fake_storage_client):
+    with cloud_db.connect(cloud_database_url) as conn:
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "hero.jpg", _image_bytes(0))
+    finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert finished["status"] == "done" and finished["message"] == "1 image(s) indexée(s)."
+    assert "matches" not in finished["result"] and "match_metrics" not in finished["result"]
+    assert set(finished["result"]["metrics"]) == {"embedded", "embed_seconds", "load_seconds", "model_load_seconds",
+                                                  "duration_seconds"}
+    assert finished["result"]["metrics"]["embedded"] == 1
+    ref = _reference_row(cloud_database_url, cloud_brand, "hero.jpg")
+    assert ref["embedding"] is not None and ref["phash_flip"] and ref["dhash_flip"]
+    assert ref["work_path"] == f"{cloud_org}/{cloud_brand}/work/hero.jpg.jpg"
+    assert ("refs", ref["work_path"]) in worker.storage_client_factory().store
+    # A second pass finds nothing to do: no model, no upload, nothing indexed.
+    again = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert again["message"] == "0 image(s) indexée(s)." and again["result"]["indexed"] == 0
+    assert again["result"]["metrics"]["embedded"] == 0 and again["result"]["metrics"]["model_load_seconds"] == 0
+
+
+def test_index_job_only_makes_what_is_missing_and_prefers_the_working_copy(worker, cloud_database_url, cloud_org,
+                                                                          cloud_brand, fake_storage_client):
+    with cloud_db.connect(cloud_database_url) as conn:
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "hero.jpg", _image_bytes(0))
+    _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    ref = _reference_row(cloud_database_url, cloud_brand, "hero.jpg")
+    # Thumbnail lost, and the original with it; the embedding and the working copy are still there.
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE reference_images SET thumb_path = NULL, compared_at = now() WHERE id = %s", (ref["id"],))
+    fake_storage_client.store.pop(("refs", ref["storage_path"]))
+    finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    # The working copy is read instead of the (now missing) original, only the thumbnail is made,
+    # and the comparison stamp survives because neither embedding nor flip hashes changed.
+    assert finished["result"]["indexed"] == 1 and finished["result"]["metrics"]["embedded"] == 0
+    after = _reference_row(cloud_database_url, cloud_brand, "hero.jpg")
+    assert after["thumb_path"] and after["work_path"] == ref["work_path"] and after["compared_at"] is not None
+
+
+def test_index_job_skips_an_unreadable_image_and_says_so(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                         fake_storage_client, caplog):
+    with cloud_db.connect(cloud_database_url) as conn:
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "lost.jpg", _image_bytes(0))
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "kept.jpg", _image_bytes(50))
+    lost = _reference_row(cloud_database_url, cloud_brand, "lost.jpg")
+    fake_storage_client.store.pop(("refs", lost["storage_path"]))
+    with caplog.at_level("WARNING", logger="nyra.worker"):
+        finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert finished["status"] == "done" and finished["result"]["indexed"] == 1
+    assert f"reading refs/{lost['storage_path']} failed; image skipped" in caplog.text
+    assert _reference_row(cloud_database_url, cloud_brand, "lost.jpg")["embedding"] is None
+    assert _reference_row(cloud_database_url, cloud_brand, "kept.jpg")["embedding"] is not None
+
+
+def _batches_of_one(worker, monkeypatch):
+    real = worker.config_for
+
+    def config_for(org_id):
+        config = real(org_id)
+        return replace(config, match=replace(config.match, embedding_batch_size=1))
+
+    monkeypatch.setattr(worker, "config_for", config_for)
+
+
+def test_index_job_reports_its_progress_in_order(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                 fake_storage_client, monkeypatch):
+    _batches_of_one(worker, monkeypatch)
+    with cloud_db.connect(cloud_database_url) as conn:
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "a.jpg", _image_bytes(0))
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "b.jpg", _image_bytes(60))
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/a.jpg", _image_bytes(0))
+    seen = []
+    real_report = worker_module.JobContext.report
+
+    def spy(self, message, progress=None, *, force=False):
+        if progress and progress.get("phase") == "index":
+            seen.append((message, progress, force))
+        real_report(self, message, progress, force=force)
+
+    monkeypatch.setattr(worker_module.JobContext, "report", spy)
+    _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    index = {"phase": "index", "total": 3}
+    assert seen == [
+        ("Chargement du modèle d'analyse (3 image(s) à indexer ; plus long la toute première fois)…",
+         {**index, "done": 0}, True),
+        ("Lecture des images · 0/3", {**index, "done": 0}, False),
+        ("Analyse des images · 1/3", {**index, "done": 1}, False),
+        ("Lecture des images · 1/3", {**index, "done": 1}, False),
+        ("Analyse des images · 2/3", {**index, "done": 2}, False),
+        ("Lecture des images · 2/3", {**index, "done": 2}, False),
+        ("Analyse des images · 3/3", {**index, "done": 3}, False),
+    ]
+
+
+def test_a_cancelled_index_job_stops_between_batches_and_skips_the_comparison(worker, cloud_database_url, cloud_org,
+                                                                             cloud_brand, fake_storage_client,
+                                                                             monkeypatch):
+    _batches_of_one(worker, monkeypatch)
+    with cloud_db.connect(cloud_database_url) as conn:
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "a.jpg", _image_bytes(0))
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "b.jpg", _image_bytes(60))
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/a.jpg", _image_bytes(0))
+    checks = []
+
+    def stop_at_the_second_batch(self):
+        checks.append(1)
+        self.cancelled = len(checks) >= 2
+        return self.cancelled
+
+    monkeypatch.setattr(worker_module.JobContext, "should_stop", stop_at_the_second_batch)
+    finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    # One reference done; the second reference and the site image are left for later.
+    assert finished["status"] == "cancelled" and finished["message"] == "Indexation arrêtée."
+    assert finished["result"]["indexed"] == 1 and "matches" not in finished["result"]
+    assert len(checks) == 3  # refs loop: batch 1, batch 2 (stops); sites loop: its first check (stops)
+
+
+def test_index_job_embeds_site_images_sharing_a_hash_and_fills_all_their_rows(worker, cloud_database_url, cloud_org,
+                                                                            cloud_brand, fake_storage_client):
+    data = _image_bytes(0)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        first = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/a.jpg", data)
+        second = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/b.jpg", data)
+        digest = conn.execute("SELECT content_hash FROM site_images WHERE id = %s", (first,)).fetchone()["content_hash"]
+        conn.execute("UPDATE site_images SET content_hash = %s WHERE id = %s", (digest, second))
+    finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert finished["result"]["indexed"] == 2 and finished["result"]["metrics"]["embedded"] == 2
+    assert finished["message"] == "2 image(s) indexée(s), comparaison à jour."
+    with cloud_db.connect(cloud_database_url) as conn:
+        rows = conn.execute("SELECT embedding, thumb_path FROM site_images WHERE org_id = %s", (cloud_org,)).fetchall()
+    assert len(rows) == 2 and all(row["embedding"] is not None for row in rows)
+    assert {row["thumb_path"] for row in rows} == {f"{cloud_org}/thumbs/{digest}.jpg"}
 
 
 def test_report_job_stores_files_without_false_positives(worker, cloud_database_url, cloud_org, cloud_brand,
