@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { Link } from "react-router";
 import { Section, Table } from "../components/insights";
-import { Skeleton, Stat, cx } from "../components/ui";
+import { Button, Skeleton, Stat, cx } from "../components/ui";
 import { bytes, duration, formatDateTime, jobLabel, num, percent } from "../lib/format";
 import type { PlatformInsights } from "../types";
 
@@ -86,12 +87,18 @@ export function PlatformStats(props: { totals: PlatformInsights["totals"]; crawl
   );
 }
 
-export function BrandsSection(props: { brands: PlatformInsights["brands"] }) {
+/** The table shows this many brands, and this many more each time "Voir plus" is pressed. */
+const BRANDS_PAGE = 25;
+
+/** `brands` is what the server sent (at most its cap, the most recently active); `total` is how many brands exist. */
+export function BrandsSection(props: { brands: PlatformInsights["brands"]; total: number }) {
+  const [shown, setShown] = useState(BRANDS_PAGE);
+  const loaded = props.brands.length;
   return (
     <Section className="mt-6" title="Marques" description="Stockage, lectures sur 90 jours, qualité du matching, échecs sur 30 jours.">
       <Table
         head={["Marque", "Sites", "Images", "Poids moy.", "Visuels", "Expirés", "Stockage", "Lectures", "Dernière", "Durée moy.", "Pages/min", "CLIP img/s", "Corresp.", "Taux FP", "Échecs 30 j", ""]}
-        rows={props.brands.map((org) => [
+        rows={props.brands.slice(0, shown).map((org) => [
           <span>
             {org.name}
             {org.org_name !== org.name ? <span className="block text-xs font-normal text-muted">{org.org_name}</span> : null}
@@ -120,6 +127,12 @@ export function BrandsSection(props: { brands: PlatformInsights["brands"] }) {
         ])}
         empty="Aucune marque."
       />
+      {props.total > loaded || loaded > shown ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs text-muted">
+          <p>{props.total > loaded ? `${num(loaded)} sur ${num(props.total)} marques : les plus récemment actives (dernière lecture ou tâche).` : null}</p>
+          {loaded > shown ? <Button size="sm" onClick={() => setShown(shown + BRANDS_PAGE)}>Voir plus</Button> : null}
+        </div>
+      ) : null}
       <p className="mt-3 text-xs text-muted">« Détail » ouvre la page Statistiques de la marque si votre compte en est administrateur.</p>
     </Section>
   );

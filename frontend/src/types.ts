@@ -383,6 +383,8 @@ export type PlatformInsights = {
     storage_bytes: number;
   };
   brands: PlatformBrand[];
+  /** How many brands exist; `brands` holds at most the server's cap of them, the most recently active. */
+  total_brands: number;
   crawls: {
     summary: CrawlSummary;
     history: Pick<

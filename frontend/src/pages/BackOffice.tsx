@@ -80,7 +80,7 @@ function BackOfficeContent() {
     <>
       <HealthBanner queue={queue} running={running} />
       <PlatformStats totals={totals} crawls={crawls} />
-      <BrandsSection brands={brands} />
+      <BrandsSection brands={brands} total={data.total_brands} />
 
       <Section className="mt-4" title="Lectures, toutes marques" description="Les 60 dernières sur 90 jours. Survolez une barre pour la marque et le détail." aside={<MetricTabs value={metric} onChange={setMetric} />}>
         <HistoryChart runs={crawls.history} metric={metric} withOrg />

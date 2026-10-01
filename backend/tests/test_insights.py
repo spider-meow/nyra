@@ -8,8 +8,10 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import re
 import time
 import uuid
+from datetime import datetime
 
 import pytest
 from PIL import Image, ImageDraw
@@ -205,16 +207,16 @@ def test_brand_insights_numbers_stay_within_the_brand(cloud_database_url, cloud_
     json.dumps(data)
 
 
-def test_platform_insights_lists_every_brand(cloud_database_url):
+def test_platform_insights_lists_every_brand(empty_platform):
     from nyra.cloud import db as cloud_db
     from nyra.cloud import insights
 
-    with cloud_db.connect(cloud_database_url) as conn:
-        a = cloud_db.create_organization(conn, name="Maison A", slug=f"a-{uuid.uuid4().hex[:8]}")
-        brand_a = conn.execute("SELECT id FROM brands WHERE org_id = %s", (a,)).fetchone()["id"]
-        second = cloud_db.create_brand(conn, org_id=a, name="Cuvée", slug=f"cuvee-{uuid.uuid4().hex[:6]}")
-        _seed(conn, a, brand_a, crawl_seconds=100.0)
-        data = insights.platform_insights(conn)
+    conn = empty_platform
+    a = cloud_db.create_organization(conn, name="Maison A", slug=f"a-{uuid.uuid4().hex[:8]}")
+    brand_a = conn.execute("SELECT id FROM brands WHERE org_id = %s", (a,)).fetchone()["id"]
+    second = cloud_db.create_brand(conn, org_id=a, name="Cuvée", slug=f"cuvee-{uuid.uuid4().hex[:6]}")
+    _seed(conn, a, brand_a, crawl_seconds=100.0)
+    data = insights.platform_insights(conn)
 
     brands = {row["brand_id"]: row for row in data["brands"]}
     # Stored: working copies + thumbnails (40 KB), plus the old row's nothing, plus the library's 5 MB.
@@ -230,20 +232,22 @@ def test_platform_insights_lists_every_brand(cloud_database_url):
     json.dumps(data)
 
 
-def test_platform_insights_shape_history_running_jobs_and_totals(cloud_database_url):
+def test_platform_insights_shape_history_running_jobs_and_totals(empty_platform):
     from nyra.cloud import db as cloud_db
     from nyra.cloud import insights
 
-    with cloud_db.connect(cloud_database_url) as conn:
-        name = f"Maison {uuid.uuid4().hex[:8]}"
-        org = cloud_db.create_organization(conn, name=name, slug=name.lower().replace(" ", "-"))
-        brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (org,)).fetchone()["id"]
-        _seed(conn, org, brand, crawl_seconds=100.0)
-        conn.execute("""INSERT INTO jobs (org_id, brand_id, kind, status, started_at, heartbeat_at, message)
-                        VALUES (%s, %s, 'index', 'running', now(), now(), 'en cours')""", (org, brand))
-        data = insights.platform_insights(conn)
+    conn = empty_platform
+    name = f"Maison {uuid.uuid4().hex[:8]}"
+    org = cloud_db.create_organization(conn, name=name, slug=name.lower().replace(" ", "-"))
+    brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (org,)).fetchone()["id"]
+    _seed(conn, org, brand, crawl_seconds=100.0)
+    conn.execute("""INSERT INTO jobs (org_id, brand_id, kind, status, started_at, heartbeat_at, message)
+                    VALUES (%s, %s, 'index', 'running', now(), now(), 'en cours')""", (org, brand))
+    data = insights.platform_insights(conn)
 
-    assert list(data) == ["totals", "brands", "crawls", "jobs", "compare", "matching", "queue", "running", "failures"]
+    assert list(data) == ["totals", "brands", "total_brands", "crawls", "jobs", "compare", "matching", "queue",
+                          "running", "failures"]
+    assert data["total_brands"] == data["totals"]["brands"] == len(data["brands"]) == 1
     assert list(data["totals"]) == ["organizations", "brands", "members", "references", "site_files", "pages_read",
                                     "matches", "storage_bytes"]
     brands = data["brands"]
@@ -278,6 +282,261 @@ def test_platform_insights_shape_history_running_jobs_and_totals(cloud_database_
     running = [row for row in data["running"] if row["org_name"] == name]
     assert [(row["kind"], row["message"]) for row in running] == [("index", "en cours")]
     assert len(data["failures"]) <= 15
+    json.dumps(data)
+
+
+# --- the platform page on an empty, deterministic platform -----------------------------------
+#
+# These tests run inside one transaction that is rolled back: `now()` is frozen (so ages are exact), the
+# platform holds only what the test creates, and nothing leaks into the other tests.
+
+@pytest.fixture()
+def empty_platform(cloud_database_url):
+    import psycopg
+    from psycopg.rows import dict_row
+
+    from nyra.cloud import db as cloud_db
+
+    with psycopg.connect(cloud_db.normalize_database_url(cloud_database_url), row_factory=dict_row) as conn:
+        conn.execute("DELETE FROM organizations")  # cascades to brands, memberships, jobs, runs…
+        yield conn
+        conn.rollback()
+
+
+def _shift(conn, brand_id, hours):
+    """Move a brand's runs and jobs back in time, so no two brands tie on a date."""
+    conn.execute("""UPDATE crawl_runs SET started_at = started_at - %s * interval '1 hour',
+                      finished_at = finished_at - %s * interval '1 hour'
+                    WHERE site_id IN (SELECT id FROM sites WHERE brand_id = %s)""", (hours, hours, brand_id))
+    conn.execute("""UPDATE jobs SET created_at = created_at - %s * interval '1 hour',
+                      started_at = started_at - %s * interval '1 hour', finished_at = finished_at - %s * interval '1 hour'
+                    WHERE brand_id = %s""", (hours, hours, hours, brand_id))
+
+
+def _run(conn, org, brand, *, status="done", days=1, pages=10, found=60, new=2, metrics=None, errors=0):
+    site = conn.execute("SELECT id FROM sites WHERE brand_id = %s ORDER BY url LIMIT 1", (brand,)).fetchone()["id"]
+    conn.execute(
+        """INSERT INTO crawl_runs (org_id, site_id, status, started_at, finished_at, pages_visited, images_found,
+                                   images_new, errors, metrics)
+           VALUES (%s, %s, %s, now() - %s * interval '1 day', now() - %s * interval '1 day' + interval '90 seconds',
+                   %s, %s, %s, %s, %s)""",
+        (org, site, status, days, days, pages, found, new, json.dumps(["e"] * errors), json.dumps(metrics or {})))
+
+
+def _job(conn, org, brand, kind, status, *, hours, run_minutes=None, error=None, heartbeat=False):
+    conn.execute(
+        """INSERT INTO jobs (org_id, brand_id, kind, status, error, message, created_at, started_at, finished_at,
+                             heartbeat_at)
+           VALUES (%s, %s, %s, %s, %s, 'msg', now() - %s * interval '1 hour',
+                   CASE WHEN %s::text IS NULL THEN NULL ELSE now() - %s * interval '1 hour' + interval '1 minute' END,
+                   CASE WHEN %s::text IS NULL THEN NULL ELSE now() - %s * interval '1 hour'
+                        + %s * interval '1 minute' END,
+                   CASE WHEN %s THEN now() - interval '30 seconds' END)""",
+        (org, brand, kind, status, error, hours, run_minutes, hours, run_minutes, hours, run_minutes or 0, heartbeat))
+
+
+def _seed_world(conn):
+    """Four organizations, six brands: crawls of every status and age, jobs, matches, reviews, members."""
+    from nyra.cloud import db as cloud_db
+
+    ids = {}
+    for name in ("Alpha", "Beta", "Delta", "Gamma"):
+        ids[name] = cloud_db.create_organization(conn, name=name, slug=name.lower())
+    brands = {name: conn.execute("SELECT id FROM brands WHERE org_id = %s", (org,)).fetchone()["id"]
+              for name, org in ids.items()}
+    brands["Alpha Cuvee"] = cloud_db.create_brand(conn, org_id=ids["Alpha"], name="Alpha Cuvee", slug="cuvee")
+    brands["Delta Bis"] = cloud_db.create_brand(conn, org_id=ids["Delta"], name="Delta Bis", slug="bis")
+    for hours, (name, secs) in enumerate((("Alpha", 100.0), ("Beta", 60.0), ("Delta", 300.0)), start=1):
+        _seed(conn, ids[name], brands[name], crawl_seconds=secs, host=f"{name.lower()}.test")
+        _shift(conn, brands[name], hours)
+    _seed(conn, ids["Alpha"], brands["Alpha Cuvee"], crawl_seconds=30.0, host="cuvee.test")
+    _shift(conn, brands["Alpha Cuvee"], 4)
+
+    alpha, beta, delta = ids["Alpha"], ids["Beta"], ids["Delta"]
+    busy = {"duration_seconds": 200.0, "embedded": 10, "embed_seconds": 5.0, "bytes_new": 1000, "render_seconds": 50.0,
+            "download_seconds": 8.0, "http_statuses": {"200": 5, "301": 2, "404": 1}, "formats_new": {"png": 2}}
+    _run(conn, alpha, brands["Alpha"], days=3, pages=20, found=100, new=4, metrics=busy)
+    _run(conn, alpha, brands["Alpha"], days=5, status="error", pages=3, found=0, new=0, errors=2)
+    _run(conn, alpha, brands["Alpha"], days=10, pages=8, found=40, new=0)            # no measurements: old row
+    _run(conn, alpha, brands["Alpha"], days=100, pages=99, found=99, new=9, metrics=busy)  # outside the 90 days
+    _run(conn, beta, brands["Beta"], days=0, status="running", pages=1, found=1, new=1)
+    _run(conn, beta, brands["Beta"], days=4, status="cancelled", pages=2, found=2, new=0, metrics={"duration_seconds": 5})
+    _run(conn, delta, brands["Delta"], days=6, pages=30, found=90, new=3,
+         metrics={**busy, "duration_seconds": 0, "http_statuses": {"200": 7, "404": 2}, "formats_new": {"webp": 1, "png": 1}})
+    _job(conn, alpha, brands["Alpha"], "index", "done", hours=30, run_minutes=3)
+    _job(conn, alpha, brands["Alpha"], "report", "cancelled", hours=2, run_minutes=1)
+    _job(conn, alpha, brands["Alpha"], "crawl", "queued", hours=15)
+    _job(conn, alpha, brands["Alpha"], "crawl", "error", hours=24 * 40, run_minutes=2, error="old failure")
+    _job(conn, beta, brands["Beta"], "index", "running", hours=1, run_minutes=1, heartbeat=True)
+    _job(conn, delta, brands["Delta Bis"], "match", "error", hours=6, run_minutes=4, error="boom")
+    _job(conn, delta, brands["Delta Bis"], "crawl", "done", hours=7, run_minutes=9)
+
+    users = [uuid.uuid4() for _ in range(3)]
+    for user in users:
+        conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (user, f"{user}@x"))
+    for user, org in ((users[0], alpha), (users[0], beta), (users[1], alpha), (users[2], delta)):
+        cloud_db.add_membership(conn, user_id=user, org_id=org, role="admin")
+    return {**{f"org:{name}": org for name, org in ids.items()}, **{f"brand:{name}": b for name, b in brands.items()}}
+
+
+_ISO = re.compile(r"^\d{4}-\d\d-\d\dT")
+
+
+def _scrub(value, aliases, now):
+    """Ids become names and dates become 'seconds before now', so a snapshot is the same on every run."""
+    if isinstance(value, dict):
+        return {key: "<id>" if key == "id" else _scrub(item, aliases, now) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_scrub(item, aliases, now) for item in value]
+    if isinstance(value, str) and _ISO.match(value):
+        return f"T-{round((now - datetime.fromisoformat(value)).total_seconds())}s"
+    if isinstance(value, str) and value in aliases:
+        return aliases[value]
+    return value
+
+
+def _same(actual, expected, path="data"):
+    """Equal structures; floats within a few ulps (an average may add its terms in another order)."""
+    if isinstance(expected, dict):
+        assert isinstance(actual, dict) and set(actual) == set(expected), path
+        for key in expected:
+            _same(actual[key], expected[key], f"{path}.{key}")
+    elif isinstance(expected, list):
+        assert isinstance(actual, list) and len(actual) == len(expected), path
+        for index, item in enumerate(expected):
+            _same(actual[index], item, f"{path}[{index}]")
+    elif isinstance(expected, float):
+        assert actual == pytest.approx(expected, rel=1e-9, abs=1e-9), path
+    else:
+        assert actual == expected, path
+
+
+def _platform_snapshot(conn):
+    from nyra.cloud import insights
+
+    ids = _seed_world(conn)
+    aliases = {str(value): key for key, value in ids.items()}
+    now = conn.execute("SELECT now() AS n").fetchone()["n"]
+    return _scrub(insights.platform_insights(conn), aliases, now)
+
+
+# Captured from the code before the back office was made to scale (every brand, every 90-day run read in Python).
+_PLATFORM_SNAPSHOT = r"""
+{
+ "totals": {"organizations": 4, "brands": 6, "members": 3, "references": 4, "site_files": 12, "pages_read": 4, "matches": 8, "storage_bytes": 20160000.0},
+ "brands": [
+  {"brand_id": "brand:Alpha", "name": "Alpha", "slug": "alpha", "org_id": "org:Alpha", "org_name": "Alpha", "org_slug": "alpha", "distinct_files": 3, "site_bytes": 400000.0, "avg_image_bytes": 200000.0, "site_stored_bytes": 40000.0, "pages_read": 1, "sites": 1, "references_total": 1, "expired": 1, "expiring_90_days": 0, "library_bytes": 5000000.0, "matches": 2, "members": 2, "storage_bytes": 5040000.0, "crawls_90d": 4, "last_crawl_at": "T-3600s", "last_crawl_status": "done", "last_crawl_seconds": 100.0, "avg_crawl_seconds": 130.0, "avg_pages_per_minute": 5.777777777777779, "clip_images_per_second": 7.142857142857143, "false_positive_rate": 0.5, "jobs_30d": 5, "failed_jobs_30d": 1},
+  {"brand_id": "brand:Alpha Cuvee", "name": "Alpha Cuvee", "slug": "cuvee", "org_id": "org:Alpha", "org_name": "Alpha", "org_slug": "alpha", "distinct_files": 3, "site_bytes": 400000.0, "avg_image_bytes": 200000.0, "site_stored_bytes": 40000.0, "pages_read": 1, "sites": 1, "references_total": 1, "expired": 1, "expiring_90_days": 0, "library_bytes": 5000000.0, "matches": 2, "members": 2, "storage_bytes": 5040000.0, "crawls_90d": 1, "last_crawl_at": "T-14400s", "last_crawl_status": "done", "last_crawl_seconds": 30.0, "avg_crawl_seconds": 30.0, "avg_pages_per_minute": 20.0, "clip_images_per_second": 20.0, "false_positive_rate": 0.5, "jobs_30d": 2, "failed_jobs_30d": 1},
+  {"brand_id": "brand:Beta", "name": "Beta", "slug": "beta", "org_id": "org:Beta", "org_name": "Beta", "org_slug": "beta", "distinct_files": 3, "site_bytes": 400000.0, "avg_image_bytes": 200000.0, "site_stored_bytes": 40000.0, "pages_read": 1, "sites": 1, "references_total": 1, "expired": 1, "expiring_90_days": 0, "library_bytes": 5000000.0, "matches": 2, "members": 1, "storage_bytes": 5040000.0, "crawls_90d": 3, "last_crawl_at": "T-0s", "last_crawl_status": "running", "last_crawl_seconds": 90.0, "avg_crawl_seconds": 60.0, "avg_pages_per_minute": 10.0, "clip_images_per_second": 20.0, "false_positive_rate": 0.5, "jobs_30d": 3, "failed_jobs_30d": 1},
+  {"brand_id": "brand:Delta", "name": "Delta", "slug": "delta", "org_id": "org:Delta", "org_name": "Delta", "org_slug": "delta", "distinct_files": 3, "site_bytes": 400000.0, "avg_image_bytes": 200000.0, "site_stored_bytes": 40000.0, "pages_read": 1, "sites": 1, "references_total": 1, "expired": 1, "expiring_90_days": 0, "library_bytes": 5000000.0, "matches": 2, "members": 1, "storage_bytes": 5040000.0, "crawls_90d": 2, "last_crawl_at": "T-10800s", "last_crawl_status": "done", "last_crawl_seconds": 300.0, "avg_crawl_seconds": 195.0, "avg_pages_per_minute": 11.0, "clip_images_per_second": 7.142857142857143, "false_positive_rate": 0.5, "jobs_30d": 2, "failed_jobs_30d": 1},
+  {"brand_id": "brand:Delta Bis", "name": "Delta Bis", "slug": "bis", "org_id": "org:Delta", "org_name": "Delta", "org_slug": "delta", "distinct_files": 0, "site_bytes": null, "avg_image_bytes": null, "site_stored_bytes": null, "pages_read": 0, "sites": 0, "references_total": 0, "expired": 0, "expiring_90_days": 0, "library_bytes": null, "matches": 0, "members": 1, "storage_bytes": 0, "crawls_90d": 0, "last_crawl_at": null, "last_crawl_status": null, "last_crawl_seconds": null, "avg_crawl_seconds": null, "avg_pages_per_minute": null, "clip_images_per_second": null, "false_positive_rate": null, "jobs_30d": 2, "failed_jobs_30d": 1},
+  {"brand_id": "brand:Gamma", "name": "Gamma", "slug": "gamma", "org_id": "org:Gamma", "org_name": "Gamma", "org_slug": "gamma", "distinct_files": 0, "site_bytes": null, "avg_image_bytes": null, "site_stored_bytes": null, "pages_read": 0, "sites": 0, "references_total": 0, "expired": 0, "expiring_90_days": 0, "library_bytes": null, "matches": 0, "members": 0, "storage_bytes": 0, "crawls_90d": 0, "last_crawl_at": null, "last_crawl_status": null, "last_crawl_seconds": null, "avg_crawl_seconds": null, "avg_pages_per_minute": null, "clip_images_per_second": null, "false_positive_rate": null, "jobs_30d": 0, "failed_jobs_30d": 0}
+ ],
+ "crawls": {
+  "summary": {"runs": 10, "finished": 7, "failed": 1, "avg_duration_seconds": 124.28571428571429, "max_duration_seconds": 300.0, "avg_pages": 14.0, "avg_pages_per_minute": 9.904761904761903, "avg_images_scanned_per_second": 0.8206349206349206, "avg_seconds_per_page": 4.694444444444445, "avg_images_per_page": 5.285714285714286, "clip_images_per_second": 10.0, "avg_new_image_bytes": 106800.0, "images_found": 470, "images_new": 15, "bytes_downloaded": 0, "bytes_new": 1602000, "phases_seconds": {"render_seconds": 340.0, "download_seconds": 16.0, "process_seconds": 0, "embed_seconds": 18.0, "store_seconds": 0}, "http_statuses": {"200": 48, "404": 7, "301": 2}, "formats_new": {"webp": 5, "jpg": 4, "png": 3}},
+  "history": [
+   {"org_name": "Alpha", "brand_name": "Alpha", "started_at": "T-864000s", "status": "done", "duration_seconds": 90.0, "pages_visited": 8, "images_found": 40, "images_new": 0, "pages_per_minute": 5.333333333333334, "images_scanned_per_second": 0.4444444444444444, "clip_images_per_second": null, "avg_new_image_bytes": null},
+   {"org_name": "Delta", "brand_name": "Delta", "started_at": "T-518400s", "status": "done", "duration_seconds": 90.0, "pages_visited": 30, "images_found": 90, "images_new": 3, "pages_per_minute": 20.0, "images_scanned_per_second": 1.0, "clip_images_per_second": 2.0, "avg_new_image_bytes": 333.3333333333333},
+   {"org_name": "Alpha", "brand_name": "Alpha", "started_at": "T-432000s", "status": "error", "duration_seconds": 90.0, "pages_visited": 3, "images_found": 0, "images_new": 0, "pages_per_minute": 2.0, "images_scanned_per_second": 0.0, "clip_images_per_second": null, "avg_new_image_bytes": null},
+   {"org_name": "Beta", "brand_name": "Beta", "started_at": "T-345600s", "status": "cancelled", "duration_seconds": 5.0, "pages_visited": 2, "images_found": 2, "images_new": 0, "pages_per_minute": 24.0, "images_scanned_per_second": 0.4, "clip_images_per_second": null, "avg_new_image_bytes": null},
+   {"org_name": "Alpha", "brand_name": "Alpha", "started_at": "T-259200s", "status": "done", "duration_seconds": 200.0, "pages_visited": 20, "images_found": 100, "images_new": 4, "pages_per_minute": 6.0, "images_scanned_per_second": 0.5, "clip_images_per_second": 2.0, "avg_new_image_bytes": 250.0},
+   {"org_name": "Alpha", "brand_name": "Alpha Cuvee", "started_at": "T-14400s", "status": "done", "duration_seconds": 30.0, "pages_visited": 10, "images_found": 60, "images_new": 2, "pages_per_minute": 20.0, "images_scanned_per_second": 2.0, "clip_images_per_second": 20.0, "avg_new_image_bytes": 200000.0},
+   {"org_name": "Delta", "brand_name": "Delta", "started_at": "T-10800s", "status": "done", "duration_seconds": 300.0, "pages_visited": 10, "images_found": 60, "images_new": 2, "pages_per_minute": 2.0, "images_scanned_per_second": 0.2, "clip_images_per_second": 20.0, "avg_new_image_bytes": 200000.0},
+   {"org_name": "Beta", "brand_name": "Beta", "started_at": "T-7200s", "status": "done", "duration_seconds": 60.0, "pages_visited": 10, "images_found": 60, "images_new": 2, "pages_per_minute": 10.0, "images_scanned_per_second": 1.0, "clip_images_per_second": 20.0, "avg_new_image_bytes": 200000.0},
+   {"org_name": "Alpha", "brand_name": "Alpha", "started_at": "T-3600s", "status": "done", "duration_seconds": 100.0, "pages_visited": 10, "images_found": 60, "images_new": 2, "pages_per_minute": 6.0, "images_scanned_per_second": 0.6, "clip_images_per_second": 20.0, "avg_new_image_bytes": 200000.0},
+   {"org_name": "Beta", "brand_name": "Beta", "started_at": "T-0s", "status": "running", "duration_seconds": 90.0, "pages_visited": 1, "images_found": 1, "images_new": 1, "pages_per_minute": 0.6666666666666667, "images_scanned_per_second": 0.011111111111111112, "clip_images_per_second": null, "avg_new_image_bytes": null}
+  ]
+ },
+ "jobs": [
+  {"kind": "crawl", "total": 6, "done": 5, "failed": 0, "cancelled": 0, "avg_run_seconds": 528.0, "p95_run_seconds": 540.0, "avg_wait_seconds": 60.0},
+  {"kind": "index", "total": 2, "done": 1, "failed": 0, "cancelled": 0, "avg_run_seconds": 120.0, "p95_run_seconds": 120.0, "avg_wait_seconds": 60.0},
+  {"kind": "match", "total": 5, "done": 0, "failed": 5, "cancelled": 0, "avg_run_seconds": null, "p95_run_seconds": null, "avg_wait_seconds": 12.0},
+  {"kind": "report", "total": 1, "done": 0, "failed": 0, "cancelled": 1, "avg_run_seconds": null, "p95_run_seconds": null, "avg_wait_seconds": 60.0}
+ ],
+ "compare": {"full": true, "hits": 2, "pairs": 1000, "seconds": 0.5, "finished_at": "T-3600s", "pairs_per_second": 2000.0},
+ "matching": {"total": {"matches": 8, "reviewed": 8, "to_remove": 4, "removed": 0, "false_positives": 4, "false_positive_rate": 0.5, "review_progress": 1.0}, "by_confidence": {"haut": {"matches": 4, "reviewed": 4, "to_remove": 4, "removed": 0, "false_positives": 0, "false_positive_rate": 0.0}, "a_verifier": {"matches": 4, "reviewed": 4, "to_remove": 0, "removed": 0, "false_positives": 4, "false_positive_rate": 1.0}}, "by_level": {"phash": {"matches": 4, "reviewed": 4, "to_remove": 4, "removed": 0, "false_positives": 0, "false_positive_rate": 0.0}, "clip": {"matches": 4, "reviewed": 4, "to_remove": 0, "removed": 0, "false_positives": 4, "false_positive_rate": 1.0}}},
+ "queue": {"queued": 1, "running": 1, "oldest_queued_seconds": 54000.0, "last_heartbeat_seconds": 30.0, "jobs_24h": 13, "failed_24h": 5, "last_finished_at": "T-3540s"},
+ "running": [
+  {"id": "<id>", "org_name": "Beta", "brand_name": "Beta", "kind": "index", "message": "msg", "progress": {}, "started_at": "T-3540s", "heartbeat_age_seconds": 30.0}
+ ],
+ "failures": [
+  {"id": "<id>", "org_name": "Alpha", "brand_name": "Alpha", "kind": "match", "error": null, "finished_at": "T-3600s"},
+  {"id": "<id>", "org_name": "Beta", "brand_name": "Beta", "kind": "match", "error": null, "finished_at": "T-7200s"},
+  {"id": "<id>", "org_name": "Delta", "brand_name": "Delta", "kind": "match", "error": null, "finished_at": "T-10800s"},
+  {"id": "<id>", "org_name": "Alpha", "brand_name": "Alpha Cuvee", "kind": "match", "error": null, "finished_at": "T-14400s"},
+  {"id": "<id>", "org_name": "Delta", "brand_name": "Delta Bis", "kind": "match", "error": "boom", "finished_at": "T-21360s"},
+  {"id": "<id>", "org_name": "Alpha", "brand_name": "Alpha", "kind": "crawl", "error": "old failure", "finished_at": "T-3455880s"}
+ ]
+}
+"""
+
+
+def test_platform_insights_snapshot_is_unchanged(empty_platform):
+    snapshot = _platform_snapshot(empty_platform)
+    expected = json.loads(_PLATFORM_SNAPSHOT)
+    # `total_brands` is new; every older figure must match the snapshot taken before.
+    assert snapshot.pop("total_brands") == 6
+    _same(snapshot, expected)
+
+
+def test_platform_summary_is_what_python_computes_from_the_runs(empty_platform):
+    from nyra.cloud import insights
+
+    _seed_world(empty_platform)
+    runs = _all_runs(empty_platform)
+    assert len(runs) == 10  # the run 100 days old is not in the 90-day window
+    _same(insights.platform_insights(empty_platform)["crawls"]["summary"], insights._crawl_summary(runs))
+
+
+def _all_runs(conn):
+    from nyra.cloud import insights
+
+    return insights._all(conn, f"""SELECT {insights._RUN_COLUMNS} FROM insights.crawl_runs
+                                   WHERE started_at > now() - interval '90 days'""")
+
+
+def test_platform_brands_are_capped_but_totals_count_every_brand(empty_platform, monkeypatch):
+    from nyra.cloud import insights
+
+    _seed_world(empty_platform)
+    everything = insights.platform_insights(empty_platform)
+    for limit, expected in ((1, {"Beta"}), (5, {"Alpha", "Alpha Cuvee", "Beta", "Delta", "Delta Bis"})):
+        monkeypatch.setattr(insights, "PLATFORM_BRANDS_LIMIT", limit)
+        data = insights.platform_insights(empty_platform)
+        # The most recently active brands (last crawl or job); Gamma never did anything.
+        assert {row["name"] for row in data["brands"]} == expected
+        assert data["brands"] == [row for row in everything["brands"] if row["name"] in expected]
+        assert data["total_brands"] == data["totals"]["brands"] == 6
+        assert data["totals"] == everything["totals"]
+        assert [row["name"] for row in data["brands"]] == sorted(row["name"] for row in data["brands"])
+    assert len(everything["brands"]) == 6
+
+
+def test_platform_history_keeps_the_latest_runs_oldest_first(empty_platform):
+    from nyra.cloud import db as cloud_db
+    from nyra.cloud import insights
+
+    conn = empty_platform
+    org = cloud_db.create_organization(conn, name="Solo", slug="solo")
+    brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (org,)).fetchone()["id"]
+    cloud_db.create_site(conn, org_id=org, brand_id=brand, url="https://solo.test/")
+    for days in range(1, 66):
+        _run(conn, org, brand, days=days, pages=days)
+    data = insights.platform_insights(conn)
+    # 65 runs, 60 shown: days 60 (oldest) to 1 (latest), and the summary still counts all 65.
+    assert [row["pages_visited"] for row in data["crawls"]["history"]] == list(range(60, 0, -1))
+    assert data["crawls"]["summary"]["runs"] == 65
+
+
+def test_platform_insights_on_an_empty_platform(empty_platform):
+    from nyra.cloud import insights
+
+    data = insights.platform_insights(empty_platform)
+    assert data["brands"] == [] and data["total_brands"] == 0
+    assert set(data["totals"].values()) == {0}
+    summary = data["crawls"]["summary"]
+    assert summary["runs"] == 0 and summary["avg_duration_seconds"] is None and summary["http_statuses"] == {}
+    assert data["crawls"]["history"] == [] and data["jobs"] == [] and data["compare"] is None
     json.dumps(data)
 
 
