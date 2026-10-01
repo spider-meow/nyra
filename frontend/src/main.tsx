@@ -1,21 +1,25 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { StrictMode, useEffect, type ReactNode } from "react";
+import { StrictMode, Suspense, lazy, useEffect, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider, useMatches } from "react-router";
 import { ConfirmProvider, ToastProvider } from "./components/feedback";
 import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
 import { BrandShell, FirstBrand, Login, NotFound, OrgHome, OrgShell, RequireSession, SetPassword } from "./pages/Access";
-import { BackOffice } from "./pages/BackOffice";
 import { Dashboard } from "./pages/Dashboard";
-import { Library } from "./pages/Library";
-import { Reports } from "./pages/Reports";
-import { Review } from "./pages/Review";
-import { Scans } from "./pages/Scans";
-import { Settings } from "./pages/Settings";
-import { SiteImages } from "./pages/SiteImages";
-import { Statistics } from "./pages/Statistics";
+import { Spinner } from "./components/ui";
 import "./index.css";
+
+// Dashboard (the landing page) and the access screens stay in the entry chunk;
+// every other page is fetched the first time it is opened.
+const BackOffice = lazy(() => import("./pages/BackOffice").then((m) => ({ default: m.BackOffice })));
+const Library = lazy(() => import("./pages/Library").then((m) => ({ default: m.Library })));
+const Reports = lazy(() => import("./pages/Reports").then((m) => ({ default: m.Reports })));
+const Review = lazy(() => import("./pages/Review").then((m) => ({ default: m.Review })));
+const Scans = lazy(() => import("./pages/Scans").then((m) => ({ default: m.Scans })));
+const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
+const SiteImages = lazy(() => import("./pages/SiteImages").then((m) => ({ default: m.SiteImages })));
+const Statistics = lazy(() => import("./pages/Statistics").then((m) => ({ default: m.Statistics })));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -28,14 +32,21 @@ const queryClient = new QueryClient({
 
 type Handle = { title: string };
 
-/** Sets the tab title from the deepest route's `handle.title`. */
+/**
+ * Sets the tab title from the deepest route's `handle.title`. The Suspense sits
+ * inside the route element, so under the layout only the page area waits.
+ */
 function Titled(props: { children: ReactNode }) {
   const matches = useMatches();
   const title = [...matches].reverse().find((match) => (match.handle as Handle | undefined)?.title)?.handle as Handle | undefined;
   useEffect(() => {
     document.title = title ? `${title.title} · Nyra` : "Nyra";
   }, [title]);
-  return <>{props.children}</>;
+  return (
+    <Suspense fallback={<div className="p-8"><Spinner label="Chargement de la page…" /></div>}>
+      {props.children}
+    </Suspense>
+  );
 }
 
 const page = (element: ReactNode) => <Titled>{element}</Titled>;
