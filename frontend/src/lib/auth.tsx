@@ -1,6 +1,7 @@
 import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, bindSession } from "./api";
+import { clearStored } from "./storage";
 
 type Phase = "loading" | "unconfigured" | "signed-out" | "signed-in";
 
@@ -71,6 +72,8 @@ export function AuthProvider(props: { children: ReactNode }) {
     if (!client) return;
     const { data } = client.auth.onAuthStateChange((event, next) => {
       if (event === "PASSWORD_RECOVERY") setMustSetPassword(true);
+      // Signed out (button, expired session, another tab): forget this browser's saved preferences and list copies.
+      if (!next) clearStored();
       setSession(next);
       setPhase(next ? "signed-in" : "signed-out");
     });

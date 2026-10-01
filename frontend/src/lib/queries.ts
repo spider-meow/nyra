@@ -17,16 +17,80 @@ import type {
   Settings,
   Site,
   SiteImage,
+  Status,
 } from "../types";
 import { ApiError, api, errorMessage } from "./api";
+import { useAuth } from "./auth";
 import { plural } from "./format";
 import { useOrg } from "./org";
+import { isRecord, oneOf, readStored, removeStored, storageKey, writeStored } from "./storage";
+
+// Copies of the Library and Overview answers in localStorage, so those pages open at once.
+// Older than this, a copy is ignored: the signed thumbnail URLs it holds last one hour.
+const COPY_MAX_AGE_MS = 10 * 60_000;
+
+/**
+ * The last server answer for `name`, per user and brand, to hand to `initialData`.
+ * `initialDataUpdatedAt: 0` (at the call sites) makes TanStack treat it as stale,
+ * so the page shows the copy and refetches immediately.
+ */
+function useAnswerCopy<T>(name: string, isAnswer: (value: unknown) => value is T, maxChars: number) {
+  const { session } = useAuth();
+  const { brand } = useOrg();
+  const key = session ? storageKey(session.user.id, brand.id, `copy.${name}`) : "";
+  const isCopy = (value: unknown): value is { savedAt: number; answer: T } =>
+    isRecord(value) && typeof value.savedAt === "number" && isAnswer(value.answer);
+  return {
+    read(): T | undefined {
+      const copy = key ? readStored("local", key, isCopy) : undefined;
+      const age = copy ? Date.now() - copy.savedAt : -1;
+      if (copy && age >= 0 && age <= COPY_MAX_AGE_MS) return copy.answer;
+      if (key) removeStored("local", key); // too old or unreadable: do not keep signed URLs around
+      return undefined;
+    },
+    write(answer: T): void {
+      if (key) writeStored("local", key, { savedAt: Date.now(), answer }, maxChars);
+    },
+  };
+}
+
+const isOverview = (value: unknown): value is Overview =>
+  isRecord(value) &&
+  isRecord(value.brand) && typeof value.brand.id === "string" &&
+  isRecord(value.organization) &&
+  isRecord(value.stats) &&
+  isRecord(value.dashboard) && Array.isArray(value.dashboard.upcoming) &&
+  isRecord(value.jobs) && Array.isArray(value.jobs.active) &&
+  Array.isArray(value.sites) &&
+  isRecord(value.defaults) && typeof value.defaults.within_days === "number";
+
+const isStatus = oneOf<Status>(["expire", "<30j", "<90j", "ok", "inconnue"]);
+const isLibraryItem = (value: unknown): value is LibraryItem =>
+  isRecord(value) &&
+  typeof value.id === "string" && typeof value.filename === "string" && typeof value.expiry_date === "string" &&
+  (value.days_left === null || typeof value.days_left === "number") &&
+  isStatus(value.status) &&
+  typeof value.credit === "string" && typeof value.notes === "string" &&
+  Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string") &&
+  typeof value.indexed === "boolean" && typeof value.compared === "boolean" &&
+  typeof value.thumb_url === "string" && typeof value.url === "string";
+
+type LibraryAnswer = { items: LibraryItem[]; indexing: boolean };
+const isLibraryAnswer = (value: unknown): value is LibraryAnswer =>
+  isRecord(value) && typeof value.indexing === "boolean" && Array.isArray(value.items) && value.items.every(isLibraryItem);
 
 export function useOverview() {
   const { apiPath, brand } = useOrg();
+  const copy = useAnswerCopy("overview", isOverview, 100_000);
   return useQuery({
     queryKey: ["overview", brand.id],
-    queryFn: () => api.get<Overview>(apiPath("/overview")),
+    queryFn: async () => {
+      const answer = await api.get<Overview>(apiPath("/overview"));
+      copy.write(answer);
+      return answer;
+    },
+    initialData: copy.read,
+    initialDataUpdatedAt: 0,
   });
 }
 
@@ -40,11 +104,22 @@ export function useJobs() {
   });
 }
 
+// ~1,000 references weigh ~0.7 MB once the full-size signed `url` is left out; above this cap nothing is stored.
+const LIBRARY_COPY_MAX_CHARS = 1_500_000;
+
 export function useLibrary() {
   const { apiPath, brand } = useOrg();
+  const copy = useAnswerCopy("library", isLibraryAnswer, LIBRARY_COPY_MAX_CHARS);
   return useQuery({
     queryKey: ["library", brand.id],
-    queryFn: () => api.get<{ items: LibraryItem[]; indexing: boolean }>(apiPath("/library")),
+    queryFn: async () => {
+      const answer = await api.get<LibraryAnswer>(apiPath("/library"));
+      // The full-size image URL is only for the edit window (it falls back to the thumbnail): keep the copy small.
+      copy.write({ ...answer, items: answer.items.map((item) => ({ ...item, url: "" })) });
+      return answer;
+    },
+    initialData: copy.read,
+    initialDataUpdatedAt: 0,
     // Signed image URLs last an hour; refresh well before that.
     staleTime: 60_000,
     refetchInterval: 30 * 60_000,

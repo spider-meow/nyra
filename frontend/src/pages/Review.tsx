@@ -7,6 +7,7 @@ import { errorMessage } from "../lib/api";
 import { daysText, decisionLabel, hostOf, pathOf, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useMatches, useOverview, useReview } from "../lib/queries";
+import { isShortText, usePersistedState } from "../lib/storage";
 import type { Decision, Hit, MatchGroup, Status } from "../types";
 
 type Tab = "found" | "verify" | "missing" | "later";
@@ -20,6 +21,9 @@ const decisionFilters: { value: DecisionFilter; label: string }[] = [
   { value: "ecarte", label: "Faux positifs" },
   { value: "all", label: "Toutes" },
 ];
+
+const WINDOWS = [30, 90, 180, 365, 3650];
+const isWindow = (value: unknown): value is number => typeof value === "number" && WINDOWS.includes(value);
 
 type Row = { key: string; group: MatchGroup; hit: Hit };
 
@@ -36,11 +40,13 @@ export function Review() {
   const overview = useOverview();
   const [params, setParams] = useSearchParams();
   const defaultWindow = overview.data?.defaults.within_days ?? 90;
-  const withinDays = Number(params.get("fenetre") ?? defaultWindow);
+  // The window is remembered in this browser (0 = never chosen); status, decision and tab live in the address, so links keep working.
+  const [savedWindow, setSavedWindow] = usePersistedState("review.window", 0, "local", isWindow);
+  const withinDays = Number(params.get("fenetre") ?? (savedWindow || defaultWindow));
   const statusFilter = (params.get("statut") ?? "all") as Status | "all";
   const decisionFilter = (params.get("decision") ?? "open") as DecisionFilter;
   const tab = (params.get("onglet") ?? "found") as Tab;
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = usePersistedState("review.query", "", "session", isShortText);
   const [shown, setShown] = useState(100);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [panelOpen, setPanelOpen] = useState(false);
@@ -53,6 +59,7 @@ export function Review() {
     if (value === null) next.delete(name);
     else next.set(name, value);
     setParams(next, { replace: true });
+    if (name === "fenetre" && value !== null) setSavedWindow(Number(value));
     setShown(100);
   }
 
@@ -168,7 +175,7 @@ export function Review() {
         <div>
           <FieldLabel htmlFor="window">Échéance</FieldLabel>
           <Select id="window" value={String(withinDays)} onChange={(event) => setParam("fenetre", event.target.value)}>
-            {[30, 90, 180, 365].map((days) => <option key={days} value={days}>Expirés ou sous {days} jours</option>)}
+            {WINDOWS.slice(0, -1).map((days) => <option key={days} value={days}>Expirés ou sous {days} jours</option>)}
             <option value="3650">Toutes les échéances</option>
           </Select>
         </div>
