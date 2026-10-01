@@ -485,6 +485,7 @@ class LocalStore:
     def __init__(self, db_path: Path | str, cache_dir: Path | str = "data/site_images"):
         self.db_path = Path(db_path)
         self.cache_dir = Path(cache_dir)
+        self._paths: dict[tuple[str, int], Optional[str]] = {}
         init_db(self.db_path)
 
     @contextmanager
@@ -559,18 +560,20 @@ class LocalStore:
     # MatchStore
     def load_features(self, use_clip: bool) -> tuple[list[dict], list[dict]]:
         with self._conn() as conn:
-            refs = [feature_dict(row) for row in conn.execute("SELECT * FROM reference_images")]
-            sites = [feature_dict(row) for row in conn.execute("SELECT * FROM site_images")]
+            ref_rows = conn.execute("SELECT * FROM reference_images").fetchall()
+            site_rows = conn.execute("SELECT * FROM site_images").fetchall()
+        refs, sites = [feature_dict(row) for row in ref_rows], [feature_dict(row) for row in site_rows]
         if not use_clip:
             for row in (*refs, *sites):
                 row["embedding"] = None
-        self._paths = {**{("ref", row["id"]): row.get("path") for row in refs},
-                       **{("site", row["id"]): row.get("local_path") for row in sites}}
+        # The image files, for `load_image`: `feature_dict` keeps hashes and embeddings only.
+        self._paths = {**{("ref", row["id"]): row["path"] for row in ref_rows},
+                       **{("site", row["id"]): row["local_path"] for row in site_rows}}
         return refs, sites
 
     def load_image(self, side: str, image_id):
         """The image file, for the geometric check of CLIP candidates (None when it can't be read)."""
-        path = getattr(self, "_paths", {}).get((side, image_id))
+        path = self._paths.get((side, image_id))
         if not path or not Path(path).is_file():
             return None
         from nyra import fetch

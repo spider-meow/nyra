@@ -9,13 +9,15 @@ from __future__ import annotations
 import io
 import random
 
+import numpy as np
 import pytest
 from PIL import Image, ImageDraw, ImageOps
 
 pytest.importorskip("cv2")
 
-from nyra import verify  # noqa: E402
-from nyra.config import MatchConfig  # noqa: E402
+from nyra import db, verify  # noqa: E402
+from nyra.config import MatchConfig, load_config  # noqa: E402
+from nyra.match import compute_flip_hashes, compute_hashes, run_matching  # noqa: E402
 
 CONFIG = MatchConfig()
 
@@ -94,3 +96,47 @@ def test_verify_hits_drops_other_pictures_confirms_copies_and_keeps_level_one_hi
         (1, 3, "phash", 0.98, "haut"),
         (1, 4, "clip", 0.80, "a_verifier"),
     ])
+
+
+def test_the_image_caches_stay_bounded_and_verdicts_do_not_change(monkeypatch):
+    """More references than the cache holds: its size never passes the limit, and each verdict is
+    the one of a pair checked alone (nothing cached)."""
+    monkeypatch.setattr(verify, "REFERENCE_CACHE", 3)
+    size = (360, 260)
+    refs = {i: scene(30 + i, size) for i in range(8)}
+    sites = {0: jpeg(refs[0].resize((300, 216))), 1: scene(60, size), 2: jpeg(ImageOps.mirror(refs[5]))}
+    load = lambda side, image_id: (refs if side == "ref" else sites)[image_id]  # noqa: E731
+    pairs = [(r, s) for r in refs for s in sites]  # 24 distinct pairs, reference by reference
+
+    shared = verify._ImageFeatures(load)
+    for ref_id, site_id in pairs:
+        got = verify._pair_verdict(shared, ref_id, site_id, CONFIG)
+        assert shared.reference.cache_info().currsize <= 3
+        assert got == verify._pair_verdict(verify._ImageFeatures(load), ref_id, site_id, CONFIG)
+    assert {verify._pair_verdict(shared, r, s, CONFIG).tier for r, s in [(0, 0), (5, 2), (1, 1)]} == {verify.SAME, None}
+
+
+def test_the_offline_store_gives_the_verifier_its_images(tmp_path):
+    """SQLite store + run_matching: a CLIP candidate that is a crop of the reference becomes geo/haut,
+    another shot (same CLIP score) is dropped. Before, `load_image` found no file and both stayed clip/a_verifier."""
+    db_path = tmp_path / "g.db"
+    db.init_db(db_path)
+    vector = np.random.default_rng(1).normal(0, 1, 16).astype(np.float32)
+    vector /= np.linalg.norm(vector)  # the same embedding everywhere: CLIP alone can't tell the crop from the other shot
+    original = scene(40)
+    with db.connect(db_path) as conn:
+        original.save(tmp_path / "ref.png")
+        (phash, dhash), (pflip, dflip) = compute_hashes(original), compute_flip_hashes(original)
+        db.upsert_reference_image(conn, filename="ref.jpg", path=str(tmp_path / "ref.png"), expiry_date=None, credit=None,
+                                  notes=None, phash=phash, dhash=dhash, phash_flip=pflip, dhash_flip=dflip, embedding=vector)
+        for name, image in {"crop": jpeg(original.crop((90, 60, 800, 600)).resize((500, 380)), 55), "other": scene(41)}.items():
+            image.save(tmp_path / f"{name}.png")
+            site_phash, site_dhash = compute_hashes(image)
+            db.upsert_site_image(conn, url=f"https://ex.com/{name}.jpg", local_path=str(tmp_path / f"{name}.png"),
+                                 phash=site_phash, dhash=site_dhash, embedding=vector)
+    stats: dict = {}
+    run_matching(db_path, load_config(), use_clip=True, stats=stats)
+    with db.connect(db_path) as conn:
+        found = [(m["site_url"], m["level"], m["confidence"]) for m in db.get_matches(conn)]
+    assert stats["verified_candidates"] == 2
+    assert found == [("https://ex.com/crop.jpg", "geo", "haut")]

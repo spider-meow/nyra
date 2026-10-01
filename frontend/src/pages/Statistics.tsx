@@ -32,7 +32,8 @@ function StatisticsContent() {
   const [metric, setMetric] = useState<HistoryMetric>("duration_seconds");
 
   if (insights.isLoading) return <StatisticsSkeleton />;
-  if (insights.error || !insights.data) return <EmptyState title="Impossible de charger les statistiques" body={errorMessage(insights.error)} />;
+  // A failed background refresh keeps the data already on screen; the error shows only when there is none.
+  if (!insights.data) return <EmptyState title="Impossible de charger les statistiques" body={errorMessage(insights.error)} />;
 
   const { site, formats, library, crawls, jobs, compare, matching } = insights.data;
   const { summary, last, history } = crawls;

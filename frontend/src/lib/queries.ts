@@ -237,10 +237,11 @@ export function useCancelJob() {
 type ReviewInput = { referenceId: string; siteImageIds: string[]; decision: Decision | "" };
 
 /** Decisions apply instantly on screen and roll back if the server refuses. */
-export function useReview(withinDays: number) {
+export function useReview() {
   const { apiPath, brand } = useOrg();
   const client = useQueryClient();
-  const key = ["matches", brand.id, withinDays];
+  // Every time window of the brand: a decision must show in all of them, not only the one on screen.
+  const key = ["matches", brand.id];
   return useMutation({
     mutationFn: (input: ReviewInput) =>
       api.post(apiPath("/reviews"), {
@@ -250,31 +251,26 @@ export function useReview(withinDays: number) {
       }),
     onMutate: async (input) => {
       await client.cancelQueries({ queryKey: key });
-      const previous = client.getQueryData<Matches>(key);
-      if (previous) {
-        const ids = new Set(input.siteImageIds);
-        const patch = (groups: Matches["confirmed"]) =>
-          groups.map((group) =>
-            group.reference_id !== input.referenceId
-              ? group
-              : {
-                  ...group,
-                  hits: group.hits.map((hit) =>
-                    hit.site_image_ids.some((id) => ids.has(id)) ? { ...hit, decision: input.decision || null } : hit,
-                  ),
-                },
-          );
-        client.setQueryData<Matches>(key, {
-          ...previous,
-          confirmed: patch(previous.confirmed),
-          to_verify: patch(previous.to_verify),
-          later: patch(previous.later),
-        });
-      }
+      const previous = client.getQueriesData<Matches>({ queryKey: key });
+      const ids = new Set(input.siteImageIds);
+      const patch = (groups: Matches["confirmed"]) =>
+        groups.map((group) =>
+          group.reference_id !== input.referenceId
+            ? group
+            : {
+                ...group,
+                hits: group.hits.map((hit) =>
+                  hit.site_image_ids.some((id) => ids.has(id)) ? { ...hit, decision: input.decision || null } : hit,
+                ),
+              },
+        );
+      client.setQueriesData<Matches>({ queryKey: key }, (data) =>
+        data && { ...data, confirmed: patch(data.confirmed), to_verify: patch(data.to_verify), later: patch(data.later) },
+      );
       return { previous };
     },
     onError: (_error, _input, context) => {
-      if (context?.previous) client.setQueryData(key, context.previous);
+      for (const [queryKey, data] of context?.previous ?? []) client.setQueryData(queryKey, data);
     },
     onSettled: () => void client.invalidateQueries({ queryKey: ["overview", brand.id] }),
   });
@@ -437,6 +433,16 @@ export function useExclusionMutations() {
       mutationFn: (input: { siteImageId: string; reason: string }) =>
         api.post<{ matches_removed: number }>(apiPath("/exclusions"), { site_image_id: input.siteImageId, reason: input.reason }),
       onSuccess: done,
+    }),
+    // Several images at once: the requests go together and the lists are refreshed once, not once per image.
+    addMany: useMutation({
+      mutationFn: async (input: { siteImageIds: string[]; reason: string }) => {
+        const results = await Promise.allSettled(
+          input.siteImageIds.map((id) => api.post(apiPath("/exclusions"), { site_image_id: id, reason: input.reason })),
+        );
+        return { failed: results.filter((result) => result.status === "rejected").length };
+      },
+      onSettled: done,
     }),
     remove: useMutation({
       mutationFn: (id: string) => api.del(apiPath(`/exclusions/${id}`)),

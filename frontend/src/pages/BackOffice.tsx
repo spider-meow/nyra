@@ -70,7 +70,8 @@ function BackOfficeContent() {
   const [metric, setMetric] = useState<HistoryMetric>("duration_seconds");
 
   if (insights.isLoading) return <BackOfficeSkeleton />;
-  if (insights.error || !insights.data) return <EmptyState title="Impossible de charger le back office" body={errorMessage(insights.error)} />;
+  // A failed background refresh keeps the data already on screen; the error shows only when there is none.
+  if (!insights.data) return <EmptyState title="Impossible de charger le back office" body={errorMessage(insights.error)} />;
 
   const data = insights.data;
   const { totals, brands, crawls, queue, running, failures } = data;

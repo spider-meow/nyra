@@ -39,10 +39,13 @@ function useFilters() {
   const defaultWindow = overview.data?.defaults.within_days ?? 90;
   // The window is remembered in this browser (0 = never chosen); status, decision and tab live in the address, so links keep working.
   const [savedWindow, setSavedWindow] = usePersistedState("review.window", 0, "local", isWindow);
-  const withinDays = Number(params.get("fenetre") ?? (savedWindow || defaultWindow));
-  const statusFilter = (params.get("statut") ?? "all") as Status | "all";
-  const decisionFilter = (params.get("decision") ?? "open") as DecisionFilter;
-  const tab = (params.get("onglet") ?? "found") as Tab;
+  // An address can say anything: a value that makes no sense falls back to the default instead of breaking the page.
+  const pick = <T extends string>(name: string, allowed: readonly T[], fallback: T): T => allowed.find((item) => item === params.get(name)) ?? fallback;
+  const urlWindow = Number(params.get("fenetre"));
+  const withinDays = Number.isInteger(urlWindow) && urlWindow > 0 && urlWindow <= 3650 ? urlWindow : savedWindow || defaultWindow;
+  const statusFilter = pick<Status | "all">("statut", ["all", "expire", "<30j", "<90j", "ok", "inconnue"], "all");
+  const decisionFilter = pick("decision", decisionFilters.map((item) => item.value), "open");
+  const tab = pick<Tab>("onglet", ["found", "verify", "missing", "later"], "found");
   const [query, setQuery] = usePersistedState("review.query", "", "session", isShortText);
   const [shown, setShown] = useState(100);
 
@@ -111,7 +114,7 @@ function useSelection(rows: Row[], shown: number, setShown: (value: number) => v
 export function useReviewView() {
   const filters = useFilters();
   const matches = useMatches(filters.withinDays);
-  const review = useReview(filters.withinDays);
+  const review = useReview();
   const { rows, missing } = useRows(matches.data, filters);
   const selection = useSelection(rows, filters.shown, filters.setShown);
   const data = matches.data;

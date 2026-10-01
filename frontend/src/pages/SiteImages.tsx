@@ -201,12 +201,11 @@ function SelectionBar(props: { count: number; onAdd: () => void; onIgnore: () =>
 
 /** Set aside as not rights-managed: never proposed again, near copies included. */
 function useIgnore() {
-  const { add } = useExclusionMutations();
+  const { addMany } = useExclusionMutations();
   const toast = useToast();
   return (items: SiteImage[], done: () => void) => {
     const pending = toast.loading(items.length > 1 ? `${items.length} images ignorées…` : "Image ignorée…");
-    void Promise.allSettled(items.map((item) => add.mutateAsync({ siteImageId: item.id, reason: "Pas sous droits" }))).then((results) => {
-      const failed = results.filter((result) => result.status === "rejected").length;
+    void addMany.mutateAsync({ siteImageIds: items.map((item) => item.id), reason: "Pas sous droits" }).then(({ failed }) => {
       done();
       toast.update(pending, failed
         ? { tone: "error", message: `${plural(failed, "image n'a pas pu être ignorée", "images n'ont pas pu être ignorées")}`, description: "Réessayez dans un instant." }

@@ -91,6 +91,24 @@ class JobContext:
         self._done.set()
 
 
+def _one_per_hash(rows: list[dict]) -> list[dict]:
+    """One row per content_hash: `_save_site` gives the embedding and the thumbnail to every row of the
+    hash, so the image is read and embedded once. `twins` counts the rows it stands for (progress, `indexed`)."""
+    heads: dict[str, dict] = {}
+    out = []
+    for row in rows:
+        head = heads.get(row["content_hash"])  # a NULL hash is never a key: those rows stay apart
+        if head is None:
+            head = {**row, "twins": 0}
+            out.append(head)
+            if row["content_hash"] is not None:
+                heads[row["content_hash"]] = head
+        else:
+            head["twins"] += 1
+            head["needs_embedding"] = head["needs_embedding"] or row["needs_embedding"]
+    return out
+
+
 class _IndexRun:
     """One index job: the images still missing something, the timings, and the progress made."""
 
@@ -129,7 +147,7 @@ class _IndexRun:
 
     def process_sites(self) -> None:
         self._process(
-            self.sites,
+            _one_per_hash(self.sites),
             lambda row: (cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"], row["content_hash"] or row["phash"]),
             self._save_site)
 
@@ -150,8 +168,8 @@ class _IndexRun:
             embeddings = iter(self._embed([img for row, img in chunk if row["needs_embedding"]]))
             for row, img in chunk:
                 save(row, img, next(embeddings) if row["needs_embedding"] else None)
-                self.updated += 1
-            self.done += len(part)
+                self.updated += 1 + row.get("twins", 0)
+            self.done += sum(1 + row.get("twins", 0) for row in part)
             self.ctx.report(f"Analyse des images · {self.done}/{self.total}",
                             {"phase": "index", "done": self.done, "total": self.total})
 

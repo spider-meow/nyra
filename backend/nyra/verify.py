@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from functools import cached_property, lru_cache
 from typing import Any, Callable, Optional, Sequence
 
 import numpy as np
@@ -145,36 +146,49 @@ def compare(a: Optional[Features], b: Optional[Features], config: MatchConfig) -
 ImageLoader = Callable[[str, Any], Optional[Image.Image]]
 
 
+class _Reference:
+    """A reference seen through the keypoint check: its grayscale and its keypoints, mirror on demand."""
+
+    def __init__(self, gray: Optional[Image.Image]):
+        self.gray = gray
+        self.plain = None if gray is None else extract(gray)
+
+    @cached_property
+    def mirrored(self) -> Optional[Features]:
+        return None if self.gray is None else extract(self.gray, mirror=True)
+
+
+# A reference meets many site images, so its decoded grayscale (~1 MB) and its two keypoint sets
+# (~1 MB each) are kept; the hits come reference by reference, so a few dozen entries are enough.
+# 32 references hold about 100 MB at most. A site image is read, used for its pair, and dropped.
+REFERENCE_CACHE = 32
+
+
 class _ImageFeatures:
-    """Each image is loaded once, and its keypoints are extracted once per orientation."""
+    """The reference side is cached in a small LRU; the site side is read again for each pair."""
 
     def __init__(self, load_image: ImageLoader):
         self.load_image = load_image
-        self.grays: dict[tuple[str, Any], Optional[Image.Image]] = {}
-        self.cache: dict[tuple[str, Any, bool], Optional[Features]] = {}
+        self.reference = lru_cache(maxsize=REFERENCE_CACHE)(self._load_reference)
 
     def gray(self, side: str, image_id: Any) -> Optional[Image.Image]:
-        if (side, image_id) not in self.grays:
-            img = self.load_image(side, image_id)
-            self.grays[(side, image_id)] = None if img is None else working_gray(img)
-        return self.grays[(side, image_id)]
+        img = self.load_image(side, image_id)
+        return None if img is None else working_gray(img)
 
-    def features(self, side: str, image_id: Any, mirror: bool = False) -> Optional[Features]:
-        key = (side, image_id, mirror)
-        if key not in self.cache:
-            image = self.gray(side, image_id)
-            self.cache[key] = None if image is None else extract(image, mirror=mirror)
-        return self.cache[key]
+    def _load_reference(self, ref_id: Any) -> _Reference:
+        return _Reference(self.gray("ref", ref_id))
 
 
 def _pair_verdict(images: _ImageFeatures, ref_id: Any, site_id: Any, config: MatchConfig) -> Optional[Verdict]:
     """The keypoint verdict of a pair, the mirrored reference included; None when an image can't be read."""
-    ref, site = images.features("ref", ref_id), images.features("site", site_id)
-    if images.gray("ref", ref_id) is None or images.gray("site", site_id) is None:
+    ref = images.reference(ref_id)
+    site_gray = None if ref.gray is None else images.gray("site", site_id)
+    if site_gray is None:
         return None
-    verdict = compare(ref, site, config)
+    site = extract(site_gray)
+    verdict = compare(ref.plain, site, config)
     if verdict.tier != SAME:
-        mirrored = compare(images.features("ref", ref_id, True), site, config)
+        mirrored = compare(ref.mirrored, site, config)
         if mirrored.tier == SAME or (mirrored.tier and not verdict.tier):
             verdict = mirrored
     return verdict

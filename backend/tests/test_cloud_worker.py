@@ -242,22 +242,45 @@ def test_a_cancelled_index_job_stops_between_batches_and_skips_the_comparison(wo
     assert len(checks) == 3  # refs loop: batch 1, batch 2 (stops); sites loop: its first check (stops)
 
 
-def test_index_job_embeds_site_images_sharing_a_hash_and_fills_all_their_rows(worker, cloud_database_url, cloud_org,
-                                                                            cloud_brand, fake_storage_client):
-    data = _image_bytes(0)
+def _site_images_sharing_a_hash(conn, storage, org_id, brand_id, count):
+    """`count` site images with the same bytes (so the same content_hash) and one different image."""
+    site = cloud_db.create_site(conn, org_id=org_id, brand_id=brand_id, url="https://t.test/")
+    ids = [_add_site_image(conn, storage, org_id, site, f"https://t.test/{i}.jpg", _image_bytes(0)) for i in range(count)]
+    digest = conn.execute("SELECT content_hash FROM site_images WHERE id = %s", (ids[0],)).fetchone()["content_hash"]
+    conn.execute("UPDATE site_images SET content_hash = %s WHERE id = ANY(%s)", (digest, ids))
+    _add_site_image(conn, storage, org_id, site, "https://t.test/other.jpg", _image_bytes(60))
+    return ids, digest
+
+
+def test_index_job_embeds_site_images_sharing_a_hash_once_and_fills_all_their_rows(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client, monkeypatch):
+    embedded = []
+    monkeypatch.setattr(worker_module, "compute_clip_embeddings",
+                        lambda images, config: embedded.append(len(images)) or _fake_embeddings(images, config))
     with cloud_db.connect(cloud_database_url) as conn:
-        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
-        first = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/a.jpg", data)
-        second = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/b.jpg", data)
-        digest = conn.execute("SELECT content_hash FROM site_images WHERE id = %s", (first,)).fetchone()["content_hash"]
-        conn.execute("UPDATE site_images SET content_hash = %s WHERE id = %s", (digest, second))
+        _, digest = _site_images_sharing_a_hash(conn, fake_storage_client, cloud_org, cloud_brand, 3)
     finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
-    assert finished["result"]["indexed"] == 2 and finished["result"]["metrics"]["embedded"] == 2
-    assert finished["message"] == "2 image(s) indexée(s), comparaison à jour."
+    assert sum(embedded) == 2  # one image per distinct hash, not four
+    assert finished["result"]["indexed"] == 4 and finished["result"]["metrics"]["embedded"] == 2
+    assert finished["message"] == "4 image(s) indexée(s), comparaison à jour."
     with cloud_db.connect(cloud_database_url) as conn:
-        rows = conn.execute("SELECT embedding, thumb_path FROM site_images WHERE org_id = %s", (cloud_org,)).fetchall()
-    assert len(rows) == 2 and all(row["embedding"] is not None for row in rows)
-    assert {row["thumb_path"] for row in rows} == {f"{cloud_org}/thumbs/{digest}.jpg"}
+        rows = conn.execute("SELECT content_hash, embedding, thumb_path FROM site_images WHERE org_id = %s",
+                            (cloud_org,)).fetchall()
+    assert len(rows) == 4 and all(row["embedding"] is not None for row in rows)
+    assert [row["thumb_path"] for row in rows if row["content_hash"] == digest] == [f"{cloud_org}/thumbs/{digest}.jpg"] * 3
+
+
+def test_index_job_embeds_a_hash_when_only_one_of_its_rows_lacks_an_embedding(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
+    with cloud_db.connect(cloud_database_url) as conn:
+        ids, _ = _site_images_sharing_a_hash(conn, fake_storage_client, cloud_org, cloud_brand, 2)
+        conn.execute("UPDATE site_images SET embedding = %s WHERE id = %s", (np.ones(512, dtype=np.float32), ids[0]))
+    finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert finished["result"]["indexed"] == 3 and finished["result"]["metrics"]["embedded"] == 2
+    with cloud_db.connect(cloud_database_url) as conn:
+        missing = conn.execute("SELECT COUNT(*) AS c FROM site_images WHERE org_id = %s AND embedding IS NULL",
+                               (cloud_org,)).fetchone()["c"]
+    assert missing == 0
 
 
 def test_report_job_stores_files_without_false_positives(worker, cloud_database_url, cloud_org, cloud_brand,
