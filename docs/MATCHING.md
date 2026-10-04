@@ -66,6 +66,19 @@ pairs of different images, 0 %. Of 400 pairs CLIP scored ≥ 0.75 that level
 1 didn't match, 42 % were dropped: different shots of the same bottles,
 cocktails, cellars and vineyards, checked by eye.
 
+## Grouping the crops of a site photo
+
+The same two steps also run between site images (`nyra/variants.py`,
+`cloud/variants.py`), after each comparison, so "Droits non vérifiés" shows
+a photo once however many crops or sizes the sites serve. For each image not
+yet checked (`variants_checked_at` NULL): its 5 closest images by CLIP
+(cosine ≥ `clip_similarity_floor`) are the candidates, the keypoint check
+keeps only the confirmed tier (≥ 20 % of both images), and the pairs are
+merged into groups (`site_images.variant_group`, at most 40 images per group,
+a group keeps its id when another crop joins it). A mirrored copy is not
+looked for. Thresholds changed in Settings do not regroup what is already
+grouped. Ignoring a photo sets aside every one of its versions.
+
 ## Exclusions
 
 Recurring false positives — a logo, a generic visual reused on every

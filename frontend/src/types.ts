@@ -183,9 +183,24 @@ export type ImportRow = {
 
 export type Exclusion = { id: string; reason: string; site_url: string; thumb_url: string; created_at: string };
 
+/** One file of a photo (a crop or a size of it), and where it was read: site version and page. */
+export type SiteImageVariant = {
+  id: string;
+  url: string;
+  url_count: number;
+  width: number | null;
+  height: number | null;
+  thumb: string;
+  image: string;
+  where: { site: string; page: string }[];
+  where_count: number;
+};
+
 export type SiteImage = {
   id: string;
   ids: string[];
+  /** Largest first; the first one is the image shown on the card. */
+  variants: SiteImageVariant[];
   url: string;
   urls: string[];
   url_count: number;

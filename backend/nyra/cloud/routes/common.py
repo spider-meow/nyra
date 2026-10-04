@@ -12,7 +12,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 import psycopg
 from fastapi import Depends, HTTPException, Request
@@ -193,14 +193,22 @@ def enqueue(ctx: Ctx, scope: BrandScope, kind: str, params: dict) -> dict:
 
 def unreferenced_images(conn, brand_id: uuid.UUID, config: Config) -> list[dict]:
     """Images of the brand's sites that match nothing in its library and weren't set aside,
-    one entry per distinct image (the same bytes under several URLs count once)."""
+    one entry per photo: the same bytes under several URLs, and the crops and resizes of one photo
+    (`variant_group`), count once. The lead of an entry is its largest image."""
     rows = cloud_db.unmatched_site_images(conn, brand_id)
     excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
-    groups: dict[str, dict] = {}
-    for row in rows:
-        if row["id"] in excluded:
-            continue
-        group = groups.setdefault(row["content_hash"] or str(row["id"]), {"lead": row, "rows": []})
-        group["rows"].append(row)
-    return list(groups.values())
+    shown = [row for row in rows if row["id"] not in excluded]
+    # A twin of a grouped file (same bytes, new address) joins the group before the worker has seen it.
+    group_of = {row["content_hash"]: row["variant_group"] for row in shown if row["variant_group"] and row["content_hash"]}
+    groups: dict[Any, list[dict]] = {}
+    for row in shown:
+        key = row["variant_group"] or group_of.get(row["content_hash"]) or row["content_hash"] or row["id"]
+        groups.setdefault(key, []).append(row)
+    for members in groups.values():
+        members.sort(key=lambda row: -image_pixels(row))  # stable: the lead is the first row of the largest file
+    return [{"lead": members[0], "rows": members} for members in groups.values()]
+
+
+def image_pixels(row: dict) -> int:
+    return (row["width"] or 0) * (row["height"] or 0)
 

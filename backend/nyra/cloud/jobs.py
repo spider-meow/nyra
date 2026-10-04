@@ -27,6 +27,8 @@ import psycopg
 KINDS = {"crawl", "match", "index", "report"}
 ACTIVE = ("queued", "running")
 STALE_AFTER_SECONDS = 180
+# A job whose worker died goes back to the queue this many times before it is marked failed.
+MAX_RETRIES = 2
 
 
 class JobConflict(Exception):
@@ -137,23 +139,52 @@ def request_cancel(conn: psycopg.Connection, brand_id: uuid.UUID, job_id: uuid.U
     return _row(row)
 
 
-def reap_stale(conn: psycopg.Connection, older_than_seconds: int = STALE_AFTER_SECONDS) -> int:
-    """Mark running jobs whose worker stopped reporting as failed, and their crawl runs too."""
-    rows = conn.execute(
-        """UPDATE jobs SET status = 'error', finished_at = now(),
+def reap_stale(conn: psycopg.Connection, older_than_seconds: int = STALE_AFTER_SECONDS) -> tuple[int, int]:
+    """Recover running jobs whose worker stopped reporting: (put back in the queue, marked failed).
+
+    A job goes back to the queue (with `retries` counted in its params, and a crawl resuming where it was)
+    up to `MAX_RETRIES` times, unless a stop was asked; past that it fails, so a job that kills its worker
+    every time cannot loop. Their crawl runs, dead either way, are closed.
+    """
+    stale = "status = 'running' AND heartbeat_at < now() - make_interval(secs => %s)"
+    retries = "COALESCE((params ->> 'retries')::int, 0)"
+    requeued = conn.execute(
+        f"""UPDATE jobs SET status = 'queued', started_at = NULL, heartbeat_at = NULL, progress = '{{}}'::jsonb,
+               message = 'Relancé automatiquement : le worker s''est arrêté pendant la tâche.',
+               params = jsonb_set(params - 'fresh', '{{retries}}', to_jsonb({retries} + 1))
+           WHERE {stale} AND NOT cancel_requested AND {retries} < %s
+           RETURNING id""",
+        (older_than_seconds, MAX_RETRIES),
+    ).fetchall()
+    failed = conn.execute(
+        f"""UPDATE jobs SET status = 'error', finished_at = now(),
                message = 'Interrompu : le worker s''est arrêté pendant la tâche.',
                error = 'heartbeat lost'
-           WHERE status = 'running' AND heartbeat_at < now() - make_interval(secs => %s)
+           WHERE {stale}
            RETURNING id""",
         (older_than_seconds,),
     ).fetchall()
-    ids = [row["id"] for row in rows]
+    ids = [row["id"] for row in (*requeued, *failed)]
     if ids:
         conn.execute(
             "UPDATE crawl_runs SET status = 'error', finished_at = now() WHERE job_id = ANY(%s) AND status = 'running'",
             (ids,),
         )
-    return len(ids)
+    return len(requeued), len(failed)
+
+
+def stalled_seconds(conn: psycopg.Connection) -> float:
+    """How long the oldest queued job has waited while nothing runs, else 0.
+
+    An idle worker claims a queued job within seconds, so a job that waits with no job running anywhere
+    means no worker is alive (a busy worker shows as a running job)."""
+    row = conn.execute(
+        """SELECT COALESCE(EXTRACT(epoch FROM now() - min(created_at) FILTER (WHERE status = 'queued')), 0) AS waited,
+                  COALESCE(bool_or(status = 'running'), false) AS running
+           FROM jobs WHERE status = ANY(%s)""",
+        (list(ACTIVE),),
+    ).fetchone()
+    return 0.0 if row["running"] else float(row["waited"])
 
 
 def get(conn: psycopg.Connection, brand_id: uuid.UUID, job_id: uuid.UUID) -> Optional[dict]:

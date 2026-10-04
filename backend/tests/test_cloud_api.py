@@ -81,6 +81,21 @@ def test_healthz_and_auth_config_need_no_session(client):
     assert client.get("/api/auth/config").json()["supabaseUrl"] == "https://x.supabase.co"
 
 
+def test_workerz_says_503_when_a_job_has_waited_for_a_worker_that_is_not_there(client, cloud_org, cloud_brand,
+                                                                               cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
+    assert client.get("/api/workerz").status_code == 200  # just queued: a worker may be about to take it
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
+    answer = client.get("/api/workerz")
+    assert answer.status_code == 503 and answer.json()["status"] == "no worker"
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_jobs.claim(conn)
+    assert client.get("/api/workerz").status_code == 200
+
+
 def test_there_is_no_public_signup(client):
     assert client.post("/api/signup", json={"email": "a@b.c", "password": "12345678"}).status_code in {404, 405}
 
@@ -763,6 +778,56 @@ def test_site_images_without_a_reference_are_listed_and_can_join_the_library(
     # Adding the same image again gets its own name instead of replacing the first visual.
     again = client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json={"site_image_ids": [campaign["id"]]}).json()
     assert again["added"][0]["filename"] == "Campagne été (2).jpg"
+
+
+def test_crops_of_one_photo_are_one_entry_listing_each_version_and_where_it_was_read(
+    client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client
+):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    data = _upload_bytes().getvalue()
+    group = uuid.uuid4()
+    with cloud_db.connect(cloud_database_url) as conn:
+        us, fr = _site(conn, org_id, cloud_brand, "https://t.test/us/"), _site(conn, org_id, cloud_brand, "https://t.test/fr/")
+        for site, name, size, group_id in ((us, "small", (366, 372), group), (fr, "large", (435, 628), group),
+                                           (fr, "alone", (200, 200), None)):
+            path = f"{org_id}/{name}.jpg"
+            fake_storage_client.store[("site-images", path)] = data
+            image = conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, content_hash, phash, dhash, width, height,
+                                            variant_group)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, f"https://t.test/{name}.jpg", path, name, "ffff0000ffff0000", "ffff0000ffff0000", *size, group_id),
+            ).fetchone()["id"]
+            page = conn.execute("INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, %s, 'done') RETURNING id",
+                                (org_id, site, f"https://t.test/{name}-page")).fetchone()["id"]
+            cloud_db.link_image_page(conn, image, page)
+
+    items = client.get(f"{base}/site-images", headers=_headers(client_id)).json()["items"]
+    assert len(items) == 2  # the two versions of the photo count once, next to the image alone
+    photo = next(item for item in items if len(item["variants"]) == 2)
+    assert (photo["width"], photo["height"]) == (435, 628)  # the card shows the largest
+    large, small = photo["variants"]
+    assert (large["width"], small["width"]) == (435, 366) and large["id"] == photo["id"]
+    assert large["where"] == [{"site": "t.test", "page": "https://t.test/large-page"}] and small["where_count"] == 1
+    assert photo["site_ids"] and len(photo["sites"]) == 2 and photo["page_count"] == 2
+    assert client.get(f"{base}/overview", headers=_headers(client_id)).json()["dashboard"]["unreferenced_online"] == 2
+
+    # The same bytes read at a new address, not seen by the worker yet (no group), join their file's entry;
+    # two addresses on one page are one occurrence.
+    with cloud_db.connect(cloud_database_url) as conn:
+        image = conn.execute(
+            """INSERT INTO site_images (org_id, site_id, url, storage_path, content_hash, phash, dhash, width, height)
+               SELECT org_id, site_id, 'https://t.test/large-copy.jpg', storage_path, content_hash, phash, dhash, width, height
+               FROM site_images WHERE org_id = %s AND content_hash = 'large' RETURNING id""",
+            (org_id,),
+        ).fetchone()["id"]
+        page = conn.execute("SELECT id FROM pages WHERE org_id = %s AND url = 'https://t.test/large-page'",
+                            (org_id,)).fetchone()["id"]
+        cloud_db.link_image_page(conn, image, page)
+    items = client.get(f"{base}/site-images", headers=_headers(client_id)).json()["items"]
+    assert len(items) == 2
+    large = next(item for item in items if len(item["variants"]) == 2)["variants"][0]
+    assert large["url_count"] == 2 and large["where_count"] == 1
 
 
 @pytest.fixture()

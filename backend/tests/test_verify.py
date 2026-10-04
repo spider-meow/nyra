@@ -79,6 +79,13 @@ def test_the_same_element_in_another_picture_is_for_a_person_to_check_or_dropped
     assert tier(first, second).tier in {verify.REVIEW, None}
 
 
+def test_same_photo_pairs_keeps_crops_and_drops_other_pictures_and_unreadable_images():
+    original = scene(20)
+    images = {"a": original, "b": jpeg(original.crop((90, 60, 800, 600)).resize((500, 380))), "c": scene(21)}
+    pairs = [("a", "b"), ("a", "c"), ("a", "missing")]
+    assert verify.same_photo_pairs(pairs, images.get, CONFIG) == [("a", "b")]
+
+
 def test_verify_hits_drops_other_pictures_confirms_copies_and_keeps_level_one_hits():
     images = {("ref", 1): scene(10), ("site", 1): jpeg(scene(10).resize((600, 433))), ("site", 2): scene(11)}
     hits = [

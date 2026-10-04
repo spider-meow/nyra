@@ -208,6 +208,36 @@ def _pair_verdict(images: _ImageFeatures, ref_id: Any, site_id: Any, config: Mat
     return verdict
 
 
+def same_photo_pairs(
+    pairs: Sequence[tuple[Any, Any]],
+    load_image: Callable[[Any], Optional[Image.Image]],
+    config: MatchConfig,
+    *,
+    progress: Optional[Callable[[int, int], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> list[tuple[Any, Any]]:
+    """The site-image pairs that are one photo (confirmed tier: cropped, resized, recolored), not just one subject.
+
+    `load_image(id)` returns the image or None; a pair with an unreadable image is left out. Pairs that
+    share an image should be adjacent: each image's keypoints are kept in a small cache.
+    A mirrored copy is not looked for (rare between two images of one site).
+    """
+    images = _ImageFeatures(lambda _side, image_id: load_image(image_id))
+    kept: list[tuple[Any, Any]] = []
+    for index, (a, b) in enumerate(pairs):
+        if should_stop and should_stop():
+            break
+        loaded = images.site(a), images.site(b)
+        if None not in loaded:
+            (first,), (second,) = loaded
+            if compare(first, second, config).tier == SAME:
+                kept.append((a, b))
+        if progress:
+            progress(index + 1, len(pairs))
+    images.clear()
+    return kept
+
+
 def verify_hits(
     hits: Sequence[tuple],
     load_image: ImageLoader,

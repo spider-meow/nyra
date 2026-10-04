@@ -3,20 +3,36 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
 
 from ... import observability
 from .. import auth as cloud_auth
 from .. import db as cloud_db
 from .. import insights as cloud_insights
+from .. import jobs as cloud_jobs
 from .common import Ctx, brand_json, get_ctx, staff_dep, user_dep
 
 router = APIRouter()
+
+# A queued job waiting this long with no job running anywhere: nobody is working (a worker polls every 2 s).
+WORKER_STALL_SECONDS = 300
 
 
 @router.get("/api/healthz")
 def healthz(ctx: Ctx = Depends(get_ctx)) -> dict:
     cloud_db.ping(ctx.settings.database_url)
     return {"status": "ok"}
+
+
+@router.get("/api/workerz")
+def workerz(ctx: Ctx = Depends(get_ctx)) -> JSONResponse:
+    """For an uptime monitor: 503 when a queued job has waited over `WORKER_STALL_SECONDS` with nothing running,
+    which means no worker is alive."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        waited = cloud_jobs.stalled_seconds(conn)
+    stalled = waited > WORKER_STALL_SECONDS
+    return JSONResponse({"status": "no worker" if stalled else "ok", "queued_wait_seconds": round(waited)},
+                        status_code=503 if stalled else 200)
 
 
 @router.get("/api/auth/config")

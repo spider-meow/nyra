@@ -253,17 +253,50 @@ def test_cancel_queued_is_immediate_and_running_is_flagged(cloud_database_url):
         assert cloud_jobs.heartbeat(conn, running["id"], message="x") is True
 
 
-def test_reap_stale_fails_jobs_whose_worker_disappeared(cloud_database_url):
+def _lose_the_worker(conn, kind="match", params=None):
+    """A job claimed by a worker that then disappeared: (brand, job id)."""
+    conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+    org = cloud_db.create_organization(conn, name="D", slug=f"d-{uuid.uuid4().hex[:8]}")
+    brand = _brand(conn, org)
+    job = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind=kind, params=params)
+    cloud_jobs.claim(conn)
+    conn.execute("UPDATE jobs SET heartbeat_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
+    return brand, uuid.UUID(job["id"])
+
+
+def test_reap_stale_puts_a_job_back_in_the_queue_then_fails_it_after_its_retries(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        brand, job_id = _lose_the_worker(conn, "crawl", {"fresh": True})
+        for attempt in range(1, cloud_jobs.MAX_RETRIES + 1):
+            assert cloud_jobs.reap_stale(conn) == (1, 0)
+            job = cloud_jobs.get(conn, brand, job_id)
+            # Back in the queue, resuming (not starting over), with its retries counted.
+            assert job["status"] == "queued" and job["params"] == {"retries": attempt}
+            cloud_jobs.claim(conn)
+            conn.execute("UPDATE jobs SET heartbeat_at = now() - interval '10 minutes' WHERE id = %s", (job_id,))
+        assert cloud_jobs.reap_stale(conn) == (0, 1)
+        assert cloud_jobs.get(conn, brand, job_id)["status"] == "error"
+
+
+def test_reap_stale_does_not_restart_a_job_the_user_asked_to_stop(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        brand, job_id = _lose_the_worker(conn)
+        cloud_jobs.request_cancel(conn, brand, job_id)
+        assert cloud_jobs.reap_stale(conn) == (0, 1)
+        assert cloud_jobs.get(conn, brand, job_id)["status"] == "error"
+
+
+def test_stalled_seconds_is_only_set_when_a_job_waits_and_nothing_runs(cloud_database_url):
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
-        org = cloud_db.create_organization(conn, name="D", slug=f"d-{uuid.uuid4().hex[:8]}")
+        assert cloud_jobs.stalled_seconds(conn) == 0
+        org = cloud_db.create_organization(conn, name="E", slug=f"e-{uuid.uuid4().hex[:8]}")
         brand = _brand(conn, org)
         job = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="match")
-    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
+        assert 590 < cloud_jobs.stalled_seconds(conn) < 700  # nobody claims it: no worker
         cloud_jobs.claim(conn)
-        conn.execute("UPDATE jobs SET heartbeat_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
-        assert cloud_jobs.reap_stale(conn) == 1
-        assert cloud_jobs.get(conn, brand, uuid.UUID(job["id"]))["status"] == "error"
+        assert cloud_jobs.stalled_seconds(conn) == 0  # a worker has it
 
 
 # --- stores ---------------------------------------------------------------------------

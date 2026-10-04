@@ -25,10 +25,10 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
       { to: link("bibliotheque"), label: "Bibliothèque", icon: "library", count: overview.data?.stats.reference_images, tone: "muted" },
       { to: link("images-du-site"), label: "Droits non vérifiés", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
       { to: link("lectures"), label: "Sites et lectures", icon: "scan" },
-      { to: link("rapports"), label: "Rapports", icon: "report" },
       ...staffItems,
     ],
     footerItems: [
+      { to: link("rapports"), label: "Rapports", icon: "report" },
       ...adminFooterItems,
       { to: link("reglages"), label: "Réglages", icon: "settings" },
     ],

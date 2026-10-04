@@ -682,12 +682,12 @@ def unmatched_site_images(conn: psycopg.Connection, brand_id: uuid.UUID) -> list
     """Images read on the brand's sites that match nothing in its library, with their pages.
 
     The same bytes found under several URLs come back once per URL; callers
-    group them by `content_hash`.
+    group them by `variant_group` (crops of one photo), else `content_hash`.
     """
     rows = conn.execute(
         """
         SELECT si.id, si.url, si.content_hash, si.storage_path, si.thumb_path, si.width, si.height,
-               si.phash, si.dhash, si.compared_at IS NOT NULL AS compared, si.first_seen, si.last_seen,
+               si.phash, si.dhash, si.variant_group, si.compared_at IS NOT NULL AS compared, si.first_seen, si.last_seen,
                s.id AS site_id, s.url AS site_url, s.label AS site_label,
                COALESCE(pg.urls, ARRAY[]::text[]) AS pages
         FROM site_images si

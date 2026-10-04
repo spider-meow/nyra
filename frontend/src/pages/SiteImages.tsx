@@ -34,7 +34,7 @@ export function SiteImages() {
   }
 
   return (
-    <div className={cx(admin && selected.size > 0 && "pb-20")}>
+    <div className={cx(admin && chosen.length > 0 && "pb-20")}>
       <PageHeader
         title="Droits non vérifiés"
         description={`Les images en ligne sur les sites de ${brand.name} qui ne correspondent à aucun visuel de la bibliothèque : personne n'a encore vérifié leurs droits, et certaines sont peut-être expirées. Ajoutez celles qui sont sous droits, avec leur échéance, et ignorez le reste (logos, pictogrammes, visuels maison).`}
@@ -58,8 +58,8 @@ export function SiteImages() {
           />
         </>
       )}
-      {admin && selected.size ? (
-        <SelectionBar count={selected.size} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => setSelected(new Set(failedIds)))} onClear={() => setSelected(new Set())} />
+      {admin && chosen.length ? (
+        <SelectionBar count={chosen.length}onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => setSelected(new Set(failedIds)))} onClear={() => setSelected(new Set())} />
       ) : null}
       <AddToLibrary
         items={adding}
@@ -226,10 +226,13 @@ function SelectionBar(props: { count: number; onAdd: () => void; onIgnore: () =>
 function useIgnore() {
   const { addMany } = useExclusionMutations();
   const toast = useToast();
-  // `done` receives the ids that could not be ignored, so a caller can keep them selected for a retry.
+  // `done` receives the ids of the cards that could not be ignored, so a caller can keep them selected for a retry.
   return (items: SiteImage[], done: (failedIds: string[]) => void) => {
     const pending = toast.loading(items.length > 1 ? `${items.length} images ignorées…` : "Image ignorée…");
-    void addMany.mutateAsync({ siteImageIds: items.map((item) => item.id), reason: "Pas sous droits" }).then(({ failedIds, firstError }) => {
+    // Every version of a photo is set aside: a crop does not look like its original to the hashes.
+    const siteImageIds = items.flatMap((item) => item.variants.map((variant) => variant.id));
+    void addMany.mutateAsync({ siteImageIds, reason: "Pas sous droits" }).then(({ failedIds: failedImages, firstError }) => {
+      const failedIds = items.filter((item) => item.variants.some((variant) => failedImages.includes(variant.id))).map((item) => item.id);
       done(failedIds);
       toast.update(pending, failedIds.length
         ? { tone: "error", message: `${plural(failedIds.length, "image n'a pas pu être ignorée", "images n'ont pas pu être ignorées")}`, description: firstError || "Réessayez dans un instant." }

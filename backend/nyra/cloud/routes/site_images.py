@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -89,13 +89,47 @@ def original_from_site(url: str, config: Config) -> Optional[bytes]:
     return got[0] if got else None
 
 
+MAX_WHERE = 20
+
+
+def _site_name(row: dict) -> str:
+    return row["site_label"] or urlparse(row["site_url"]).netloc
+
+
+def _variants(rows: list[dict]) -> list[dict]:
+    """The distinct files of one photo, in the order of `rows` (largest first, see `unreferenced_images`): each
+    one's rows, the first being the row to act on."""
+    files: dict[Any, list[dict]] = {}
+    for row in rows:
+        files.setdefault(row["content_hash"] or row["id"], []).append(row)
+    return list(files.values())
+
+
+def _variant_item(members: list[dict], urls: dict[str, str]) -> dict:
+    lead = members[0]
+    # One line per site and page: two addresses of the same bytes read on one page are one occurrence.
+    where = list(dict.fromkeys((_site_name(row), page) for row in members for page in row["pages"]))
+    return {
+        "id": str(lead["id"]),
+        "url": lead["url"],
+        "url_count": len(members),
+        "width": lead["width"],
+        "height": lead["height"],
+        "thumb": urls.get(lead["thumb_path"] or "") or urls.get(lead["storage_path"] or "", ""),
+        "image": urls.get(lead["storage_path"] or "", ""),
+        "where": [{"site": site, "page": page} for site, page in where[:MAX_WHERE]],
+        "where_count": len(where),
+    }
+
+
 def _site_image_item(group: dict, urls: dict[str, str]) -> dict:
     lead, rows = group["lead"], group["rows"]
     pages = sorted({page for row in rows for page in row["pages"]})
-    sites = {row["site_id"]: row["site_label"] or urlparse(row["site_url"]).netloc for row in rows}
+    sites = {row["site_id"]: _site_name(row) for row in rows}
     return {
         "id": str(lead["id"]),
         "ids": [str(row["id"]) for row in rows],
+        "variants": [_variant_item(members, urls) for members in _variants(rows)],
         "url": lead["url"],
         "urls": [row["url"] for row in rows][:10],
         "url_count": len(rows),
@@ -119,7 +153,7 @@ def site_images(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depend
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)
         groups = unreferenced_images(conn, scope.brand_id, config)
-    leads = [group["lead"] for group in groups]
+    leads = [variant[0] for group in groups for variant in _variants(group["rows"])]
     urls = ctx.sign(cloud_storage.BUCKET_SITE_IMAGES, [row["thumb_path"] for row in leads] + [row["storage_path"] for row in leads])
     return {"items": [_site_image_item(group, urls) for group in groups]}
 

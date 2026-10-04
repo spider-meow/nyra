@@ -110,7 +110,11 @@ class CloudCrawlStore:
                 compared_at=CASE
                     WHEN site_images.content_hash IS DISTINCT FROM excluded.content_hash
                       OR (excluded.embedding IS NOT NULL AND site_images.embedding IS NULL)
-                    THEN NULL ELSE site_images.compared_at END
+                    THEN NULL ELSE site_images.compared_at END,
+                variant_group=CASE WHEN site_images.content_hash IS DISTINCT FROM excluded.content_hash
+                    THEN NULL ELSE site_images.variant_group END,
+                variants_checked_at=CASE WHEN site_images.content_hash IS DISTINCT FROM excluded.content_hash
+                    THEN NULL ELSE site_images.variants_checked_at END
             RETURNING id
             """,
             (self.org_id, self.site_id, url, storage_path, thumb_path, content_hash, width, height, phash, dhash,

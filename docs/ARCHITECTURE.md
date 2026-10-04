@@ -87,6 +87,7 @@ numbers and the report itself are pure functions over plain dicts in
 | `fetch.py` | Download (through netguard), decompression-bomb-safe decoding, size filter, hashes, thumbnail. |
 | `crawl.py` | URL canonicalization, HTML/sitemap parsing (pure), overlay dismissal, the async crawler. |
 | `match.py` | Hashes, CLIP (batched), pure classification, the vectorized comparison kernel, incremental orchestration, calibration sweeps. |
+| `variants.py`, `cloud/variants.py` | Groups the crops and resizes of one site photo (CLIP candidates, keypoint check, union into `variant_group`); the worker runs it after each comparison. |
 | `refs.py` | `RefSource` (CSV + folder today, a DAM export later), strict expiry-date parsing, reference features. |
 | `report.py` | Grouping, dashboard numbers, report HTML/CSV. |
 | `db.py` | SQLite schema and `LocalStore` for the CLI. |

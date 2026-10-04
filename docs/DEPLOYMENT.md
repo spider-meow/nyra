@@ -65,6 +65,23 @@ the database) and the image declares a Docker `HEALTHCHECK`. A job that
 fails shows its error in the interface and in `jobs.error`; the full
 traceback is in the worker's log.
 
+## Staying up
+
+- **A process that exits** is restarted by the platform (`restart: unless-stopped` in compose).
+- **A job whose worker died** (crash, redeploy, restart) is noticed after 3 minutes without a
+  heartbeat and **put back in the queue**, a crawl resuming where it was, up to 2 times; after that it
+  is marked failed, so a job that kills its worker every time cannot loop. A job whose stop was
+  requested is not restarted.
+- **A hung worker**: the worker touches a file every few seconds and the `worker` image's
+  `HEALTHCHECK` reads its age. A platform that restarts unhealthy containers (Fly, Railway, Render,
+  Kubernetes) restarts it. Plain `docker compose` only reports `unhealthy`: restart it from
+  systemd or a small watcher. Whatever runs the worker, a job running over 6 hours (`JOB_MAX_SECONDS`
+  in `cloud/worker.py`) makes it exit, so the restart policy above takes over and the job is retried.
+- **No worker at all**: point an uptime monitor (UptimeRobot, Better Stack...) at `GET /api/workerz`.
+  It answers 503 when a queued job has waited over 5 minutes while no job runs anywhere. Keep
+  `GET /api/healthz` for the web process. The interface already tells an administrator that a task
+  waits for a worker after a minute.
+
 ## Security checklist
 
 - `.env` holds the service-role key: keep it out of synced folders,

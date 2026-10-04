@@ -20,6 +20,8 @@ Job kinds:
 from __future__ import annotations
 
 import logging
+import os
+import tempfile
 import threading
 import time
 import traceback
@@ -39,11 +41,24 @@ from . import db as cloud_db
 from . import jobs as cloud_jobs
 from . import storage as cloud_storage
 from .store import CloudCrawlStore, CloudMatchStore
+from .variants import update_variants
 
 log = logging.getLogger("nyra.worker")
 
 HEARTBEAT_SECONDS = 30
 PROGRESS_SECONDS = 1.0
+# A job running longer than this is taken for hung (a frozen browser keeps the heartbeat thread beating): the
+# worker exits, the container restarts, and the job is put back in the queue (see `jobs.reap_stale`).
+JOB_MAX_SECONDS = 6 * 3600
+# Touched while the worker lives, idle or busy; the container's health check reads its age.
+ALIVE_FILE = Path(os.environ.get("NYRA_WORKER_ALIVE_FILE") or Path(tempfile.gettempdir()) / "nyra-worker-alive")
+
+
+def touch_alive() -> None:
+    try:
+        ALIVE_FILE.touch()
+    except OSError:
+        log.warning("could not touch %s; the health check will fail", ALIVE_FILE)
 
 
 class JobFailed(Exception):
@@ -60,12 +75,18 @@ class JobContext:
         self._last_report = 0.0
         self._lock = threading.Lock()
         self._done = threading.Event()
+        self._started = time.monotonic()
         self._beat = threading.Thread(target=self._beat_loop, name=f"heartbeat-{job['id']}", daemon=True)
         self._beat.start()
 
     def _beat_loop(self) -> None:
         while not self._done.wait(HEARTBEAT_SECONDS):
             self._heartbeat()
+            touch_alive()
+            if time.monotonic() - self._started > JOB_MAX_SECONDS:
+                log.error("job %s ran over %d s: exiting so the container restarts and the job is retried",
+                          self.job["id"], JOB_MAX_SECONDS)
+                os._exit(70)  # a hung job cannot be stopped from a thread; the heartbeat then stops and the job is requeued
 
     def _heartbeat(self, message: Optional[str] = None, progress: Optional[dict] = None) -> None:
         with self._lock:
@@ -325,13 +346,14 @@ class Worker:
         log.info("worker started")
         last_reap = 0.0
         while not self._stop.is_set():
+            touch_alive()
             if time.monotonic() - last_reap > 60:
                 last_reap = time.monotonic()
                 try:
                     with cloud_db.connect(self.database_url) as conn:
-                        reaped = cloud_jobs.reap_stale(conn)
-                    if reaped:
-                        log.warning("marked %d stale job(s) as failed", reaped)
+                        requeued, failed = cloud_jobs.reap_stale(conn)
+                    if requeued or failed:
+                        log.warning("stale jobs: %d put back in the queue, %d marked as failed", requeued, failed)
                 except Exception:  # noqa: BLE001 - housekeeping must not stop the worker loop
                     log.exception("reaping failed")
             try:
@@ -401,14 +423,27 @@ class Worker:
         def verifying(done: int, total: int) -> None:
             ctx.report(f"Vérification des ressemblances · {done}/{total}", {"phase": "verify", "done": done, "total": total})
 
+        def grouping(done: int, total: int) -> None:
+            ctx.report(f"Regroupement des recadrages · {done}/{total}", {"phase": "variants", "done": done, "total": total})
+
         ctx.report("Comparaison avec la bibliothèque…", {"phase": "match"}, force=True)
+        storage = self.storage_client_factory()
         store = CloudMatchStore(org_id=org_id, brand_id=brand_id, database_url=self.database_url,
-                                storage_client=self.storage_client_factory(),
-                                max_image_pixels=config.crawl.max_image_pixels)
+                                storage_client=storage, max_image_pixels=config.crawl.max_image_pixels)
         info: dict = {}
         started = time.perf_counter()
         count = run_matching(store, config, use_clip=True, progress=progress, should_stop=ctx.should_stop,
                              verify_progress=verifying, stats=info)
+        ctx.report("Regroupement des recadrages…", {"phase": "variants"}, force=True)
+        try:
+            info.update(update_variants(self.database_url, storage, org_id, brand_id, config, progress=grouping,
+                                        should_stop=ctx.should_stop))
+        except MatchStopped:
+            raise
+        except Exception as exc:  # noqa: BLE001 - grouping is a derived step: the matches are saved, the job stays done
+            log.exception("grouping the crops of brand %s failed", brand_id)
+            _capture(exc)
+            info["variant_error"] = f"{type(exc).__name__}: {str(exc)[:200]}"
         info["seconds"] = round(time.perf_counter() - started, 3)
         info["matches_total"] = count
         if metrics is not None:

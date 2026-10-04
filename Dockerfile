@@ -46,4 +46,8 @@ COPY config.yaml ./
 RUN python -c "from nyra.config import load_config; from nyra.match import _load_clip; c = load_config().match; _load_clip(c.clip_model_name, c.clip_pretrained)" \
     && chmod -R a+rX /opt/hf
 USER pwuser
+# The worker touches a file while it lives (idle or busy); a platform that restarts unhealthy containers
+# (Fly, Railway, Render, Kubernetes) restarts one that hangs. See docs/DEPLOYMENT.md.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD python -c "import os, sys, tempfile, time; p = os.environ.get('NYRA_WORKER_ALIVE_FILE') or os.path.join(tempfile.gettempdir(), 'nyra-worker-alive'); sys.exit(0 if time.time() - os.path.getmtime(p) < 120 else 1)"
 CMD ["nyra", "worker"]

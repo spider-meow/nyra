@@ -121,6 +121,75 @@ def _run_index(worker, url, org_id, brand_id):
     return _job(url, brand_id, job["id"])
 
 
+def _jpeg_bytes(img: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    return buf.getvalue()
+
+
+def test_an_image_that_could_not_be_read_is_not_marked_checked_and_is_grouped_on_the_next_run(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client, monkeypatch):
+    pytest.importorskip("cv2")
+    from types import SimpleNamespace
+
+    from test_verify import scene
+
+    from nyra.cloud import variants as variants_module
+
+    photo = scene(40)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        for name, img in (("photo", photo), ("crop", photo.crop((90, 60, 800, 600)).resize((500, 380)))):
+            _add_site_image(conn, fake_storage_client, cloud_org, site, f"https://t.test/{name}.jpg", _jpeg_bytes(img))
+
+    def state():
+        with cloud_db.connect(cloud_database_url) as conn:
+            return conn.execute("SELECT count(variant_group) AS grouped, count(variants_checked_at) AS checked "
+                                "FROM site_images WHERE org_id = %s", (cloud_org,)).fetchone()
+
+    with monkeypatch.context() as broken:
+        broken.setattr(variants_module, "fetch", SimpleNamespace(decode=lambda data, max_pixels: None))
+        _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert dict(state()) == {"grouped": 0, "checked": 0}  # nothing was looked at, so nothing is stamped
+    _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert dict(state()) == {"grouped": 2, "checked": 2}
+
+
+def test_a_comparison_groups_the_crops_of_a_photo_and_keeps_the_group_when_another_crop_arrives(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
+    pytest.importorskip("cv2")
+    from test_verify import scene
+
+    photo = scene(30)
+    crop = photo.crop((90, 60, 800, 600)).resize((500, 380))
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        ids = [_add_site_image(conn, fake_storage_client, cloud_org, site, f"https://t.test/{name}.jpg", _jpeg_bytes(img))
+               for name, img in (("photo", photo), ("crop", crop), ("other", scene(31)))]
+
+    finished = _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    assert finished["status"] == "done", finished
+    assert finished["result"]["match_metrics"]["variant_links"] == 1
+
+    def groups():
+        with cloud_db.connect(cloud_database_url) as conn:
+            rows = conn.execute("SELECT id, variant_group, variants_checked_at FROM site_images WHERE org_id = %s",
+                                (cloud_org,)).fetchall()
+        assert all(row["variants_checked_at"] is not None for row in rows)
+        return {row["id"]: row["variant_group"] for row in rows}
+
+    first = groups()
+    assert first[ids[0]] is not None and first[ids[0]] == first[ids[1]] and first[ids[2]] is None
+
+    # A third crop of the same photo, read later, joins the same group; nothing already checked changes.
+    smaller = photo.crop((0, 0, 700, 500)).resize((420, 300))
+    with cloud_db.connect(cloud_database_url) as conn:
+        late = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/late.jpg", _jpeg_bytes(smaller))
+    _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    second = groups()
+    assert second[late] == first[ids[0]] and {key: second[key] for key in ids} == first
+
+
 def _reference_row(url, brand_id, name):
     with cloud_db.connect(url) as conn:
         return cloud_db.get_reference_by_filename(conn, brand_id, name)
