@@ -32,6 +32,7 @@ from nyra import fetch, netguard, observability
 from nyra import report as report_module
 from nyra.config import Config, load_config, with_overrides
 from nyra.crawl import CrawlStats, crawl_site, normalize_url
+from nyra.estimate import remaining_seconds
 from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching, warm_clip
 
 from . import db as cloud_db
@@ -89,6 +90,35 @@ class JobContext:
 
     def close(self) -> None:
         self._done.set()
+
+
+class _CrawlProgress:
+    """What a read reports about one address: the pages done out of the pages known so far, and the time left.
+
+    The total is what is known to read (read + queued + in progress), not the cap, so a 40-page site with a
+    sitemap is at 50% after 20 pages. Without a sitemap it grows as links are found; it never shrinks. The pace
+    is measured from the first finished page, so the sitemap and the browser start-up don't slow it."""
+
+    def __init__(self, ctx: JobContext, prefix: str, limit: int):
+        self.ctx, self.prefix, self.limit = ctx, prefix, limit
+        self.expected = 0
+        self.first: Optional[tuple[float, int]] = None  # (time, pages done) at the first report with a page done
+
+    def report(self, stats: CrawlStats) -> None:
+        done = stats.pages_visited
+        self.expected = max(self.expected, min(self.limit, max(1, done + stats.pages_queued)))
+        if self.first is None and done:
+            self.first = (time.monotonic(), done)
+        eta = None
+        if self.first:
+            began, done_then = self.first
+            eta = remaining_seconds(done - done_then, self.expected - done_then, time.monotonic() - began)
+        self.ctx.report(
+            f"{self.prefix}Page {done}/{self.expected} · {stats.images_new} nouvelle(s) image(s)",
+            {"phase": "crawl", "done": done, "total": self.expected, "images_new": stats.images_new,
+             "images_stored": stats.images_stored, "errors": len(stats.errors),
+             "blocked_by_robots": stats.blocked_by_robots, "eta_seconds": eta},
+        )
 
 
 # An index job reads its candidates `INDEX_CHUNK_BATCHES` embedding batches at a time (keyset on `id`), so only one
@@ -439,21 +469,17 @@ class Worker:
         store = CloudCrawlStore(org_id=org_id, site_id=site["id"], database_url=self.database_url,
                                 storage_client=storage)
         last_run_update = 0.0
+        reporter = _CrawlProgress(ctx, prefix, limit)
 
         def progress(stats: CrawlStats) -> None:
             nonlocal last_run_update
-            ctx.report(
-                f"{prefix}Page {stats.pages_visited}/{limit} · {stats.images_new} nouvelle(s) image(s)",
-                {"phase": "crawl", "done": stats.pages_visited, "total": limit, "images_new": stats.images_new,
-                 "images_stored": stats.images_stored, "errors": len(stats.errors),
-                 "blocked_by_robots": stats.blocked_by_robots},
-            )
+            reporter.report(stats)
             if time.monotonic() - last_run_update > 5:
                 last_run_update = time.monotonic()
                 with cloud_db.connect(self.database_url) as conn:
                     cloud_db.update_crawl_run_progress(conn, run_id, stats)
 
-        ctx.report(f"{prefix}Lecture du sitemap…", {"phase": "crawl", "done": 0, "total": limit}, force=True)
+        ctx.report(f"{prefix}Lecture du sitemap…", {"phase": "crawl", "done": 0, "total": 0}, force=True)
         try:
             # Loaded up front so the first batch's embedding time isn't mostly model loading.
             load_started = time.perf_counter()

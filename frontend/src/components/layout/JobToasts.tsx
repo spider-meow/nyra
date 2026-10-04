@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "../../lib/api";
-import { jobLabel } from "../../lib/format";
+import { approxDuration, jobLabel } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { refreshAfter, useCancelJob, useInvalidate, useJobs } from "../../lib/queries";
 import type { Job } from "../../types";
@@ -128,7 +128,7 @@ function describe(row: Job[], active: Job[], admin: boolean, stopping: Set<strin
     message: jobLabel[job.kind],
     description: queued
       ? [row.length > 1 ? groupLine(row.length, active) : capitalize(queued.line), queued.hint].filter(Boolean).join(". ")
-      : job.message,
+      : [job.message, eta(job)].filter(Boolean).join(" · "),
     progress: queued ? undefined : total > 0 ? Math.min(1, done / total) : null,
     action: admin
       ? {
@@ -139,6 +139,12 @@ function describe(row: Job[], active: Job[], admin: boolean, stopping: Set<strin
         }
       : undefined,
   };
+}
+
+/** "il reste 4 min pour cette adresse", once the worker has a pace to go by. */
+function eta(job: Job): string {
+  const seconds = job.progress.eta_seconds;
+  return seconds == null ? "" : `il reste ${seconds < 60 ? "moins d'une minute" : approxDuration(seconds)} pour cette adresse`;
 }
 
 function capitalize(text: string): string {

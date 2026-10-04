@@ -816,6 +816,31 @@ def finish_crawl_run(conn: psycopg.Connection, run_id: uuid.UUID, *, status: str
     )
 
 
+def crawl_history(conn: psycopg.Connection, site_ids: list[uuid.UUID], per_site: int = 5) -> list[Row]:
+    """The last finished reads of each site, newest first (the figures `nyra.estimate` works from)."""
+    return conn.execute(
+        """SELECT site_id, pages_visited, seconds FROM (
+               SELECT site_id, pages_visited, started_at,
+                      COALESCE(NULLIF((metrics ->> 'duration_seconds')::float8, 0),
+                               EXTRACT(epoch FROM finished_at - started_at)) AS seconds,
+                      row_number() OVER (PARTITION BY site_id ORDER BY started_at DESC) AS rank
+               FROM crawl_runs WHERE site_id = ANY(%s) AND status = 'done') last
+           WHERE rank <= %s ORDER BY site_id, started_at DESC""",
+        (site_ids, per_site),
+    ).fetchall()
+
+
+def match_history(conn: psycopg.Connection, brand_id: uuid.UUID, limit: int = 5) -> list[float]:
+    """How long the brand's last comparisons took, in seconds."""
+    rows = conn.execute(
+        """SELECT (result -> 'match_metrics' ->> 'seconds')::float8 AS seconds FROM jobs
+           WHERE brand_id = %s AND status = 'done' AND (result -> 'match_metrics' ->> 'seconds') IS NOT NULL
+           ORDER BY finished_at DESC LIMIT %s""",
+        (brand_id, limit),
+    ).fetchall()
+    return [row["seconds"] for row in rows if row["seconds"]]
+
+
 def list_crawl_runs(conn: psycopg.Connection, brand_id: uuid.UUID, limit: int = 20) -> list[Row]:
     return conn.execute(
         """SELECT c.*, s.url AS site_url, s.label AS site_label FROM crawl_runs c JOIN sites s ON s.id = c.site_id

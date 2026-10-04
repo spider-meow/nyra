@@ -29,10 +29,8 @@ export function Layout() {
       </div>
       {menuOpen ? <div className="border-b border-line bg-side md:hidden">{sidebar}</div> : null}
       <main className="min-w-0 px-4 py-6 md:px-14 md:py-10">
-        <div className="mx-auto max-w-6xl">
-          <JobToasts />
-          <Outlet />
-        </div>
+        <JobToasts />
+        <Outlet />
       </main>
     </div>
   );

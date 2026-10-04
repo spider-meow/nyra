@@ -2,10 +2,10 @@ import { useState, type FormEvent } from "react";
 import { useToast, type Toaster } from "../../components/feedback";
 import { Button, Card, Checkbox, FieldLabel, Input } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
-import { plural } from "../../lib/format";
+import { approxDuration, hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
-import { useJobs, useOverview, useStartJob } from "../../lib/queries";
-import type { Overview, Site } from "../../types";
+import { useCrawlEstimate, useJobs, useOverview, useStartJob } from "../../lib/queries";
+import type { CrawlEstimate, Overview, Site } from "../../types";
 
 function crawlOutcome(toast: Toaster, count: number) {
   return {
@@ -40,6 +40,7 @@ export function RunCard(props: { list: Site[]; selected: Site[] }) {
   const [thenMatch, setThenMatch] = useState(true);
 
   const defaults = overview.data?.defaults;
+  const estimate = useCrawlEstimate({ siteIds: selected.map((site) => site.id), maxPages: maxPages || undefined, fresh, thenMatch });
   const busy = (jobs.data?.active ?? []).some((job) => job.kind === "crawl" || job.kind === "match");
   const noLibrary = overview.data?.stats.reference_images === 0;
 
@@ -75,6 +76,7 @@ export function RunCard(props: { list: Site[]; selected: Site[] }) {
           <Button onClick={compareNow} loading={start.isPending && start.variables?.kind === "match"} disabled={busy || start.isPending || !overview.data?.stats.site_images}>
             Comparer sans relire
           </Button>
+          {estimate.data ? <EstimateLine estimate={estimate.data} sites={selected} thenMatch={thenMatch} /> : null}
           {noLibrary ? <p className="text-xs text-muted">Ajoutez d'abord des visuels à la bibliothèque.</p> : null}
         </div>
       </form>
@@ -98,5 +100,21 @@ function MaxPages(props: { value: number | ""; onChange: (value: number | "") =>
       />
       <p className="mt-1 text-xs text-muted">Un plafond : un site plus petit est lu en entier, et la lecture s'arrête d'elle-même.</p>
     </div>
+  );
+}
+
+/** Roughly how long the read will take: the addresses with history add up, the others are named. */
+function EstimateLine(props: { estimate: CrawlEstimate; sites: Site[]; thenMatch: boolean }) {
+  const { estimate, sites } = props;
+  const known = sites.filter((site) => estimate.sites[site.id]);
+  const unknown = sites.filter((site) => !estimate.sites[site.id]);
+  const seconds = known.reduce((sum, site) => sum + (estimate.sites[site.id]?.seconds ?? 0), 0) + (estimate.compare_seconds ?? 0);
+  if (!known.length) return <p className="text-xs text-muted">Durée inconnue : pas encore assez de lectures pour la prévoir. Elle le sera après la première.</p>;
+  return (
+    <p className="text-xs text-muted">
+      Durée estimée : {unknown.length ? "au moins " : "environ "}{approxDuration(seconds)}, d'après les dernières lectures.
+      {unknown.length ? ` Sans historique : ${unknown.map((site) => site.label || hostOf(site.url)).join(", ")}.` : ""}
+      {props.thenMatch && estimate.compare_seconds === null ? " La comparaison n'est pas comptée (jamais mesurée)." : ""}
+    </p>
   );
 }

@@ -234,3 +234,45 @@ def test_a_pass_that_could_not_check_clip_candidates_does_not_look_like_one_that
 
     config = _MatchConfig()
     assert _signature(config, True, verified=False) != _signature(config, True, verified=True)
+
+
+# --- time estimate ------------------------------------------------------------
+
+def test_crawl_estimate_uses_the_pace_of_past_reads_and_the_page_cap():
+    from nyra.estimate import crawl_estimate, remaining_seconds
+
+    runs = [{"pages_visited": 3, "seconds": 20.0}, {"pages_visited": 100, "seconds": 600.0}, {"pages_visited": 50, "seconds": 300.0}]
+    # 900 s over 150 usable pages: 6 s per page. A full re-read expects the most pages seen (100), capped by the limit.
+    assert crawl_estimate(runs, limit=300, fresh=True) == {"pages": 100, "seconds": 600, "runs_used": 2}
+    assert crawl_estimate(runs, limit=40, fresh=True)["pages"] == 40
+    # A resumed read expects what the latest read found (3 pages), at the same pace.
+    assert crawl_estimate(runs, limit=300, fresh=False)["pages"] == 3
+    # Nothing long enough to measure a pace: no estimate rather than a guess.
+    assert crawl_estimate([{"pages_visited": 2, "seconds": 9.0}], 300, True) is None
+    assert crawl_estimate([], 300, True) is None
+    # Live: 20 of 100 pages in 100 s leaves 400 s; no pace before 5 pages.
+    assert remaining_seconds(20, 100, 100.0) == 400
+    assert remaining_seconds(4, 100, 100.0) is None
+
+
+def test_crawl_progress_total_never_shrinks_and_pace_starts_at_the_first_page(monkeypatch):
+    from nyra.cloud import worker
+    from nyra.crawl import CrawlStats
+
+    clock = iter([100.0, 110.0, 120.0, 130.0, 140.0, 150.0, 160.0, 170.0])
+    monkeypatch.setattr(worker.time, "monotonic", lambda: next(clock))
+    sent = []
+
+    class Ctx:
+        def report(self, message, progress=None, *, force=False):
+            sent.append(progress)
+
+    progress = worker._CrawlProgress(Ctx(), "", limit=50)
+    # 3 pages known, then a page that reveals many links, then the queue drains below the old total.
+    for visited, queued in [(0, 3), (1, 2), (2, 40), (3, 5)]:
+        progress.report(CrawlStats(pages_visited=visited, pages_queued=queued))
+    assert [p["total"] for p in sent] == [3, 3, 42, 42]
+    assert [p["eta_seconds"] for p in sent] == [None, None, None, None]  # fewer than 5 pages since the first one
+    progress.report(CrawlStats(pages_visited=7, pages_queued=0))
+    # First page done at t=110 (1 page); at t=150, 6 more pages in 40 s: 42 - 7 = 35 left at 6.67 s each.
+    assert sent[-1]["done"] == 7 and sent[-1]["eta_seconds"] == round(35 * 40 / 6)

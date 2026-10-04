@@ -48,9 +48,9 @@ export function ImageCard(props: {
           </a>
         ) : null}
         {props.onAdd ? (
-          <div className="mt-auto flex gap-1 pt-2">
-            <Button size="sm" variant="primary" className="flex-1" onClick={props.onAdd}>Ajouter</Button>
-            <Button size="sm" variant="ghost" onClick={props.onIgnore}>Ignorer</Button>
+          <div className="mt-auto flex items-center gap-3 pt-1.5 text-[13px]">
+            <button type="button" className="font-medium text-ink underline-offset-2 hover:underline" onClick={props.onAdd}>+ Ajouter</button>
+            <button type="button" className="text-muted underline-offset-2 hover:text-ink hover:underline" onClick={props.onIgnore}>Ignorer</button>
           </div>
         ) : null}
       </div>

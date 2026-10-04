@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useToast } from "../components/feedback";
-import { Button, EmptyState, FieldLabel, Input, PageHeader, Select, Skeleton, cx } from "../components/ui";
+import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { plural } from "../lib/format";
 import { useOrg } from "../lib/org";
@@ -47,7 +47,7 @@ export function SiteImages() {
         <AllVerified />
       ) : (
         <>
-          <FilterBar filter={filter} total={items.length} selected={selected} onSelect={setSelected} />
+          <FilterBar filter={filter} items={items} selected={selected} onSelect={setSelected} />
           <ImageGrid
             filter={filter}
             selected={selected}
@@ -100,24 +100,46 @@ function useImageFilter(items: SiteImage[]) {
   };
 }
 
-function FilterBar(props: { filter: ReturnType<typeof useImageFilter>; total: number; selected: Set<string>; onSelect: (ids: Set<string>) => void }) {
+/** One tab per site version (US, FR, INT...): each one is its own library of unverified images. */
+function SiteTabs(props: { filter: ReturnType<typeof useImageFilter>; items: SiteImage[] }) {
+  const { filter, items } = props;
+  if (filter.sites.length < 2) return null;
+  const tabs: [string, string, number][] = [
+    ["all", "Tous", items.length],
+    ...filter.sites.map(([id, label]): [string, string, number] => [id, label, items.filter((item) => item.site_ids.includes(id)).length]),
+  ];
+  return (
+    <div className="mb-5 flex w-full overflow-x-auto border-b border-line [scrollbar-width:none]" role="tablist" aria-label="Versions du site">
+      {tabs.map(([id, label, count]) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          aria-selected={filter.site === id}
+          onClick={() => filter.changeSite(id)}
+          className={cx(
+            "-mb-px flex-1 whitespace-nowrap border-b-2 px-4 py-2.5 text-[13.5px] transition-colors",
+            filter.site === id ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink",
+          )}
+        >
+          {label} <span className="tabular text-muted">{count}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function FilterBar(props: { filter: ReturnType<typeof useImageFilter>; items: SiteImage[]; selected: Set<string>; onSelect: (ids: Set<string>) => void }) {
   const { admin } = useOrg();
   const { filter, selected } = props;
   return (
+    <>
+    <SiteTabs filter={filter} items={props.items} />
     <div className="mb-4 flex flex-wrap items-end gap-3">
       <div className="w-full sm:w-72">
         <FieldLabel htmlFor="img-search">Rechercher</FieldLabel>
         <Input id="img-search" type="search" placeholder="Nom de fichier ou page" value={filter.query} onChange={(event) => filter.changeQuery(event.target.value)} />
       </div>
-      {filter.sites.length > 1 ? (
-        <div className="w-full sm:w-56">
-          <FieldLabel htmlFor="img-site">Site</FieldLabel>
-          <Select id="img-site" value={filter.site} onChange={(event) => filter.changeSite(event.target.value)}>
-            <option value="all">Tous ({props.total})</option>
-            {filter.sites.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
-          </Select>
-        </div>
-      ) : null}
       <p className="pb-2 text-sm text-muted">{plural(filter.visible.length, "image à vérifier", "images à vérifier")}</p>
       {admin && filter.visible.length ? (
         <button
@@ -129,6 +151,7 @@ function FilterBar(props: { filter: ReturnType<typeof useImageFilter>; total: nu
         </button>
       ) : null}
     </div>
+    </>
   );
 }
 

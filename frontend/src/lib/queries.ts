@@ -1,8 +1,9 @@
-import { skipToken, useMutation, useQuery, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
+import { keepPreviousData, skipToken, useMutation, useQuery, useQueryClient, type QueryClient, type QueryKey } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useToast } from "../components/feedback";
 import type {
   Brand,
+  CrawlEstimate,
   CurrentJobs,
   Decision,
   Exclusion,
@@ -104,6 +105,22 @@ export function useJobs() {
     queryKey: ["jobs", brand.id],
     queryFn: () => api.get<CurrentJobs>(apiPath("/jobs/current")),
     refetchInterval: (query) => ((query.state.data?.active.length ?? 0) > 0 ? 2000 : 20_000),
+  });
+}
+
+/** How long the next read would take, from the past ones; asks again when the choice changes or a job ends. */
+export function useCrawlEstimate(options: { siteIds: string[]; maxPages: number | undefined; fresh: boolean; thenMatch: boolean }) {
+  const { admin, apiPath, brand } = useOrg();
+  const { siteIds, maxPages, fresh, thenMatch } = options;
+  const params = new URLSearchParams({ fresh: String(fresh), then_match: String(thenMatch) });
+  siteIds.forEach((id) => params.append("site_ids", id));
+  if (maxPages) params.set("max_pages", String(maxPages));
+  return useQuery({
+    queryKey: ["estimate", brand.id, params.toString()],
+    queryFn: () => api.get<CrawlEstimate>(`${apiPath("/jobs/estimate")}?${params}`),
+    enabled: admin && siteIds.length > 0 && siteIds.length <= 50,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
   });
 }
 
@@ -261,8 +278,8 @@ export function useSites() {
 
 /** What to refresh when a job of each kind finishes. */
 export const refreshAfter: Record<Job["kind"], string[]> = {
-  crawl: ["overview", "matches", "scans", "library", "site-images", "sites", "insights"],
-  match: ["overview", "matches", "library", "site-images", "insights"],
+  crawl: ["overview", "matches", "scans", "library", "site-images", "sites", "insights", "estimate"],
+  match: ["overview", "matches", "library", "site-images", "insights", "estimate"],
   index: ["overview", "matches", "library", "site-images", "insights"],
   report: ["reports", "insights"],
 };

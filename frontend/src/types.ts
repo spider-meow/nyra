@@ -22,13 +22,19 @@ export type Job = {
   status: JobStatus;
   message: string;
   params: Record<string, unknown>;
-  progress: { phase?: string; done?: number; total?: number; errors?: number; blocked_by_robots?: number; images_new?: number };
+  progress: { phase?: string; done?: number; total?: number; errors?: number; blocked_by_robots?: number; images_new?: number; eta_seconds?: number | null };
   result: Record<string, unknown> | null;
   error: string | null;
   cancel_requested: boolean;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+};
+
+/** How long a read would take: per address (null without usable history), then in total. */
+export type CrawlEstimate = {
+  sites: Record<string, { pages: number; seconds: number; runs_used: number } | null>;
+  compare_seconds: number | null;
 };
 
 export type CurrentJobs = { active: Job[]; last: Job | null };

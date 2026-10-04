@@ -5,8 +5,10 @@ from __future__ import annotations
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+
+from nyra import estimate
 
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
@@ -26,6 +28,27 @@ class CrawlBody(BaseModel):
 def current_jobs(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         return cloud_jobs.current(conn, scope.brand_id)
+
+
+@router.get(f"{BRAND}/jobs/estimate")
+def estimate_crawl(site_ids: list[uuid.UUID] = Query(default=[], max_length=50), max_pages: Optional[int] = Query(default=None, ge=1),
+                   fresh: bool = False, then_match: bool = True,
+                   scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """How long a read of these addresses would take, from the brand's past reads (all addresses when none is given).
+    An address with no usable history is None (the interface says so rather than leave it out of a total);
+    `compare_seconds` is None when the comparison has never run."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        config = ctx.org_config(conn, scope.org_id)
+        ids = site_ids or [row["id"] for row in cloud_db.list_sites(conn, scope.brand_id)]
+        ids = [row["id"] for row in cloud_db.get_sites(conn, scope.brand_id, ids)]  # only this brand's addresses
+        history = cloud_db.crawl_history(conn, ids)
+        compare = estimate.match_estimate(cloud_db.match_history(conn, scope.brand_id)) if then_match else None
+    limit = min(max_pages or config.crawl.max_pages, config.crawl.max_pages_limit)
+    sites = {}
+    for site_id in ids:
+        runs = [row for row in history if row["site_id"] == site_id]
+        sites[str(site_id)] = estimate.crawl_estimate(runs, limit, fresh)
+    return {"sites": sites, "compare_seconds": compare}
 
 
 @router.get(f"{BRAND}/jobs")

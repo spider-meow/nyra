@@ -413,6 +413,7 @@ async def dismiss_overlays(page, *, extra_selectors: Sequence[str] = (), rounds:
 @dataclass
 class CrawlStats:
     pages_visited: int = 0
+    pages_queued: int = 0          # known and still to read (not a measurement: grows as links are found)
     images_found: int = 0
     images_stored: int = 0
     images_new: int = 0
@@ -533,6 +534,7 @@ class _Crawl:
         for url in [self.site_url, *seeds]:
             self.enqueue(url)
         self.stats.sitemap_urls = len(seeds)
+        self.stats.pages_queued = len(self.queue)
         self.stats.discover_seconds = time.perf_counter() - started
 
     def enqueue(self, url: str) -> None:
@@ -601,6 +603,7 @@ class _Crawl:
                     await self._crawl_page(page, http, url)
                 finally:
                     self.in_flight -= 1
+                self.stats.pages_queued = len(self.queue) + self.in_flight  # pages in other workers are still to finish
                 if self.progress:
                     self.progress(self.stats)
                 if self.should_stop():
@@ -640,7 +643,8 @@ class _Crawl:
         self.stats.http_statuses[status_key] = self.stats.http_statuses.get(status_key, 0) + 1
 
         image_urls = extract_images_from_html(html, final_url)
-        image_urls |= {urljoin(final_url, u) for u in background_urls if u and not u.startswith("data:")}
+        joined = {urljoin(final_url, u) for u in background_urls if u and not u.startswith("data:")}
+        image_urls |= {u for u in joined if urlparse(u).scheme in {"http", "https"}}  # as for the HTML images above
         for link in extract_internal_links(html, final_url, self.netloc):
             self.enqueue(link)
 

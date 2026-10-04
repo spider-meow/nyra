@@ -195,3 +195,20 @@ def test_netguard_refuses_private_and_local_addresses(monkeypatch):
     assert netguard.is_public_ip("8.8.8.8")
     assert not netguard.is_public_ip("100.64.0.1")
     assert not netguard.is_public_ip("::ffff:10.0.0.1")
+
+
+def test_a_malformed_image_address_is_skipped_not_fatal():
+    import asyncio
+
+    import httpx
+
+    from nyra import fetch
+
+    async def run():
+        # A client holding a cookie (a crawler's, after its first responses) builds the request differently.
+        async with httpx.AsyncClient(cookies={"a": "b"}) as client:
+            return await fetch.adownload("/", client, timeout=1.0, max_bytes=1000)
+
+    assert asyncio.run(run()) is None
+    with httpx.Client(cookies={"a": "b"}) as client:
+        assert fetch.download("/", client, timeout=1.0, max_bytes=1000) is None

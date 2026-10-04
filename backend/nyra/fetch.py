@@ -176,7 +176,7 @@ def download(url: str, client: httpx.Client, *, timeout: float, max_bytes: int) 
                 return None
             data = netguard.read_capped(resp, max_bytes)
             content_type = resp.headers.get("content-type")
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):  # ValueError: a malformed address ("unknown url type"); skip that one image
         return None
     if not data:
         return None
@@ -192,7 +192,7 @@ async def adownload(
                 return None
             data = await netguard.aread_capped(resp, max_bytes)
             content_type = resp.headers.get("content-type")
-    except httpx.HTTPError:
+    except (httpx.HTTPError, ValueError):  # ValueError: a malformed address ("unknown url type"); skip that one image
         return None
     if not data:
         return None
