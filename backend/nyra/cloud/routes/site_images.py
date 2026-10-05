@@ -256,6 +256,7 @@ def add_exclusion(body: ExclusionBody, scope: BrandScope = Depends(brand_admin_d
         removed = conn.execute(
             "DELETE FROM matches WHERE org_id = %s AND site_image_id = ANY(%s)", (scope.org_id, list(excluded))
         ).rowcount
+        conn.execute("DELETE FROM reference_locations WHERE org_id = %s AND site_image_id = ANY(%s)", (scope.org_id, list(excluded)))
     return {"id": str(group_id), "matches_removed": removed}
 
 

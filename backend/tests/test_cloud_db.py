@@ -348,3 +348,61 @@ def test_match_store_runs_incremental_matching(cloud_database_url, cloud_org, cl
         _site_image(conn, cloud_org, site, "https://t.test/y.jpg")
         _ref(conn, cloud_org, cloud_brand, "b.jpg", phash=HASH_B)
     assert run_matching(store, config, use_clip=True) == 2
+
+
+def _page(conn, org_id, site_id, path, image_id):
+    page = conn.execute("""INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, %s, 'done')
+                           ON CONFLICT (site_id, url) DO UPDATE SET status = 'done' RETURNING id""",
+                        (org_id, site_id, f"https://t.test{path}")).fetchone()["id"]
+    cloud_db.link_image_page(conn, image_id, page)
+
+
+def test_occurrences_list_pages_of_located_and_matched_images_and_skip_set_aside_ones(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, cloud_org, cloud_brand)
+        ref = _ref(conn, cloud_org, cloud_brand, "a.jpg")
+        other_ref = _ref(conn, cloud_org, cloud_brand, "b.jpg", phash="f" * 16)
+        full, crop, aside, unrelated = (_site_image(conn, cloud_org, site, f"https://t.test/{n}.jpg") for n in "wxyz")
+        for path, image in (("/shop", full), ("/shop", crop), ("/story", crop), ("/aside", aside), ("/other", unrelated)):
+            _page(conn, cloud_org, site, path, image)
+        cloud_db.write_matches(conn, cloud_org, [(ref, full, "phash", 1.0, "haut"), (ref, aside, "clip", 0.8, "moyen"),
+                                                 (other_ref, unrelated, "phash", 1.0, "haut")])
+        conn.execute("INSERT INTO reviews (org_id, reference_id, site_image_id, decision) VALUES (%s, %s, %s, 'ecarte')",
+                     (cloud_org, ref, aside))
+        for image, tier in ((crop, "review"), (full, "review")):  # `full` is also a confirmed match: the better tier wins
+            conn.execute("""INSERT INTO reference_locations (reference_id, site_image_id, org_id, tier, inliers, ref_coverage,
+                            site_coverage) VALUES (%s, %s, %s, %s, 12, 0.01, 0.4)""", (ref, image, cloud_org, tier))
+        conn.execute("UPDATE reference_images SET located_at = now() WHERE id = %s", (ref,))
+        pages = cloud_db.occurrence_pages(conn, cloud_brand, ref, limit=10, offset=0)
+        second = cloud_db.occurrence_pages(conn, cloud_brand, ref, limit=1, offset=1)
+        summary = cloud_db.occurrence_summary(conn, cloud_brand, ref)
+        never = cloud_db.occurrence_summary(conn, cloud_brand, other_ref)
+        review = cloud_db.occurrence_pages(conn, cloud_brand, ref, limit=10, offset=0, tier="review")
+        review_summary = cloud_db.occurrence_summary(conn, cloud_brand, ref, tier="review")
+    assert [page["page_url"] for page in pages] == ["https://t.test/shop", "https://t.test/story"]
+    assert {image["url"]: image["tier"] for image in pages[0]["images"]} == {"https://t.test/w.jpg": "same", "https://t.test/x.jpg": "review"}
+    assert pages[0]["image_count"] == 2 and [page["page_url"] for page in second] == ["https://t.test/story"]
+    assert summary["images"] == 2 and summary["pages"] == 2 and summary["located_at"] is not None and summary["pages_crawled"] == 4
+    assert never["located_at"] is None
+    # Only what is for a person to check: `w` is also a confirmed match, so only the crop `x` remains.
+    assert [image["url"] for page in review for image in page["images"]] == ["https://t.test/x.jpg"] * 2
+    assert review_summary["images"] == 1 and review_summary["pages"] == 2 and summary["review_images"] == 1
+
+
+def test_replacing_a_reference_forgets_what_was_found_for_the_old_picture(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, cloud_org, cloud_brand)
+        ref = _ref(conn, cloud_org, cloud_brand, "a.jpg")
+        image = _site_image(conn, cloud_org, site, "https://t.test/x.jpg")
+        conn.execute("""INSERT INTO reference_locations (reference_id, site_image_id, org_id, tier, inliers, ref_coverage, site_coverage)
+                        VALUES (%s, %s, %s, 'same', 30, 0.5, 0.5)""", (ref, image, cloud_org))
+        conn.execute("UPDATE reference_images SET located_at = now() WHERE id = %s", (ref,))
+
+        def state():
+            return (conn.execute("SELECT count(*) AS n FROM reference_locations WHERE reference_id = %s", (ref,)).fetchone()["n"],
+                    conn.execute("SELECT located_at FROM reference_images WHERE id = %s", (ref,)).fetchone()["located_at"])
+
+        _ref(conn, cloud_org, cloud_brand, "a.jpg")  # same hashes (the file was only re-saved): the search still stands
+        assert state()[0] == 1 and state()[1] is not None
+        _ref(conn, cloud_org, cloud_brand, "a.jpg", phash="0" * 16)  # another picture under the same name
+        assert state() == (0, None)

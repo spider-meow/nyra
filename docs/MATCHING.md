@@ -79,6 +79,36 @@ a group keeps its id when another crop joins it). A mirrored copy is not
 looked for. Thresholds changed in Settings do not regroup what is already
 grouped. Ignoring a photo sets aside every one of its versions.
 
+## Where is this picture used? (`locate`)
+
+The "Où est-elle utilisée ?" panel of a library picture lists the pages of the
+brand's sites that show it, crops included. A `locate` job (`verify.locate`,
+`cloud/locate.py`) checks the reference against **every** image the crawls
+already stored (no new read of a site, no CLIP pre-selection: a tight crop looks
+nothing like its whole), so it costs roughly 0.1 to 0.5 s per image (an estimate, not measured on real sites: 10,000 images take between 15 minutes and 1.5 hours). It is one running job for the brand, so a started search delays the brand's other jobs until it ends; the queue starts any other kind first when both wait. The criterion
+differs from a comparison's: `compare` judges by the *smaller* of the two
+coverages, which drops a crop made of a sliver of the reference; here
+(`verify.locate_tier`) the larger side counts too.
+
+| Tier | Rule |
+|---|---|
+| same | ≥ `geometric_min_inliers` (20) and both coverages ≥ `geometric_confirm_coverage` (20 %) |
+| review | either coverage ≥ 20 %, or ≥ 20 inliers and both coverages ≥ 5 %; from `geometric_locate_min_inliers` (10) inliers, so a very small crop is not lost |
+
+The images grouped (`variant_group`) with a hit join it with its tier: a crop
+too small to match on its own is still the same photo as a larger crop that did.
+A mirrored copy is looked for. The result replaces the reference's previous one
+(`reference_locations`, `reference_images.located_at`); the list merges it with
+the comparison's matches and leaves out what a person set aside. **Ceiling:** a
+crop under about 3 % of the reference's area (fewer than 10 keypoints agree)
+is missed, as is one whose scale differs from the 1024 px working copy by more than 8× (the
+reference keeps at most 2,000 keypoints, so a small crop of a very detailed picture has few to match); on generated pictures, unrelated images never reached the "review"
+tier (0 of 300 pairs, at most 11 inliers) — **not measured on real images**: the low-inlier
+"review" path (10 to 19 inliers) should be calibrated like the thresholds above before being
+trusted. Images set aside by an exclusion are never searched, and a result is forgotten when the
+reference is replaced (other hashes), when a site image's file changes, or when an image is excluded.
+The result does not follow later crawls: the panel says when the last search ran and offers to relaunch it.
+
 ## Exclusions
 
 Recurring false positives — a logo, a generic visual reused on every

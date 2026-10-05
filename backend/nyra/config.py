@@ -71,6 +71,9 @@ class MatchConfig:
     geometric_min_inliers: int = 20
     geometric_review_coverage: float = 0.05
     geometric_confirm_coverage: float = 0.20
+    # The search for one picture's crops (`verify.locate`): a very small crop holds few keypoints, so from this many
+    # (and a large share of the crop covered) it is "to verify" instead of being lost. Not tunable per organization.
+    geometric_locate_min_inliers: int = 10
 
 
 @dataclass(frozen=True)

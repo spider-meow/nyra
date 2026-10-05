@@ -12,6 +12,7 @@ import type {
   Job,
   LibraryItem,
   Matches,
+  Occurrences,
   OrgInsights,
   Overview,
   Report,
@@ -266,7 +267,7 @@ export function useSiteImageMutations() {
           added: { site_image_id: string; filename: string }[];
           failed: { site_image_id: string; url: string; reason: string }[];
         }>(apiPath("/site-images/adopt"), input),
-      onSuccess: () => invalidate("site-images", "library", "matches", "overview", "jobs"),
+      onSuccess: () => invalidate("occurrences", "site-images", "library", "matches", "overview", "jobs"),
     }),
   };
 }
@@ -278,10 +279,11 @@ export function useSites() {
 
 /** What to refresh when a job of each kind finishes. */
 export const refreshAfter: Record<Job["kind"], string[]> = {
-  crawl: ["overview", "matches", "scans", "library", "site-images", "sites", "insights", "estimate"],
-  match: ["overview", "matches", "library", "site-images", "insights", "estimate"],
-  index: ["overview", "matches", "library", "site-images", "insights"],
+  crawl: ["occurrences", "overview", "matches", "scans", "library", "site-images", "sites", "insights", "estimate"],
+  match: ["occurrences", "overview", "matches", "library", "site-images", "insights", "estimate"],
+  index: ["occurrences", "overview", "matches", "library", "site-images", "insights"],
   report: ["reports", "insights"],
+  locate: ["occurrences"],
 };
 
 export function useInvalidate() {
@@ -300,6 +302,26 @@ export function useStartJob() {
       const path = input.kind === "report" ? "/reports" : `/jobs/${input.kind}`;
       return api.post<{ job: Job }>(apiPath(path), input.body);
     },
+    onSuccess: () => invalidate("jobs"),
+  });
+}
+
+/** The pages showing one reference (its crops included), `limit` of them from `offset`. */
+export function useOccurrences(filename: string, offset: number, limit: number, tier?: "review") {
+  const { apiPath, brand } = useOrg();
+  return useQuery({
+    queryKey: ["occurrences", brand.id, filename, offset, tier ?? "all"],
+    queryFn: () => api.get<Occurrences>(`${apiPath(`/library/${encodeURIComponent(filename)}/occurrences`)}?limit=${limit}&offset=${offset}${tier ? `&tier=${tier}` : ""}`),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Searches every image already read for one reference; the answer comes back as a job (see `useJobs`). */
+export function useLocate() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (filename: string) => api.post<{ job: Job }>(apiPath(`/library/${encodeURIComponent(filename)}/locate`)),
     onSuccess: () => invalidate("jobs"),
   });
 }
@@ -358,7 +380,10 @@ export function useReview() {
     onError: (_error, input, context) => {
       patchHits(client, key, input.referenceId, (hit) => context?.before.get(hit.site_image_id));
     },
-    onSettled: () => void client.invalidateQueries({ queryKey: ["overview", brand.id] }),
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ["overview", brand.id] });
+      void client.invalidateQueries({ queryKey: ["occurrences", brand.id] }); // a match set aside leaves the list of where a picture is used
+    },
   });
 }
 
@@ -400,7 +425,7 @@ export function useReferenceUpload() {
     } finally {
       window.removeEventListener("beforeunload", warn);
       setProgress(null);
-      invalidate("library", "overview", "matches", "jobs");
+      invalidate("occurrences", "library", "overview", "matches", "jobs");
       forgetImages(result.saved); // same name, new picture (replaced, or deleted before): the old thumbnail and original must not stay
     }
     reportUnanswered(files, result);
@@ -414,7 +439,7 @@ export function useReferenceUpload() {
 export function useLibraryMutations() {
   const { apiPath } = useOrg();
   const invalidate = useInvalidate();
-  const done = () => invalidate("library", "overview", "matches", "jobs");
+  const done = () => invalidate("occurrences", "library", "overview", "matches", "jobs");
   return {
     updateMeta: useMutation({
       mutationFn: (input: { filename: string; expiry_date: string; credit: string; notes: string; tags: string[] }) =>
@@ -514,7 +539,7 @@ export function useExclusions() {
 export function useExclusionMutations() {
   const { apiPath } = useOrg();
   const invalidate = useInvalidate();
-  const done = () => invalidate("exclusions", "matches", "overview", "jobs", "site-images");
+  const done = () => invalidate("occurrences", "exclusions", "matches", "overview", "jobs", "site-images");
   return {
     add: useMutation({
       mutationFn: (input: { siteImageId: string; reason: string }) =>

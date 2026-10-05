@@ -31,7 +31,7 @@ nyra serve --host 0.0.0.0 --port 8000
 
 ### `worker`
 
-Runs queued jobs: `crawl`, `match`, `index`, `report`. Run one or more
+Runs queued jobs: `crawl`, `match`, `index`, `report`, `locate`. Run one or more
 next to `serve`; each takes one job at a time, never two for the same
 organization. Stops cleanly on SIGTERM.
 

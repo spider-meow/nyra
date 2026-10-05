@@ -8,6 +8,7 @@ import { MAX_TAGS, splitTags } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { useLibraryMutations } from "../../lib/queries";
 import type { LibraryItem } from "../../types";
+import { OccurrencesSection } from "./Occurrences";
 
 type Form = { expiry_date: string; credit: string; notes: string; tags: string[] };
 
@@ -26,6 +27,9 @@ export function EditReference(props: { item: LibraryItem | null; thumbUrl: strin
     if (loadedFor !== null) setLoadedFor(null); // closed: the next opening starts from the current data, not from an abandoned draft
     return null;
   }
+
+  // Saving and cancelling only make sense once something differs from what is stored.
+  const dirty = form.expiry_date !== item.expiry_date || form.credit !== item.credit || form.notes !== item.notes || form.tags.join("|") !== item.tags.join("|");
 
   function save() {
     if (!item) return;
@@ -50,9 +54,15 @@ export function EditReference(props: { item: LibraryItem | null; thumbUrl: strin
       footer={
         admin ? (
           <>
-            <Button variant="danger" className="mr-auto" onClick={() => props.onDelete(item)}>Supprimer</Button>
-            <Button onClick={props.onClose}>Annuler</Button>
-            <Button variant="primary" onClick={save} loading={updateMeta.isPending}>Enregistrer</Button>
+            <button type="button" onClick={() => props.onDelete(item)} className="mr-auto inline-flex h-8 items-center rounded-lg px-2.5 text-[13px] font-medium text-expired transition-colors hover:bg-expired-soft">
+              Supprimer
+            </button>
+            {dirty ? (
+              <div className="pop-in flex gap-2">
+                <Button onClick={props.onClose}>Annuler</Button>
+                <Button variant="primary" onClick={save} loading={updateMeta.isPending}>Enregistrer</Button>
+              </div>
+            ) : null}
           </>
         ) : (
           <Button onClick={props.onClose}>Fermer</Button>
@@ -60,6 +70,7 @@ export function EditReference(props: { item: LibraryItem | null; thumbUrl: strin
       }
     >
       <ReferenceFields item={item} thumbUrl={props.thumbUrl} form={form} setForm={setForm} />
+      <OccurrencesSection item={item} />
     </Modal>
   );
 }

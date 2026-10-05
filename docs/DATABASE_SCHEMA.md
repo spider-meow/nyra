@@ -49,6 +49,7 @@ before September 26, 2026 still point at their original.
 | `site_images` | Images found | `url` (unique per site), `content_hash` (indexed; same bytes are reused), hashes, `embedding`, `storage_path`, `thumb_path`, `compared_at`, `variant_group` (shared by the crops and resizes of one photo, set by the worker after each comparison; NULL = no twin; never read by matching), `variants_checked_at` (incremental marker: only images where it is NULL are searched for twins) |
 | `image_pages` | Image ↔ page | composite key |
 | `matches` | Reference ↔ site image hits | `level` (phash/dhash/clip), `score`, `confidence` (haut/moyen/a_verifier) |
+| `reference_locations` | Site images found to be a copy or crop of a reference by the `locate` job (replaced at each search) | `reference_id`, `site_image_id`, `tier` (same/review), `inliers`, `ref_coverage`, `site_coverage`; `reference_images.located_at` = last search |
 | `reviews` | Decisions | `decision` ∈ {retenu = to remove, ecarte = false positive, traite = removed}, `reviewed_by` |
 | `excluded_hashes` | Recurring false positives never matched again, per brand | `brand_id`, `hash`, `hash_type` (phash/dhash), `group_id` (one exclusion = both rows), `reason`, `thumb_path` |
 | `match_meta` | Signature of a brand's last match pass | `brand_id` (key), thresholds + model; a change forces a full recompute |

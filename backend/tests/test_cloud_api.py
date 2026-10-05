@@ -643,6 +643,50 @@ def test_matches_sign_urls_in_batch_and_reviews_are_scoped(client, org_with_user
     assert client.post(f"{other_base}/reviews", headers=_headers(admin_id), json=review).status_code == 404
 
 
+def test_locate_is_an_admin_job_and_occurrences_list_pages_with_signed_thumbnails(client, org_with_users, cloud_brand,
+                                                                                  cloud_database_url):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        ref = cloud_db.upsert_reference_image(
+            conn, org_id=org_id, brand_id=cloud_brand, filename="a.jpg", storage_path=f"{org_id}/a.jpg",
+            expiry_date=None, credit=None, notes=None, phash="ffff0000ffff0000", dhash="ffff0000ffff0000",
+        )
+        site = _site(conn, org_id, cloud_brand)
+        crop = conn.execute(
+            """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, phash, dhash)
+               VALUES (%s, %s, 'https://target.test/crop.jpg', %s, %s, '0', '0') RETURNING id""",
+            (org_id, site, f"{org_id}/crop.jpg", f"{org_id}/thumbs/crop.jpg"),
+        ).fetchone()["id"]
+        page = conn.execute("INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, 'https://target.test/p', 'done') RETURNING id",
+                            (org_id, site)).fetchone()["id"]
+        cloud_db.link_image_page(conn, crop, page)
+        conn.execute("""INSERT INTO reference_locations (reference_id, site_image_id, org_id, tier, inliers, ref_coverage, site_coverage)
+                        VALUES (%s, %s, %s, 'review', 12, 0.01, 0.4)""", (ref, crop, org_id))
+
+    assert client.post(f"{base}/library/a.jpg/locate", headers=_headers(client_id)).status_code == 403
+    assert client.post(f"{base}/library/nope.jpg/locate", headers=_headers(admin_id)).status_code == 404
+    job = client.post(f"{base}/library/a.jpg/locate", headers=_headers(admin_id)).json()["job"]
+    assert job["kind"] == "locate" and job["params"] == {"reference_id": str(ref)}
+    assert client.post(f"{base}/library/a.jpg/locate", headers=_headers(admin_id)).status_code == 409
+
+    found = client.get(f"{base}/library/a.jpg/occurrences", headers=_headers(client_id)).json()
+    assert found["total_pages"] == 1 and found["images_found"] == 1 and found["pages_crawled"] == 1
+    [shown] = found["pages"]
+    assert shown["url"] == "https://target.test/p" and shown["image_count"] == 1
+    assert shown["images"][0]["tier"] == "review"
+    assert shown["images"][0]["thumb"].startswith(f"https://fake-storage.test/site-images/{org_id}/thumbs/")
+    assert client.get(f"{base}/library/a.jpg/occurrences?limit=0", headers=_headers(client_id)).status_code == 422
+    assert client.get(f"{base}/library/a.jpg/occurrences?tier=nope", headers=_headers(client_id)).status_code == 422
+    only_review = client.get(f"{base}/library/a.jpg/occurrences?tier=review", headers=_headers(client_id)).json()
+    assert only_review["total_pages"] == 1 and only_review["review_images"] == 1
+    past_the_end = client.get(f"{base}/library/a.jpg/occurrences?offset=500", headers=_headers(client_id)).json()
+    assert past_the_end["offset"] == 0 and len(past_the_end["pages"]) == 1  # a result that shrank is never answered empty
+
+    other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
+    assert client.get(f"/api/orgs/{org_id}/brands/{other['id']}/library/a.jpg/occurrences",
+                      headers=_headers(admin_id)).status_code == 404
+
+
 def test_reports_are_queued_and_listed_with_signed_links(client, org_with_users, cloud_brand, cloud_database_url):
     org_id, base, admin_id, client_id, _ = org_with_users
     r = client.post(f"{base}/reports", headers=_headers(admin_id), json={"within_days": 90})

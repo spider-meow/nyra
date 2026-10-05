@@ -14,7 +14,8 @@ Job kinds:
            (CLIP embedding, mirror hashes, thumbnail), then compare. The
            web process enqueues one after every upload; it also
            backfills rows created before those columns existed;
-- report — build report.html + the two CSVs and store them.
+- report — build report.html + the two CSVs and store them;
+- locate — find every crawled image that is a crop or copy of one reference.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashe
 from . import db as cloud_db
 from . import jobs as cloud_jobs
 from . import storage as cloud_storage
+from .locate import NotSearchable, locate_reference
 from .store import CloudCrawlStore, CloudMatchStore
 from .variants import update_variants
 
@@ -384,6 +386,7 @@ class Worker:
             "match": self._match_job,
             "index": self._index,
             "report": self._report,
+            "locate": self._locate,
         }[job["kind"]]
         try:
             message, result = handler(ctx, uuid.UUID(job["org_id"]), uuid.UUID(job["brand_id"]), job.get("params") or {})
@@ -552,6 +555,23 @@ class Worker:
         metrics: dict = {}
         count = self._compare(ctx, org_id, brand_id, self.config_for(org_id), metrics)
         return f"Comparaison terminée : {count} correspondance(s).", {"matches": count, "match_metrics": metrics}
+
+    def _locate(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
+        try:
+            reference_id = uuid.UUID(str(params.get("reference_id")))
+        except ValueError as exc:
+            raise JobFailed("Référence manquante.") from exc
+
+        def progress(done: int, total: int) -> None:
+            ctx.report(f"Recherche dans les images lues · {done}/{total}", {"phase": "locate", "done": done, "total": total})
+
+        ctx.report("Recherche de la référence…", {"phase": "locate"}, force=True)
+        try:
+            result = locate_reference(self.database_url, self.storage_client_factory(), org_id, brand_id, reference_id,
+                                      self.config_for(org_id), progress=progress, should_stop=ctx.should_stop)
+        except NotSearchable as exc:
+            raise JobFailed(str(exc)) from exc
+        return f"{result['found']} image(s) trouvée(s) sur {result['searched']} lue(s).", result
 
     def _index(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         config = self.config_for(org_id)

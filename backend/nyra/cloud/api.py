@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from nyra.config import Config, load_config
 
 from . import storage as cloud_storage
-from .routes import brands, interface, jobs, library, matches, reports_settings, session, site_images
+from .routes import brands, interface, jobs, library, matches, occurrences, reports_settings, session, site_images
 from .routes.common import Ctx
 
 
@@ -96,7 +96,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
     # (the order of `/library/export-csv` against `/library/{filename}` matters), the catch-all page last.
     interface.add_security(app, settings.supabase_url, settings.sentry_browser_dsn)
     interface.mount_assets(app, dist)
-    for module in (session, brands, library, jobs, matches, site_images, reports_settings):
+    for module in (session, brands, library, occurrences, jobs, matches, site_images, reports_settings):
         app.include_router(module.router)
     interface.add_pages(app, dist)
     return app

@@ -561,3 +561,94 @@ def test_a_missing_chromium_is_explained_instead_of_a_traceback():
     missing = Exception("BrowserType.launch: Executable doesn't exist at C:/x/chrome-headless-shell.exe")
     assert "python -m playwright install chromium" in worker_module.browser_problem(missing)
     assert worker_module.browser_problem(RuntimeError("disk on fire")) is None
+
+
+def test_locate_job_finds_copies_crops_and_their_group_mates_and_replaces_its_previous_result(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
+    pytest.importorskip("cv2")
+    from test_verify import jpeg, scene
+
+    photo = scene(40)
+    tight = photo.crop((300, 200, 560, 400))
+    group = uuid.uuid4()
+    with cloud_db.connect(cloud_database_url) as conn:
+        ref = _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "hero.jpg", _jpeg_bytes(photo))
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        ids = {name: _add_site_image(conn, fake_storage_client, cloud_org, site, f"https://t.test/{name}.jpg", _jpeg_bytes(img))
+               for name, img in (("copy", jpeg(photo.resize((600, 433)))), ("crop", jpeg(tight.resize((520, 400)))),
+                                 ("mate", scene(41)), ("other", scene(42)), ("gone", scene(43)))}
+        conn.execute("UPDATE site_images SET variant_group = %s WHERE id = ANY(%s)", (group, [ids["crop"], ids["mate"]]))
+        path = conn.execute("SELECT storage_path FROM site_images WHERE id = %s", (ids["gone"],)).fetchone()["storage_path"]
+        del fake_storage_client.store[("site-images", path)]  # a missing object: counted, never fatal
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="locate", params={"reference_id": str(ref)})
+
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert finished["status"] == "done", finished
+    assert finished["result"] == {"searched": 5, "unreadable": 1, "found": 3, "found_direct": 2}
+
+    def saved():
+        with cloud_db.connect(cloud_database_url) as conn:
+            rows = conn.execute("SELECT site_image_id, tier, inliers FROM reference_locations WHERE reference_id = %s", (ref,)).fetchall()
+        return {row["site_image_id"]: (row["tier"], row["inliers"]) for row in rows}
+
+    found = saved()
+    assert set(found) == {ids["copy"], ids["crop"], ids["mate"]}
+    assert found[ids["copy"]][0] == "same" and found[ids["crop"]][0] == "review"
+    assert found[ids["mate"]] == ("review", 0)  # same photo as the crop, no figures of its own
+    assert _reference_row(cloud_database_url, cloud_brand, "hero.jpg")["located_at"] is not None
+
+    # A second search replaces the first: an image that stopped being a hit disappears.
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE site_images SET variant_group = NULL WHERE id = ANY(%s)", (list(ids.values()),))
+        conn.execute("DELETE FROM site_images WHERE id = %s", (ids["copy"],))
+        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="locate", params={"reference_id": str(ref)})
+    assert worker.run_once()
+    assert set(saved()) == {ids["crop"]}
+
+
+def test_locate_job_says_why_it_cannot_search(worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
+    with cloud_db.connect(cloud_database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="locate", params={"reference_id": str(uuid.uuid4())})
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert finished["status"] == "error" and finished["error"] == "Référence introuvable."
+
+
+def test_locate_job_leaves_out_excluded_images_and_refuses_to_save_for_a_replaced_reference(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client, monkeypatch):
+    pytest.importorskip("cv2")
+    from test_verify import jpeg, scene
+
+    from nyra.cloud import locate as locate_module
+
+    photo = scene(50)
+    with cloud_db.connect(cloud_database_url) as conn:
+        ref = _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "hero.jpg", _jpeg_bytes(photo))
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        kept = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/kept.jpg", _jpeg_bytes(jpeg(photo.crop((300, 200, 560, 400)).resize((520, 400)))))
+        aside = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/aside.jpg",
+                                _jpeg_bytes(jpeg(photo.resize((600, 433)))))  # exclusions reach every copy, not every crop
+        cloud_db.add_exclusion(conn, cloud_org, cloud_brand, aside, reason=None, created_by=None)
+        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="locate", params={"reference_id": str(ref)})
+    assert worker.run_once()
+    with cloud_db.connect(cloud_database_url) as conn:
+        found = {row["site_image_id"] for row in conn.execute("SELECT site_image_id FROM reference_locations WHERE reference_id = %s", (ref,)).fetchall()}
+    assert found == {kept}  # an image set aside as a recurring false positive is never searched
+
+    # The reference is replaced while the search runs: nothing is saved for the old picture, and the message says why.
+    real_locate = locate_module.verify.locate
+
+    def replaced_meanwhile(*args, **kwargs):
+        with cloud_db.connect(cloud_database_url) as conn:
+            conn.execute("UPDATE reference_images SET phash = %s WHERE id = %s", ("0" * 16, ref))
+        return real_locate(*args, **kwargs)
+
+    monkeypatch.setattr(locate_module.verify, "locate", replaced_meanwhile)
+    with cloud_db.connect(cloud_database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="locate", params={"reference_id": str(ref)})
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert finished["status"] == "error" and "remplacée" in finished["error"]
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM reference_locations WHERE reference_id = %s", (ref,)).fetchone()["n"] == 1  # the first result stands

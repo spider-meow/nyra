@@ -24,7 +24,7 @@ from typing import Any, Optional
 
 import psycopg
 
-KINDS = {"crawl", "match", "index", "report"}
+KINDS = {"crawl", "match", "index", "report", "locate"}
 ACTIVE = ("queued", "running")
 STALE_AFTER_SECONDS = 180
 # A job whose worker died goes back to the queue this many times before it is marked failed.
@@ -88,7 +88,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
                 SELECT j.id FROM jobs j
                 WHERE j.status = 'queued'
                   AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.brand_id = j.brand_id AND r.status = 'running')
-                ORDER BY j.created_at
+                ORDER BY (j.kind = 'locate'), j.created_at  -- a long search never waits ahead of another kind
                 FOR UPDATE SKIP LOCKED
                 LIMIT 1
             )

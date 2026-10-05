@@ -389,6 +389,13 @@ def upsert_reference_image(
     work_path: Optional[str] = None,
     byte_size: Optional[int] = None,
 ) -> uuid.UUID:
+    # A replaced picture is not the one that was searched for: forget what was found for the old one.
+    conn.execute(
+        """DELETE FROM reference_locations l USING reference_images r
+           WHERE l.reference_id = r.id AND r.brand_id = %s AND r.filename = %s
+             AND (r.phash IS DISTINCT FROM %s OR r.dhash IS DISTINCT FROM %s OR r.phash_flip IS DISTINCT FROM %s)""",
+        (brand_id, filename, phash, dhash, phash_flip),
+    )
     row = conn.execute(
         """
         INSERT INTO reference_images
@@ -410,6 +417,13 @@ def upsert_reference_image(
             thumb_path=excluded.thumb_path,
             work_path=excluded.work_path,
             byte_size=COALESCE(excluded.byte_size, reference_images.byte_size),
+            located_at=CASE
+                WHEN reference_images.phash IS DISTINCT FROM excluded.phash
+                  OR reference_images.dhash IS DISTINCT FROM excluded.dhash
+                  OR reference_images.phash_flip IS DISTINCT FROM excluded.phash_flip
+                THEN NULL
+                ELSE reference_images.located_at
+            END,
             compared_at=CASE
                 WHEN reference_images.phash IS DISTINCT FROM excluded.phash
                   OR reference_images.dhash IS DISTINCT FROM excluded.dhash
@@ -676,6 +690,80 @@ def unmatched_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     for row in rows:
         row["expiry_date"] = row["expiry_date"].isoformat() if row["expiry_date"] else None
     return rows
+
+
+# The images of one reference: the ones the `locate` job found and the ones the comparison matched (a high
+# confidence is "same", the rest "review"), minus those a person set aside. One row per image, best tier.
+_REFERENCE_HITS = """
+    SELECT h.site_image_id, CASE WHEN bool_or(h.tier = 'same') THEN 'same' ELSE 'review' END AS tier
+    FROM (
+        SELECT l.site_image_id, l.tier FROM reference_locations l WHERE l.reference_id = %(ref)s
+        UNION ALL
+        SELECT m.site_image_id, CASE WHEN m.confidence = 'haut' THEN 'same' ELSE 'review' END
+        FROM matches m WHERE m.reference_id = %(ref)s
+    ) h
+    WHERE NOT EXISTS (SELECT 1 FROM reviews v WHERE v.reference_id = %(ref)s AND v.site_image_id = h.site_image_id
+                      AND v.decision = 'ecarte')
+    GROUP BY h.site_image_id"""
+
+
+# Images kept per page (a page showing more crops of one picture keeps its count, not the rest).
+OCCURRENCE_IMAGES_PER_PAGE = 20
+
+
+def occurrence_pages(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID, *,
+                     limit: int, offset: int, tier: Optional[str] = None) -> list[Row]:
+    """The pages of the brand's sites that show the reference (or a crop of it), `limit` of them from `offset`, by
+    address; only the images of `tier` ("same" or "review") when given. Each has `image_count` and its first `OCCURRENCE_IMAGES_PER_PAGE` images (`site_image_id`, `url`,
+    `tier`, `thumb_path`, `storage_path`)."""
+    return conn.execute(
+        f"""
+        SELECT page_url, max(n) AS image_count,
+               jsonb_agg(jsonb_build_object('site_image_id', id, 'url', url, 'tier', tier,
+                                            'thumb_path', thumb_path, 'storage_path', storage_path)
+                         ORDER BY rn) FILTER (WHERE rn <= %(per_page)s) AS images
+        FROM (
+            SELECT p.id AS page_id, p.url AS page_url, si.id, si.url, h.tier, si.thumb_path, si.storage_path,
+                   row_number() OVER (PARTITION BY p.id ORDER BY si.url, si.id) AS rn,
+                   count(*) OVER (PARTITION BY p.id) AS n
+            FROM ({_REFERENCE_HITS}) h
+            JOIN site_images si ON si.id = h.site_image_id
+            JOIN sites s ON s.id = si.site_id AND s.brand_id = %(brand)s
+            JOIN image_pages ip ON ip.image_id = si.id
+            JOIN pages p ON p.id = ip.page_id
+            WHERE (%(tier)s::text IS NULL OR h.tier = %(tier)s)
+        ) found
+        GROUP BY page_id, page_url ORDER BY page_url LIMIT %(limit)s OFFSET %(offset)s
+        """,
+        {"ref": reference_id, "brand": brand_id, "limit": limit, "offset": offset, "per_page": OCCURRENCE_IMAGES_PER_PAGE,
+         "tier": tier},
+    ).fetchall()
+
+
+def occurrence_summary(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID, *,
+                       tier: Optional[str] = None) -> Row:
+    """What the occurrences stand on: images and pages found, when the reference was last searched for, the last read of
+    the brand's sites and the pages read, so "nothing found" is not taken for "not there". `images` and `pages` follow
+    `tier` when given; `review_images` is always the number of images for a person to check."""
+    return conn.execute(
+        f"""
+        SELECT (SELECT count(*) FROM ({_REFERENCE_HITS}) h JOIN site_images si ON si.id = h.site_image_id
+                 JOIN sites s ON s.id = si.site_id AND s.brand_id = %(brand)s
+                 WHERE (%(tier)s::text IS NULL OR h.tier = %(tier)s)) AS images,
+               (SELECT count(DISTINCT ip.page_id) FROM ({_REFERENCE_HITS}) h JOIN site_images si ON si.id = h.site_image_id
+                 JOIN sites s ON s.id = si.site_id AND s.brand_id = %(brand)s
+                 JOIN image_pages ip ON ip.image_id = si.id
+                 WHERE (%(tier)s::text IS NULL OR h.tier = %(tier)s)) AS pages,
+               (SELECT count(*) FROM ({_REFERENCE_HITS}) h JOIN site_images si ON si.id = h.site_image_id
+                 JOIN sites s ON s.id = si.site_id AND s.brand_id = %(brand)s WHERE h.tier = 'review') AS review_images,
+               (SELECT located_at FROM reference_images WHERE id = %(ref)s AND brand_id = %(brand)s) AS located_at,
+               (SELECT max(c.started_at) FROM crawl_runs c JOIN sites s ON s.id = c.site_id
+                 WHERE s.brand_id = %(brand)s) AS last_crawled_at,
+               (SELECT count(*) FROM pages p JOIN sites s ON s.id = p.site_id
+                 WHERE s.brand_id = %(brand)s AND p.status = 'done') AS pages_crawled
+        """,
+        {"ref": reference_id, "brand": brand_id, "tier": tier},
+    ).fetchone()
 
 
 def unmatched_site_images(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:

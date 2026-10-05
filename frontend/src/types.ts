@@ -12,7 +12,7 @@ export type Confidence = "haut" | "moyen" | "a_verifier";
 
 export type Decision = "retenu" | "ecarte" | "traite";
 
-export type JobKind = "crawl" | "match" | "index" | "report";
+export type JobKind = "crawl" | "match" | "index" | "report" | "locate";
 
 export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
@@ -35,6 +35,20 @@ export type Job = {
 export type CrawlEstimate = {
   sites: Record<string, { pages: number; seconds: number; runs_used: number } | null>;
   compare_seconds: number | null;
+};
+
+/** The pages that show one library picture, or a crop of it: `review` images are for a person to check. */
+export type Occurrences = {
+  pages: { url: string; image_count: number; images: { site_image_id: string; url: string; tier: "same" | "review"; thumb: string }[] }[];
+  total_pages: number;
+  /** Where this answer starts: the server never answers past the end of a result that shrank. */
+  offset: number;
+  images_found: number;
+  /** Images for a person to check, whatever the filter. */
+  review_images: number;
+  located_at: string | null;
+  last_crawled_at: string | null;
+  pages_crawled: number;
 };
 
 export type CurrentJobs = { active: Job[]; last: Job | null };

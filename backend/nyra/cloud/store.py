@@ -88,6 +88,12 @@ class CloudCrawlStore:
 
     def _upsert(self, conn, *, url, storage_path, thumb_path, content_hash, width, height, phash, dhash, embedding,
                 byte_size, format=None, stored_bytes=None):
+        # A file that changed under the same address is not what was found for a reference.
+        conn.execute(
+            """DELETE FROM reference_locations l USING site_images s
+               WHERE l.site_image_id = s.id AND s.site_id = %s AND s.url = %s AND s.content_hash IS DISTINCT FROM %s""",
+            (self.site_id, url, content_hash),
+        )
         row = conn.execute(
             """
             INSERT INTO site_images

@@ -238,6 +238,75 @@ def same_photo_pairs(
     return kept
 
 
+class NoDetail(Exception):
+    """An image with too few keypoints (a flat logo, a blank) can't be searched for."""
+
+
+def locate_tier(verdict: Verdict, config: MatchConfig) -> Optional[str]:
+    """SAME, REVIEW or None for an image searched for a *given* photo, crops included.
+
+    `compare` judges a pair by the smaller of the two coverages, so a tight crop of the reference (its frame
+    full of agreeing points, a sliver of the reference) falls under the bar. Here the larger side counts too:
+    the crop, or the banner that holds the whole reference, is for a person to check. Both sides high: the
+    same photo. A very small crop has few keypoints: from `geometric_locate_min_inliers` it is for a person to
+    check, never confirmed."""
+    if verdict.inliers < config.geometric_locate_min_inliers:
+        return None
+    enough = verdict.inliers >= config.geometric_min_inliers
+    if enough and verdict.coverage >= config.geometric_confirm_coverage:
+        return SAME
+    wide = max(verdict.coverage_a, verdict.coverage_b) >= config.geometric_confirm_coverage
+    if wide or (enough and verdict.coverage >= config.geometric_review_coverage):
+        return REVIEW
+    return None
+
+
+def _located(ref: _Reference, site: Features, config: MatchConfig) -> tuple[Optional[str], Verdict]:
+    """The best of the plain and the mirrored reference against one site image."""
+    best_verdict = compare(ref.plain, site, config)
+    best = locate_tier(best_verdict, config)
+    if best != SAME:
+        mirrored = compare(ref.mirrored, site, config)
+        tier = locate_tier(mirrored, config)
+        if tier == SAME or (tier and not best):
+            best, best_verdict = tier, mirrored
+    return best, best_verdict
+
+
+def locate(
+    reference: Image.Image,
+    ids: Sequence[Any],
+    load_image: Callable[[Any], Optional[Image.Image]],
+    config: MatchConfig,
+    *,
+    progress: Optional[Callable[[int, int], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> list[tuple[Any, str, Verdict]]:
+    """Every image of `ids` that holds `reference` (or a crop of it): (id, SAME or REVIEW, verdict).
+
+    Exhaustive on purpose: each image gets the keypoint check, none is pre-selected by CLIP, because a tight crop
+    looks nothing like its whole. Cost: one decode, one SIFT extraction and up to four matchings per image
+    (an estimate of 0.1 to 0.5 s, not measured on real sites): 10,000 images take between 15 minutes and 1.5 hours.
+    Keypoints are not kept between images (nothing grows with `ids`).
+    `load_image(id)` returns the image or None (skipped). A stop ends the loop early: the caller discards the result."""
+    ref = _Reference(working_gray(reference))
+    if ref.plain is None:
+        raise NoDetail("the reference has too little detail to be searched for")
+    found: list[tuple[Any, str, Verdict]] = []
+    for index, image_id in enumerate(ids):
+        if should_stop and should_stop():
+            break
+        img = load_image(image_id)
+        site = None if img is None else extract(working_gray(img))
+        if site is not None:
+            tier, verdict = _located(ref, site, config)
+            if tier:
+                found.append((image_id, tier, verdict))
+        if progress:
+            progress(index + 1, len(ids))
+    return found
+
+
 def verify_hits(
     hits: Sequence[tuple],
     load_image: ImageLoader,
