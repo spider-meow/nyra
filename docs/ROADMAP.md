@@ -6,6 +6,22 @@ Une idée terminée est cochée avec la date et le commit ; on ne la supprime pa
 
 Légende : `[ ]` à faire · `[~]` en cours · `[x]` fait.
 
+## Cap : un service qu'on peut présenter
+
+Ce qui manque pour présenter Nyra comme un service n'est pas la détection
+(solide, voir `MATCHING.md`) mais **la boucle qui rend le produit utile sans
+qu'on y pense** : aujourd'hui il faut se connecter et cliquer (audit du
+29 septembre, `AUDIT_PRODUIT.md`). Ordre proposé, du plus décisif au moins :
+
+1. **La boucle automatique** (idée 3) : le produit vient à l'utilisateur.
+2. **La valeur juridique** (idée 4) : de quoi demander un retrait.
+3. **Résoudre, pas seulement détecter** (idée 5).
+4. **Des chiffres réels** (idée 6) : sans eux, tout le reste reste théorique.
+5. Les idées 1 et 2 ci-dessous : utiles, mais elles améliorent l'exploration,
+   pas la promesse centrale.
+
+Chiffrages : ceux de l'audit, à confirmer avant de s'y engager.
+
 ## En premier
 
 ### [~] 1. Regrouper les recadrages d'une même image (Droits non vérifiés, « Tous »)
@@ -82,6 +98,48 @@ re-seuiller sans recalculer.
 Questions ouvertes : qui définit les étiquettes (admin de la marque, nous) ?
 Les étiquettes sont-elles propres à une marque ou partagées ? Que veut dire
 « pique » pour Louis XIII (l'objet tenu par le sommelier sur la photo) ?
+
+### [ ] 3. La boucle automatique (passage hebdomadaire, résumé, alertes)
+
+**Ce qu'on veut.** Un passage de lecture chaque semaine par marque, un e-mail de
+résumé (« 3 nouveaux visuels expirés détectés ») et une alerte d'expiration de
+la bibliothèque (« 5 visuels expirent dans 30 jours »), indépendante du crawl.
+
+**Pourquoi.** Un outil de surveillance qu'il faut penser à lancer perd
+l'essentiel de sa valeur. Aujourd'hui il n'y a ni passage planifié ni alerte.
+
+**Piste.** Réglage par organisation et déclencheur pg_cron qui insère un job
+`crawl` avec `fresh: true` (sinon le mode reprise saute les pages déjà vues) ;
+e-mails par Resend, destinataires par organisation. Environ 4 à 6 jours.
+
+### [ ] 4. Preuve datée
+
+**Ce qu'on veut.** Au moment de la détection, une capture de la page et un
+horodatage, joints au rapport.
+
+**Pourquoi.** Donne une valeur juridique au rapport, nécessaire pour demander
+un retrait. Environ 2 à 4 jours.
+
+### [ ] 5. Suivi de retrait
+
+**Ce qu'on veut.** Assigner, commenter, fixer une échéance, relancer.
+
+**Pourquoi.** Fait passer de « détecter » à « résoudre ». Environ 3 à 5 jours.
+
+### [ ] 6. Chiffres réels
+
+**Ce qu'on veut.** Importer une vraie bibliothèque, lancer une vraie lecture,
+prendre 20 à 30 décisions, et mesurer le rappel sur 30 à 50 paires connues à la
+main (`nyra calibrate`).
+
+**Pourquoi.** Les 97,5 % de `MATCHING.md` viennent de copies retouchées
+fabriquées, pas de vrais cas de réutilisation ; le rappel réel est inconnu.
+
+## Avant d'ouvrir à un client
+
+Limitation de débit sur l'API, tests cloud en CI sur une vraie base, vraie
+adresse de contact du robot dans `config.yaml`, politique de conservation des
+images (`AUDIT_PRODUIT.md`, §3.2).
 
 ## Propositions à discuter
 
