@@ -11,9 +11,8 @@ type Editing = { id: string; name: string } | null;
 
 function useBrandActions(editing: Editing, setEditing: (editing: Editing) => void) {
   const { org, brand: current } = useOrg();
-  const { rename, remove } = useBrandMutations();
+  const { rename } = useBrandMutations();
   const navigate = useNavigate();
-  const confirm = useConfirm();
   const toast = useToast();
 
   function save(event: FormEvent) {
@@ -30,42 +29,16 @@ function useBrandActions(editing: Editing, setEditing: (editing: Editing) => voi
     });
   }
 
-  async function del(brand: Brand) {
-    const ok = await confirm({
-      title: `Supprimer la marque ${brand.name} ?`,
-      body: (
-        <>
-          <p>
-            Sa bibliothèque, ses adresses, les images lues, les correspondances, les décisions, les exclusions et les rapports de cette
-            marque seront effacés. Les autres marques ne sont pas touchées.
-          </p>
-          <p className="mt-2 font-medium">Cette action est définitive.</p>
-        </>
-      ),
-      confirm: "Supprimer la marque",
-      danger: true,
-    });
-    if (!ok) return;
-    const pending = toast.loading(`Suppression de ${brand.name}…`, "Bibliothèque, adresses et historique de la marque.");
-    remove.mutate(brand.id, {
-      onSuccess: () => {
-        toast.update(pending, { tone: "success", message: `Marque ${brand.name} supprimée`, description: "Les autres marques n'ont pas été touchées." });
-        if (brand.id === current.id) navigate(`/o/${org.slug}`, { replace: true });
-      },
-      onError: (error) => toast.update(pending, { tone: "error", message: `${brand.name} n'a pas été supprimée`, description: errorMessage(error) }),
-    });
-  }
-
-  return { rename, remove, save, del };
+  return { rename, save };
 }
 
 export function Brands() {
   const { admin, org, brand: current } = useOrg();
   const [editing, setEditing] = useState<Editing>(null);
-  const { rename, remove, save, del } = useBrandActions(editing, setEditing);
+  const { rename, save } = useBrandActions(editing, setEditing);
 
   return (
-    <Card className="mb-4" padded={false}>
+    <Card padded={false}>
       <div className="px-5 pt-5">
         <h2 className="font-semibold">Marques</h2>
         <p className="mt-1 max-w-2xl text-sm text-muted">
@@ -91,7 +64,6 @@ export function Brands() {
                 {admin ? (
                   <span className="flex gap-1">
                     <Button size="sm" variant="ghost" onClick={() => setEditing({ id: brand.id, name: brand.name })}>Renommer</Button>
-                    <Button size="sm" variant="ghost" loading={remove.isPending && remove.variables === brand.id} disabled={remove.isPending} onClick={() => void del(brand)}>Supprimer</Button>
                   </span>
                 ) : null}
               </>
@@ -134,5 +106,61 @@ function NewBrand() {
       </div>
       <Button type="submit" loading={create.isPending} disabled={!name.trim()}>Créer</Button>
     </form>
+  );
+}
+
+/** Deleting a brand, apart from the everyday settings: it cannot be undone. */
+export function DeleteBrands() {
+  const { org, brand: current } = useOrg();
+  const { remove } = useBrandMutations();
+  const navigate = useNavigate();
+  const confirm = useConfirm();
+  const toast = useToast();
+
+  async function del(brand: Brand) {
+    const ok = await confirm({
+      title: `Supprimer la marque ${brand.name} ?`,
+      body: (
+        <>
+          <p>
+            Sa bibliothèque, ses adresses, les images lues, les correspondances, les décisions, les exclusions et les rapports de cette
+            marque seront effacés. Les autres marques ne sont pas touchées.
+          </p>
+          <p className="mt-2 font-medium">Cette action est définitive.</p>
+        </>
+      ),
+      confirm: "Supprimer la marque",
+      danger: true,
+    });
+    if (!ok) return;
+    const pending = toast.loading(`Suppression de ${brand.name}…`, "Bibliothèque, adresses et historique de la marque.");
+    remove.mutate(brand.id, {
+      onSuccess: () => {
+        toast.update(pending, { tone: "success", message: `Marque ${brand.name} supprimée`, description: "Les autres marques n'ont pas été touchées." });
+        if (brand.id === current.id) navigate(`/o/${org.slug}`, { replace: true });
+      },
+      onError: (error) => toast.update(pending, { tone: "error", message: `${brand.name} n'a pas été supprimée`, description: errorMessage(error) }),
+    });
+  }
+
+  return (
+    <Card padded={false}>
+      <div className="px-5 pt-5">
+        <h2 className="font-semibold">Supprimer une marque</h2>
+        <p className="mt-1 max-w-2xl text-sm text-muted">
+          Efface sa bibliothèque, ses adresses, les images lues, les décisions et les rapports. Les autres marques ne sont pas touchées. Impossible à annuler.
+        </p>
+      </div>
+      <ul className="mt-3 divide-y divide-line border-t border-line">
+        {org.brands.map((brand) => (
+          <li key={brand.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+            <span className="min-w-0 flex-1 truncate font-medium">{brand.name}</span>
+            <Button size="sm" variant="danger" loading={remove.isPending && remove.variables === brand.id} disabled={remove.isPending} onClick={() => void del(brand)}>
+              Supprimer
+            </Button>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }

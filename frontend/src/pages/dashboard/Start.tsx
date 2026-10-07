@@ -27,8 +27,8 @@ function Step(props: { index: number; title: string; done: boolean; to: string; 
     <li className="flex flex-wrap items-center gap-3">
       <span
         className={cx(
-          "grid h-8 w-8 shrink-0 place-items-center rounded-full text-xs font-medium",
-          props.done ? "bg-ok-soft text-ok" : "bg-peach-soft text-bark-700",
+          "grid h-8 w-8 shrink-0 place-items-center rounded-full border border-ink text-xs font-semibold",
+          props.done ? "bg-mint text-ink" : "bg-yellow text-ink",
         )}
         aria-label={props.done ? "Fait" : "À faire"}
       >

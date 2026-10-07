@@ -5,7 +5,7 @@ import type { Decision, Hit } from "../../types";
 export function DecisionPanel(props: { hit: Hit; others: number; busy?: boolean; onDecide: (decision: Decision | "", everywhere?: boolean) => void }) {
   const { hit, others, busy, onDecide } = props;
   return (
-    <div className="rounded-2xl bg-sunk p-3.5">
+    <div className="rounded-xl bg-sunk p-3.5">
       <div className="flex items-center justify-between gap-2">
         <p className="text-[13px] font-semibold">Décision</p>
         <DecisionBadge decision={hit.decision} />

@@ -66,7 +66,7 @@ function DropTile({ onPick }: { onPick: () => void }) {
       <button
         type="button"
         onClick={onPick}
-        className="flex h-full min-h-56 w-full flex-col items-center justify-center gap-2.5 rounded-2xl border-[1.5px] border-dashed border-line-strong bg-sunk p-4 text-center transition-colors hover:border-bark hover:bg-peach-soft/40"
+        className="flex h-full min-h-56 w-full flex-col items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-dashed border-line-strong bg-sunk p-4 text-center transition-colors hover:border-bark hover:bg-peach-soft/40"
       >
         <span className="grid h-11 w-11 place-items-center rounded-xl bg-peach-soft text-bark-700"><Icon name="upload" size={20} /></span>
         <span className="text-sm font-medium">Déposez des images</span>
@@ -91,8 +91,8 @@ function ReferenceCard({ item, thumbUrl, checked, anySelected, onEdit, onToggle 
   return (
     <li
       className={cx(
-        "group relative flex flex-col overflow-hidden rounded-2xl border bg-paper transition-shadow hover:shadow-float",
-        checked ? "border-[#e6d3c2] shadow-[0_0_0_3px_var(--color-peach-soft)]" : "border-line",
+        "group relative flex flex-col overflow-hidden rounded-xl border bg-paper transition-shadow hover:shadow-float",
+        checked ? "border-focus shadow-[0_0_0_3px_var(--color-peach-soft)]" : "border-ink",
       )}
     >
       <button type="button" onClick={() => onEdit(item)} className="block text-left" aria-label={`${admin ? "Modifier" : "Voir"} ${item.filename}`}>

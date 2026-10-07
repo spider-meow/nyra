@@ -121,7 +121,7 @@ export function MetricTabs(props: { value: HistoryMetric; onChange: (metric: His
           onClick={() => props.onChange(metric)}
           className={cx(
             "rounded-md px-2 py-1 text-xs",
-            props.value === metric ? "bg-ink text-white" : "text-ink-soft hover:bg-canvas",
+            props.value === metric ? "bg-ink text-paper" : "text-ink-soft hover:bg-canvas",
           )}
         >
           {historyMetrics[metric].label}

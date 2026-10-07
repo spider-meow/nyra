@@ -212,13 +212,13 @@ export function OrgHome() {
     <Centered title="Organisations" body="Choisissez l'espace à ouvrir.">
       <div className="mt-5 grid gap-2">
         {list.map((org) => (
-          <Link key={org.org_id} to={`/o/${org.slug}`} className="rounded-xl border border-line-strong bg-paper px-4 py-3 text-sm font-medium hover:border-faint">
+          <Link key={org.org_id} to={`/o/${org.slug}`} className="rounded-xl border border-ink bg-paper px-4 py-3 text-sm font-medium hover:bg-yellow">
             {org.name}
             <span className="block text-xs font-normal text-muted">{org.role === "admin" ? "Administrateur" : "Lecture et validation"}</span>
           </Link>
         ))}
         {staff ? (
-          <Link to="/interne" className="rounded-xl border border-dashed border-line-strong bg-paper px-4 py-3 text-sm font-medium hover:border-faint">
+          <Link to="/interne" className="rounded-xl border border-dashed border-ink bg-paper px-4 py-3 text-sm font-medium hover:bg-yellow">
             Back office Nyra
             <span className="block text-xs font-normal text-muted">Toutes les marques, la file de tâches, les performances</span>
           </Link>

@@ -159,7 +159,7 @@ the same pull request:
 - **A new image-loading pattern**: `extract_images_from_html` for DOM
   attributes, `BACKGROUND_IMAGE_JS` for computed styles; add a test with a
   minimal HTML snippet.
-- **A stubborn age gate**: add its selector in Settings > "Clics
-  supplémentaires", or extend `DISMISS_OVERLAYS_JS`.
+- **A stubborn age gate**: add its selector in Réglages > Lecture des sites >
+  « Un contrôle d'âge qui bloque quand même ? », or extend `DISMISS_OVERLAYS_JS`.
 - **A new match signal**: a pure `classify_levelN`, wired into `compare`
   after the cheaper levels, plus the feature in both stores.

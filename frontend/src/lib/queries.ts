@@ -12,6 +12,7 @@ import type {
   Job,
   LibraryItem,
   Matches,
+  Member,
   Occurrences,
   OrgInsights,
   Overview,
@@ -525,6 +526,28 @@ export function useBrandMutations() {
       mutationFn: (id: string) => api.del(orgApiPath(`/brands/${id}`)),
       onSuccess: done,
     }),
+  };
+}
+
+export function useMembers() {
+  const { orgApiPath, org } = useOrg();
+  return useQuery({ queryKey: ["members", org.org_id], queryFn: () => api.get<{ members: Member[] }>(orgApiPath("/members")) });
+}
+
+export function useMemberMutations() {
+  const { orgApiPath } = useOrg();
+  const client = useQueryClient();
+  const done = () => void client.invalidateQueries({ queryKey: ["members"] });
+  return {
+    invite: useMutation({
+      mutationFn: (input: { email: string; role: Member["role"] }) => api.post<{ invited: boolean }>(orgApiPath("/members"), input),
+      onSuccess: done,
+    }),
+    setRole: useMutation({
+      mutationFn: (input: { userId: string; role: Member["role"] }) => api.put(orgApiPath(`/members/${input.userId}`), { role: input.role }),
+      onSuccess: done,
+    }),
+    remove: useMutation({ mutationFn: (userId: string) => api.del(orgApiPath(`/members/${userId}`)), onSuccess: done }),
   };
 }
 

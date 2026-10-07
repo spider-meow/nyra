@@ -93,12 +93,12 @@ type Props = {
 /** Floating bar over the selected visuels: deadline, tags, delete. */
 export function SelectionBar({ selected, bulk, removing, onRemove, onClear }: Props) {
   return (
-    <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-2xl bg-ink px-4 py-2.5 text-sm text-paper shadow-float md:left-[calc(256px+3.5rem)]" role="region" aria-label="Actions sur la sélection">
+    <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-xl border border-line-strong bg-bar px-4 py-2.5 text-sm text-white shadow-float md:left-[calc(256px+3.5rem)]" role="region" aria-label="Actions sur la sélection">
       <span className="font-medium">{plural(selected.size, "sélectionné")}</span>
       <span className="flex items-center gap-2">
         <label htmlFor="bulk-date" className="text-white/70">Échéance</label>
-        <input id="bulk-date" type="date" value={bulk.date} onChange={(event) => bulk.setDate(event.target.value)} className="h-9 rounded-[10px] border border-white/20 bg-white/10 px-2.5 text-paper [color-scheme:dark]" />
-        <button type="button" className="h-9 rounded-[10px] bg-peach px-3.5 text-[13.5px] font-medium text-bark-800 hover:bg-[#f9bd98] disabled:cursor-progress disabled:opacity-60" onClick={bulk.applyDate} disabled={bulk.dateBusy}>
+        <input id="bulk-date" type="date" value={bulk.date} onChange={(event) => bulk.setDate(event.target.value)} className="h-9 rounded-md border border-white/20 bg-white/10 px-2.5 text-white [color-scheme:dark]" />
+        <button type="button" className="h-9 rounded-md bg-peach px-3.5 text-[13.5px] font-medium text-ink hover:bg-accent-hover disabled:cursor-progress disabled:opacity-60" onClick={bulk.applyDate} disabled={bulk.dateBusy}>
           {bulk.dateBusy ? "Application…" : "Appliquer"}
         </button>
       </span>
@@ -112,16 +112,16 @@ export function SelectionBar({ selected, bulk, removing, onRemove, onClear }: Pr
           placeholder="magnum, classic"
           onChange={(event) => bulk.setTag(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter") bulk.applyTags("add"); }}
-          className="h-9 w-40 rounded-[10px] border border-white/20 bg-white/10 px-2.5 text-paper placeholder:text-white/40"
+          className="h-9 w-40 rounded-md border border-white/20 bg-white/10 px-2.5 text-white placeholder:text-white/40"
         />
-        <button type="button" className="h-9 rounded-[10px] bg-peach px-3.5 text-[13.5px] font-medium text-bark-800 hover:bg-[#f9bd98] disabled:cursor-not-allowed disabled:opacity-50" onClick={() => bulk.applyTags("add")} disabled={bulk.tagsBusy || !splitTags(bulk.tag).length}>
+        <button type="button" className="h-9 rounded-md bg-peach px-3.5 text-[13.5px] font-medium text-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={() => bulk.applyTags("add")} disabled={bulk.tagsBusy || !splitTags(bulk.tag).length}>
           Ajouter
         </button>
-        <button type="button" className="h-9 rounded-[10px] px-3 text-[13.5px] text-paper hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => bulk.applyTags("remove")} disabled={bulk.tagsBusy || !splitTags(bulk.tag).length}>
+        <button type="button" className="h-9 rounded-md px-3 text-[13.5px] text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => bulk.applyTags("remove")} disabled={bulk.tagsBusy || !splitTags(bulk.tag).length}>
           Retirer
         </button>
       </span>
-      <button type="button" className="h-9 rounded-[10px] px-3 text-[13.5px] text-[#f4b3a8] hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" disabled={removing} onClick={() => void onRemove([...selected])}>
+      <button type="button" className="h-9 rounded-md px-3 text-[13.5px] text-[#f4b3a8] hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" disabled={removing} onClick={() => void onRemove([...selected])}>
         {removing ? "Suppression…" : "Supprimer"}
       </button>
       <button type="button" className="ml-auto text-white/70 hover:text-white" onClick={onClear}>Tout désélectionner</button>

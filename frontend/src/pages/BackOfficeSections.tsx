@@ -71,17 +71,17 @@ export function PlatformStats(props: { totals: PlatformInsights["totals"]; crawl
   return (
     <>
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat value={num(totals.brands)} label="marques" hint={`${num(totals.organizations)} organisation(s) · ${num(totals.members)} compte(s)`} />
-        <Stat value={num(totals.site_files)} label="images de sites stockées" hint={`${num(totals.pages_read)} pages lues`} />
-        <Stat value={num(totals.references)} label="visuels sous surveillance" hint={`${num(totals.matches)} correspondance(s)`} />
-        <Stat value={bytes(totals.storage_bytes)} label="stockage total" hint="copies de travail des sites + bibliothèques" />
+        <Stat tint="yellow" value={num(totals.brands)} label="marques" hint={`${num(totals.organizations)} organisation(s) · ${num(totals.members)} compte(s)`} />
+        <Stat tint="mint" value={num(totals.site_files)} label="images de sites stockées" hint={`${num(totals.pages_read)} pages lues`} />
+        <Stat tint="blush" value={num(totals.references)} label="visuels sous surveillance" hint={`${num(totals.matches)} correspondance(s)`} />
+        <Stat tint="teal" value={bytes(totals.storage_bytes)} label="stockage total" hint="copies de travail des sites + bibliothèques" />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat value={duration(crawls.summary.avg_duration_seconds)} label="durée moyenne d'une lecture" hint={`max ${duration(crawls.summary.max_duration_seconds)} · ${num(crawls.summary.finished)} lecture(s) sur 90 j`} />
-        <Stat value={num(crawls.summary.avg_pages_per_minute, 1)} label="pages lues par minute" hint={`${num(crawls.summary.avg_images_per_page, 1)} images par page`} />
-        <Stat value={num(crawls.summary.clip_images_per_second, 1)} label="images CLIP par seconde" hint={`${num(crawls.summary.avg_images_scanned_per_second, 1)} images vues / s en lecture`} />
-        <Stat value={bytes(crawls.summary.avg_new_image_bytes)} label="poids moyen d'une nouvelle image" hint={`${bytes(crawls.summary.bytes_downloaded)} téléchargés sur 90 j`} />
+        <Stat tint="yellow" value={duration(crawls.summary.avg_duration_seconds)} label="durée moyenne d'une lecture" hint={`max ${duration(crawls.summary.max_duration_seconds)} · ${num(crawls.summary.finished)} lecture(s) sur 90 j`} />
+        <Stat tint="mint" value={num(crawls.summary.avg_pages_per_minute, 1)} label="pages lues par minute" hint={`${num(crawls.summary.avg_images_per_page, 1)} images par page`} />
+        <Stat tint="blush" value={num(crawls.summary.clip_images_per_second, 1)} label="images CLIP par seconde" hint={`${num(crawls.summary.avg_images_scanned_per_second, 1)} images vues / s en lecture`} />
+        <Stat tint="teal" value={bytes(crawls.summary.avg_new_image_bytes)} label="poids moyen d'une nouvelle image" hint={`${bytes(crawls.summary.bytes_downloaded)} téléchargés sur 90 j`} />
       </div>
     </>
   );

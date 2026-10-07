@@ -1,30 +1,39 @@
 @import "tailwindcss";
 
-/* Nyra design system, "Terre & Pêche": warm neutrals, the logo's bark brown
-   and peach for brand moments, and one strict colour ladder for expiry. */
+/* Nyra design system, "creative sketchbook": cream paper, forest ink, highlighter yellow,
+   pastel cards, and one strict colour ladder for expiry. */
 @theme {
-  --font-sans: "Geist", "Segoe UI", system-ui, sans-serif;
-  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "Archivo Black", "Segoe UI", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
 
-  /* Warm neutrals */
-  --color-ink: #1f1a15; /* espresso: text, primary buttons */
-  --color-ink-soft: #463d35;
-  --color-muted: #6f655b; /* 5.6:1 on canvas */
-  --color-faint: #a2978b;
-  --color-line: #eae3d9;
-  --color-line-strong: #d8cec1;
-  --color-canvas: #f7f3ee;
-  --color-side: #f1ebe3;
-  --color-sunk: #fbf8f4;
-  --color-paper: #fffefc;
+  /* Cream paper, forest ink: the ink does the structure (text, main action, card borders) */
+  --color-ink: #1a3300;
+  --color-ink-soft: #3d5226;
+  --color-muted: #5f6e50;
+  --color-faint: #8a9680;
+  --color-line: #ebe7db;
+  --color-line-strong: #b6b6b6; /* pencil gray */
+  --color-canvas: #fdfcf8;
+  --color-side: #fdfcf8;
+  --color-sunk: #f7f4ec;
+  --color-paper: #ffffff;
+  --color-bar: #1a3300; /* floating action bars, tooltips */
 
-  /* Brand, from the logo */
-  --color-bark-800: #5a3710;
-  --color-bark-700: #7a4e1d;
-  --color-bark: #93622a;
-  --color-peach: #fbcbae;
-  --color-peach-soft: #fdebdd;
+  /* Highlighter yellow for emphasis and the active state; pastel "sticky notes" for cards */
+  --color-yellow: #f6e27f;
+  --color-mint: #dce9cf;
+  --color-blush: #f4d9c6;
+  --color-teal: #d5e5e3;
+  --color-terracotta: #cb5521;
+
+  --color-accent: #1a3300;
+  --color-accent-hover: #3d5226;
+  --color-bark-800: #1a3300;
+  --color-bark-700: #1a3300;
+  --color-bark: #1a3300;
+  --color-peach: #f6e27f;
+  --color-peach-soft: rgb(246 226 127 / 0.45);
 
   /* Status: one hue per urgency, used for text, borders and soft fills.
      They also differ in lightness, not only in hue. */
@@ -36,15 +45,15 @@
   --color-soon-soft: #f8f0d2;
   --color-ok: #2f6b45;
   --color-ok-soft: #e4f0e7;
-  --color-unknown: #6f655b;
-  --color-unknown-soft: #efeae3;
+  --color-unknown: #5f6e50;
+  --color-unknown-soft: #efede4;
 
-  /* Focus and selection follow the brand */
-  --color-focus: #93622a;
-  --color-focus-soft: #fdebdd;
+  --color-focus: #1a3300;
+  --color-focus-soft: rgb(246 226 127 / 0.7);
 
-  --shadow-lift: 0 1px 2px rgb(74 48 20 / 0.08);
-  --shadow-float: 0 12px 32px rgb(74 48 20 / 0.12);
+  /* Almost no shadow: the borders and the colour fills separate things. */
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-float: 0 4px 16px rgb(0 0 0 / 0.12);
 }
 
 html,
@@ -60,6 +69,7 @@ body {
   font-family: var(--font-sans);
   letter-spacing: -0.006em;
   -webkit-font-smoothing: antialiased;
+  color-scheme: light;
 }
 
 a {
@@ -81,8 +91,8 @@ a {
 }
 
 .font-display {
-  font-weight: 400;
-  letter-spacing: -0.02em;
+  font-weight: 800;
+  letter-spacing: 0.01em;
 }
 
 @keyframes toast-in {
@@ -134,4 +144,12 @@ a {
 /* Suggestions come from a <datalist>; the browser's dropdown arrow on those fields is noise. */
 input[list]::-webkit-calendar-picker-indicator {
   display: none !important;
+}
+
+/* A word in a headline, highlighted like with a marker pen. */
+.marker {
+  background: var(--color-yellow);
+  padding: 0 0.14em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
 }

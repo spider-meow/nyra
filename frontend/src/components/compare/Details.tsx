@@ -5,7 +5,7 @@ import type { Hit } from "../../types";
 export function PageList(props: { hit: Hit }) {
   const { hit } = props;
   return (
-    <div className="rounded-xl border border-line">
+    <div className="rounded-xl border border-ink">
       <p className="border-b border-line px-3.5 py-2.5 text-[13px] font-semibold">
         Visible sur {hit.page_count} page{hit.page_count > 1 ? "s" : ""}
       </p>

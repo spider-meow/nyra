@@ -1,4 +1,4 @@
-import { forwardRef, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes } from "react";
+import { forwardRef, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router";
 import { confidenceHelp, confidenceLabel, decisionLabel, statusLabel } from "../lib/format";
@@ -16,12 +16,12 @@ type Size = "sm" | "md" | "lg";
 export function buttonClass(variant: Variant = "secondary", size: Size = "md", className?: string): string {
   return cx(
     "inline-flex shrink-0 items-center justify-center gap-2 font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-    size === "sm" && "h-9 rounded-[10px] px-3 text-[13.5px]",
-    size === "md" && "h-10 rounded-xl px-4 text-sm",
-    size === "lg" && "h-11 rounded-xl px-5 text-[14.5px]",
-    variant === "primary" && "bg-ink text-paper hover:bg-ink-soft",
-    variant === "secondary" && "border border-line-strong bg-paper text-ink hover:border-faint hover:bg-sunk",
-    variant === "ghost" && "text-ink-soft hover:bg-side hover:text-ink",
+    size === "sm" && "h-9 rounded-md px-3 text-[13.5px]",
+    size === "md" && "h-10 rounded-md px-4 text-sm",
+    size === "lg" && "h-11 rounded-md px-5 text-[14.5px]",
+    variant === "primary" && "bg-ink text-paper shadow-lift hover:bg-ink-soft",
+    variant === "secondary" && "border border-ink bg-paper text-ink hover:bg-yellow",
+    variant === "ghost" && "text-ink-soft hover:bg-line hover:text-ink",
     variant === "danger" && "border border-expired/25 bg-paper text-expired hover:bg-expired-soft",
     className,
   );
@@ -197,7 +197,7 @@ export function DecisionBadge(props: { decision: Decision | null }) {
 
 export function Card(props: { children: ReactNode; className?: string; padded?: boolean }) {
   return (
-    <section className={cx("rounded-2xl border border-line bg-paper", props.padded !== false && "p-6", props.className)}>
+    <section className={cx("rounded-xl border border-ink bg-paper", props.padded !== false && "p-6", props.className)}>
       {props.children}
     </section>
   );
@@ -208,7 +208,7 @@ export function PageHeader(props: { title: string; description?: ReactNode; acti
     <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
         {props.eyebrow ? <p className="mb-1.5 text-[13px] text-muted">{props.eyebrow}</p> : null}
-        <h1 className="font-display text-[40px] leading-none md:text-5xl">{props.title}</h1>
+        <h1 className="font-display text-[32px] leading-none md:text-4xl">{props.title}</h1>
         {props.description ? <p className="mt-2.5 max-w-2xl text-[14.5px] leading-relaxed text-muted">{props.description}</p> : null}
       </div>
       {props.actions ? <div className="flex flex-wrap items-center gap-2">{props.actions}</div> : null}
@@ -226,7 +226,7 @@ export function FieldLabel(props: { children: ReactNode; htmlFor?: string; hint?
 }
 
 export const fieldClass =
-  "h-10 w-full rounded-[10px] border border-line-strong bg-paper px-3.5 text-sm text-ink placeholder:text-faint outline-none transition-shadow focus:border-focus focus:ring-4 focus:ring-focus-soft disabled:bg-canvas disabled:text-muted";
+  "h-10 w-full rounded-md border border-line-strong bg-paper px-3.5 text-sm text-ink placeholder:text-faint outline-none transition-shadow focus:border-focus focus:ring-4 focus:ring-focus-soft disabled:bg-canvas disabled:text-muted";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...rest },
@@ -234,11 +234,6 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
 ) {
   return <input ref={ref} className={cx(fieldClass, className)} {...rest} />;
 });
-
-export function Select(props: SelectHTMLAttributes<HTMLSelectElement>) {
-  const { className, ...rest } = props;
-  return <select className={cx(fieldClass, "pr-8", className)} {...rest} />;
-}
 
 export function Checkbox(props: { checked: boolean; onChange: (value: boolean) => void; label: ReactNode; disabled?: boolean; hint?: ReactNode }) {
   return (
@@ -260,7 +255,7 @@ export function Checkbox(props: { checked: boolean; onChange: (value: boolean) =
 
 export function EmptyState(props: { title: string; body?: ReactNode; action?: ReactNode }) {
   return (
-    <div className="rounded-2xl border border-dashed border-line-strong bg-sunk px-6 py-12 text-center">
+    <div className="rounded-xl border border-dashed border-line-strong bg-sunk px-6 py-12 text-center">
       <Logo size={48} className="mx-auto mb-3 opacity-90" />
       <p className="font-display text-2xl">{props.title}</p>
       {props.body ? <p className="mx-auto mt-1 max-w-md text-sm text-muted">{props.body}</p> : null}
@@ -292,10 +287,10 @@ export function Thumb(props: { src: string; size?: number; className?: string; a
       width={size}
       height={size}
       style={{ width: size, height: size }}
-      className={cx("shrink-0 rounded-[9px] bg-side object-cover", props.className)}
+      className={cx("shrink-0 rounded-md bg-side object-cover", props.className)}
     />
   ) : (
-    <span style={{ width: size, height: size }} className={cx("block shrink-0 rounded-[9px] bg-side", props.className)} aria-hidden />
+    <span style={{ width: size, height: size }} className={cx("block shrink-0 rounded-md bg-side", props.className)} aria-hidden />
   );
 }
 
@@ -303,13 +298,14 @@ export function Kbd(props: { children: ReactNode }) {
   return <kbd className="inline-flex min-w-5 items-center justify-center rounded-md border border-line-strong bg-paper px-1.5 py-px font-sans text-[11px] text-muted">{props.children}</kbd>;
 }
 
-export function Stat(props: { value: ReactNode; label: string; tone?: "alert" | "warn"; hint?: ReactNode; children?: ReactNode }) {
+const stickyTint = { yellow: "bg-yellow", mint: "bg-mint", blush: "bg-blush", teal: "bg-teal" } as const;
+
+/** A number and what it counts, on a pastel "sticky note" when a tint is given. */
+export function Stat(props: { value: ReactNode; label: string; tint?: keyof typeof stickyTint; hint?: ReactNode; children?: ReactNode }) {
   return (
-    <div className="flex min-w-0 flex-col rounded-2xl border border-line bg-paper p-5">
-      <p className={cx("font-display text-5xl leading-none tabular", props.tone === "alert" && "text-expired", props.tone === "warn" && "text-urgent")}>
-        {props.value}
-      </p>
-      <p className="mt-2 text-sm text-ink-soft">{props.label}</p>
+    <div className={cx("flex min-w-0 flex-col rounded-xl border border-ink p-5", props.tint ? stickyTint[props.tint] : "bg-paper")}>
+      <p className="font-display text-5xl leading-none tabular">{props.value}</p>
+      <p className="mt-2 text-sm text-ink">{props.label}</p>
       {props.children}
       {props.hint ? <p className="mt-1 text-[13px] text-muted">{props.hint}</p> : null}
     </div>
@@ -325,7 +321,7 @@ export function Chip(props: { active: boolean; onClick: () => void; children: Re
       onClick={props.onClick}
       className={cx(
         "inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] whitespace-nowrap transition-colors",
-        props.active ? "bg-ink font-medium text-paper" : "border border-line-strong bg-paper text-ink hover:border-faint",
+        props.active ? "bg-ink font-medium text-paper" : "border border-ink bg-paper text-ink hover:bg-yellow",
       )}
     >
       {props.dot ? <span className={cx("h-1.5 w-1.5 rounded-full", statusDot[props.dot])} aria-hidden /> : null}
@@ -338,7 +334,7 @@ export function Chip(props: { active: boolean; onClick: () => void; children: Re
 /** A two- or three-way toggle on a sunken track. */
 export function Segmented<T extends string>(props: { value: T; options: { value: T; label: string }[]; onChange: (value: T) => void; label: string }) {
   return (
-    <div className="inline-flex rounded-[10px] bg-side p-[3px]" role="group" aria-label={props.label}>
+    <div className="inline-flex rounded-lg border border-line-strong bg-sunk p-[3px]" role="group" aria-label={props.label}>
       {props.options.map((option) => (
         <button
           key={option.value}
@@ -346,8 +342,8 @@ export function Segmented<T extends string>(props: { value: T; options: { value:
           aria-pressed={props.value === option.value}
           onClick={() => props.onChange(option.value)}
           className={cx(
-            "h-8 rounded-lg px-3 text-[13px] whitespace-nowrap",
-            props.value === option.value ? "bg-paper font-medium text-ink shadow-lift" : "text-muted hover:text-ink",
+            "h-8 rounded-md px-3 text-[13px] whitespace-nowrap",
+            props.value === option.value ? "bg-yellow font-medium text-ink" : "text-muted hover:text-ink",
           )}
         >
           {option.label}

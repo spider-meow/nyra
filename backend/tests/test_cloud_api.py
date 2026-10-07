@@ -134,6 +134,31 @@ def test_brands_are_created_renamed_and_admin_only(client, org_with_users):
     assert names == ["Louis XIII Cognac", "Test Org"]
 
 
+def test_team_is_listed_for_members_and_managed_by_admins_who_cannot_leave_the_org_without_an_admin(
+        client, org_with_users, cloud_database_url, monkeypatch):
+    org_id, _, admin_id, client_id, outsider_id = org_with_users
+    base = f"/api/orgs/{org_id}/members"
+    monkeypatch.setattr("nyra.cloud.routes.members.find_or_invite_user",
+                        lambda *args: (str(outsider_id), True))
+    listed = client.get(base, headers=_headers(client_id)).json()["members"]
+    assert {m["role"] for m in listed} == {"admin", "client"}
+    assert [m["you"] for m in listed if m["user_id"] == str(client_id)] == [True]
+    assert client.get(base, headers=_headers(outsider_id)).status_code == 403
+    assert client.post(base, json={"email": "a@b.co"}, headers=_headers(client_id)).status_code == 403
+
+    assert client.post(base, json={"email": "pas-un-mail"}, headers=_headers(admin_id)).status_code == 400
+    added = client.post(base, json={"email": "A@B.co", "role": "client"}, headers=_headers(admin_id))
+    assert added.status_code == 200 and added.json()["invited"] is True
+    assert client.post(base, json={"email": "a@b.co"}, headers=_headers(admin_id)).status_code == 409
+
+    assert client.put(f"{base}/{outsider_id}", json={"role": "admin"}, headers=_headers(admin_id)).status_code == 200
+    assert client.put(f"{base}/{outsider_id}", json={"role": "client"}, headers=_headers(admin_id)).status_code == 200
+    assert client.put(f"{base}/{admin_id}", json={"role": "client"}, headers=_headers(admin_id)).status_code == 409
+    assert client.delete(f"{base}/{admin_id}", headers=_headers(admin_id)).status_code == 409
+    assert client.delete(f"{base}/{outsider_id}", headers=_headers(admin_id)).status_code == 200
+    assert client.delete(f"{base}/{outsider_id}", headers=_headers(admin_id)).status_code == 404
+
+
 def test_addresses_belong_to_one_brand_and_are_checked(client, org_with_users, monkeypatch):
     org_id, base, admin_id, client_id, _ = org_with_users
     from nyra import netguard

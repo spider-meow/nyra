@@ -1,90 +1,76 @@
-import { useToast } from "../components/feedback";
-import { Button, Card, EmptyState, PageHeader, Skeleton, Thumb } from "../components/ui";
+import type { ReactNode } from "react";
+import { useSearchParams } from "react-router";
+import { cx, EmptyState, PageHeader, Skeleton } from "../components/ui";
 import { errorMessage } from "../lib/api";
-import { formatDate, hostOf } from "../lib/format";
-import { useAuth } from "../lib/auth";
 import { useOrg } from "../lib/org";
-import { useExclusionMutations, useExclusions, useSettings } from "../lib/queries";
-import { Brands } from "./settings/Brands";
-import { SettingsForm } from "./settings/SettingsForm";
+import { useSettings } from "../lib/queries";
+import type { Settings as SettingsData } from "../types";
+import { Account } from "./settings/Account";
+import { Brands, DeleteBrands } from "./settings/Brands";
+import { Detection } from "./settings/Detection";
+import { Exclusions } from "./settings/Exclusions";
+import { Reading } from "./settings/Reading";
+import { Team } from "./settings/Team";
 
-export function Settings() {
-  const { admin, org } = useOrg();
-  const auth = useAuth();
-  const settings = useSettings();
+type Section = { id: string; label: string; adminOnly?: boolean; render: (data: SettingsData) => ReactNode };
 
-  if (settings.isLoading) return <Skeleton className="h-96" />;
-  if (settings.error || !settings.data) return <EmptyState title="Réglages indisponibles" body={errorMessage(settings.error)} />;
+const stack = (...children: ReactNode[]) => <div className="grid gap-4">{children}</div>;
+
+const SECTIONS: Section[] = [
+  { id: "marques", label: "Marques", render: () => stack(<Brands />, <Exclusions />) },
+  { id: "equipe", label: "Équipe", render: () => <Team /> },
+  { id: "compte", label: "Mon compte", render: () => <Account /> },
+  { id: "detection", label: "Détection", adminOnly: true, render: (data) => <Detection data={data} /> },
+  { id: "lecture", label: "Lecture des sites", adminOnly: true, render: (data) => <Reading data={data} /> },
+  { id: "donnees", label: "Données", adminOnly: true, render: () => <DeleteBrands /> },
+];
+
+function SectionLink(props: { section: Section; active: boolean; onPick: () => void }) {
   return (
-    <>
-      <PageHeader
-        title="Réglages"
-        description={`Propres à ${org.name}${org.brands.length > 1 ? ", communs à toutes ses marques" : ""}. Un champ vide reprend la valeur par défaut, affichée en grisé.`}
-      />
-      <Brands />
-      <SettingsForm data={settings.data} />
-      <Exclusions />
-
-      <Card className="mt-8">
-        <h2 className="font-semibold">Compte</h2>
-        <p className="mt-1 text-sm text-muted">
-          Connecté en tant que {auth.email} · {admin ? "administrateur" : "lecture et validation"}.
-        </p>
-        <Button className="mt-3" onClick={() => void auth.signOut()}>Se déconnecter</Button>
-      </Card>
-    </>
+    <button
+      type="button"
+      aria-current={props.active ? "page" : undefined}
+      onClick={props.onPick}
+      className={cx(
+        "h-9 rounded-lg px-3 text-left text-sm whitespace-nowrap",
+        props.active ? "bg-yellow font-medium text-ink" : "text-muted hover:text-ink",
+      )}
+    >
+      {props.section.label}
+    </button>
   );
 }
 
-function Exclusions() {
-  const { admin, brand, org } = useOrg();
-  const exclusions = useExclusions();
-  const { remove } = useExclusionMutations();
-  const toast = useToast();
-  const items = exclusions.data?.exclusions ?? [];
+function Nav(props: { sections: Section[]; activeId: string; onPick: (id: string) => void }) {
+  const everyone = props.sections.filter((section) => !section.adminOnly);
+  const admins = props.sections.filter((section) => section.adminOnly);
+  const link = (section: Section) => <SectionLink key={section.id} section={section} active={section.id === props.activeId} onPick={() => props.onPick(section.id)} />;
   return (
-    <Card className="mt-8" padded={false}>
-      <div className="px-5 pt-5">
-        <h2 className="font-semibold">Images exclues{org.brands.length > 1 ? ` · ${brand.name}` : ""}</h2>
-        <p className="mt-1 max-w-2xl text-sm text-muted">
-          Faux positifs récurrents (logos, visuels génériques) qui ne sont plus jamais proposés, copies proches comprises.
-          On exclut une image depuis l'écran « À traiter ».
-        </p>
+    <nav aria-label="Sections des réglages" className="flex gap-1 overflow-x-auto lg:sticky lg:top-6 lg:w-52 lg:shrink-0 lg:flex-col lg:self-start">
+      {everyone.map(link)}
+      {admins.length ? <p className="hidden px-3 pt-4 pb-1 text-xs font-medium tracking-wide text-faint uppercase lg:block">Administrateurs</p> : null}
+      {admins.map(link)}
+    </nav>
+  );
+}
+
+export function Settings() {
+  const { admin, org } = useOrg();
+  const settings = useSettings();
+  const [params, setParams] = useSearchParams();
+
+  if (settings.isLoading) return <Skeleton className="h-96" />;
+  if (settings.error || !settings.data) return <EmptyState title="Réglages indisponibles" body={errorMessage(settings.error)} />;
+
+  const visible = SECTIONS.filter((section) => admin || !section.adminOnly);
+  const active = visible.find((section) => section.id === params.get("section")) ?? visible[0];
+  return (
+    <>
+      <PageHeader title="Réglages" description={`Propres à ${org.name}${org.brands.length > 1 ? ", communs à toutes ses marques" : ""}.`} />
+      <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
+        <Nav sections={visible} activeId={active.id} onPick={(id) => setParams({ section: id }, { replace: true })} />
+        <div className="min-w-0 flex-1">{active.render(settings.data)}</div>
       </div>
-      {items.length ? (
-        <ul className="mt-3 divide-y divide-line border-t border-line">
-          {items.map((item) => (
-            <li key={item.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
-              <Thumb src={item.thumb_url} size={40} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{item.reason || "Sans raison indiquée"}</span>
-                <span className="block truncate text-xs text-muted">
-                  {item.site_url ? `${hostOf(item.site_url)} · ` : ""}exclue le {formatDate(item.created_at)}
-                </span>
-              </span>
-              {admin ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  loading={remove.isPending && remove.variables === item.id}
-                  disabled={remove.isPending}
-                  onClick={() =>
-                    remove.mutate(item.id, {
-                      onSuccess: () =>
-                        toast.show({ tone: "success", message: "Image réintégrée", description: "Elle est de nouveau comparée : une comparaison vient d'être programmée." }),
-                      onError: (error) => toast.show({ tone: "error", message: "L'image n'a pas été réintégrée", description: errorMessage(error) }),
-                    })
-                  }
-                >
-                  Réintégrer
-                </Button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="px-5 pt-2 pb-5 text-sm text-muted">Aucune image exclue.</p>
-      )}
-    </Card>
+    </>
   );
 }

@@ -102,7 +102,7 @@ function ReferenceFields({ item, thumbUrl, form, setForm }: { item: LibraryItem;
             placeholder="Usages autorisés, territoires, numéro de contrat…"
             value={form.notes}
             onChange={(event) => setForm({ ...form, notes: event.target.value })}
-            className="w-full rounded-[10px] border border-line-strong bg-paper px-3.5 py-2.5 text-sm outline-none focus:border-focus focus:ring-4 focus:ring-focus-soft disabled:bg-canvas"
+            className="w-full rounded-md border border-line-strong bg-paper px-3.5 py-2.5 text-sm outline-none focus:border-focus focus:ring-4 focus:ring-focus-soft disabled:bg-canvas"
           />
         </div>
         <p className="text-xs text-muted">
@@ -125,7 +125,7 @@ function TagEditor(props: { id: string; tags: string[]; onChange: (tags: string[
   }
 
   return (
-    <div className="flex flex-wrap gap-1.5 rounded-[10px] border border-line-strong bg-paper p-2 focus-within:border-focus focus-within:ring-4 focus-within:ring-focus-soft has-[input:disabled]:bg-canvas">
+    <div className="flex flex-wrap gap-1.5 rounded-md border border-line-strong bg-paper p-2 focus-within:border-focus focus-within:ring-4 focus-within:ring-focus-soft has-[input:disabled]:bg-canvas">
       {props.tags.map((tag) => (
         <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-side py-1 pr-1.5 pl-2.5 text-[12.5px]">
           {tag}
@@ -180,9 +180,9 @@ function OriginalImage({ item, thumbUrl }: { item: LibraryItem; thumbUrl: string
   return (
     <div>
       {url ? (
-        <a href={url} target="_blank" rel="noreferrer noopener" aria-label="Ouvrir l'image en taille réelle" className="block overflow-hidden rounded-2xl bg-side">{image}</a>
+        <a href={url} target="_blank" rel="noreferrer noopener" aria-label="Ouvrir l'image en taille réelle" className="block overflow-hidden rounded-xl bg-side">{image}</a>
       ) : (
-        <div className="overflow-hidden rounded-2xl bg-side">{image}</div>
+        <div className="overflow-hidden rounded-xl bg-side">{image}</div>
       )}
       {original.isError ? <p className="mt-2 text-xs text-muted">L'image en pleine taille n'a pas pu être chargée.</p> : null}
     </div>

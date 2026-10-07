@@ -41,9 +41,9 @@ export function OccurrencesSection({ item }: { item: LibraryItem }) {
             : "Pas encore recherchée";
 
   return (
-    <div ref={section} className="mt-5 overflow-hidden rounded-xl border border-line bg-sunk">
+    <div ref={section} className="mt-5 overflow-hidden rounded-xl border border-ink bg-paper">
       <button type="button" aria-expanded={open} aria-controls="occurrences-panel" onClick={() => setOpen(!open)} className="group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-paper">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] bg-peach-soft text-bark"><Icon name="scan" size={18} strokeWidth={1.8} /></span>
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-peach-soft text-bark"><Icon name="scan" size={18} strokeWidth={1.8} /></span>
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium">Où est-elle utilisée ?</span>
           <span className="block truncate text-[13px] text-muted">{hint || "Les pages des sites qui montrent ce visuel, recadrages compris"}</span>

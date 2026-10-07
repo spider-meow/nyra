@@ -3,6 +3,7 @@ import { useAuth } from "../../lib/auth";
 import { brandLink, useMe, useOrg } from "../../lib/org";
 import { useOverview } from "../../lib/queries";
 import type { Organization } from "../../types";
+import { Dropdown } from "../Dropdown";
 import { Icon, type IconName } from "../icons";
 import { Logo } from "../Logo";
 import { cx } from "../ui";
@@ -43,14 +44,14 @@ function NavItems(props: { list: NavItem[]; onNavigate: () => void }) {
       onClick={props.onNavigate}
       className={({ isActive }) =>
         cx(
-          "group flex h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm transition-colors",
-          isActive ? "bg-paper font-medium text-ink shadow-lift" : "text-ink-soft hover:bg-paper/60 hover:text-ink",
+          "group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm transition-colors",
+          isActive ? "bg-yellow font-medium text-ink" : "text-ink-soft hover:bg-sunk hover:text-ink",
         )
       }
     >
       {({ isActive }) => (
         <>
-          <Icon name={item.icon} className={isActive ? "text-bark" : "text-muted group-hover:text-ink-soft"} />
+          <Icon name={item.icon} className={isActive ? "text-ink" : "text-muted group-hover:text-ink-soft"} />
           <span className="flex-1">{item.label}</span>
           {item.count ? (
             <span
@@ -71,42 +72,38 @@ function NavItems(props: { list: NavItem[]; onNavigate: () => void }) {
   ));
 }
 
-/** The organization on screen; with several, a select laid over it switches. */
+const SWITCHER = "w-full rounded-md border border-ink bg-paper px-2.5";
+
+/** The organization on screen; with several, a list to switch. */
 function OrgSwitcher(props: { orgs: Organization[] | undefined }) {
   const { org } = useOrg();
   const navigate = useNavigate();
   const { orgs } = props;
-  return (
-    <div className="relative flex h-12 items-center gap-2.5 rounded-xl border border-[#e2d9cc] bg-sunk px-2.5">
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-bark text-xs font-semibold text-paper" aria-hidden>
+  const identity = (
+    <span className="flex min-w-0 items-center gap-2.5">
+      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-ink text-xs font-semibold text-paper" aria-hidden>
         {initials(org.name)}
       </span>
       <span className="min-w-0 flex-1 leading-tight">
         <span className="block truncate text-[13.5px] font-medium">{org.name}</span>
         <span className="block text-[11.5px] text-muted">{org.role === "admin" ? "Administrateur" : "Lecture et validation"}</span>
       </span>
-      {orgs && orgs.length > 1 ? (
-        <>
-          <Icon name="chevrons" size={14} className="text-muted" />
-          <select
-            aria-label="Changer d'organisation"
-            className="absolute inset-0 cursor-pointer opacity-0"
-            value={org.slug}
-            onChange={(event) => navigate(`/o/${event.target.value}`)}
-          >
-            {orgs.map((item) => (
-              <option key={item.org_id} value={item.slug}>
-                {item.name}
-              </option>
-            ))}
-          </select>
-        </>
-      ) : null}
-    </div>
+    </span>
+  );
+  if (!orgs || orgs.length < 2) return <div className={cx(SWITCHER, "flex h-12 items-center")}>{identity}</div>;
+  return (
+    <Dropdown
+      aria-label="Changer d'organisation"
+      className={cx(SWITCHER, "h-12")}
+      trigger={identity}
+      value={org.slug}
+      options={orgs.map((item) => ({ value: item.slug, label: item.name }))}
+      onChange={(slug) => navigate(`/o/${slug}`)}
+    />
   );
 }
 
-/** With several brands, a select to switch (same page, other brand); with one named differently, its name. */
+/** With several brands, a list to switch (same page, other brand); with one named differently, its name. */
 function BrandSwitcher() {
   const { org, brand, link } = useOrg();
   const navigate = useNavigate();
@@ -117,24 +114,20 @@ function BrandSwitcher() {
     return brand.name !== org.name ? <p className="-mt-4 px-2.5 text-[12.5px] text-muted">{brand.name}</p> : null;
   }
   return (
-    <div className="relative -mt-3 flex h-11 items-center gap-2.5 rounded-xl border border-[#e2d9cc] bg-paper px-2.5">
-      <span className="min-w-0 flex-1 leading-tight">
-        <span className="block text-[11.5px] text-muted">Marque</span>
-        <span className="block truncate text-[13.5px] font-medium">{brand.name}</span>
-      </span>
-      <Icon name="chevrons" size={14} className="text-muted" />
-      <select
+    <div className="-mt-3">
+      <Dropdown
         aria-label="Changer de marque"
-        className="absolute inset-0 cursor-pointer opacity-0"
+        className={cx(SWITCHER, "h-11")}
+        trigger={
+          <span className="block leading-tight">
+            <span className="block text-[11.5px] text-muted">Marque</span>
+            <span className="block truncate text-[13.5px] font-medium">{brand.name}</span>
+          </span>
+        }
         value={brand.slug}
-        onChange={(event) => navigate(brandLink(org, event.target.value, page))}
-      >
-        {org.brands.map((item) => (
-          <option key={item.id} value={item.slug}>
-            {item.name}
-          </option>
-        ))}
-      </select>
+        options={org.brands.map((item) => ({ value: item.slug, label: item.name }))}
+        onChange={(slug) => navigate(brandLink(org, slug, page))}
+      />
     </div>
   );
 }
@@ -142,7 +135,7 @@ function BrandSwitcher() {
 function Account() {
   const auth = useAuth();
   return (
-    <div className="flex items-center gap-2.5 border-t border-[#e2d9cc] px-2.5 pt-3.5">
+    <div className="flex items-center gap-2.5 border-t border-line-strong px-2.5 pt-3.5">
       <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-peach text-xs font-semibold text-bark-800" aria-hidden>
         {initials(auth.email ?? "")}
       </span>

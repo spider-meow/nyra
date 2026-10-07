@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useToast } from "../components/feedback";
-import { Button, Card, EmptyState, FieldLabel, PageHeader, Select, Skeleton } from "../components/ui";
+import { Button, Card, EmptyState, FieldLabel, PageHeader, Skeleton } from "../components/ui";
+import { Select } from "../components/Dropdown";
 import { errorMessage } from "../lib/api";
 import { formatDateTime } from "../lib/format";
 import { useOrg } from "../lib/org";

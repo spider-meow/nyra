@@ -111,7 +111,7 @@ export function UploadNotices(props: { up: Upload; indexing: boolean }) {
   return (
     <>
       {up.dragging ? (
-        <p className="pointer-events-none fixed inset-x-0 top-6 z-40 mx-auto w-fit rounded-full bg-ink px-4 py-2 text-sm text-white shadow-lg">
+        <p className="pointer-events-none fixed inset-x-0 top-6 z-40 mx-auto w-fit rounded-full border border-line-strong bg-bar px-4 py-2 text-sm text-white shadow-float">
           Déposez pour ajouter à la bibliothèque de {brand.name}
         </p>
       ) : null}

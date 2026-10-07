@@ -102,7 +102,7 @@ function SearchBar({ item, data, onStarted }: { item: LibraryItem; data: Occurre
 function PageRows({ data, filter }: { data: OccurrencesData; filter: Filter }) {
   if (!data.pages.length) {
     return (
-      <p className="rounded-2xl border border-dashed border-line-strong px-4 py-8 text-center text-sm text-muted">
+      <p className="rounded-xl border border-dashed border-line-strong px-4 py-8 text-center text-sm text-muted">
         {filter === "review" ? "Aucune image à vérifier." : data.located_at ? `Aucune page ne montre ce visuel parmi les ${data.pages_crawled} pages lues.` : "Rien à afficher pour l'instant."}
       </p>
     );
@@ -111,7 +111,7 @@ function PageRows({ data, filter }: { data: OccurrencesData; filter: Filter }) {
     <ul className="grid grid-cols-1 gap-2">
       {data.pages.map((page) => (
         <li key={page.url} className="min-w-0">
-          <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="group flex items-center gap-3 rounded-xl border border-line bg-paper p-2.5 transition-colors hover:border-line-strong hover:bg-sunk">
+          <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="group flex items-center gap-3 rounded-xl border border-ink bg-paper p-2.5 transition-colors hover:border-line-strong hover:bg-sunk">
             <Thumbs page={page} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-xs text-muted">{hostOf(page.url)}</span>
@@ -132,9 +132,9 @@ function Thumbs({ page }: { page: PageRow }) {
   return (
     <span className="flex shrink-0 -space-x-3">
       {page.images.slice(0, 3).map((image) => (
-        <span key={image.site_image_id} className="rounded-[10px] ring-2 ring-paper group-hover:ring-sunk"><Thumb src={image.thumb} size={48} /></span>
+        <span key={image.site_image_id} className="rounded-md ring-2 ring-paper group-hover:ring-sunk"><Thumb src={image.thumb} size={48} /></span>
       ))}
-      {page.image_count > 3 ? <span className="grid h-12 w-12 place-items-center rounded-[10px] bg-side text-xs font-medium text-muted ring-2 ring-paper">+{page.image_count - 3}</span> : null}
+      {page.image_count > 3 ? <span className="grid h-12 w-12 place-items-center rounded-md bg-side text-xs font-medium text-muted ring-2 ring-paper">+{page.image_count - 3}</span> : null}
     </span>
   );
 }
