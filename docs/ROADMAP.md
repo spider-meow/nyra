@@ -20,9 +20,11 @@ quelle version du site (marché/langue).
 **Pourquoi.** Aujourd'hui chaque variante est une carte : la liste est
 gonflée et on revérifie la même image plusieurs fois.
 
-**État (4 octobre 2026).** Code écrit et testé, pas encore commité. À faire
-avant de cocher : appliquer la migration `20261004000017`, puis vérifier sur
-les vraies images de Louis XIII. Risque connu : deux photos différentes qui
+**État (7 octobre 2026).** Code commité (`71d45bd`, 4 octobre) et testé : les
+tests passent sur un Postgres jetable où la migration `20261004000017` est
+appliquée. « Ignorer » agit sur toutes les variantes d'un groupe. À faire avant
+de cocher : appliquer la migration sur la base réelle, puis vérifier sur les
+vraies images de Louis XIII. Risque connu : deux photos différentes qui
 partagent un même bandeau ou gabarit peuvent être fusionnées (le contrôle de
 points clés les juge identiques) ; à calibrer sur des images réelles, et un
 groupe ne peut pas encore être scindé à la main.
@@ -42,8 +44,8 @@ groupe ne peut pas encore être scindé à la main.
 - Interface : badge « × N » sur la carte, volet de détail listant page +
   version du site de chaque occurrence. Le crawl garde déjà la page d'origine
   de chaque image (à confirmer dans le schéma, `docs/DATABASE_SCHEMA.md`).
-- Décision à prendre : « Ignorer » / « + Ajouter » sur un groupe agit-il sur
-  toutes les variantes ? (proposition : oui, avec annulation possible).
+- Décision : « Ignorer » sur un groupe met de côté toutes les variantes
+  (fait). Reste à confirmer pour « + Ajouter » et l'annulation.
 - Vérification : un jeu d'images recadrées à la main (comme la calibration de
   `MATCHING.md`) pour mesurer faux regroupements et regroupements manqués.
 
