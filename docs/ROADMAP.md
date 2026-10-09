@@ -17,8 +17,9 @@ qu'on y pense** : aujourd'hui il faut se connecter et cliquer (audit du
 2. **La valeur juridique** (idée 4) : de quoi demander un retrait.
 3. **Résoudre, pas seulement détecter** (idée 5).
 4. **Des chiffres réels** (idée 6) : sans eux, tout le reste reste théorique.
-5. Les idées 1 et 2 ci-dessous : utiles, mais elles améliorent l'exploration,
-   pas la promesse centrale.
+5. Les idées 1, 2 et 7 : utiles, mais elles améliorent l'exploration et le
+   tri, pas la promesse centrale. L'idée 7 (images parasites) rend la liste
+   « Droits non vérifiés » lisible : elle passe en tête de ce groupe.
 
 Chiffrages : ceux de l'audit, à confirmer avant de s'y engager.
 
@@ -134,6 +135,35 @@ main (`nyra calibrate`).
 
 **Pourquoi.** Les 97,5 % de `MATCHING.md` viennent de copies retouchées
 fabriquées, pas de vrais cas de réutilisation ; le rappel réel est inconnu.
+
+### [ ] 7. Trier les images parasites (logos, packshots produit…) dans « Droits non vérifiés »
+
+**Ce qu'on veut.** Pouvoir mettre de côté, en une fois, les images du site qui
+n'ont rien à vérifier : logos, pictogrammes, packshots produit (bouteille sur
+fond uni). Pour cela, **définir l'aspect de chaque type d'image parasite** :
+qu'est-ce qui fait qu'une image est « un logo », « un packshot » ?
+
+**Pourquoi.** La liste mélange de vraies photos à vérifier et des images
+récurrentes sans enjeu de droits, qu'on écarte aujourd'hui une par une
+(exclusions, voir `MATCHING.md`). Le bruit cache l'essentiel.
+
+**Piste (à valider).**
+- Décrire chaque type par des signaux mesurables : dimensions et format
+  (logo petit ou carré, souvent PNG transparent), couleurs (fond uni ou
+  transparent, peu de teintes), contenu (CLIP : proche d'un texte
+  « a product bottle on a white background »).
+- Même mécanisme que l'idée 2 (prototypes CLIP à partir d'exemples), avec des
+  types de départ propres à ce tri plutôt qu'une liste d'étiquettes libre.
+- Voie sûre : proposer le tri sans masquer (filtre « probablement un logo »,
+  action en lot avec annulation), et mesurer les faux « parasites » avant de
+  cacher quoi que ce soit : une vraie photo écartée par erreur est un droit
+  non vérifié.
+- Vérification : des images réelles étiquetées à la main par type, précision
+  et rappel mesurés comme pour le matching.
+
+**Questions ouvertes.** Quels types de parasites exactement ? Un packshot
+produit est-il toujours sans enjeu, ou parfois soumis à des droits (le contrat
+décide, voir « produit découpé » dans `MATCHING.md`) ?
 
 ## Avant d'ouvrir à un client
 
