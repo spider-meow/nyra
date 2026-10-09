@@ -187,8 +187,17 @@ image dont on a oublié de saisir la date, et fausse le suivi.
   la valeur correspondante dans l'import CSV.
 - Les droits illimités sortent des urgences d'expiration, du tableau de bord et
   des alertes de l'idée 3 ; ils restent comptés à part dans les statistiques.
-- À trancher : une image libre d'usage trouvée sur un site apparaît-elle dans
-  « À traiter », ou est-elle rangée d'office comme conforme ?
+- **Liée aux étiquettes.** Les droits illimités doivent pouvoir se rattacher à
+  des étiquettes : les packshots, par exemple, sont très souvent sans
+  expiration. Piste : une règle par marque « les références portant
+  l'étiquette *packshot* sont à droits illimités » (ou l'inverse : proposer
+  l'étiquette quand on coche « droits illimités »), pour ne pas cocher image
+  par image. Les étiquettes de la bibliothèque existent déjà (migration
+  `…016`) ; celles des images du site viennent avec l'idée 7.
+- À trancher : une règle d'étiquette écrase-t-elle une date saisie à la main
+  (proposition : non, la date explicite l'emporte) ? Une image libre d'usage
+  trouvée sur un site apparaît-elle dans « À traiter », ou est-elle rangée
+  d'office comme conforme ?
 
 ## Avant d'ouvrir à un client
 
