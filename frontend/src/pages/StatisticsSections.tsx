@@ -25,17 +25,17 @@ export function StatisticsStats(props: { insights: OrgInsights }) {
   return (
     <>
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat value={num(site.distinct_files)} label="images du site stockées" hint={`${num(site.image_urls)} URL, ${num(site.pages_read)} pages lues`} />
-        <Stat value={bytes(site.avg_bytes)} label="poids moyen d'une image" hint={`médiane ${bytes(site.median_bytes)} · max ${bytes(site.max_bytes)}`} />
-        <Stat value={last ? num(last.images_scanned_per_second, 1) : "—"} label="images vues par seconde" hint={`CLIP : ${num(summary.clip_images_per_second, 1)} images/s`} />
-        <Stat value={duration(last?.duration_seconds)} label="durée de la dernière lecture" hint={`moyenne ${duration(summary.avg_duration_seconds)} sur ${num(summary.finished)} lecture(s)`} />
+        <Stat tint="yellow" value={num(site.distinct_files)} label="images du site stockées" hint={`${num(site.image_urls)} URL, ${num(site.pages_read)} pages lues`} />
+        <Stat tint="mint" value={bytes(site.avg_bytes)} label="poids moyen d'une image" hint={`médiane ${bytes(site.median_bytes)} · max ${bytes(site.max_bytes)}`} />
+        <Stat tint="blush" value={last ? num(last.images_scanned_per_second, 1) : "—"} label="images vues par seconde" hint={`CLIP : ${num(summary.clip_images_per_second, 1)} images/s`} />
+        <Stat tint="teal" value={duration(last?.duration_seconds)} label="durée de la dernière lecture" hint={`moyenne ${duration(summary.avg_duration_seconds)} sur ${num(summary.finished)} lecture(s)`} />
       </div>
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat value={num(summary.avg_pages_per_minute, 1)} label="pages lues par minute" hint={`${duration(summary.avg_seconds_per_page)} de rendu par page`} />
-        <Stat value={num(summary.avg_images_per_page, 1)} label="images par page" hint={`${num(site.image_page_links)} liens image-page`} />
-        <Stat value={bytes((site.stored_bytes ?? 0) + (library.total_bytes ?? 0))} label="stockage utilisé" hint={`copies des images ${bytes(site.stored_bytes)} · bibliothèque ${bytes(library.total_bytes)}`} />
-        <Stat value={percent(matching.total.false_positive_rate)} label="de faux positifs" hint={`sur ${num(matching.total.reviewed)} correspondance(s) décidée(s)`} />
+        <Stat tint="yellow" value={num(summary.avg_pages_per_minute, 1)} label="pages lues par minute" hint={`${duration(summary.avg_seconds_per_page)} de rendu par page`} />
+        <Stat tint="mint" value={num(summary.avg_images_per_page, 1)} label="images par page" hint={`${num(site.image_page_links)} liens image-page`} />
+        <Stat tint="blush" value={bytes((site.stored_bytes ?? 0) + (library.total_bytes ?? 0))} label="stockage utilisé" hint={`copies des images ${bytes(site.stored_bytes)} · bibliothèque ${bytes(library.total_bytes)}`} />
+        <Stat tint="teal" value={percent(matching.total.false_positive_rate)} label="de faux positifs" hint={`sur ${num(matching.total.reviewed)} correspondance(s) décidée(s)`} />
       </div>
     </>
   );

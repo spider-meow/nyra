@@ -24,6 +24,8 @@ cd frontend && npm run dev     # interface en mode dev : http://localhost:5173 (
 
 ## Utilisateurs d'une organisation
 
+Dans l'interface (Réglages > Équipe, administrateur) : lister, inviter, changer le rôle, retirer. Les commandes ci-dessous font la même chose en ligne de commande.
+
 | Action | Commande |
 |---|---|
 | Ajouter quelqu'un (invitation si pas de compte) | `nyra cloud-invite --org remy-martin --email a@b.com --role client` |

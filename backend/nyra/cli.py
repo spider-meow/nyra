@@ -229,7 +229,8 @@ def serve_cmd(
     settings = CloudSettings(
         database_url=env["DATABASE_URL"], supabase_url=env["SUPABASE_URL"],
         service_role_key=env["SUPABASE_SERVICE_ROLE_KEY"], jwt_secret=env["SUPABASE_JWT_SECRET"] or None,
-        anon_key=env["SUPABASE_ANON_KEY"], sentry_browser_dsn=env["SENTRY_BROWSER_DSN"], config_path=config,
+        anon_key=env["SUPABASE_ANON_KEY"], sentry_browser_dsn=env["SENTRY_BROWSER_DSN"],
+        public_url=env["NYRA_PUBLIC_URL"], config_path=config,
     )
     typer.secho(f"Nyra  ->  http://{host}:{port}", fg=typer.colors.GREEN)
     uvicorn.run(create_app(settings), host=host, port=port, log_level="info", proxy_headers=True, log_config=None)
@@ -262,17 +263,10 @@ def worker_cmd(
 
 def _find_or_invite_user(env: dict[str, str], email: str) -> tuple[str, bool]:
     """Supabase Auth user id for this e-mail, inviting them if they don't exist. Returns (id, invited)."""
-    from nyra.cloud import db as cloud_db
-    from nyra.cloud import storage as cloud_storage
+    from nyra.cloud.routes.members import find_or_invite_user
 
-    with cloud_db.connect(env["DATABASE_URL"]) as conn:
-        row = conn.execute("SELECT id FROM auth.users WHERE lower(email) = lower(%s)", (email,)).fetchone()
-    if row is not None:
-        return str(row["id"]), False
-    client = cloud_storage.get_client(env["SUPABASE_URL"], env["SUPABASE_SERVICE_ROLE_KEY"])
-    options = {"redirect_to": env["NYRA_PUBLIC_URL"].rstrip("/") + "/connexion"} if env["NYRA_PUBLIC_URL"] else {}
-    response = client.auth.admin.invite_user_by_email(email, options)
-    return str(response.user.id), True
+    return find_or_invite_user(env["DATABASE_URL"], env["SUPABASE_URL"], env["SUPABASE_SERVICE_ROLE_KEY"],
+                               env["NYRA_PUBLIC_URL"], email)
 
 
 @app.command("cloud-provision-org")

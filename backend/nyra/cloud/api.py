@@ -25,7 +25,7 @@ from fastapi import FastAPI
 from nyra.config import Config, load_config
 
 from . import storage as cloud_storage
-from .routes import brands, interface, jobs, library, matches, occurrences, reports_settings, session, site_images
+from .routes import brands, interface, jobs, library, matches, members, occurrences, reports_settings, session, site_images
 from .routes.common import Ctx
 
 
@@ -47,6 +47,7 @@ class CloudSettings:
         jwt_secret: Optional[str],
         anon_key: str = "",
         sentry_browser_dsn: str = "",
+        public_url: str = "",
         config_path: Optional[Path] = None,
     ):
         self.database_url = database_url
@@ -55,6 +56,7 @@ class CloudSettings:
         self.jwt_secret = jwt_secret
         self.anon_key = anon_key
         self.sentry_browser_dsn = sentry_browser_dsn
+        self.public_url = public_url
         self.config_path = config_path
         self._storage = None
 
@@ -84,6 +86,7 @@ def settings_from_env(config_path: Optional[Path] = None) -> CloudSettings:
         jwt_secret=os.environ.get("SUPABASE_JWT_SECRET") or None,
         anon_key=os.environ.get("SUPABASE_ANON_KEY", ""),
         sentry_browser_dsn=os.environ.get("SENTRY_BROWSER_DSN", ""),
+        public_url=os.environ.get("NYRA_PUBLIC_URL", ""),
         config_path=config_path,
     )
 
@@ -96,7 +99,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
     # (the order of `/library/export-csv` against `/library/{filename}` matters), the catch-all page last.
     interface.add_security(app, settings.supabase_url, settings.sentry_browser_dsn)
     interface.mount_assets(app, dist)
-    for module in (session, brands, library, occurrences, jobs, matches, site_images, reports_settings):
+    for module in (session, brands, members, library, occurrences, jobs, matches, site_images, reports_settings):
         app.include_router(module.router)
     interface.add_pages(app, dist)
     return app

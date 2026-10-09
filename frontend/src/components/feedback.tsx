@@ -132,7 +132,7 @@ function ToastCard(props: { toast: Toast; onDismiss: () => void; onPause: () => 
       onMouseLeave={props.onResume}
       className={cx(
         "toast-in pointer-events-auto w-full max-w-sm overflow-hidden rounded-xl text-sm shadow-float",
-        toast.tone === "error" ? "border border-expired/20 bg-expired-soft text-expired" : "bg-ink text-paper",
+        toast.tone === "error" ? "border border-expired/20 bg-expired-soft text-expired" : "border border-line-strong bg-bar text-white",
       )}
     >
       <div className="flex items-start gap-3 px-4 py-3">
@@ -184,7 +184,7 @@ function ToastProgress(props: { progress: ToastInput["progress"] }) {
 
 function ToastIcon(props: { tone: Tone }) {
   if (props.tone === "loading") {
-    return <span aria-hidden className="mt-0.5 h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-paper/30 border-t-peach" />;
+    return <span aria-hidden className="mt-0.5 h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/30 border-t-peach" />;
   }
   if (props.tone === "success") return <Icon name="check" size={16} strokeWidth={2} className="mt-0.5 shrink-0 text-peach" />;
   if (props.tone === "error") return <Icon name="alert" size={16} strokeWidth={2} className="mt-0.5 shrink-0" />;
@@ -232,18 +232,18 @@ export function Modal(props: { open: boolean; onClose: () => void; title: string
 
   if (!props.open) return null;
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-[#1f1a15]/45 p-4 backdrop-blur-[2px]" onMouseDown={props.onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]" onMouseDown={props.onClose}>
       <div
         ref={panel}
         role="dialog"
         aria-modal="true"
         aria-label={props.title}
-        className={cx("flex max-h-[90vh] w-full flex-col rounded-[20px] bg-paper shadow-float", props.wide ? "max-w-3xl" : "max-w-md")}
+        className={cx("flex max-h-[90vh] w-full flex-col rounded-xl bg-paper shadow-float", props.wide ? "max-w-3xl" : "max-w-md")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-4 px-6 pt-5 pb-3">
           <h2 className="min-w-0 truncate text-lg font-semibold tracking-tight">{props.title}</h2>
-          <button type="button" className="grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-muted hover:bg-side hover:text-ink" aria-label="Fermer" onClick={props.onClose}>
+          <button type="button" className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-muted hover:bg-line hover:text-ink" aria-label="Fermer" onClick={props.onClose}>
             <Icon name="close" size={16} strokeWidth={2} />
           </button>
         </div>

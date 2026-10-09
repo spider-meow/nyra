@@ -68,26 +68,26 @@ function Stats(props: { dashboard: Overview["dashboard"]; stats: Overview["stats
       <Stat
         value={dashboard.urgent_online}
         label="expirent sous 30 jours et sont en ligne"
-        tone={dashboard.urgent_online ? "warn" : undefined}
-        hint={dashboard.urgent_online ? <Link className="text-bark-700 hover:underline" to={`${link("a-traiter")}?statut=%3C30j&fenetre=3650`}>Anticiper</Link> : undefined}
+        tint="yellow"
+        hint={dashboard.urgent_online ? <Link className="font-medium text-ink underline underline-offset-2" to={`${link("a-traiter")}?statut=%3C30j&fenetre=3650`}>Anticiper</Link> : undefined}
       />
-      <Stat value={dashboard.pending_review} label="occurrences attendent une décision" hint={dashboard.pending_review ? <Link className="text-bark-700 hover:underline" to={`${link("a-traiter")}?fenetre=3650`}>Les traiter</Link> : "Tout est décidé."} />
+      <Stat tint="teal" value={dashboard.pending_review} label="occurrences attendent une décision" hint={dashboard.pending_review ? <Link className="font-medium text-ink underline underline-offset-2" to={`${link("a-traiter")}?fenetre=3650`}>Les traiter</Link> : "Tout est décidé."} />
       <Stat
         value={dashboard.unreferenced_online}
         label="images en ligne dont les droits n'ont jamais été vérifiés"
-        tone={dashboard.unreferenced_online ? "warn" : undefined}
+        tint="blush"
         hint={
           dashboard.unreferenced_online ? (
             <>
               Certaines sont peut-être expirées.{" "}
-              <Link className="text-bark-700 hover:underline" to={link("images-du-site")}>Les vérifier</Link>
+              <Link className="font-medium text-ink underline underline-offset-2" to={link("images-du-site")}>Les vérifier</Link>
             </>
           ) : (
             "Toutes les images en ligne ont des droits vérifiés."
           )
         }
       />
-      <Stat value={stats.reference_images} label="visuels sous surveillance" hint={`${plural(stats.site_images, "image lue", "images lues")} sur ${plural(stats.pages_crawled, "page")}`} />
+      <Stat tint="mint" value={stats.reference_images} label="visuels sous surveillance" hint={`${plural(stats.site_images, "image lue", "images lues")} sur ${plural(stats.pages_crawled, "page")}`} />
     </div>
   );
 }

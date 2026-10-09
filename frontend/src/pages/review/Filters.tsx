@@ -1,4 +1,5 @@
-import { FieldLabel, SearchField, Select, cx } from "../../components/ui";
+import { Select } from "../../components/Dropdown";
+import { FieldLabel, SearchField, cx } from "../../components/ui";
 import { WINDOWS, decisionFilters, type ReviewView } from "./view";
 
 /** Window, status, decision and search. */
@@ -57,7 +58,7 @@ export function ReviewTabs(props: { view: ReviewView }) {
           onClick={() => setParam("onglet", value === "found" ? null : value)}
           className={cx(
             "inline-flex h-9 shrink-0 items-center gap-2 rounded-full px-4 text-[13.5px] whitespace-nowrap transition-colors",
-            tab === value ? "bg-ink font-medium text-paper" : "border border-line-strong bg-paper text-ink hover:border-faint",
+            tab === value ? "bg-ink font-medium text-paper" : "border border-ink bg-paper text-ink hover:bg-yellow",
           )}
         >
           {label} <span className={cx("tabular", tab === value ? "text-paper/70" : "text-muted")}>{count}</span>

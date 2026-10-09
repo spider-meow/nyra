@@ -19,15 +19,15 @@ export function Upcoming(props: { items: UpcomingItem[] }) {
     <Card padded={false} className="mt-6 overflow-hidden">
       <div className="flex items-center justify-between border-b border-line px-6 py-4">
         <h2 className="text-[17px] font-semibold tracking-tight">Échéances des 90 prochains jours</h2>
-        <Link to={link("bibliotheque")} className="text-[13.5px] text-bark-700 hover:underline">Toute la bibliothèque</Link>
+        <Link to={link("bibliotheque")} className="text-[13.5px] font-medium text-ink underline underline-offset-2">Toute la bibliothèque</Link>
       </div>
       {props.items.length ? (
-        <ul className="divide-y divide-side">
+        <ul className="divide-y divide-line">
           {props.items.map((item) => {
             const [day, month] = dayMonth(item.expiry_date);
             return (
               <li key={item.reference_id} className="flex items-center gap-4 px-6 py-3 text-sm">
-                <span className="flex w-[52px] shrink-0 flex-col items-center rounded-[10px] bg-canvas py-1" aria-label={formatDate(item.expiry_date)}>
+                <span className="flex w-[52px] shrink-0 flex-col items-center rounded-md border border-ink bg-yellow py-1" aria-label={formatDate(item.expiry_date)}>
                   <span className="text-lg leading-tight font-semibold tabular">{day}</span>
                   <span className="text-[11px] tracking-wide text-muted uppercase">{month}</span>
                 </span>

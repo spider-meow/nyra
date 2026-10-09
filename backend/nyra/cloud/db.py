@@ -180,6 +180,31 @@ def get_membership(conn: psycopg.Connection, *, user_id: uuid.UUID, org_id: uuid
     ).fetchone()
 
 
+def list_members(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
+    return conn.execute(
+        """
+        SELECT m.user_id, m.role, u.email
+        FROM memberships m JOIN auth.users u ON u.id = m.user_id
+        WHERE m.org_id = %s ORDER BY m.role, lower(u.email)
+        """,
+        (org_id,),
+    ).fetchall()
+
+
+def count_admins(conn: psycopg.Connection, org_id: uuid.UUID) -> int:
+    return conn.execute("SELECT count(*) AS n FROM memberships WHERE org_id = %s AND role = 'admin'", (org_id,)).fetchone()["n"]
+
+
+def set_member_role(conn: psycopg.Connection, *, org_id: uuid.UUID, user_id: uuid.UUID, role: str) -> bool:
+    """False when that person is not a member."""
+    return conn.execute("UPDATE memberships SET role = %s WHERE org_id = %s AND user_id = %s", (role, org_id, user_id)).rowcount == 1
+
+
+def remove_member(conn: psycopg.Connection, *, org_id: uuid.UUID, user_id: uuid.UUID) -> bool:
+    """False when that person is not a member."""
+    return conn.execute("DELETE FROM memberships WHERE org_id = %s AND user_id = %s", (org_id, user_id)).rowcount == 1
+
+
 def list_memberships_for_user(conn: psycopg.Connection, user_id: uuid.UUID) -> list[Row]:
     return conn.execute(
         """

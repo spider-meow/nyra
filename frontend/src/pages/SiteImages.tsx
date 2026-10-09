@@ -213,7 +213,7 @@ function AllVerified() {
 
 function SelectionBar(props: { count: number; onAdd: () => void; onIgnore: () => void; onClear: () => void }) {
   return (
-    <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-2xl flex-wrap items-center gap-3 rounded-xl bg-ink px-4 py-2.5 text-sm text-white shadow-xl md:left-[calc(248px+2.5rem)]" role="region" aria-label="Actions sur la sélection">
+    <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-2xl flex-wrap items-center gap-3 rounded-full border border-line-strong bg-bar px-5 py-2.5 text-sm text-white shadow-float md:left-[calc(248px+2.5rem)]" role="region" aria-label="Actions sur la sélection">
       <span className="font-medium">{plural(props.count, "sélectionnée", "sélectionnées")}</span>
       <Button size="sm" onClick={props.onAdd}>Ajouter à la bibliothèque</Button>
       <button type="button" className="text-white/80 hover:text-white" onClick={props.onIgnore}>Ignorer</button>

@@ -55,7 +55,7 @@ function Results(props: { view: ReviewView; compare: ReactNode }) {
       <OccurrenceList view={props.view} />
       <div className="hidden lg:block">
         <div className="sticky top-6">
-          <Card className="shadow-[0_12px_32px_rgb(74_48_20/0.06)]">{props.compare ?? <p className="text-sm text-muted">Sélectionnez une occurrence.</p>}</Card>
+          <Card>{props.compare ?? <p className="text-sm text-muted">Sélectionnez une occurrence.</p>}</Card>
         </div>
       </div>
     </div>

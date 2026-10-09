@@ -183,6 +183,8 @@ export type Settings = {
   effective: { crawl: SettingsSection; match: SettingsSection; report: SettingsSection };
 };
 
+export type Member = { user_id: string; email: string; role: "admin" | "client"; you: boolean };
+
 export type ImportRow = {
   line: number;
   filename: string;
