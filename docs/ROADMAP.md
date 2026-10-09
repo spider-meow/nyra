@@ -21,6 +21,8 @@ qu'on y pense** : aujourd'hui il faut se connecter et cliquer (audit du
    tri, pas la promesse centrale. L'idée 7 (étiquettes de type sur les images du
    site) rend la liste « Droits non vérifiés » lisible : elle prolonge l'idée 2
    et passe en tête de ce groupe.
+6. L'idée 8 (droits illimités) : petite et indépendante, à glisser dès qu'on
+   retouche l'import ou la fiche d'une référence.
 
 Chiffrages : ceux de l'audit, à confirmer avant de s'y engager.
 
@@ -166,6 +168,27 @@ récurrentes sans enjeu, aujourd'hui écartées une à une (exclusions, voir
 **Questions ouvertes.** Quels types exactement ? Un packshot est-il toujours
 sans enjeu, ou parfois soumis à des droits (le contrat décide, voir « produit
 découpé » dans `MATCHING.md`) ?
+
+### [ ] 8. Droits illimités (« libre d'usage »)
+
+**Ce qu'on veut.** Pouvoir marquer une référence comme **libre d'usage / droits
+illimités** : elle n'expire jamais, donc elle ne devient jamais « expirée » ni
+« à échéance », mais elle reste reconnue sur les sites (utile pour retrouver où
+elle est utilisée).
+
+**Pourquoi.** Aujourd'hui une référence sans date veut dire « date inconnue »
+(`without_expiry` dans les statistiques, et `parse_expiry` accepte le vide).
+Les deux cas se mélangent : une image aux droits illimités ressemble à une
+image dont on a oublié de saisir la date, et fausse le suivi.
+
+**Piste (à valider).**
+- Un état distinct de « date inconnue » : par exemple une case « droits
+  illimités » à côté de la date d'expiration (ajout de colonne, additif), avec
+  la valeur correspondante dans l'import CSV.
+- Les droits illimités sortent des urgences d'expiration, du tableau de bord et
+  des alertes de l'idée 3 ; ils restent comptés à part dans les statistiques.
+- À trancher : une image libre d'usage trouvée sur un site apparaît-elle dans
+  « À traiter », ou est-elle rangée d'office comme conforme ?
 
 ## Avant d'ouvrir à un client
 
