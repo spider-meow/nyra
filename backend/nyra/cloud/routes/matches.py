@@ -26,7 +26,8 @@ class ReviewBody(BaseModel):
 def _shaped(row: dict, ref_urls: dict[str, str], site_urls: dict[str, str]) -> dict:
     return {
         "reference_id": str(row["reference_id"]), "filename": row["filename"],
-        "expiry_date": row["expiry_date"], "credit": row["credit"] or "", "notes": row["notes"] or "",
+        "expiry_date": row["expiry_date"], "unlimited_rights": row["unlimited_rights"],
+        "credit": row["credit"] or "", "notes": row["notes"] or "",
         "site_image_id": str(row["site_image_id"]), "site_url": row["site_url"],
         "content_hash": row["content_hash"], "level": row["level"], "score": float(row["score"]),
         "confidence": row["confidence"], "decision": row["decision"], "pages": row["pages"],
@@ -41,7 +42,8 @@ def _shaped(row: dict, ref_urls: dict[str, str], site_urls: dict[str, str]) -> d
 def _unmatched_item(row: dict, ref_urls: dict[str, str]) -> dict:
     return {
         "reference_id": str(row["reference_id"]), "filename": row["filename"],
-        "expiry_date": row["expiry_date"], "credit": row["credit"] or "", "notes": row["notes"] or "",
+        "expiry_date": row["expiry_date"], "unlimited_rights": row["unlimited_rights"],
+        "credit": row["credit"] or "", "notes": row["notes"] or "",
         "compared": row["compared"],
         "ref_thumb": ref_urls.get(row["ref_thumb_path"] or "") or ref_urls.get(row["ref_storage_path"], ""),
     }
@@ -61,7 +63,7 @@ def matches(within_days: Optional[int] = Query(None, ge=0, le=3650),
     site_urls = ctx.sign(cloud_storage.BUCKET_SITE_IMAGES, [r["site_thumb_path"] for r in rows]
                          + [r["site_storage_path"] for r in rows])
     result = report_module.group_matches([_shaped(row, ref_urls, site_urls) for row in rows], window)
-    for key in ("confirmed", "to_verify", "later"):
+    for key in ("confirmed", "to_verify", "later", "unlimited"):
         for group in result[key]:
             for hit in group["hits"]:
                 hit["site_image_ids"] = [str(item) for item in hit["site_image_ids"]]

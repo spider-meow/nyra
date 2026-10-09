@@ -1,11 +1,13 @@
 import { useState } from "react";
+import { LabelChips } from "../../components/Labels";
 import { Button, Card, cx } from "../../components/ui";
 import { Modal } from "../../components/feedback";
 import { formatDate, pathOf, plural } from "../../lib/format";
-import type { SiteImage, SiteImageVariant } from "../../types";
+import type { ImageLabel, SiteImage, SiteImageVariant } from "../../types";
 
 export function ImageCard(props: {
   item: SiteImage;
+  labels: ImageLabel[];
   selected: boolean;
   onSelect?: (on: boolean) => void;
   onOpen: () => void;
@@ -42,6 +44,7 @@ export function ImageCard(props: {
       <div className="flex flex-1 flex-col gap-1 p-3">
         <span className="w-fit rounded-full bg-urgent-soft px-2 py-0.5 text-[11px] font-medium text-urgent">Droits non vérifiés</span>
         <p className="truncate text-sm font-medium" title={item.filename}>{item.filename}</p>
+        <LabelChips labels={props.labels} />
         <p className="text-xs text-muted">
           {item.sites.join(", ")} · {plural(item.page_count, "page")}
           {item.width && item.height ? ` · ${item.width} × ${item.height}` : ""}

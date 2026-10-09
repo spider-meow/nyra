@@ -90,12 +90,13 @@ numbers and the report itself are pure functions over plain dicts in
 | `match.py` | Hashes, CLIP (batched), pure classification, the vectorized comparison kernel, incremental orchestration, calibration sweeps. |
 | `variants.py`, `cloud/variants.py` | Groups the crops and resizes of one site photo (CLIP candidates, keypoint check, union into `variant_group`); the worker runs it after each comparison. |
 | `cloud/locate.py` | The `locate` job's database side: reads the brand's stored images, runs `verify.locate`, replaces the reference's `reference_locations`. |
+| `labels.py`, `cloud/labels.py` | Labels learned from examples a person chose: the score of an image for a label is the mean similarity of its 3 closest examples (CLIP). Types (one per image) take the best score; content labels (several) pass a threshold. Proposals are computed from the embeddings when asked, nothing is stored but the decisions. |
 | `refs.py` | `RefSource` (CSV + folder today, a DAM export later), strict expiry-date parsing, reference features. |
 | `report.py` | Grouping, dashboard numbers, report HTML/CSV. |
 | `db.py` | SQLite schema and `LocalStore` for the CLI. |
 | `cloud/api.py` | The web process: `CloudSettings` and `create_app`, which wires the modules below in a fixed order (middleware, `/assets`, API routes, then the catch-all page). |
 | `cloud/routes/common.py` | What the route modules share: the request context (`Ctx`), the auth and brand dependencies, small helpers. |
-| `cloud/routes/` (`session`, `brands`, `members`, `library`, `occurrences`, `jobs`, `matches`, `site_images`, `reports_settings`) | The API routes, one module per domain, each exposing a `router`. |
+| `cloud/routes/` (`session`, `brands`, `members`, `library`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `reports_settings`) | The API routes, one module per domain, each exposing a `router`. |
 | `cloud/routes/interface.py` | The built interface (single-page app), gzip and security headers, error handlers. |
 | `cloud/worker.py` | The job runner. |
 | `cloud/jobs.py` | The queue (enqueue, claim, heartbeat, cancel, reap). |

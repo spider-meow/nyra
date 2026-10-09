@@ -1,7 +1,8 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Button, EmptyState, PageHeader, Skeleton, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useOrg } from "../lib/org";
+import { useAssignments, useLabels } from "../lib/labels";
 import { useLibrary, useLibraryThumbs } from "../lib/queries";
 import type { LibraryItem } from "../types";
 import { EditReference } from "./library/EditReference";
@@ -16,7 +17,10 @@ export function Library() {
   const { admin } = useOrg();
   const library = useLibrary();
   const items = library.data?.items ?? [];
-  const view = useLibraryView(items);
+  const assignments = useAssignments("reference").data?.assignments;
+  const labelsOf = useCallback((id: string) => assignments?.[id] ?? [], [assignments]);
+  const view = useLibraryView(items, labelsOf);
+  const labels = useLabels().data?.labels ?? [];
   const up = useUpload();
   const [picked, setPicked] = useState<Set<string>>(new Set());
   // Bulk actions only touch what is on screen: a card hidden by the search, a tag or a status filter is never acted on.
@@ -59,9 +63,9 @@ export function Library() {
       ) : (
         <>
           <LibraryToolbar view={view} onTab={changeTab} />
-          {admin && selected.size ? <SelectionBar selected={selected} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
+          {admin && selected.size ? <SelectionBar selected={selected} referenceIds={items.filter((item) => selected.has(item.filename)).map((item) => item.id)} labels={labels} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
           {thumbs.failed ? <p role="status" className="mb-3 text-[13px] text-muted">Vignettes indisponibles pour le moment.</p> : null}
-          <LibraryGrid view={view} thumbs={thumbs.urls} selected={selected} setSelected={setPicked} onEdit={setEditing} onPick={up.pick} />
+          <LibraryGrid view={view} thumbs={thumbs.urls} labelsOf={labelsOf} selected={selected} setSelected={setPicked} onEdit={setEditing} onPick={up.pick} />
         </>
       )}
 

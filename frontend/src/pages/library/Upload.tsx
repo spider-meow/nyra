@@ -4,6 +4,8 @@ import { Button, Card } from "../../components/ui";
 import { plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { useReferenceUpload } from "../../lib/queries";
+import { NO_RIGHTS, type UploadRights } from "../../lib/upload";
+import { ImportDialog } from "./ImportDialog";
 
 type Failure = { filename: string; reason: string };
 
@@ -25,8 +27,15 @@ export function useUpload() {
   const [retryable, setRetryable] = useState<File[]>([]);
   const [replaced, setReplaced] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
+  // The files waiting for the common rights to be chosen (the dialog), and the rights of the last send, for a retry.
+  const [staged, setStaged] = useState<File[]>([]);
+  const [lastRights, setLastRights] = useState<UploadRights>(NO_RIGHTS);
 
-  function upload(files: File[]) {
+  function stage(files: File[]) {
+    if (admin && files.length) setStaged(files);
+  }
+
+  function upload(files: File[], rights: UploadRights = lastRights) {
     if (!admin || !files.length) return;
     if (uploader.uploading) {
       toast.show({ message: "Un envoi est déjà en cours", description: "Ajoutez ces fichiers dès qu'il est terminé." });
@@ -35,7 +44,9 @@ export function useUpload() {
     setFailures([]);
     setRetryable([]);
     setReplaced([]);
-    void uploader.run(files).then((result) => {
+    setStaged([]);
+    setLastRights(rights);
+    void uploader.run(files, rights).then((result) => {
       setFailures(result.failed);
       setReplaced(result.replaced);
       const refused = new Set(result.failed.map((item) => item.filename));
@@ -56,12 +67,13 @@ export function useUpload() {
     onDrop: (event: DragEvent) => {
       event.preventDefault();
       setDragging(false);
-      upload(Array.from(event.dataTransfer.files));
+      stage(Array.from(event.dataTransfer.files));
     },
   };
 
   return {
-    uploader, fileInput, failures, retryable, replaced, dragging, dropProps, upload,
+    uploader, fileInput, failures, retryable, replaced, dragging, dropProps, upload, stage, staged,
+    cancelStaged: () => setStaged([]),
     pick: () => fileInput.current?.click(),
     closeReplaced: () => setReplaced([]),
     closeFailures: () => { setFailures([]); setRetryable([]); },
@@ -94,7 +106,7 @@ export function LibraryActions({ up, onImport }: { up: Upload; onImport: () => v
             multiple
             hidden
             onChange={(event) => {
-              up.upload(Array.from(event.target.files ?? []));
+              up.stage(Array.from(event.target.files ?? []));
               event.target.value = "";
             }}
           />
@@ -123,6 +135,7 @@ export function UploadNotices(props: { up: Upload; indexing: boolean }) {
         </p>
       ) : null}
 
+      <ImportDialog files={up.staged} onCancel={up.cancelStaged} onSend={up.upload} />
       {up.replaced.length ? <ReplacedNotice names={up.replaced} onClose={up.closeReplaced} /> : null}
       {up.failures.length ? <FailedNotice up={up} /> : null}
     </>
@@ -138,7 +151,7 @@ function ReplacedNotice(props: { names: string[]; onClose: () => void }) {
             {props.names.length > 1 ? `${props.names.length} visuels remplacés` : "1 visuel remplacé"}
           </p>
           <p className="mt-0.5 text-[13px] text-muted">
-            Un visuel du même nom était déjà dans la bibliothèque : l'image a été remplacée, son échéance, son crédit et ses notes sont conservés.
+            Un visuel du même nom était déjà dans la bibliothèque : l'image a été remplacée, son échéance, son crédit et ses notes sont conservés (sauf si une échéance commune a été choisie à l'envoi).
           </p>
           <p className="mt-1 break-words text-[13px] text-ink-soft">{props.names.join(", ")}</p>
         </div>

@@ -1,8 +1,11 @@
 import { useState } from "react";
 import { useConfirm, useToast } from "../../components/feedback";
+import { ContentTagger } from "../../components/Labels";
 import { errorMessage } from "../../lib/api";
 import { formatDate, plural, splitTags } from "../../lib/format";
+import { LABELS_ENABLED } from "../../lib/labels";
 import { useLibraryMutations } from "../../lib/queries";
+import type { LabelInfo } from "../../types";
 
 /** Date and tag edits applied to the selected visuals. Lives in the page, not in the bar: the typed values survive a deselection. */
 export function useBulkEdit(selected: Set<string>, clear: () => void) {
@@ -11,14 +14,14 @@ export function useBulkEdit(selected: Set<string>, clear: () => void) {
   const [date, setDate] = useState("");
   const [tag, setTag] = useState("");
 
-  function applyDate() {
+  function applyDate(unlimited = false) {
     setExpiry.mutate(
-      { filenames: [...selected], expiry_date: date },
+      { filenames: [...selected], expiry_date: unlimited ? "" : date, unlimited_rights: unlimited },
       {
         onSuccess: (result) => {
           toast.show({
             tone: "success",
-            message: date ? `Échéance fixée au ${formatDate(date)}` : "Échéance retirée",
+            message: unlimited ? "Droits illimités" : date ? `Échéance fixée au ${formatDate(date)}` : "Échéance retirée",
             description: plural(result.updated, "visuel mis à jour", "visuels mis à jour"),
           });
           clear();
@@ -84,6 +87,8 @@ export function useRemoveReferences(onRemoved: (names: string[]) => void) {
 
 type Props = {
   selected: Set<string>;
+  referenceIds: string[];
+  labels: LabelInfo[];
   bulk: ReturnType<typeof useBulkEdit>;
   removing: boolean;
   onRemove: (names: string[]) => Promise<void>;
@@ -91,15 +96,18 @@ type Props = {
 };
 
 /** Floating bar over the selected visuels: deadline, tags, delete. */
-export function SelectionBar({ selected, bulk, removing, onRemove, onClear }: Props) {
+export function SelectionBar({ selected, referenceIds, labels, bulk, removing, onRemove, onClear }: Props) {
   return (
     <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-xl border border-line-strong bg-bar px-4 py-2.5 text-sm text-white shadow-float md:left-[calc(256px+3.5rem)]" role="region" aria-label="Actions sur la sélection">
       <span className="font-medium">{plural(selected.size, "sélectionné")}</span>
       <span className="flex items-center gap-2">
         <label htmlFor="bulk-date" className="text-white/70">Échéance</label>
         <input id="bulk-date" type="date" value={bulk.date} onChange={(event) => bulk.setDate(event.target.value)} className="h-9 rounded-md border border-white/20 bg-white/10 px-2.5 text-white [color-scheme:dark]" />
-        <button type="button" className="h-9 rounded-md bg-peach px-3.5 text-[13.5px] font-medium text-ink hover:bg-accent-hover disabled:cursor-progress disabled:opacity-60" onClick={bulk.applyDate} disabled={bulk.dateBusy}>
+        <button type="button" className="h-9 rounded-md bg-peach px-3.5 text-[13.5px] font-medium text-ink hover:bg-accent-hover disabled:cursor-progress disabled:opacity-60" onClick={() => bulk.applyDate()} disabled={bulk.dateBusy}>
           {bulk.dateBusy ? "Application…" : "Appliquer"}
+        </button>
+        <button type="button" className="h-9 rounded-md px-3 text-[13.5px] text-white hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" onClick={() => bulk.applyDate(true)} disabled={bulk.dateBusy}>
+          Droits illimités
         </button>
       </span>
       <span className="flex items-center gap-2">
@@ -121,6 +129,7 @@ export function SelectionBar({ selected, bulk, removing, onRemove, onClear }: Pr
           Retirer
         </button>
       </span>
+      {LABELS_ENABLED ? <ContentTagger labels={labels} images={{ referenceIds }} dark /> : null}
       <button type="button" className="h-9 rounded-md px-3 text-[13.5px] text-[#f4b3a8] hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" disabled={removing} onClick={() => void onRemove([...selected])}>
         {removing ? "Suppression…" : "Supprimer"}
       </button>

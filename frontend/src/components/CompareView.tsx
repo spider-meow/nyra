@@ -6,7 +6,7 @@ import { ExcludeModal } from "./compare/Exclude";
 import { Pictures, type Mode, type Zoom } from "./compare/Pictures";
 import { ConfidenceBadge, Segmented, StatusBadge } from "./ui";
 import { useOrg } from "../lib/org";
-import { confidenceHelp, daysText, formatDate } from "../lib/format";
+import { confidenceHelp, formatDate, rightsText } from "../lib/format";
 import type { Decision, Hit, MatchGroup } from "../types";
 
 type Props = {
@@ -29,7 +29,7 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold tracking-tight" title={group.filename}>{group.filename}</h2>
           <p className="mt-1.5 flex flex-wrap items-center gap-2 text-[13px] text-muted">
-            <StatusBadge status={group.status} label={daysText(group.days_left)} />
+            <StatusBadge status={group.status} label={rightsText(group.status, group.days_left)} />
             {group.expiry_date ? <span>Échéance {formatDate(group.expiry_date)}</span> : null}
           </p>
           {group.credit || group.notes ? (

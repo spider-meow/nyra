@@ -69,7 +69,17 @@ groupe ne peut pas encore être scindé à la main.
 - Vérification : un jeu d'images recadrées à la main (comme la calibration de
   `MATCHING.md`) pour mesurer faux regroupements et regroupements manqués.
 
-### [ ] 2. Étiquettes automatiques de contenu (verres en cristal, carafe, pique…)
+### [~] 2. Étiquettes automatiques de contenu (verres en cristal, carafe, pique…)
+
+**Désactivée pour l'instant** (9 octobre 2026) : le code est là mais l'API ne s'enregistre qu'avec `NYRA_LABELS=1` et l'interface qu'avec `VITE_LABELS=1`.
+
+**État (9 octobre 2026).** Code écrit et testé (`test_labels.py`, test d'API des étiquettes), pas encore commité ni
+appliqué sur la base réelle (migration `20261009000020`). Le nom d'une étiquette de contenu se tape dans la barre de
+sélection de la bibliothèque ou de « Droits non vérifiés » : « Étiqueter » pose les exemples, « Pas ça » refuse une
+proposition ; trois exemples suffisent pour que les autres images soient proposées (pointillés et « ? » dans la
+carte). Filtre par contenu sur les deux pages. **Reste** : le seuil de 0,82 est une estimation à calibrer sur de vraies
+images (un seuil par étiquette) ; pas de zero-shot par texte ; pas d'écran pour supprimer une étiquette (l'API
+`DELETE /labels/{id}` existe). Les étiquettes sont propres à chaque marque.
 
 **Ce qu'on veut.** Par marque (ex. Louis XIII), définir des étiquettes
 d'objets et que l'algorithme dise **lesquels sont visibles** sur chaque image :
@@ -139,7 +149,16 @@ main (`nyra calibrate`).
 **Pourquoi.** Les 97,5 % de `MATCHING.md` viennent de copies retouchées
 fabriquées, pas de vrais cas de réutilisation ; le rappel réel est inconnu.
 
-### [ ] 7. Étiqueter les images du site (logo, packshot…) pour trier « Droits non vérifiés »
+### [~] 7. Étiqueter les images du site (logo, packshot…) pour trier « Droits non vérifiés »
+
+**Désactivée pour l'instant** (9 octobre 2026) : le code est là mais l'API ne s'enregistre qu'avec `NYRA_LABELS=1` et l'interface qu'avec `VITE_LABELS=1`.
+
+**État (9 octobre 2026).** Code écrit et testé, pas encore commité ni appliqué sur la base réelle. Quatre types fixes
+par marque (logo, packshot, pictogramme, autre). Dans « Droits non vérifiés » : bouton « Étiqueter à la main » (une
+image à la fois, touches 1 à 4, images choisies pour être variées, tableau précision/rappel à la fin), boutons de type
+dans la barre de sélection, filtre par type et « Sans type ». L'algorithme propose un type aux autres images (badge en
+pointillés). Rien n'est masqué d'office. **Reste** : mesurer précision et rappel sur de vraies images étiquetées par
+Louis XIII (20 à 30 par type) avant de s'y fier.
 
 **Ce qu'on veut.** Le même principe que l'idée 2, appliqué aux **images du
 site** : chaque image porte des étiquettes de type (« logo », « packshot
@@ -169,7 +188,16 @@ récurrentes sans enjeu, aujourd'hui écartées une à une (exclusions, voir
 sans enjeu, ou parfois soumis à des droits (le contrat décide, voir « produit
 découpé » dans `MATCHING.md`) ?
 
-### [ ] 8. Droits illimités (« libre d'usage »)
+### [~] 8. Droits illimités (« libre d'usage »)
+
+**État (9 octobre 2026).** Code écrit et testé, pas encore commité ni appliqué sur la base réelle (migration
+`20261009000019`). Une case « Droits illimités » (fiche, ajout depuis le site, sélection de la bibliothèque) ; dans le
+CSV, le mot `illimité` à la place de la date. Une date et des droits illimités s'excluent (un contrôle en base). Hors
+des urgences et du tableau de bord ; compté à part dans les statistiques. Retrouvée avec certitude (niveau
+« Confirmé »), la référence va dans l'onglet « Libre d'usage » de la page des correspondances ; un « Probable » ou
+« À vérifier » reste à vérifier. Pas de règle automatique par étiquette : un packshot n'est jamais sûr à 100 %, la case
+est seulement précochée pour un packshot qu'on ajoute à la bibliothèque. **Reste** : les alertes de l'idée 3 devront
+ignorer les droits illimités.
 
 **Ce qu'on veut.** Pouvoir marquer une référence comme **libre d'usage / droits
 illimités** : elle n'expire jamais, donc elle ne devient jamais « expirée » ni

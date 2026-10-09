@@ -1,13 +1,13 @@
 import { useMemo, useState } from "react";
 import { LIBRARY_PAGE } from "../../lib/queries";
 import { isBoolean, isShortText, isStrings, oneOf, usePersistedState } from "../../lib/storage";
-import type { LibraryItem, Status } from "../../types";
+import type { ImageLabel, LibraryItem, Status } from "../../types";
 
 export type Filter = "all" | Status | "unindexed";
 type Sort = "expiry" | "name";
 const isTab = oneOf<Tab>(["active", "expired"]);
 const isSort = oneOf<Sort>(["expiry", "name"]);
-const isFilter = oneOf<Filter>(["all", "expire", "<30j", "<90j", "ok", "inconnue", "unindexed"]);
+const isFilter = oneOf<Filter>(["all", "expire", "<30j", "<90j", "ok", "inconnue", "illimite", "unindexed"]);
 /** Expired visuals live in their own tab: still compared to the sites, out of the way of the working library. */
 export type Tab = "active" | "expired";
 export const TAGS_SHOWN = 12;
@@ -19,14 +19,16 @@ function tagCounts(items: LibraryItem[]): [string, number][] {
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr"));
 }
 
-type Criteria = { tab: Tab; filter: Filter; sort: Sort; query: string; activeTags: string[]; untagged: boolean };
+type Criteria = { tab: Tab; filter: Filter; sort: Sort; query: string; activeTags: string[]; untagged: boolean; content: string };
+type LabelsOf = (id: string) => ImageLabel[];
 
-function visibleItems(pool: LibraryItem[], { tab, filter, sort, query, activeTags, untagged }: Criteria): LibraryItem[] {
+function visibleItems(pool: LibraryItem[], { tab, filter, sort, query, activeTags, untagged, content }: Criteria, labelsOf: LabelsOf): LibraryItem[] {
   const needle = query.trim().toLowerCase();
   const list = pool.filter((item) => {
     if (needle && !item.filename.toLowerCase().includes(needle) && !item.tags.some((tag) => tag.includes(needle))) return false;
     if (untagged && item.tags.length) return false;
     if (activeTags.some((tag) => !item.tags.includes(tag))) return false;
+    if (content !== "all" && !labelsOf(item.id).some((label) => label.label_id === content)) return false;
     if (filter === "unindexed") return !item.indexed;
     return filter === "all" || item.status === filter;
   });
@@ -40,7 +42,7 @@ function visibleItems(pool: LibraryItem[], { tab, filter, sort, query, activeTag
 }
 
 /** Tab, status filter, sort, search and tag filters of the library, and the visuals they leave. Every filter change goes back to the first page. */
-export function useLibraryView(items: LibraryItem[]) {
+export function useLibraryView(items: LibraryItem[], labelsOf: LabelsOf) {
   // Tab and sort are kept in this browser; search and filters only for the browser tab (reload, come back later).
   const [tab, setTab] = usePersistedState<Tab>("library.tab", "active", "local", isTab);
   const [sort, setSort] = usePersistedState<Sort>("library.sort", "expiry", "local", isSort);
@@ -48,6 +50,7 @@ export function useLibraryView(items: LibraryItem[]) {
   const [query, setQuery] = usePersistedState("library.query", "", "session", isShortText);
   const [tagsSaved, setActiveTags] = usePersistedState<string[]>("library.tags", [], "session", isStrings);
   const [untaggedSaved, setUntagged] = usePersistedState("library.untagged", false, "session", isBoolean);
+  const [content, setContent] = usePersistedState("library.content", "all", "session", isShortText);
   const [allTags, setAllTags] = useState(false);
   const [shown, setShown] = useState(LIBRARY_PAGE);
 
@@ -62,7 +65,13 @@ export function useLibraryView(items: LibraryItem[]) {
   const activeTags = useMemo(() => tagsSaved.filter((tag) => poolTags.some(([name]) => name === tag)), [tagsSaved, poolTags]);
   const untagged = untaggedSaved && untaggedCount > 0;
   const filter = tab === "active" ? filterSaved : "all";
-  const visible = useMemo(() => visibleItems(pool, { tab, filter, sort, query, activeTags, untagged }), [pool, tab, filter, sort, query, activeTags, untagged]);
+  const visible = useMemo(() => visibleItems(pool, { tab, filter, sort, query, activeTags, untagged, content }, labelsOf), [pool, tab, filter, sort, query, activeTags, untagged, content, labelsOf]);
+  // How many visuals of the tab carry each content label (a label that no visual carries has no chip to filter on).
+  const contentCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const item of pool) for (const label of labelsOf(item.id)) counts[label.label_id] = (counts[label.label_id] ?? 0) + 1;
+    return counts;
+  }, [pool, labelsOf]);
 
   function changeTab(next: Tab) {
     setTab(next);
@@ -79,11 +88,12 @@ export function useLibraryView(items: LibraryItem[]) {
   }
 
   return {
-    tab, filter, sort, query, activeTags, untagged, allTags, shown,
+    tab, filter, sort, query, activeTags, untagged, content, contentCounts, allTags, shown,
     activeItems, expiredItems, libraryTags, poolTags, untaggedCount, visible,
-    filtering: filter !== "all" || Boolean(query) || activeTags.length > 0 || untagged,
+    filtering: filter !== "all" || Boolean(query) || activeTags.length > 0 || untagged || content !== "all",
     changeTab, toggleTag, setSort,
     toggleAllTags: () => setAllTags((value) => !value),
+    setContent: (value: string) => { setContent(value); setShown(LIBRARY_PAGE); },
     toggleUntagged: () => { setUntagged(!untagged); setShown(LIBRARY_PAGE); },
     setFilter: (value: Filter) => { setFilter(value); setShown(LIBRARY_PAGE); },
     setQuery: (value: string) => { setQuery(value); setShown(LIBRARY_PAGE); },

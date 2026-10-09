@@ -23,6 +23,10 @@ export function batches(files: File[]): File[][] {
   return out;
 }
 
+/** The common rights of an upload: a date, or unlimited rights, or neither (each file keeps what it had). */
+export type UploadRights = { expiry: string; unlimited: boolean };
+export const NO_RIGHTS: UploadRights = { expiry: "", unlimited: false };
+
 export type UploadResult = {
   saved: string[];
   /** Also in `saved`: a visual of that name was already in the library and has been replaced. */
@@ -46,9 +50,11 @@ export function withoutDuplicates(files: File[], result: UploadResult): File[] {
 }
 
 /** One request: what the server saved or refused goes into `result`; a failed request refuses the whole batch. */
-export async function sendBatch(path: string, batch: File[], result: UploadResult): Promise<void> {
+export async function sendBatch(path: string, batch: File[], result: UploadResult, rights: UploadRights): Promise<void> {
   const body = new FormData();
   for (const file of batch) body.append("files", file);
+  if (rights.unlimited) body.append("unlimited_rights", "true");
+  else if (rights.expiry) body.append("expiry_date", rights.expiry);
   try {
     const data = await api.post<UploadResult>(path, body);
     result.saved.push(...data.saved);

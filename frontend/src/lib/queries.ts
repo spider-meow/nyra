@@ -27,7 +27,7 @@ import { api, errorMessage } from "./api";
 import { useAuth } from "./auth";
 import { useOrg } from "./org";
 import { isRecord, oneOf, readStored, removeOtherBrands, removeStored, storageKey, writeStored } from "./storage";
-import { batches, reportUnanswered, sendBatch, summary, withoutDuplicates, type UploadResult } from "./upload";
+import { batches, reportUnanswered, sendBatch, summary, withoutDuplicates, type UploadResult, type UploadRights } from "./upload";
 
 // Copies of the Library and Overview answers in localStorage, so those pages open at once.
 // They hold no signed URL (thumbnails come from `useLibraryThumbs`). Older than this, a copy is ignored.
@@ -71,10 +71,10 @@ const isOverview = (value: unknown): value is Overview =>
   Array.isArray(value.sites) &&
   isRecord(value.defaults) && typeof value.defaults.within_days === "number";
 
-const isStatus = oneOf<Status>(["expire", "<30j", "<90j", "ok", "inconnue"]);
+const isStatus = oneOf<Status>(["expire", "<30j", "<90j", "ok", "inconnue", "illimite"]);
 const isLibraryItem = (value: unknown): value is LibraryItem =>
   isRecord(value) &&
-  typeof value.id === "string" && typeof value.filename === "string" && typeof value.expiry_date === "string" &&
+  typeof value.id === "string" && typeof value.filename === "string" && typeof value.expiry_date === "string" && typeof value.unlimited_rights === "boolean" &&
   (value.days_left === null || typeof value.days_left === "number") &&
   isStatus(value.status) &&
   typeof value.credit === "string" && typeof value.notes === "string" &&
@@ -263,7 +263,7 @@ export function useSiteImageMutations() {
   const invalidate = useInvalidate();
   return {
     adopt: useMutation({
-      mutationFn: (input: { site_image_ids: string[]; expiry_date: string; credit: string; filenames: Record<string, string> }) =>
+      mutationFn: (input: { site_image_ids: string[]; expiry_date: string; unlimited_rights: boolean; credit: string; filenames: Record<string, string> }) =>
         api.post<{
           added: { site_image_id: string; filename: string }[];
           failed: { site_image_id: string; url: string; reason: string }[];
@@ -347,7 +347,7 @@ function patchHits(client: QueryClient, key: QueryKey, referenceId: string, next
         : { ...group, hits: group.hits.map((hit) => { const decision = next(hit); return decision === undefined ? hit : { ...hit, decision }; }) },
     );
   client.setQueriesData<Matches>({ queryKey: key }, (data) =>
-    data && { ...data, confirmed: patch(data.confirmed), to_verify: patch(data.to_verify), later: patch(data.later) },
+    data && { ...data, confirmed: patch(data.confirmed), to_verify: patch(data.to_verify), later: patch(data.later), unlimited: patch(data.unlimited) },
   );
 }
 
@@ -371,7 +371,7 @@ export function useReview() {
       // Only what this decision changes is put back on failure: decisions made meanwhile on other rows stay.
       const before = new Map<string, Decision | null>();
       for (const [, data] of client.getQueriesData<Matches>({ queryKey: key })) {
-        for (const group of [...(data?.confirmed ?? []), ...(data?.to_verify ?? []), ...(data?.later ?? [])]) {
+        for (const group of [...(data?.confirmed ?? []), ...(data?.to_verify ?? []), ...(data?.later ?? []), ...(data?.unlimited ?? [])]) {
           if (group.reference_id === input.referenceId) for (const hit of group.hits) if (touched(hit)) before.set(hit.site_image_id, hit.decision);
         }
       }
@@ -401,7 +401,7 @@ export function useReferenceUpload() {
   const toast = useToast();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
-  async function run(sent: File[]): Promise<UploadResult> {
+  async function run(sent: File[], rights: UploadRights): Promise<UploadResult> {
     const result: UploadResult = { saved: [], replaced: [], failed: [] };
     const files = withoutDuplicates(sent, result);
     const total = files.length;
@@ -417,7 +417,7 @@ export function useReferenceUpload() {
     let done = 0;
     try {
       for (const batch of batches(files)) {
-        await sendBatch(apiPath("/library/upload"), batch, result);
+        await sendBatch(apiPath("/library/upload"), batch, result, rights);
         done += batch.length;
         setProgress({ done, total });
         if (total > 1) toast.update(id, { message: `Envoi des visuels · ${done} sur ${total}`, progress: done / total });
@@ -443,7 +443,7 @@ export function useLibraryMutations() {
   const done = () => invalidate("occurrences", "library", "overview", "matches", "jobs");
   return {
     updateMeta: useMutation({
-      mutationFn: (input: { filename: string; expiry_date: string; credit: string; notes: string; tags: string[] }) =>
+      mutationFn: (input: { filename: string; expiry_date: string; unlimited_rights: boolean; credit: string; notes: string; tags: string[] }) =>
         api.put<{ expiry_date: string }>(apiPath(`/library/${encodeURIComponent(input.filename)}`), input),
       onSuccess: () => invalidate("library", "overview", "matches"),
     }),
@@ -452,7 +452,7 @@ export function useLibraryMutations() {
       onSuccess: done,
     }),
     setExpiry: useMutation({
-      mutationFn: (input: { filenames: string[]; expiry_date: string }) =>
+      mutationFn: (input: { filenames: string[]; expiry_date: string; unlimited_rights?: boolean }) =>
         api.post<{ updated: number }>(apiPath("/library/expiry"), input),
       onSuccess: () => invalidate("library", "overview", "matches"),
     }),

@@ -1,14 +1,17 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import { useToast } from "../components/feedback";
+import { ContentFilter, ContentTagger } from "../components/Labels";
 import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { plural } from "../lib/format";
+import { LABELS_ENABLED, useAssignments, useLabels } from "../lib/labels";
 import { useOrg } from "../lib/org";
 import { useExclusionMutations, useSiteImages } from "../lib/queries";
-import type { SiteImage } from "../types";
+import type { ImageLabel, LabelInfo, SiteImage } from "../types";
 import { AddToLibrary } from "./site-images/AddToLibrary";
 import { ImageCard, Zoom } from "./site-images/ImageCard";
+import { LabelingMode, TypeButtons, TypeFilter, typeOf } from "./site-images/Typing";
 
 /**
  * Everything read on the brand's sites that matches nothing in its library.
@@ -21,9 +24,13 @@ export function SiteImages() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState<SiteImage[] | null>(null);
   const [zoom, setZoom] = useState<SiteImage | null>(null);
+  const [typing, setTyping] = useState(false);
   const ignore = useIgnore();
   const items = images.data?.items ?? [];
-  const filter = useImageFilter(items);
+  const assignments = useAssignments("site").data?.assignments;
+  const labelsOf = useCallback((item: SiteImage) => assignments?.[item.id] ?? [], [assignments]);
+  const labels = useLabels().data?.labels ?? [];
+  const filter = useImageFilter(items, labelsOf);
   const chosen = items.filter((item) => selected.has(item.id));
 
   function toggle(id: string, on: boolean) {
@@ -38,6 +45,7 @@ export function SiteImages() {
       <PageHeader
         title="Droits non vérifiés"
         description={`Les images en ligne sur les sites de ${brand.name} qui ne correspondent à aucun visuel de la bibliothèque : personne n'a encore vérifié leurs droits, et certaines sont peut-être expirées. Ajoutez celles qui sont sous droits, avec leur échéance, et ignorez le reste (logos, pictogrammes, visuels maison).`}
+        actions={admin && LABELS_ENABLED ? <Button onClick={() => setTyping(true)}>Étiqueter à la main</Button> : undefined}
       />
       {images.isLoading ? (
         <ImageSkeletons />
@@ -47,9 +55,10 @@ export function SiteImages() {
         <AllVerified />
       ) : (
         <>
-          <FilterBar filter={filter} items={items} selected={selected} onSelect={setSelected} />
+          <FilterBar filter={filter} items={items} labels={labels} selected={selected} onSelect={setSelected} />
           <ImageGrid
             filter={filter}
+            labelsOf={labelsOf}
             selected={selected}
             onToggle={toggle}
             onZoom={setZoom}
@@ -59,7 +68,10 @@ export function SiteImages() {
         </>
       )}
       {admin && chosen.length ? (
-        <SelectionBar count={chosen.length}onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => setSelected(new Set(failedIds)))} onClear={() => setSelected(new Set())} />
+        <SelectionBar count={chosen.length} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => setSelected(new Set(failedIds)))} onClear={() => setSelected(new Set())}>
+          {LABELS_ENABLED ? <TypeButtons types={labels.filter((label) => label.kind === "type")} items={chosen} onDone={() => setSelected(new Set())} /> : null}
+          {LABELS_ENABLED ? <ContentTagger labels={labels} images={{ siteImageIds: chosen.flatMap((item) => item.ids) }} dark /> : null}
+        </SelectionBar>
       ) : null}
       <AddToLibrary
         items={adding}
@@ -71,13 +83,16 @@ export function SiteImages() {
         }}
       />
       <Zoom item={zoom} onClose={() => setZoom(null)} />
+      {LABELS_ENABLED ? <LabelingMode open={typing} onClose={() => setTyping(false)} /> : null}
     </div>
   );
 }
 
-/** The site, the search text and how many cards are shown; any filter change goes back to the first 60. */
-function useImageFilter(items: SiteImage[]) {
+/** The site, the type, the content, the search text and how many cards are shown; any filter change goes back to the first 60. */
+function useImageFilter(items: SiteImage[], labelsOf: (item: SiteImage) => ImageLabel[]) {
   const [site, setSite] = useState("all");
+  const [type, setType] = useState("all");
+  const [content, setContent] = useState("all");
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(60);
   const sites = useMemo(() => {
@@ -90,11 +105,26 @@ function useImageFilter(items: SiteImage[]) {
     return items.filter(
       (item) =>
         (site === "all" || item.site_ids.includes(site)) &&
+        (type === "all" || (typeOf(labelsOf(item))?.name ?? "none") === type) &&
+        (content === "all" || labelsOf(item).some((label) => label.label_id === content)) &&
         (!needle || item.filename.toLowerCase().includes(needle) || item.pages.some((page) => page.toLowerCase().includes(needle))),
     );
-  }, [items, site, query]);
+  }, [items, site, type, content, query, labelsOf]);
+  // How many images carry each type ("none": no type yet) and each content label.
+  const counts = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const item of items) {
+      const found = labelsOf(item);
+      const key = typeOf(found)?.name ?? "none";
+      out[key] = (out[key] ?? 0) + 1;
+      for (const label of found) if (label.kind === "content") out[label.label_id] = (out[label.label_id] ?? 0) + 1;
+    }
+    return out;
+  }, [items, labelsOf]);
   return {
-    site, query, shown, sites, visible, setShown,
+    site, type, content, counts, query, shown, sites, visible, setShown,
+    changeType: (value: string) => { setType(value); setShown(60); },
+    changeContent: (value: string) => { setContent(value); setShown(60); },
     changeSite: (value: string) => { setSite(value); setShown(60); },
     changeQuery: (value: string) => { setQuery(value); setShown(60); },
   };
@@ -129,7 +159,7 @@ function SiteTabs(props: { filter: ReturnType<typeof useImageFilter>; items: Sit
   );
 }
 
-function FilterBar(props: { filter: ReturnType<typeof useImageFilter>; items: SiteImage[]; selected: Set<string>; onSelect: (ids: Set<string>) => void }) {
+function FilterBar(props: { filter: ReturnType<typeof useImageFilter>; items: SiteImage[]; labels: LabelInfo[]; selected: Set<string>; onSelect: (ids: Set<string>) => void }) {
   const { admin } = useOrg();
   const { filter, selected } = props;
   return (
@@ -151,12 +181,15 @@ function FilterBar(props: { filter: ReturnType<typeof useImageFilter>; items: Si
         </button>
       ) : null}
     </div>
+    {LABELS_ENABLED ? <TypeFilter types={props.labels.filter((label) => label.kind === "type")} counts={filter.counts} value={filter.type} onChange={filter.changeType} /> : null}
+    {LABELS_ENABLED ? <ContentFilter labels={props.labels} counts={filter.counts} value={filter.content} onChange={filter.changeContent} /> : null}
     </>
   );
 }
 
 type GridProps = {
   filter: ReturnType<typeof useImageFilter>;
+  labelsOf: (item: SiteImage) => ImageLabel[];
   selected: Set<string>;
   onToggle: (id: string, on: boolean) => void;
   onZoom: (item: SiteImage) => void;
@@ -174,6 +207,7 @@ function ImageGrid(props: GridProps) {
           <ImageCard
             key={item.id}
             item={item}
+            labels={props.labelsOf(item)}
             selected={props.selected.has(item.id)}
             onSelect={admin ? (on) => props.onToggle(item.id, on) : undefined}
             onOpen={() => props.onZoom(item)}
@@ -211,12 +245,13 @@ function AllVerified() {
   );
 }
 
-function SelectionBar(props: { count: number; onAdd: () => void; onIgnore: () => void; onClear: () => void }) {
+function SelectionBar(props: { count: number; onAdd: () => void; onIgnore: () => void; onClear: () => void; children: ReactNode }) {
   return (
-    <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-2xl flex-wrap items-center gap-3 rounded-full border border-line-strong bg-bar px-5 py-2.5 text-sm text-white shadow-float md:left-[calc(248px+2.5rem)]" role="region" aria-label="Actions sur la sélection">
+    <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-4xl flex-wrap items-center gap-3 rounded-3xl border border-line-strong bg-bar px-5 py-2.5 text-sm text-white shadow-float md:left-[calc(248px+2.5rem)]" role="region" aria-label="Actions sur la sélection">
       <span className="font-medium">{plural(props.count, "sélectionnée", "sélectionnées")}</span>
       <Button size="sm" onClick={props.onAdd}>Ajouter à la bibliothèque</Button>
       <button type="button" className="text-white/80 hover:text-white" onClick={props.onIgnore}>Ignorer</button>
+      {props.children}
       <button type="button" className="ml-auto text-white/70 hover:text-white" onClick={props.onClear}>Annuler</button>
     </div>
   );

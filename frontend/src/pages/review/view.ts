@@ -4,7 +4,7 @@ import { useMatches, useOverview, useReview } from "../../lib/queries";
 import { isShortText, usePersistedState } from "../../lib/storage";
 import type { Decision, Hit, Matches, MatchGroup, Status } from "../../types";
 
-type Tab = "found" | "verify" | "missing" | "later";
+type Tab = "found" | "verify" | "missing" | "later" | "free";
 type DecisionFilter = "open" | "undecided" | Decision | "all";
 
 export const decisionFilters: { value: DecisionFilter; label: string }[] = [
@@ -45,7 +45,7 @@ function useFilters() {
   const withinDays = Number.isInteger(urlWindow) && urlWindow > 0 && urlWindow <= 3650 ? urlWindow : savedWindow || defaultWindow;
   const statusFilter = pick<Status | "all">("statut", ["all", "expire", "<30j", "<90j", "inconnue"], "all");
   const decisionFilter = pick("decision", decisionFilters.map((item) => item.value), "open");
-  const tab = pick<Tab>("onglet", ["found", "verify", "missing", "later"], "found");
+  const tab = pick<Tab>("onglet", ["found", "verify", "missing", "later", "free"], "found");
   const [query, setQuery] = usePersistedState("review.query", "", "session", isShortText);
   const [shown, setShown] = useState(100);
 
@@ -67,7 +67,7 @@ function useRows(data: Matches | undefined, filters: ReturnType<typeof useFilter
   const needle = filters.query.trim().toLowerCase();
 
   const rows: Row[] = useMemo(() => {
-    const source = tab === "found" ? data?.confirmed : tab === "verify" ? data?.to_verify : tab === "later" ? data?.later : [];
+    const source = tab === "found" ? data?.confirmed : tab === "verify" ? data?.to_verify : tab === "later" ? data?.later : tab === "free" ? data?.unlimited : [];
     const out: Row[] = [];
     for (const group of (source ?? []).filter((item) => passes(item, statusFilter, needle))) {
       for (const hit of group.hits) {
@@ -123,6 +123,7 @@ export function useReviewView() {
     verify: data?.to_verify.length ?? 0,
     missing: data?.not_found.length ?? 0,
     later: data?.later.length ?? 0,
+    free: data?.unlimited.length ?? 0,
   };
   return { ...filters, ...selection, matches, review, rows, missing, counts, showMore: () => filters.setShown((value) => value + 100) };
 }

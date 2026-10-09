@@ -70,6 +70,16 @@ def parse_expiry(raw: Optional[str]) -> Optional[str]:
     raise RefValidationError(f"Date illisible : {raw!r}. Formats acceptés : AAAA-MM-JJ ou JJ/MM/AAAA.")
 
 
+UNLIMITED_WORDS = {"illimité", "illimite", "illimités", "illimites", "unlimited", "libre", "libre d'usage"}
+
+
+def parse_rights(raw: Optional[str]) -> tuple[Optional[str], bool]:
+    """(expiry date, unlimited rights) of a CSV cell: a date, a word saying the rights never expire, or blank."""
+    if (raw or "").strip().lower() in UNLIMITED_WORDS:
+        return None, True
+    return parse_expiry(raw), False
+
+
 MAX_TAGS_PER_REFERENCE = 20
 MAX_TAG_LENGTH = 40
 _TAG_SEPARATORS = re.compile(r"[,;|]")

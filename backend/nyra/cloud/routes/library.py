@@ -9,13 +9,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from nyra import fetch
 from nyra import report as report_module
-from nyra.refs import RefValidationError, change_tags, normalize_tags, parse_expiry
+from nyra.refs import RefValidationError, change_tags, normalize_tags, parse_rights
 
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
@@ -32,6 +32,7 @@ from .common import (
     iso,
     log,
     put_reference_files,
+    rights_from_body,
     safe_filename,
     upload_failure,
 )
@@ -45,6 +46,7 @@ router = APIRouter()
 
 class MetaBody(BaseModel):
     expiry_date: str = ""
+    unlimited_rights: bool = False
     credit: str = Field(default="", max_length=500)
     notes: str = Field(default="", max_length=2000)
     # None leaves the tags as they are; a list replaces them.
@@ -62,6 +64,7 @@ class ThumbsBody(BaseModel):
 
 class BulkExpiryBody(FilenamesBody):
     expiry_date: str = ""
+    unlimited_rights: bool = False
 
 
 class BulkTagsBody(FilenamesBody):
@@ -86,8 +89,9 @@ def library(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
             "id": str(row["id"]),
             "filename": row["filename"],
             "expiry_date": expiry or "",
+            "unlimited_rights": row["unlimited_rights"],
             "days_left": left,
-            "status": report_module.urgency_status(left),
+            "status": report_module.STATUS_UNLIMITED if row["unlimited_rights"] else report_module.urgency_status(left),
             "credit": row["credit"] or "",
             "notes": row["notes"] or "",
             "tags": list(row["tags"]),
@@ -154,9 +158,10 @@ def _read_upload(upload_file: UploadFile) -> tuple[Optional[dict], str, bytes]:
 
 
 def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: UploadFile, filename: str,
-                  data: bytes) -> tuple[Optional[bool], str]:
+                  data: bytes, rights: Optional[tuple[Optional[str], bool]]) -> tuple[Optional[bool], str]:
     """Store one file as a reference: (a reference of that name was replaced, why the file was refused).
-    The first item is None when the file was refused."""
+    The first item is None when the file was refused. `rights` (expiry date, unlimited rights) is the common
+    value chosen for this upload; None keeps what a replaced reference had."""
     img, refused = fetch.decode_reference(data, config.crawl.max_image_pixels)
     if img is None:
         return None, refused
@@ -166,7 +171,8 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
         existing = cloud_db.get_reference_by_filename(conn, scope.brand_id, filename)
         cloud_db.upsert_reference_image(
             conn, org_id=scope.org_id, brand_id=scope.brand_id, filename=filename,
-            expiry_date=iso(existing["expiry_date"]) if existing else None,
+            expiry_date=rights[0] if rights else iso(existing["expiry_date"]) if existing else None,
+            unlimited_rights=rights[1] if rights else existing["unlimited_rights"] if existing else False,
             credit=existing["credit"] if existing else None,
             notes=existing["notes"] if existing else None,
             **stored,
@@ -178,8 +184,12 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
 
 
 @router.post(f"{BRAND}/library/upload")
-def upload(files: list[UploadFile] = File(...), scope: BrandScope = Depends(brand_admin_dep),
-           ctx: Ctx = Depends(get_ctx)) -> dict:
+def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unlimited_rights: bool = Form(False),
+           scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Add visuals. A common expiry date (or unlimited rights) applies to these files only, replaced ones included;
+    without one, a replaced visual keeps its own."""
+    expiry, unlimited = rights_from_body(expiry_date, unlimited_rights)
+    rights = (expiry, unlimited) if expiry or unlimited else None
     if not files:
         raise HTTPException(status_code=400, detail="Aucun fichier.")
     if len(files) > MAX_FILES_PER_UPLOAD:
@@ -196,7 +206,7 @@ def upload(files: list[UploadFile] = File(...), scope: BrandScope = Depends(bran
             failed.append(refusal)
             continue
         try:
-            was_replaced, refused = _store_upload(ctx, scope, client, config, upload_file, filename, data)
+            was_replaced, refused = _store_upload(ctx, scope, client, config, upload_file, filename, data, rights)
         except Exception as exc:  # noqa: BLE001 - one bad file must not sink the others
             log.exception("upload of %r to brand %s failed", filename, scope.brand_id)
             failed.append({"filename": filename, "reason": upload_failure(exc)})
@@ -219,22 +229,19 @@ def upload(files: list[UploadFile] = File(...), scope: BrandScope = Depends(bran
 def update_meta(filename: str, body: MetaBody, scope: BrandScope = Depends(brand_admin_dep),
                 ctx: Ctx = Depends(get_ctx)) -> dict:
     filename = safe_filename(filename)
-    try:
-        expiry = parse_expiry(body.expiry_date)
-    except RefValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    expiry, unlimited = rights_from_body(body.expiry_date, body.unlimited_rights)
     try:
         tags = None if body.tags is None else normalize_tags(body.tags)
     except RefValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     with cloud_db.connect(ctx.settings.database_url) as conn:
         found = cloud_db.update_reference_meta(
-            conn, scope.brand_id, filename, expiry_date=expiry,
+            conn, scope.brand_id, filename, expiry_date=expiry, unlimited_rights=unlimited,
             credit=body.credit.strip() or None, notes=body.notes.strip() or None, tags=tags,
         )
     if not found:
         raise HTTPException(status_code=404, detail="Référence introuvable.")
-    return {"ok": True, "expiry_date": expiry or "", "tags": tags}
+    return {"ok": True, "expiry_date": expiry or "", "unlimited_rights": unlimited, "tags": tags}
 
 
 def _delete_filenames(ctx: Ctx, brand_id: uuid.UUID, filenames: list[str]) -> int:
@@ -259,13 +266,10 @@ def delete_many(body: FilenamesBody, scope: BrandScope = Depends(brand_admin_dep
 
 @router.post(f"{BRAND}/library/expiry")
 def bulk_expiry(body: BulkExpiryBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    try:
-        expiry = parse_expiry(body.expiry_date)
-    except RefValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    expiry, unlimited = rights_from_body(body.expiry_date, body.unlimited_rights)
     names = [safe_filename(name) for name in body.filenames]
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        updated = cloud_db.set_expiry_for(conn, scope.brand_id, names, expiry)
+        updated = cloud_db.set_expiry_for(conn, scope.brand_id, names, expiry, unlimited)
     return {"updated": updated}
 
 
@@ -316,10 +320,11 @@ def _csv_entry(line: int, row: dict, has_tags: bool) -> Optional[dict]:
     name = Path(row.get("filename", "")).name
     if not name:
         return None
-    entry = {"line": line, "filename": name, "expiry_date": "", "credit": row.get("credit", ""),
+    entry = {"line": line, "filename": name, "expiry_date": "", "unlimited_rights": False, "credit": row.get("credit", ""),
              "notes": row.get("notes", ""), "tags": None, "status": "ok", "message": ""}
     try:
-        entry["expiry_date"] = parse_expiry(row.get("expiry_date", "")) or ""
+        expiry, entry["unlimited_rights"] = parse_rights(row.get("expiry_date", ""))
+        entry["expiry_date"] = expiry or ""
     except RefValidationError as exc:
         entry.update(status="bad_date", message=str(exc))
     if has_tags:
@@ -367,7 +372,7 @@ def import_csv(file: UploadFile = File(...), apply: bool = Query(False),
                 if entry["status"] == "ok":
                     cloud_db.update_reference_meta(
                         conn, scope.brand_id, entry["filename"], expiry_date=entry["expiry_date"] or None,
-                        credit=entry["credit"] or None, notes=entry["notes"] or None, tags=entry["tags"],
+                        unlimited_rights=entry["unlimited_rights"], credit=entry["credit"] or None, notes=entry["notes"] or None, tags=entry["tags"],
                     )
                     applied += 1
     return {"rows": parsed, "applied": applied}
@@ -381,7 +386,7 @@ def export_csv(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends
     writer = csv.writer(buf)
     writer.writerow(["filename", "expiry_date", "credit", "notes", "tags"])
     for row in rows:
-        writer.writerow([_csv_cell(row["filename"]), iso(row["expiry_date"]) or "", _csv_cell(row["credit"] or ""),
+        writer.writerow([_csv_cell(row["filename"]), "illimité" if row["unlimited_rights"] else iso(row["expiry_date"]) or "", _csv_cell(row["credit"] or ""),
                          _csv_cell(row["notes"] or ""), _csv_cell(", ".join(row["tags"]))])
     return Response(
         content=("﻿" + buf.getvalue()).encode("utf-8"),

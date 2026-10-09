@@ -1,5 +1,7 @@
 import { Link } from "react-router";
+import { ContentFilter } from "../../components/Labels";
 import { Chip, SearchField, Segmented } from "../../components/ui";
+import { useLabels } from "../../lib/labels";
 import { useOrg } from "../../lib/org";
 import type { LibraryItem, Status } from "../../types";
 import { TAGS_SHOWN, type Filter, type LibraryView, type Tab } from "./view";
@@ -15,6 +17,7 @@ function statusChips(items: LibraryItem[]): { value: Filter; label: string; dot?
     { value: "<90j", label: "Sous 90 j", dot: "<90j", count: countStatus(items, "<90j") },
     { value: "ok", label: "Dans les délais", dot: "ok" },
     { value: "inconnue", label: "Sans échéance", dot: "inconnue", count: countStatus(items, "inconnue") },
+    { value: "illimite", label: "Droits illimités", dot: "illimite", count: countStatus(items, "illimite") },
     { value: "unindexed", label: "Pas encore indexés", count: items.filter((item) => !item.indexed).length },
   ];
 }
@@ -22,6 +25,7 @@ function statusChips(items: LibraryItem[]): { value: Filter; label: string; dot?
 /** Tabs, search, status chips, sort and tag filters, plus the `#library-tags` suggestions the tag fields use. */
 export function LibraryToolbar(props: { view: LibraryView; onTab: (tab: Tab) => void }) {
   const { admin, link } = useOrg();
+  const labels = useLabels().data?.labels ?? [];
   const view = props.view;
   return (
     <>
@@ -62,6 +66,7 @@ export function LibraryToolbar(props: { view: LibraryView; onTab: (tab: Tab) => 
       </div>
 
       <TagFilters view={view} />
+      <ContentFilter labels={labels} counts={view.contentCounts} value={view.content} onChange={view.setContent} />
 
       <datalist id="library-tags">
         {view.libraryTags.map(([tag]) => <option key={tag} value={tag} />)}

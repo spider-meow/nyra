@@ -6,7 +6,7 @@ export type Organization = { org_id: string; name: string; slug: string; role: R
 
 export type Site = { id: string; url: string; label: string; images: number; last_crawled_at: string | null };
 
-export type Status = "expire" | "<30j" | "<90j" | "ok" | "inconnue";
+export type Status = "expire" | "<30j" | "<90j" | "ok" | "inconnue" | "illimite";
 
 export type Confidence = "haut" | "moyen" | "a_verifier";
 
@@ -93,6 +93,7 @@ export type LibraryItem = {
   id: string;
   filename: string;
   expiry_date: string;
+  unlimited_rights: boolean;
   days_left: number | null;
   status: Status;
   credit: string;
@@ -147,6 +148,8 @@ export type Matches = {
   confirmed: MatchGroup[];
   to_verify: MatchGroup[];
   later: MatchGroup[];
+  /** Unlimited rights found with certainty: nothing to treat. */
+  unlimited: MatchGroup[];
   not_found: NotFoundItem[];
   outside_window: number;
 };
@@ -189,6 +192,7 @@ export type ImportRow = {
   line: number;
   filename: string;
   expiry_date: string;
+  unlimited_rights: boolean;
   credit: string;
   notes: string;
   /** null when the CSV has no tags column: the tags stay as they are. */
@@ -232,6 +236,17 @@ export type SiteImage = {
   thumb: string;
   image: string;
 };
+
+// --- labels (types of site image, contents) ---
+
+export type LabelKind = "type" | "content";
+export type LabelInfo = { id: string; kind: LabelKind; name: string; examples: number };
+/** One label of an image: decided by a person (`user`) or proposed by the algorithm (`algo`, with its score). */
+export type ImageLabel = { label_id: string; name: string; kind: LabelKind; source: "user" | "algo"; score: number | null };
+/** How well the examples of a type predict themselves, each one classified by the others. */
+export type LabelQuality = { examples: number; precision: number | null; recall: number | null };
+export type LabelsAnswer = { labels: LabelInfo[]; quality: Record<string, LabelQuality>; min_examples: number };
+export type LabelSampleItem = { id: string; ids: string[]; url: string; width: number | null; height: number | null; thumb: string; image: string };
 
 // --- insights (Statistiques, back office) ---
 
@@ -366,6 +381,7 @@ export type OrgInsights = {
     expiring_30_days: number;
     expiring_90_days: number;
     without_expiry: number;
+    unlimited_rights: number;
     total_bytes: number | null;
     avg_bytes: number | null;
     avg_megapixels: number | null;

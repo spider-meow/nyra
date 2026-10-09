@@ -1,13 +1,15 @@
 import { Icon } from "../../components/icons";
+import { LabelChips } from "../../components/Labels";
 import { Button, StatusBadge, cx } from "../../components/ui";
-import { daysText, formatDate } from "../../lib/format";
+import { formatDate, rightsText } from "../../lib/format";
 import { useOrg } from "../../lib/org";
-import type { LibraryItem } from "../../types";
+import type { ImageLabel, LibraryItem } from "../../types";
 import type { LibraryView } from "./view";
 
 type Props = {
   view: LibraryView;
   thumbs: Record<string, string>;
+  labelsOf: (id: string) => ImageLabel[];
   selected: Set<string>;
   setSelected: (selected: Set<string>) => void;
   onEdit: (item: LibraryItem) => void;
@@ -15,7 +17,7 @@ type Props = {
 };
 
 /** "Select all" box, the visuels (first page of them), "show more" and the empty-result message. */
-export function LibraryGrid({ view, thumbs, selected, setSelected, onEdit, onPick }: Props) {
+export function LibraryGrid({ view, thumbs, labelsOf, selected, setSelected, onEdit, onPick }: Props) {
   const { admin } = useOrg();
   const { visible, shown, tab, filtering } = view;
   const allVisibleSelected = visible.length > 0 && visible.every((item) => selected.has(item.filename));
@@ -43,7 +45,7 @@ export function LibraryGrid({ view, thumbs, selected, setSelected, onEdit, onPic
       <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {admin && tab === "active" && !filtering ? <DropTile onPick={onPick} /> : null}
         {visible.slice(0, shown).map((item) => (
-          <ReferenceCard key={item.id} item={item} thumbUrl={thumbs[item.filename]} checked={selected.has(item.filename)} anySelected={selected.size > 0} onEdit={onEdit} onToggle={toggle} />
+          <ReferenceCard key={item.id} item={item} labels={labelsOf(item.id)} thumbUrl={thumbs[item.filename]} checked={selected.has(item.filename)} anySelected={selected.size > 0} onEdit={onEdit} onToggle={toggle} />
         ))}
       </ul>
       {visible.length > shown ? (
@@ -78,6 +80,7 @@ function DropTile({ onPick }: { onPick: () => void }) {
 
 type CardProps = {
   item: LibraryItem;
+  labels: ImageLabel[];
   /** Undefined until the signed URL arrives, and for good when the reference has no image to show. */
   thumbUrl: string | undefined;
   checked: boolean;
@@ -86,7 +89,7 @@ type CardProps = {
   onToggle: (filename: string, checked: boolean) => void;
 };
 
-function ReferenceCard({ item, thumbUrl, checked, anySelected, onEdit, onToggle }: CardProps) {
+function ReferenceCard({ item, labels, thumbUrl, checked, anySelected, onEdit, onToggle }: CardProps) {
   const { admin } = useOrg();
   return (
     <li
@@ -106,7 +109,7 @@ function ReferenceCard({ item, thumbUrl, checked, anySelected, onEdit, onToggle 
         <span className="flex flex-col gap-2 px-3.5 pt-3 pb-3.5">
           <span className="truncate text-[13.5px] font-medium" title={item.filename}>{item.filename}</span>
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <StatusBadge status={item.status} label={item.status === "inconnue" ? undefined : daysText(item.days_left)} />
+            <StatusBadge status={item.status} label={item.status === "inconnue" ? undefined : rightsText(item.status, item.days_left)} />
             {item.expiry_date ? <span className="text-[11.5px] text-muted tabular">{formatDate(item.expiry_date)}</span> : null}
           </span>
           {item.tags.length ? (
@@ -117,6 +120,7 @@ function ReferenceCard({ item, thumbUrl, checked, anySelected, onEdit, onToggle 
               {item.tags.length > 3 ? <span className="px-1 py-0.5 text-[11px] text-muted">+{item.tags.length - 3}</span> : null}
             </span>
           ) : null}
+          <LabelChips labels={labels} />
           {!item.indexed ? <span className="text-[11.5px] text-urgent">Indexation en attente</span> : null}
         </span>
       </button>

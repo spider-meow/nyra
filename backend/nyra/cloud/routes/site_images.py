@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field
 from nyra import fetch, netguard
 from nyra import match as match_module
 from nyra.config import Config
-from nyra.refs import RefValidationError, parse_expiry
 
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
@@ -31,6 +30,7 @@ from .common import (
     iso,
     log,
     put_reference_files,
+    rights_from_body,
     safe_filename,
     unreferenced_images,
     upload_failure,
@@ -42,6 +42,7 @@ router = APIRouter()
 class AdoptBody(BaseModel):
     site_image_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
     expiry_date: str = ""
+    unlimited_rights: bool = False
     credit: str = Field(default="", max_length=500)
     notes: str = Field(default="", max_length=2000)
     # Optional name per image (site image id -> file name); otherwise taken from the image's address.
@@ -174,7 +175,7 @@ def _adopt_one(ctx: Ctx, scope: BrandScope, client, config: Config, body: AdoptB
     with cloud_db.connect(ctx.settings.database_url) as conn:
         ref_id = cloud_db.upsert_reference_image(
             conn, org_id=scope.org_id, brand_id=scope.brand_id, filename=filename,
-            expiry_date=expiry, credit=body.credit.strip() or None, notes=body.notes.strip() or None, **stored,
+            expiry_date=expiry, unlimited_rights=body.unlimited_rights, credit=body.credit.strip() or None, notes=body.notes.strip() or None, **stored,
         )
         same = cloud_db.same_image_ids(conn, scope.brand_id, row["content_hash"], row["id"])
         cloud_db.write_matches(conn, scope.org_id, [(ref_id, image_id, "phash", 1.0, "haut") for image_id in same])
@@ -186,10 +187,7 @@ def _adopt_one(ctx: Ctx, scope: BrandScope, client, config: Config, body: AdoptB
 def adopt_site_images(body: AdoptBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """Add images read on the site to the library. Each one is linked to its occurrences at once
     (a sure match: same image), so it goes straight to "À traiter"."""
-    try:
-        expiry = parse_expiry(body.expiry_date)
-    except RefValidationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    expiry, _ = rights_from_body(body.expiry_date, body.unlimited_rights)
     client = ctx.settings.storage_client()
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)

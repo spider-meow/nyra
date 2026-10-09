@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Modal, useToast } from "../../components/feedback";
 import { Icon } from "../../components/icons";
-import { Button, FieldLabel, Input } from "../../components/ui";
+import { Button, Checkbox, FieldLabel, Input } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { MAX_TAGS, splitTags } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -10,18 +10,18 @@ import { useLibraryMutations } from "../../lib/queries";
 import type { LibraryItem } from "../../types";
 import { OccurrencesSection } from "./Occurrences";
 
-type Form = { expiry_date: string; credit: string; notes: string; tags: string[] };
+type Form = { expiry_date: string; unlimited_rights: boolean; credit: string; notes: string; tags: string[] };
 
 export function EditReference(props: { item: LibraryItem | null; thumbUrl: string | undefined; onClose: () => void; onDelete: (item: LibraryItem) => void }) {
   const { admin } = useOrg();
   const { updateMeta } = useLibraryMutations();
   const toast = useToast();
   const item = props.item;
-  const [form, setForm] = useState<Form>({ expiry_date: "", credit: "", notes: "", tags: [] });
+  const [form, setForm] = useState<Form>({ expiry_date: "", unlimited_rights: false, credit: "", notes: "", tags: [] });
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
   if (item && loadedFor !== item.id) {
     setLoadedFor(item.id);
-    setForm({ expiry_date: item.expiry_date, credit: item.credit, notes: item.notes, tags: item.tags });
+    setForm({ expiry_date: item.expiry_date, unlimited_rights: item.unlimited_rights, credit: item.credit, notes: item.notes, tags: item.tags });
   }
   if (!item) {
     if (loadedFor !== null) setLoadedFor(null); // closed: the next opening starts from the current data, not from an abandoned draft
@@ -29,7 +29,7 @@ export function EditReference(props: { item: LibraryItem | null; thumbUrl: strin
   }
 
   // Saving and cancelling only make sense once something differs from what is stored.
-  const dirty = form.expiry_date !== item.expiry_date || form.credit !== item.credit || form.notes !== item.notes || form.tags.join("|") !== item.tags.join("|");
+  const dirty = form.expiry_date !== item.expiry_date || form.unlimited_rights !== item.unlimited_rights || form.credit !== item.credit || form.notes !== item.notes || form.tags.join("|") !== item.tags.join("|");
 
   function save() {
     if (!item) return;
@@ -83,7 +83,16 @@ function ReferenceFields({ item, thumbUrl, form, setForm }: { item: LibraryItem;
       <div className="grid content-start gap-4">
         <div>
           <FieldLabel htmlFor="edit-expiry">Date d'expiration des droits</FieldLabel>
-          <Input id="edit-expiry" type="date" disabled={!admin} value={form.expiry_date} onChange={(event) => setForm({ ...form, expiry_date: event.target.value })} />
+          <Input id="edit-expiry" type="date" disabled={!admin || form.unlimited_rights} value={form.expiry_date} onChange={(event) => setForm({ ...form, expiry_date: event.target.value })} />
+          <div className="mt-2">
+            <Checkbox
+              checked={form.unlimited_rights}
+              disabled={!admin}
+              onChange={(value) => setForm({ ...form, unlimited_rights: value, expiry_date: value ? "" : form.expiry_date })}
+              label="Droits illimités (libre d'usage)"
+              hint="Jamais expiré : retrouvé sur les sites, mais rangé sans alerte."
+            />
+          </div>
         </div>
         <div>
           <FieldLabel htmlFor="edit-credit">Crédit</FieldLabel>

@@ -133,6 +133,7 @@ const statusTone: Record<Status, string> = {
   "<90j": "bg-soon-soft text-soon",
   ok: "bg-ok-soft text-ok",
   inconnue: "bg-unknown-soft text-unknown",
+  illimite: "bg-ok-soft text-ok",
 };
 
 export const statusDot: Record<Status, string> = {
@@ -141,6 +142,7 @@ export const statusDot: Record<Status, string> = {
   "<90j": "bg-soon",
   ok: "bg-ok",
   inconnue: "bg-unknown",
+  illimite: "bg-ok",
 };
 
 export const statusText: Record<Status, string> = {
@@ -149,6 +151,7 @@ export const statusText: Record<Status, string> = {
   "<90j": "text-soon",
   ok: "text-ok",
   inconnue: "text-unknown",
+  illimite: "text-ok",
 };
 
 /** Expiry: round and coloured. The only badge that uses the urgency ladder. */

@@ -49,6 +49,7 @@ export function ReviewTabs(props: { view: ReviewView }) {
         ["verify", "À vérifier", counts.verify],
         ["missing", "Non trouvés", counts.missing],
         ["later", "Échéance plus lointaine", counts.later],
+        ["free", "Libre d'usage", counts.free],
       ] as const).map(([value, label, count]) => (
         <button
           key={value}

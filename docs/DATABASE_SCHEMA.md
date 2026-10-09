@@ -44,12 +44,14 @@ before September 26, 2026 still point at their original.
 | `brands` | Brands of an organization | `slug` (unique per org) |
 | `org_settings` | Per-organization overrides of `config.yaml`, shared by its brands | `overrides` jsonb (whitelisted keys only) |
 | `sites` | A brand's addresses | `brand_id`, `url` (canonical, unique per org: an address belongs to one brand), `label` (US, FR...) |
-| `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |
+| `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `unlimited_rights` (never expires; excludes a date: a check forbids both), `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |
 | `pages` | Pages discovered | `url` (canonical, unique per site), `status` pending/done |
 | `site_images` | Images found | `url` (unique per site), `content_hash` (indexed; same bytes are reused), hashes, `embedding`, `storage_path`, `thumb_path`, `compared_at`, `variant_group` (shared by the crops and resizes of one photo, set by the worker after each comparison; NULL = no twin; never read by matching), `variants_checked_at` (incremental marker: only images where it is NULL are searched for twins) |
 | `image_pages` | Image ↔ page | composite key |
 | `matches` | Reference ↔ site image hits | `level` (phash/dhash/clip), `score`, `confidence` (haut/moyen/a_verifier) |
 | `reference_locations` | Site images found to be a copy or crop of a reference by the `locate` job (replaced at each search) | `reference_id`, `site_image_id`, `tier` (same/review), `inliers`, `ref_coverage`, `site_coverage`; `reference_images.located_at` = last search |
+| `labels` | A brand's labels: the four types of site image (logo, packshot, pictogramme, autre) and its content labels (carafe…) | `brand_id`, `kind` (type/content), `name` (unique per brand and kind) |
+| `image_labels` | What a person decided about an image and a label (the examples the algorithm learns from) | `label_id`, `site_image_id` or `reference_id`, `positive` (false = not this); never read by matching |
 | `reviews` | Decisions | `decision` ∈ {retenu = to remove, ecarte = false positive, traite = removed}, `reviewed_by` |
 | `excluded_hashes` | Recurring false positives never matched again, per brand | `brand_id`, `hash`, `hash_type` (phash/dhash), `group_id` (one exclusion = both rows), `reason`, `thumb_path` |
 | `match_meta` | Signature of a brand's last match pass | `brand_id` (key), thresholds + model; a change forces a full recompute |

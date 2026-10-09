@@ -15,7 +15,15 @@ from PIL import Image, ImageDraw, ImageOps
 from nyra import fetch, report
 from nyra.config import Config, validate_overrides, with_overrides
 from nyra.match import compare, compute_flip_hashes, compute_hashes, pack
-from nyra.refs import MAX_TAG_LENGTH, MAX_TAGS_PER_REFERENCE, RefValidationError, change_tags, normalize_tags, parse_expiry
+from nyra.refs import (
+    MAX_TAG_LENGTH,
+    MAX_TAGS_PER_REFERENCE,
+    RefValidationError,
+    change_tags,
+    normalize_tags,
+    parse_expiry,
+    parse_rights,
+)
 
 # --- tags ---------------------------------------------------------------------
 
@@ -51,6 +59,14 @@ def test_change_tags_adds_and_removes_without_duplicates():
 
 
 # --- expiry dates -------------------------------------------------------------
+
+def test_parse_rights_reads_a_date_a_word_for_unlimited_or_blank():
+    assert parse_rights("01/02/2027") == ("2027-02-01", False)
+    assert parse_rights(" Illimité ") == (None, True)
+    assert parse_rights("") == (None, False)
+    with pytest.raises(RefValidationError):
+        parse_rights("bientôt")
+
 
 def test_parse_expiry_accepts_iso_and_day_first():
     assert parse_expiry("2027-02-01") == "2027-02-01"
@@ -135,6 +151,18 @@ def test_group_matches_merges_cdn_variants_and_sorts_by_urgency():
     early = grouped["confirmed"][0]
     assert len(early["hits"]) == 1 and sorted(early["hits"][0]["site_image_ids"]) == ["b", "c"]
     assert early["status"] == report.STATUS_EXPIRED
+
+
+def test_unlimited_rights_found_with_certainty_leave_the_urgencies():
+    today = date(2026, 1, 1)
+    free = {**_row("free", "a", expiry=None), "unlimited_rights": True}
+    weak = {**_row("weak", "b", expiry=None, confidence="a_verifier"), "unlimited_rights": True}
+    grouped = report.group_matches([free, weak, _row("late", "c")], 365, today)
+    assert [g["reference_id"] for g in grouped["unlimited"]] == ["free"]
+    assert grouped["unlimited"][0]["status"] == report.STATUS_UNLIMITED
+    assert [g["reference_id"] for g in grouped["to_verify"]] == ["weak"]  # a weak match is still to be checked
+    assert [g["reference_id"] for g in grouped["confirmed"]] == ["late"]
+    assert report.dashboard([free], [], today)["pending_review"] == 0
 
 
 def test_report_leaves_out_false_positives():

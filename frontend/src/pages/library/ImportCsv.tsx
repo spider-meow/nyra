@@ -110,7 +110,7 @@ function ImportPreview({ rows }: { rows: ImportRow[] }) {
             <tr key={`${row.line}-${row.filename}`}>
               <td className="px-3 py-1.5 text-muted tabular">{row.line}</td>
               <td className="max-w-[240px] truncate px-3 py-1.5">{row.filename}</td>
-              <td className="px-3 py-1.5 tabular">{row.expiry_date ? formatDate(row.expiry_date) : "·"}</td>
+              <td className="px-3 py-1.5 tabular">{row.unlimited_rights ? "Illimitée" : row.expiry_date ? formatDate(row.expiry_date) : "·"}</td>
               <td className="max-w-[200px] truncate px-3 py-1.5" title={row.tags?.join(", ")}>{row.tags === null ? <span className="text-muted">inchangés</span> : row.tags.length ? row.tags.join(", ") : "·"}</td>
               <td className={cx("px-3 py-1.5", row.status === "ok" ? "text-ok" : "text-expired")} title={row.message}>
                 {importStatus[row.status]}

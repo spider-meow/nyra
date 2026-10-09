@@ -424,6 +424,52 @@ def test_meta_update_validates_dates(client, org_with_users):
     assert client.put(f"{base}/library/none.jpg", headers=_headers(admin_id), json={}).status_code == 404
 
 
+def test_a_common_expiry_applies_to_the_files_of_one_upload_only(client, org_with_users):
+    _, base, admin_id, _, _ = org_with_users
+    _upload(client, base, admin_id, "old.jpg")
+    client.put(f"{base}/library/old.jpg", headers=_headers(admin_id), json={"expiry_date": "2030-01-01"})
+    files = [("files", (name, _upload_bytes(), "image/jpeg")) for name in ("a.jpg", "b.jpg")]
+    sent = client.post(f"{base}/library/upload", headers=_headers(admin_id), files=files, data={"expiry_date": "2027-03-31"})
+    assert sent.status_code == 200 and sent.json()["saved"] == ["a.jpg", "b.jpg"]
+    items = {i["filename"]: i for i in client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]}
+    assert items["a.jpg"]["expiry_date"] == items["b.jpg"]["expiry_date"] == "2027-03-31"
+    assert items["old.jpg"]["expiry_date"] == "2030-01-01"  # not in this upload: untouched
+    bad = client.post(f"{base}/library/upload", headers=_headers(admin_id), files=files, data={"expiry_date": "pas une date"})
+    assert bad.status_code == 400
+    free = client.post(f"{base}/library/upload", headers=_headers(admin_id), data={"unlimited_rights": "true"},
+                       files=[("files", ("a.jpg", _upload_bytes(), "image/jpeg"))])
+    assert free.json()["replaced"] == ["a.jpg"]  # a replaced visual takes the common value too
+    items = {i["filename"]: i for i in client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]}
+    assert items["a.jpg"]["unlimited_rights"] is True and items["a.jpg"]["expiry_date"] == ""
+    _upload(client, base, admin_id, "b.jpg")  # no common value: the replaced visual keeps its own
+    items = {i["filename"]: i for i in client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]}
+    assert items["b.jpg"]["expiry_date"] == "2027-03-31"
+
+
+def test_unlimited_rights_exclude_a_date_and_go_through_csv_both_ways(client, org_with_users):
+    _, base, admin_id, _, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg", "b.jpg")
+    url = f"{base}/library/a.jpg"
+    assert client.put(url, headers=_headers(admin_id), json={"unlimited_rights": True, "expiry_date": "2027-01-01"}).status_code == 400
+    assert client.put(url, headers=_headers(admin_id), json={"unlimited_rights": True}).json()["unlimited_rights"] is True
+    items = {i["filename"]: i for i in client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]}
+    assert items["a.jpg"]["status"] == "illimite" and items["a.jpg"]["days_left"] is None
+    assert items["b.jpg"]["status"] == "inconnue"  # no date entered is not unlimited
+    _upload(client, base, admin_id, "a.jpg")  # a replaced picture keeps its rights
+    assert client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"][0]["unlimited_rights"] is True
+    exported = client.get(f"{base}/library/export-csv", headers=_headers(admin_id)).content.decode("utf-8-sig")
+    assert "a.jpg,illimité," in exported
+    client.put(url, headers=_headers(admin_id), json={"expiry_date": "2027-01-01"})  # a date takes the rights back
+    assert client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"][0]["unlimited_rights"] is False
+    applied = client.post(f"{base}/library/import-csv?apply=true", headers=_headers(admin_id),
+                          files={"file": ("m.csv", exported.encode("utf-8"), "text/csv")}).json()
+    assert applied["applied"] == 2
+    assert client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"][0]["unlimited_rights"] is True
+    bulk = client.post(f"{base}/library/expiry", headers=_headers(admin_id),
+                       json={"filenames": ["a.jpg", "b.jpg"], "unlimited_rights": True})
+    assert bulk.json()["updated"] == 2
+
+
 def test_csv_import_previews_before_applying(client, org_with_users, cloud_brand, cloud_database_url):
     _, base, admin_id, _, _ = org_with_users
     client.post(f"{base}/library/upload", headers=_headers(admin_id), files=[("files", ("a.jpg", _upload_bytes(), "image/jpeg"))])
@@ -925,3 +971,85 @@ def test_big_responses_are_gzipped_and_small_ones_are_not(static_client):
     assert big.text == "console.log(1);\n" * 500  # the client decompresses transparently
     assert "Content-Encoding" not in static_client.get("/api/nope", headers={"Accept-Encoding": "gzip"}).headers
     assert "Content-Encoding" not in static_client.get("/assets/app-abc123.js", headers={"Accept-Encoding": "identity"}).headers
+
+
+@pytest.fixture()
+def labels_on(monkeypatch):
+    """Labels are off unless NYRA_LABELS=1; this must come before `client` in a test's arguments (the app reads it when built)."""
+    monkeypatch.setenv("NYRA_LABELS", "1")
+
+
+def test_labels_are_off_by_default(client, org_with_users):
+    _, base, admin_id, _, _ = org_with_users
+    assert client.get(f"{base}/labels", headers=_headers(admin_id)).status_code in {404, 405}
+
+
+def _look(seed: int, count: int):
+    """`count` embeddings of one look: unit vectors close to each other, far from another seed's."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    centre = rng.normal(size=512)
+    rows = centre + 0.05 * rng.normal(size=(count, 512))
+    return (rows / np.linalg.norm(rows, axis=1, keepdims=True)).astype(np.float32)
+
+
+def test_images_get_a_type_and_a_content_from_a_few_examples(labels_on, client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    logos, packshots = _look(1, 6), _look(2, 6)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand)
+        ids = []
+        for index, vector in enumerate([*logos, *packshots]):
+            ids.append(str(conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, content_hash, phash, dhash, embedding)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, f"https://t.test/{index}.jpg", f"{org_id}/{index}.jpg", f"h{index}", f"{index:016x}", f"{index:016x}", vector),
+            ).fetchone()["id"]))
+    found = client.get(f"{base}/labels", headers=_headers(client_id)).json()
+    types = {label["name"]: label["id"] for label in found["labels"] if label["kind"] == "type"}
+    assert list(types) == ["logo", "packshot", "pictogramme", "autre"]
+
+    def say(label_id, decision, **images):
+        return client.post(f"{base}/labels/{label_id}/images", headers=_headers(admin_id), json={"decision": decision, **images})
+
+    assert say(types["logo"], "yes", site_image_ids=ids[:3], reference_ids=[]).status_code == 200
+    assert say(types["logo"], "yes", site_image_ids=ids[:1]).status_code == 200  # saying it again changes nothing
+    assert client.post(f"{base}/labels/{types['logo']}/images", headers=_headers(client_id),
+                       json={"decision": "yes", "site_image_ids": ids[:1]}).status_code == 403
+    assert say(types["packshot"], "yes", site_image_ids=ids[6:9]).json()["written"] == 3
+
+    found = client.get(f"{base}/labels/assignments?target=site", headers=_headers(client_id)).json()["assignments"]
+    assert [(entry["name"], entry["source"]) for entry in found[ids[0]]] == [("logo", "user")]
+    assert [(entry["name"], entry["source"]) for entry in found[ids[5]]] == [("logo", "algo")]
+    assert [(entry["name"], entry["source"]) for entry in found[ids[11]]] == [("packshot", "algo")]
+
+    # A type per image: saying packshot for a logo replaces it; a type does not apply to the library.
+    say(types["packshot"], "yes", site_image_ids=ids[:1])
+    found = client.get(f"{base}/labels/assignments?target=site", headers=_headers(client_id)).json()["assignments"]
+    assert [entry["name"] for entry in found[ids[0]]] == ["packshot"]
+    assert say(types["logo"], "yes", reference_ids=[str(uuid.uuid4())]).status_code == 400
+    assert say(types["logo"], "clear", site_image_ids=ids[:1]).json()["written"] == 0  # nothing said for logo any more
+    found_quality = client.get(f"{base}/labels", headers=_headers(client_id)).json()
+    assert found_quality["quality"]["packshot"]["examples"] == 4 and found_quality["min_examples"] == 3
+
+    # The sample leaves out what is typed and shows the rest once.
+    sample = client.get(f"{base}/labels/sample?count=50", headers=_headers(client_id)).json()
+    assert {item["id"] for item in sample["items"]} == set(ids) - set(ids[:3]) - set(ids[6:9]) - {ids[0]}
+
+    # A content label is created by name, learned from examples in the library, and can be refused.
+    with cloud_db.connect(cloud_database_url) as conn:
+        refs = [str(cloud_db.upsert_reference_image(conn, org_id=org_id, brand_id=cloud_brand, filename=f"r{n}.jpg",
+                                                    storage_path=f"{org_id}/r{n}.jpg", expiry_date=None, credit=None,
+                                                    notes=None, embedding=vector))
+                for n, vector in enumerate(logos)]
+    carafe = client.post(f"{base}/labels", headers=_headers(admin_id), json={"name": "  Carafe "}).json()
+    assert carafe["name"] == "carafe" and client.post(f"{base}/labels", headers=_headers(admin_id), json={"name": "carafe"}).json()["id"] == carafe["id"]
+    say(carafe["id"], "yes", reference_ids=refs[:3])
+    say(carafe["id"], "no", reference_ids=refs[5:])
+    found = client.get(f"{base}/labels/assignments?target=reference", headers=_headers(client_id)).json()["assignments"]
+    assert [(e["name"], e["source"]) for e in found[refs[0]]] == [("carafe", "user")]
+    assert [(e["name"], e["source"]) for e in found[refs[3]]] == [("carafe", "algo")]
+    assert refs[5] not in found  # refused
+    assert client.delete(f"{base}/labels/{types['logo']}", headers=_headers(admin_id)).status_code == 404
+    assert client.delete(f"{base}/labels/{carafe['id']}", headers=_headers(admin_id)).status_code == 200

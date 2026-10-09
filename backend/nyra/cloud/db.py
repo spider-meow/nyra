@@ -413,6 +413,7 @@ def upsert_reference_image(
     thumb_path: Optional[str] = None,
     work_path: Optional[str] = None,
     byte_size: Optional[int] = None,
+    unlimited_rights: bool = False,
 ) -> uuid.UUID:
     # A replaced picture is not the one that was searched for: forget what was found for the old one.
     conn.execute(
@@ -425,11 +426,13 @@ def upsert_reference_image(
         """
         INSERT INTO reference_images
             (org_id, brand_id, filename, storage_path, expiry_date, credit, notes,
-             phash, dhash, phash_flip, dhash_flip, embedding, width, height, thumb_path, work_path, byte_size)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             phash, dhash, phash_flip, dhash_flip, embedding, width, height, thumb_path, work_path, byte_size,
+             unlimited_rights)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (brand_id, filename) DO UPDATE SET
             storage_path=excluded.storage_path,
             expiry_date=excluded.expiry_date,
+            unlimited_rights=excluded.unlimited_rights,
             credit=excluded.credit,
             notes=excluded.notes,
             phash=excluded.phash,
@@ -460,13 +463,13 @@ def upsert_reference_image(
         RETURNING id
         """,
         (org_id, brand_id, filename, storage_path, expiry_date, credit, notes, phash, dhash, phash_flip, dhash_flip,
-         embedding, width, height, thumb_path, work_path, byte_size),
+         embedding, width, height, thumb_path, work_path, byte_size, unlimited_rights),
     ).fetchone()
     return row["id"]
 
 
-_REF_LIST_COLUMNS = """id, filename, storage_path, thumb_path, work_path, expiry_date, credit, notes, tags, width, height,
-    phash IS NOT NULL AS hashed, embedding IS NOT NULL AS embedded, compared_at, created_at, updated_at"""
+_REF_LIST_COLUMNS = """id, filename, storage_path, thumb_path, work_path, expiry_date, unlimited_rights, credit, notes, tags, width,
+    height, phash IS NOT NULL AS hashed, embedding IS NOT NULL AS embedded, compared_at, created_at, updated_at"""
 
 
 def list_references(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
@@ -500,14 +503,15 @@ def existing_filenames(conn: psycopg.Connection, brand_id: uuid.UUID, filenames:
 def update_reference_meta(
     conn: psycopg.Connection, brand_id: uuid.UUID, filename: str, *,
     expiry_date: Optional[str], credit: Optional[str], notes: Optional[str],
-    tags: Optional[list[str]] = None,
+    tags: Optional[list[str]] = None, unlimited_rights: bool = False,
 ) -> bool:
-    """`tags=None` leaves the tags as they are (a CSV without a tags column must not wipe them)."""
+    """`tags=None` leaves the tags as they are (a CSV without a tags column must not wipe them).
+    Unlimited rights and an expiry date exclude each other (the caller passes no date with them)."""
     result = conn.execute(
         """UPDATE reference_images
-           SET expiry_date = %s, credit = %s, notes = %s, tags = COALESCE(%s::text[], tags)
+           SET expiry_date = %s, unlimited_rights = %s, credit = %s, notes = %s, tags = COALESCE(%s::text[], tags)
            WHERE brand_id = %s AND filename = %s""",
-        (expiry_date, credit, notes, tags, brand_id, filename),
+        (expiry_date, unlimited_rights, credit, notes, tags, brand_id, filename),
     )
     return result.rowcount > 0
 
@@ -534,10 +538,11 @@ def set_reference_tags(conn: psycopg.Connection, brand_id: uuid.UUID, tags_by_fi
     ).rowcount
 
 
-def set_expiry_for(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str], expiry_date: Optional[str]) -> int:
+def set_expiry_for(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str], expiry_date: Optional[str],
+                   unlimited_rights: bool = False) -> int:
     result = conn.execute(
-        "UPDATE reference_images SET expiry_date = %s WHERE brand_id = %s AND filename = ANY(%s)",
-        (expiry_date, brand_id, filenames),
+        "UPDATE reference_images SET expiry_date = %s, unlimited_rights = %s WHERE brand_id = %s AND filename = ANY(%s)",
+        (expiry_date, unlimited_rights, brand_id, filenames),
     )
     return result.rowcount
 
@@ -674,7 +679,7 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
         """
         SELECT
             m.level, m.score, m.confidence,
-            r.id AS reference_id, r.filename, r.expiry_date, r.credit, r.notes,
+            r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.credit, r.notes,
             r.storage_path AS ref_storage_path, r.thumb_path AS ref_thumb_path, r.work_path AS ref_work_path,
             s.id AS site_image_id, s.url AS site_url, s.content_hash,
             s.storage_path AS site_storage_path, s.thumb_path AS site_thumb_path,
@@ -703,7 +708,7 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
 def unmatched_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     rows = conn.execute(
         """
-        SELECT r.id AS reference_id, r.filename, r.expiry_date, r.credit, r.notes,
+        SELECT r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.credit, r.notes,
                r.storage_path AS ref_storage_path, r.thumb_path AS ref_thumb_path,
                r.compared_at IS NOT NULL AS compared
         FROM reference_images r

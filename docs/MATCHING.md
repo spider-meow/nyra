@@ -109,6 +109,17 @@ trusted. Images set aside by an exclusion are never searched, and a result is fo
 reference is replaced (other hashes), when a site image's file changes, or when an image is excluded.
 The result does not follow later crawls: the panel says when the last search ran and offers to relaunch it.
 
+## Labels (types and contents)
+
+Not part of the matching, which never reads them (`nyra/labels.py`). A person gives examples; an image's score for
+a label is the mean cosine similarity of its 3 closest examples (a label with several looks is not averaged into a
+blur). The four **types** of site image (logo, packshot, pictogramme, autre) take one per image, the best score,
+once each has 3 examples. A **content** label (carafe, glasses…) is proposed above `CONTENT_THRESHOLD` (0.82, **a
+guess, not calibrated on real images**). A person's answer always wins over a proposal, and "pas ça" keeps a
+content label off an image. The hand-labeling mode reports how well the examples predict themselves (each one
+classified by the others): an optimistic estimate, since examples are picked by hand. Zero-shot labels (a text
+prompt instead of examples) are not done.
+
 ## Exclusions
 
 Recurring false positives — a logo, a generic visual reused on every

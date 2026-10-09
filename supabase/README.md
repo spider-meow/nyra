@@ -20,6 +20,8 @@ supabase/migrations/
   20260925000013_brands_constraints.sql          marques (étape 2, après déploiement du code)
   20260926000014_reference_working_copies.sql   copie de travail des références (work_path)
   20260929000015_insights.sql                    mesures des lectures, poids et format des images, équipe Nyra, vues `insights`
+  20261009000019_unlimited_rights.sql            droits illimités (colonne `unlimited_rights`, contrôle date/illimité, vue `insights.library`)
+  20261009000020_image_labels.sql                étiquettes (`labels`, `image_labels`) : types d'images du site et contenus
   20260930000016_reference_tags.sql              tags libres des références (colonne `tags text[]`, index GIN ; jamais lus par le matching)
 ```
 

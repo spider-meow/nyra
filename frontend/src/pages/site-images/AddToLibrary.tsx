@@ -1,21 +1,23 @@
 import { useState, type FormEvent } from "react";
 import { Modal, useToast, type ToastInput } from "../../components/feedback";
-import { Button, FieldLabel, Input } from "../../components/ui";
+import { Button, Checkbox, FieldLabel, Input } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDate, plural } from "../../lib/format";
+import { useAssignments } from "../../lib/labels";
 import { useSiteImageMutations } from "../../lib/queries";
 import type { SiteImage } from "../../types";
+import { typeOf } from "./Typing";
 
-type Fields = { expiry: string; credit: string; name: string };
+type Fields = { expiry: string; unlimited: boolean; credit: string; name: string };
 
 type Adopted = { added: { site_image_id: string; filename: string }[]; failed: { reason: string }[] };
 
-function adoptedToast(result: Adopted, expiry: string): ToastInput {
+function adoptedToast(result: Adopted, hasRights: boolean): ToastInput {
   if (result.added.length && !result.failed.length) {
     return {
       tone: "success",
       message: result.added.length > 1 ? `${result.added.length} visuels ajoutés à la bibliothèque` : `${result.added[0].filename} ajouté à la bibliothèque`,
-      description: expiry
+      description: hasRights
         ? "Ils sont déjà reliés à leurs pages : retrouvez-les dans « À traiter »."
         : "Ils sont reliés à leurs pages. Renseignez leur échéance dans la bibliothèque pour qu'ils comptent dans les alertes.",
     };
@@ -30,13 +32,16 @@ function adoptedToast(result: Adopted, expiry: string): ToastInput {
 export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => void; onDone: (ids: string[]) => void }) {
   const { adopt } = useSiteImageMutations();
   const toast = useToast();
-  const [fields, setFields] = useState<Fields>({ expiry: "", credit: "", name: "" });
+  const [fields, setFields] = useState<Fields>({ expiry: "", unlimited: false, credit: "", name: "" });
   const [openedFor, setOpenedFor] = useState<string | null>(null);
   const items = props.items;
+  const assignments = useAssignments("site").data?.assignments;
+  // Packshots nearly always come with unlimited rights, never surely: the box is ticked for the ones a person typed (not for a guess), and stays visible.
+  const packshots = Boolean(items?.length) && items?.every((item) => typeOf(assignments?.[item.id] ?? [])?.name === "packshot" && typeOf(assignments?.[item.id] ?? [])?.source === "user") === true;
   const key = items?.map((item) => item.id).join(",") ?? null;
   if (key !== openedFor) {
     setOpenedFor(key);
-    setFields({ expiry: "", credit: "", name: items?.length === 1 ? items[0].filename : "" });
+    setFields({ expiry: "", unlimited: packshots, credit: "", name: items?.length === 1 ? items[0].filename : "" });
   }
   if (!items) return null;
   const single = items.length === 1;
@@ -48,6 +53,7 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
       {
         site_image_ids: items.map((item) => item.id),
         expiry_date: fields.expiry,
+        unlimited_rights: fields.unlimited,
         credit: fields.credit,
         filenames: single && fields.name.trim() ? { [items[0].id]: fields.name.trim() } : {},
       },
@@ -55,7 +61,7 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
         onSuccess: (result) => {
           props.onDone(result.added.map((item) => item.site_image_id));
           props.onClose();
-          toast.show(adoptedToast(result, fields.expiry));
+          toast.show(adoptedToast(result, Boolean(fields.expiry) || fields.unlimited));
         },
         onError: (error) => toast.show({ tone: "error", message: "L'ajout n'a pas abouti", description: errorMessage(error) }),
       },
@@ -76,12 +82,12 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
         </>
       }
     >
-      <AdoptFields items={items} fields={fields} onChange={setFields} onSubmit={submit} />
+      <AdoptFields items={items} fields={fields} packshots={packshots} onChange={setFields} onSubmit={submit} />
     </Modal>
   );
 }
 
-function AdoptFields(props: { items: SiteImage[]; fields: Fields; onChange: (fields: Fields) => void; onSubmit: (event: FormEvent) => void }) {
+function AdoptFields(props: { items: SiteImage[]; fields: Fields; packshots: boolean; onChange: (fields: Fields) => void; onSubmit: (event: FormEvent) => void }) {
   const { items, fields } = props;
   const { expiry } = fields;
   const single = items.length === 1;
@@ -104,7 +110,10 @@ function AdoptFields(props: { items: SiteImage[]; fields: Fields; onChange: (fie
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <FieldLabel htmlFor="adopt-expiry" hint="facultatif">Date d'expiration des droits</FieldLabel>
-          <Input id="adopt-expiry" type="date" value={fields.expiry} onChange={(event) => props.onChange({ ...fields, expiry: event.target.value })} />
+          <Input id="adopt-expiry" type="date" disabled={fields.unlimited} value={fields.expiry} onChange={(event) => props.onChange({ ...fields, expiry: event.target.value })} />
+          <div className="mt-2">
+            <Checkbox checked={fields.unlimited} onChange={(value) => props.onChange({ ...fields, unlimited: value, expiry: value ? "" : fields.expiry })} label="Droits illimités" hint={props.packshots ? "Ce sont des packshots : le plus souvent à droits illimités, mais pas toujours. À vérifier." : "Jamais expiré : le visuel reste reconnu sur les sites, sans alerte."} />
+          </div>
         </div>
         <div>
           <FieldLabel htmlFor="adopt-credit" hint="facultatif">Crédit</FieldLabel>
@@ -112,7 +121,9 @@ function AdoptFields(props: { items: SiteImage[]; fields: Fields; onChange: (fie
         </div>
       </div>
       <p className="text-xs text-muted">
-        {expiry
+        {fields.unlimited
+          ? "Droits illimités : le visuel reste reconnu sur les sites, sans jamais expirer."
+          : expiry
           ? `Échéance ${new Date(expiry) < new Date() ? "déjà passée : ces visuels apparaîtront comme expirés et en ligne" : `au ${formatDate(expiry)}`}.`
           : "Sans échéance, le visuel est surveillé mais ne déclenche pas d'alerte d'expiration."}
       </p>

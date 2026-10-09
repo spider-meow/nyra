@@ -17,6 +17,7 @@ created with `nyra cloud-provision-org`, and people are added with
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -25,7 +26,19 @@ from fastapi import FastAPI
 from nyra.config import Config, load_config
 
 from . import storage as cloud_storage
-from .routes import brands, interface, jobs, library, matches, members, occurrences, reports_settings, session, site_images
+from .routes import (
+    brands,
+    interface,
+    jobs,
+    labels,
+    library,
+    matches,
+    members,
+    occurrences,
+    reports_settings,
+    session,
+    site_images,
+)
 from .routes.common import Ctx
 
 
@@ -101,5 +114,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
     interface.mount_assets(app, dist)
     for module in (session, brands, members, library, occurrences, jobs, matches, site_images, reports_settings):
         app.include_router(module.router)
+    if os.environ.get("NYRA_LABELS") == "1":  # labels (types and contents) are switched off until they are calibrated
+        app.include_router(labels.router)
     interface.add_pages(app, dist)
     return app

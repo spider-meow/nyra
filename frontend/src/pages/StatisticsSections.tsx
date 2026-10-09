@@ -123,6 +123,7 @@ function LibrarySection(props: { library: OrgInsights["library"] }) {
           ["Expirés", num(library.expired)],
           ["Expirent sous 30 / 90 jours", `${num(library.expiring_30_days)} / ${num(library.expiring_90_days)}`],
           ["Sans échéance", num(library.without_expiry)],
+          ["Droits illimités", num(library.unlimited_rights)],
           ["Poids moyen d'un visuel", bytes(library.avg_bytes)],
           ["Mégapixels moyens", num(library.avg_megapixels, 1)],
         ]}

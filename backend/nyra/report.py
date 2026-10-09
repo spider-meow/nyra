@@ -30,7 +30,7 @@ from typing import Any, Callable, Optional, Sequence
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from nyra.config import Config
-from nyra.match import CONFIDENCE_TO_VERIFY
+from nyra.match import CONFIDENCE_HIGH, CONFIDENCE_TO_VERIFY
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -39,6 +39,7 @@ STATUS_URGENT = "<30j"
 STATUS_SOON = "<90j"
 STATUS_OK = "ok"
 STATUS_UNKNOWN = "inconnue"
+STATUS_UNLIMITED = "illimite"
 
 DECISION_REMOVE = "retenu"
 DECISION_FALSE_POSITIVE = "ecarte"
@@ -51,6 +52,7 @@ STATUS_LABELS = {
     STATUS_SOON: "Moins de 90 jours",
     STATUS_OK: "Dans les délais",
     STATUS_UNKNOWN: "Date inconnue",
+    STATUS_UNLIMITED: "Droits illimités",
 }
 CONFIDENCE_LABELS = {"haut": "Confirmé", "moyen": "Probable", "a_verifier": "À vérifier"}
 DECISION_LABELS = {DECISION_REMOVE: "À retirer", DECISION_FALSE_POSITIVE: "Faux positif", DECISION_REMOVED: "Retiré"}
@@ -72,6 +74,19 @@ def urgency_status(days_left: Optional[int]) -> str:
     if days_left < 90:
         return STATUS_SOON
     return STATUS_OK
+
+
+def rights_status(row: dict, days_left: Optional[int]) -> str:
+    """The status of a reference: unlimited rights never expire, whatever the date says."""
+    return STATUS_UNLIMITED if row.get("unlimited_rights") else urgency_status(days_left)
+
+
+def _is_free_to_use(group: dict) -> bool:
+    """Unlimited rights found with certainty (a confirmed match nobody dismissed): nothing to treat. A weaker
+    match stays to be checked, because a wrong match would hide an image whose rights nobody knows."""
+    return group["status"] == STATUS_UNLIMITED and any(
+        hit["confidence"] == CONFIDENCE_HIGH and hit.get("decision") != DECISION_FALSE_POSITIVE for hit in group["hits"]
+    )
 
 
 def _urgency_key(days_left: Optional[int]) -> tuple[int, int]:
@@ -118,7 +133,8 @@ def group_matches(rows: list[dict], window: int, today: Optional[date] = None) -
 
     Returns confirmed (at least one confident occurrence, in the window),
     to_verify (only low-confidence occurrences, in the window), later
-    (outside the window) and the number of rows outside the window.
+    (outside the window), unlimited (unlimited rights found with certainty:
+    nothing to treat) and the number of rows outside the window.
     """
     today = today or datetime.now(timezone.utc).date()
     grouped: dict[Any, dict] = {}
@@ -135,7 +151,7 @@ def group_matches(rows: list[dict], window: int, today: Optional[date] = None) -
                 "filename": row["filename"],
                 "expiry_date": row.get("expiry_date"),
                 "days_left": left,
-                "status": urgency_status(left),
+                "status": rights_status(row, left),
                 "credit": row.get("credit") or "",
                 "notes": row.get("notes") or "",
                 "ref_image": row.get("ref_image"),
@@ -150,6 +166,9 @@ def group_matches(rows: list[dict], window: int, today: Optional[date] = None) -
         bucket["hits"] = _collapse_hits(bucket["hits"])
         groups.append(bucket)
     groups.sort(key=lambda item: (_urgency_key(item["days_left"]), item["filename"].lower()))
+    free = [item for item in groups if _is_free_to_use(item)]
+    free_ids = {item["reference_id"] for item in free}
+    groups = [item for item in groups if item["reference_id"] not in free_ids]
     current = [item for item in groups if item["in_window"]]
     confirmed = [item for item in current if any(hit["confidence"] != CONFIDENCE_TO_VERIFY for hit in item["hits"])]
     confirmed_ids = {item["reference_id"] for item in confirmed}
@@ -158,6 +177,7 @@ def group_matches(rows: list[dict], window: int, today: Optional[date] = None) -
         "confirmed": confirmed,
         "to_verify": [item for item in current if item["reference_id"] not in confirmed_ids],
         "later": [item for item in groups if not item["in_window"]],
+        "unlimited": free,
         "outside_window": outside,
     }
 
@@ -174,7 +194,7 @@ def not_found_items(rows: list[dict], window: int, today: Optional[date] = None)
         left = days_until(row.get("expiry_date"), today)
         if not in_window(left, window):
             continue
-        items.append({**row, "days_left": left, "status": urgency_status(left)})
+        items.append({**row, "days_left": left, "status": rights_status(row, left)})
     items.sort(key=lambda item: (_urgency_key(item["days_left"]), item["filename"].lower()))
     return items
 
@@ -188,11 +208,13 @@ def dashboard(match_rows: list[dict], unmatched_rows: list[dict], today: Optiona
     today = today or datetime.now(timezone.utc).date()
     live: dict[Any, dict] = {}
     pending_review: set = set()
+    free = {row["reference_id"] for row in match_rows if row.get("unlimited_rights") and row["confidence"] == CONFIDENCE_HIGH
+            and row.get("decision") != DECISION_FALSE_POSITIVE}  # listed as "Libre d'usage", not to review
     for row in match_rows:
         if row.get("decision") in {DECISION_FALSE_POSITIVE, DECISION_REMOVED}:
             continue
         live.setdefault(row["reference_id"], row)
-        if not row.get("decision"):
+        if not row.get("decision") and row["reference_id"] not in free:
             pending_review.add(row["reference_id"])
 
     def status_of(row: dict) -> str:

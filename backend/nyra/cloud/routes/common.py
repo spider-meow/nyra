@@ -20,7 +20,7 @@ from fastapi import Depends, HTTPException, Request
 from nyra import fetch
 from nyra import match as match_module
 from nyra.config import Config, with_overrides
-from nyra.refs import reference_features
+from nyra.refs import RefValidationError, parse_expiry, reference_features
 
 from .. import auth as cloud_auth
 from .. import db as cloud_db
@@ -97,6 +97,17 @@ def staff_dep(claims: cloud_auth.Claims = Depends(user_dep), ctx: Ctx = Depends(
         if not cloud_insights.is_staff(conn, claims.user_id):
             raise HTTPException(status_code=403, detail="Réservé à l'équipe Nyra.")
     return claims
+
+
+def rights_from_body(expiry_date: str, unlimited_rights: bool) -> tuple[Optional[str], bool]:
+    """(expiry date, unlimited rights) of a request: a date and unlimited rights exclude each other."""
+    try:
+        expiry = parse_expiry(expiry_date)
+    except RefValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if unlimited_rights and expiry:
+        raise HTTPException(status_code=400, detail="Des droits illimités n'ont pas de date d'échéance.")
+    return expiry, unlimited_rights
 
 
 def _scope_for(ctx: Ctx, member: cloud_auth.Member, brand_id: uuid.UUID) -> BrandScope:

@@ -6,6 +6,7 @@ export const statusLabel: Record<Status, string> = {
   "<90j": "Moins de 90 jours",
   ok: "Dans les délais",
   inconnue: "Sans échéance",
+  illimite: "Droits illimités",
 };
 
 export const confidenceLabel: Record<Confidence, string> = {
@@ -52,6 +53,11 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "·";
   const date = new Date(iso);
   return Number.isNaN(date.getTime()) ? iso : dateTimeFormat.format(date);
+}
+
+/** What a reference's badge says: its rights never expire, or how long it has left. */
+export function rightsText(status: Status, days: number | null): string {
+  return status === "illimite" ? statusLabel.illimite : daysText(days);
 }
 
 export function daysText(days: number | null): string {
