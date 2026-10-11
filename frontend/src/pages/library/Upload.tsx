@@ -82,6 +82,9 @@ export function useUpload() {
 
 type Upload = ReturnType<typeof useUpload>;
 
+/** The CSV import button is hidden for now: build with VITE_CSV_IMPORT=1 to show it. */
+const CSV_IMPORT_ENABLED = import.meta.env.VITE_CSV_IMPORT === "1";
+
 /** Header buttons: CSV import, and the upload button with its hidden file input. */
 export function LibraryActions({ up, onImport }: { up: Upload; onImport: () => void }) {
   const { admin } = useOrg();
@@ -89,7 +92,7 @@ export function LibraryActions({ up, onImport }: { up: Upload; onImport: () => v
 
   return (
     <>
-      {admin ? <Button onClick={onImport}>Importer (CSV)</Button> : null}
+      {admin && CSV_IMPORT_ENABLED ? <Button onClick={onImport}>Importer (CSV)</Button> : null}
       {admin ? (
         <>
           <Button variant="primary" loading={uploader.uploading} onClick={up.pick}>
