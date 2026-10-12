@@ -214,8 +214,13 @@ def serve_cmd(
     host: str = typer.Option("127.0.0.1", "--host", help="Address to bind. Use 0.0.0.0 in a container."),
     port: int = typer.Option(8000, "--port"),
     config: Optional[Path] = ConfigOption,
+    with_worker: bool = typer.Option(False, "--with-worker", envvar="NYRA_WITH_WORKER",
+                                     help="Also run (and keep running) a worker: for development, not for the web image."),
 ) -> None:
     """Run the web process: API + interface. Long jobs go to `nyra worker`."""
+    import sys
+    import threading
+
     import uvicorn
 
     from nyra import observability
@@ -233,7 +238,20 @@ def serve_cmd(
         public_url=env["NYRA_PUBLIC_URL"], config_path=config,
     )
     typer.secho(f"Nyra  ->  http://{host}:{port}", fg=typer.colors.GREEN)
-    uvicorn.run(create_app(settings), host=host, port=port, log_level="info", proxy_headers=True, log_config=None)
+    stop = threading.Event()
+    watcher = None
+    if with_worker:
+        from nyra.cloud.worker import supervise
+
+        command = [sys.executable, "-m", "nyra.cli", "worker", *(["--config", str(config)] if config else [])]
+        watcher = threading.Thread(target=supervise, args=(command, stop), name="worker-supervisor")
+        watcher.start()
+    try:
+        uvicorn.run(create_app(settings), host=host, port=port, log_level="info", proxy_headers=True, log_config=None)
+    finally:
+        stop.set()
+        if watcher is not None:
+            watcher.join()
 
 
 @app.command("worker")

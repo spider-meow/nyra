@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
+import subprocess
 import tempfile
 import threading
 import time
@@ -680,6 +681,24 @@ def _capture(exc: BaseException) -> None:
     except ImportError:
         return
     sentry_sdk.capture_exception(exc)
+
+
+def supervise(command: list[str], stop: threading.Event, restart_seconds: float = 5.0) -> None:
+    """Keep `command` running (a `nyra worker` next to the web process, in development): started again when it exits,
+    until `stop` is set, which also ends it. Meant for a thread."""
+    while not stop.is_set():
+        process = subprocess.Popen(command)
+        while process.poll() is None and not stop.wait(1.0):
+            pass
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            return
+        log.warning("worker exited with code %s; starting it again in %.0f s", process.returncode, restart_seconds)
+        stop.wait(restart_seconds)
 
 
 def configure_logging() -> None:

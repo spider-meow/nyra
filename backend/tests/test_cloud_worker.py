@@ -652,3 +652,26 @@ def test_locate_job_leaves_out_excluded_images_and_refuses_to_save_for_a_replace
     assert finished["status"] == "error" and "remplacée" in finished["error"]
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT count(*) AS n FROM reference_locations WHERE reference_id = %s", (ref,)).fetchone()["n"] == 1  # the first result stands
+
+
+def test_supervise_restarts_a_worker_that_exits_and_stops_when_asked():
+    import sys
+    import tempfile
+    import threading
+    import time
+    from pathlib import Path
+
+    from nyra.cloud.worker import supervise
+
+    stop = threading.Event()
+    flag = Path(tempfile.mkdtemp()) / "starts"
+    code = f"open({str(flag)!r}, 'a').write('x'); import sys; sys.exit(1)"
+    thread = threading.Thread(target=supervise, args=([sys.executable, "-c", code], stop, 0.1))
+    thread.start()
+    deadline = time.time() + 20
+    while time.time() < deadline and (not flag.exists() or len(flag.read_text()) < 2):
+        time.sleep(0.2)
+    stop.set()
+    thread.join(timeout=40)
+    assert not thread.is_alive()
+    assert len(flag.read_text()) >= 2, "started again after exiting"

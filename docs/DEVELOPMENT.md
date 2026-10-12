@@ -13,10 +13,14 @@ Run the product locally against a Supabase project (a separate one from
 production):
 
 ```bash
-nyra serve          # http://127.0.0.1:8000
-nyra worker
+nyra serve --with-worker     # http://127.0.0.1:8000, and a worker kept running next to it
 cd frontend && npm run dev   # http://127.0.0.1:5173, proxies /api to :8000
 ```
+
+`--with-worker` starts `nyra worker` as a child of the web process and starts it again if it exits; it
+stops with `serve`. Setting `NYRA_WITH_WORKER=1` does the same without the flag. Without it, run
+`nyra worker` yourself: a job only waits in the queue until a worker takes it. The web image never uses
+the flag (it has neither Chromium nor torch).
 
 After renaming or moving the package, reinstall (`pip install -e .`):
 an editable install points at the old path otherwise.
