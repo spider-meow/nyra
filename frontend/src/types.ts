@@ -152,6 +152,8 @@ export type Matches = {
   unlimited: MatchGroup[];
   not_found: NotFoundItem[];
   outside_window: number;
+  /** The labels of the brand's sites (US, FR, INT...) that show a match: what the country filter offers. */
+  countries: string[];
 };
 
 export type Scan = {

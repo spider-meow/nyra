@@ -133,3 +133,64 @@ export function Select(props: {
     />
   );
 }
+
+/**
+ * A list where clicking a name picks that one alone (and closes), and the box beside it adds or removes it from a
+ * selection of several (the list stays open). Nothing ticked means "all", which `allLabel` stands for.
+ */
+export function MultiDropdown(props: {
+  options: string[];
+  selected: string[];
+  /** Click on a name: this one only. */
+  onOnly: (value: string) => void;
+  /** Click on a box: add or remove this one. */
+  onToggle: (value: string) => void;
+  /** Click on the first row: nothing selected. */
+  onAll: () => void;
+  allLabel: string;
+  id?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+  const row = "flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm hover:bg-sunk";
+  return (
+    <div ref={root} className="relative" onKeyDown={(event) => event.key === "Escape" && setOpen(false)}>
+      <button
+        type="button"
+        id={props.id}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className={cx("flex w-full items-center gap-2 text-left", fieldClass.replace("h-10 ", ""), "min-h-10 py-2 pr-3")}
+      >
+        <span className="min-w-0 flex-1 truncate">{props.selected.length ? props.selected.join(", ") : props.allLabel}</span>
+        <Icon name="chevrons" size={14} className="shrink-0 text-muted" />
+      </button>
+      {open ? (
+        <div role="listbox" aria-multiselectable className="absolute top-full right-0 left-0 z-50 mt-1 max-h-64 min-w-max overflow-auto rounded-md border border-ink bg-paper p-1 shadow-float">
+          <button type="button" role="option" aria-selected={!props.selected.length} onClick={() => { props.onAll(); setOpen(false); }} className={cx(row, !props.selected.length && "bg-yellow font-medium")}>
+            <span className="min-w-0 flex-1">{props.allLabel}</span>
+            {!props.selected.length ? <Icon name="check" size={14} strokeWidth={2} /> : null}
+          </button>
+          {props.options.map((value) => {
+            const on = props.selected.includes(value);
+            return (
+              <div key={value} role="option" aria-selected={on} className={cx(row, "p-0", on && "bg-yellow font-medium")}>
+                <button type="button" onClick={() => { props.onOnly(value); setOpen(false); }} className="min-w-0 flex-1 cursor-pointer px-2.5 py-1.5 text-left">{value}</button>
+                <input type="checkbox" checked={on} onChange={() => props.onToggle(value)} aria-label={`Ajouter ${value} à la sélection`} className="mr-2.5 size-4 shrink-0 cursor-pointer accent-ink" />
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}

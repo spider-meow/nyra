@@ -1,12 +1,12 @@
-import { Select } from "../../components/Dropdown";
+import { MultiDropdown, Select } from "../../components/Dropdown";
 import { FieldLabel, SearchField, cx } from "../../components/ui";
 import { WINDOWS, decisionFilters, type ReviewView } from "./view";
 
-/** Window, status, decision and search. */
+/** Window, status, decision and search, then the countries (when the sites are labeled). */
 export function ReviewFilters(props: { view: ReviewView }) {
-  const { withinDays, statusFilter, decisionFilter, query, setQuery, setParam } = props.view;
+  const { withinDays, statusFilter, decisionFilter, countries, selectedCountries, setCountries, query, setQuery, setParam } = props.view;
   return (
-    <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div className={cx("mb-4 grid gap-3 sm:grid-cols-2", countries.length || selectedCountries.length ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
       <div>
         <FieldLabel htmlFor="window">Échéance</FieldLabel>
         <Select id="window" value={String(withinDays)} onChange={(event) => setParam("fenetre", event.target.value)}>
@@ -31,6 +31,20 @@ export function ReviewFilters(props: { view: ReviewView }) {
           {decisionFilters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </Select>
       </div>
+      {countries.length || selectedCountries.length ? (
+        <div>
+          <FieldLabel htmlFor="country">Pays</FieldLabel>
+          <MultiDropdown
+            id="country"
+            allLabel="Tous les pays"
+            options={[...new Set([...countries, ...selectedCountries])]}
+            selected={selectedCountries}
+            onAll={() => setCountries([])}
+            onOnly={(value) => setCountries([value])}
+            onToggle={(value) => setCountries(selectedCountries.includes(value) ? selectedCountries.filter((item) => item !== value) : [...selectedCountries, value])}
+          />
+        </div>
+      ) : null}
       <div>
         <FieldLabel htmlFor="search">Rechercher</FieldLabel>
         <SearchField id="search" placeholder="Nom de fichier" value={query} onChange={setQuery} />

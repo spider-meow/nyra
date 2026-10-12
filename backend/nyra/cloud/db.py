@@ -681,13 +681,14 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
             m.level, m.score, m.confidence,
             r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.credit, r.notes,
             r.storage_path AS ref_storage_path, r.thumb_path AS ref_thumb_path, r.work_path AS ref_work_path,
-            s.id AS site_image_id, s.url AS site_url, s.content_hash,
+            s.id AS site_image_id, s.url AS site_url, s.content_hash, COALESCE(st.label, '') AS site_label,
             s.storage_path AS site_storage_path, s.thumb_path AS site_thumb_path,
             v.decision,
             COALESCE(pg.urls, ARRAY[]::text[]) AS pages
         FROM matches m
         JOIN reference_images r ON r.id = m.reference_id
         JOIN site_images s ON s.id = m.site_image_id
+        JOIN sites st ON st.id = s.site_id
         LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
         LEFT JOIN LATERAL (
             SELECT array_agg(p.url ORDER BY p.url) AS urls

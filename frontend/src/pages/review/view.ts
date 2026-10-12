@@ -32,7 +32,7 @@ function passes(item: { filename: string; status: Status }, statusFilter: Status
   return (statusFilter === "all" || item.status === statusFilter) && (!needle || item.filename.toLowerCase().includes(needle));
 }
 
-/** Window, status, decision and tab filters (in the address), search text, and how many rows are shown. */
+/** Window, status, decision, country and tab filters (in the address), search text, and how many rows are shown. */
 function useFilters() {
   const overview = useOverview();
   const [params, setParams] = useSearchParams();
@@ -46,6 +46,7 @@ function useFilters() {
   const statusFilter = pick<Status | "all">("statut", ["all", "expire", "<30j", "<90j", "inconnue"], "all");
   const decisionFilter = pick("decision", decisionFilters.map((item) => item.value), "open");
   const tab = pick<Tab>("onglet", ["found", "verify", "missing", "later", "free"], "found");
+  const selectedCountries = params.getAll("pays").sort();
   const [query, setQuery] = usePersistedState("review.query", "", "session", isShortText);
   const [shown, setShown] = useState(100);
 
@@ -58,7 +59,16 @@ function useFilters() {
     setShown(100);
   }
 
-  return { withinDays, statusFilter, decisionFilter, tab, query, setQuery, shown, setShown, setParam };
+  /** The countries kept (none = every country), in the address. */
+  function setCountries(labels: string[]) {
+    const next = new URLSearchParams(params);
+    next.delete("pays");
+    for (const item of labels) next.append("pays", item);
+    setParams(next, { replace: true });
+    setShown(100);
+  }
+
+  return { withinDays, statusFilter, decisionFilter, selectedCountries, setCountries, tab, query, setQuery, shown, setShown, setParam };
 }
 
 /** One row per occurrence of the tab being looked at, and the references not found. */
@@ -113,7 +123,7 @@ function useSelection(rows: Row[], shown: number, setShown: (value: number) => v
 /** Everything the page shows: the answer, the filters, the rows, the selection. */
 export function useReviewView() {
   const filters = useFilters();
-  const matches = useMatches(filters.withinDays);
+  const matches = useMatches(filters.withinDays, filters.selectedCountries);
   const review = useReview();
   const { rows, missing } = useRows(matches.data, filters);
   const selection = useSelection(rows, filters.shown, filters.setShown);
@@ -125,7 +135,9 @@ export function useReviewView() {
     later: data?.later.length ?? 0,
     free: data?.unlimited.length ?? 0,
   };
-  return { ...filters, ...selection, matches, review, rows, missing, counts, showMore: () => filters.setShown((value) => value + 100) };
+  // The countries on offer come from the answer (always every label, whichever one is chosen).
+  const countries = matches.data?.countries ?? [];
+  return { ...filters, ...selection, matches, review, rows, missing, counts, countries, showMore: () => filters.setShown((value) => value + 100) };
 }
 
 export type ReviewView = ReturnType<typeof useReviewView>;

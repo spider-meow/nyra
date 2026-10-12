@@ -714,6 +714,36 @@ def test_matches_sign_urls_in_batch_and_reviews_are_scoped(client, org_with_user
     assert client.post(f"{other_base}/reviews", headers=_headers(admin_id), json=review).status_code == 404
 
 
+def test_matches_filter_by_the_label_of_the_site(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, _, _ = org_with_users
+    same_hash = "ffff0000ffff0000"
+    with cloud_db.connect(cloud_database_url) as conn:
+        ref = cloud_db.upsert_reference_image(
+            conn, org_id=org_id, brand_id=cloud_brand, filename="found.jpg", storage_path=f"{org_id}/found.jpg",
+            expiry_date="2026-10-01", credit=None, notes=None, phash=same_hash, dhash=same_hash,
+        )
+        images = []
+        for label, url in (("US", "https://target.test/us/"), ("FR", "https://target.test/fr/")):
+            site = cloud_db.create_site(conn, org_id=org_id, brand_id=cloud_brand, url=url, label=label)
+            images.append(conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, phash, dhash)
+                   VALUES (%s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, f"{url}found.jpg", f"{org_id}/{label}.jpg", same_hash, same_hash),
+            ).fetchone()["id"])
+        cloud_db.write_matches(conn, org_id, [(ref, image, "phash", 1.0, "haut") for image in images])
+
+    everywhere = client.get(f"{base}/matches?within_days=3650", headers=_headers(admin_id)).json()
+    assert everywhere["countries"] == ["FR", "US"]
+    assert len(everywhere["confirmed"][0]["hits"]) == 2
+    only_fr = client.get(f"{base}/matches?within_days=3650&country=FR", headers=_headers(admin_id)).json()
+    assert [hit["site_url"] for hit in only_fr["confirmed"][0]["hits"]] == ["https://target.test/fr/found.jpg"]
+    assert only_fr["countries"] == ["FR", "US"]  # the choice stays on offer whichever one is picked
+    both = client.get(f"{base}/matches?within_days=3650&country=FR&country=US", headers=_headers(admin_id)).json()
+    assert len(both["confirmed"][0]["hits"]) == 2
+    nowhere = client.get(f"{base}/matches?within_days=3650&country=UK", headers=_headers(admin_id)).json()
+    assert nowhere["confirmed"] == []
+
+
 def test_locate_is_an_admin_job_and_occurrences_list_pages_with_signed_thumbnails(client, org_with_users, cloud_brand,
                                                                                   cloud_database_url):
     org_id, base, admin_id, client_id, _ = org_with_users

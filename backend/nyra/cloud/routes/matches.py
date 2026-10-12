@@ -50,13 +50,18 @@ def _unmatched_item(row: dict, ref_urls: dict[str, str]) -> dict:
 
 
 @router.get(f"{BRAND}/matches")
-def matches(within_days: Optional[int] = Query(None, ge=0, le=3650),
+def matches(within_days: Optional[int] = Query(None, ge=0, le=3650), country: list[str] = Query([], max_length=20),
             scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)
         rows = cloud_db.match_rows(conn, scope.brand_id)
         unmatched = cloud_db.unmatched_rows(conn, scope.brand_id)
     window = config.report.default_within_days if within_days is None else within_days
+    # The label of a site (US, FR, INT...) is its country. Filtering the rows before grouping keeps the tabs and
+    # their counts right: a reference is "found" only by what the chosen countries' sites show.
+    countries = sorted({row["site_label"] for row in rows if row["site_label"]})
+    if country:
+        rows = [row for row in rows if row["site_label"] in country]
     ref_urls = ctx.sign(cloud_storage.BUCKET_REFS, [r["ref_thumb_path"] for r in rows + unmatched]
                         + [r["ref_storage_path"] for r in rows + unmatched]
                         + [r["ref_work_path"] for r in rows])
@@ -70,6 +75,7 @@ def matches(within_days: Optional[int] = Query(None, ge=0, le=3650),
                 hit.pop("content_hash", None)
                 hit["pages"] = hit["pages"][:20]
     result["not_found"] = report_module.not_found_items([_unmatched_item(row, ref_urls) for row in unmatched], window)
+    result["countries"] = countries
     return result
 
 

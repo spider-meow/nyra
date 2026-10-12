@@ -207,11 +207,12 @@ export function useForgetImages() {
   };
 }
 
-export function useMatches(withinDays: number) {
+/** `countries` are site labels (US, FR...); none means every site. */
+export function useMatches(withinDays: number, countries: string[] = []) {
   const { apiPath, brand } = useOrg();
   return useQuery({
-    queryKey: ["matches", brand.id, withinDays],
-    queryFn: () => api.get<Matches>(apiPath(`/matches?within_days=${withinDays}`)),
+    queryKey: ["matches", brand.id, withinDays, countries],
+    queryFn: () => api.get<Matches>(apiPath(`/matches?within_days=${withinDays}${countries.map((item) => `&country=${encodeURIComponent(item)}`).join("")}`)),
     placeholderData: (previous) => previous,
     staleTime: 60_000,
     refetchInterval: 30 * 60_000,
