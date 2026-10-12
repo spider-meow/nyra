@@ -14,7 +14,9 @@ Two images match when the Hamming distance is within `phash_threshold` /
 `dhash_threshold` (default 8 of 64 bits). References also store the
 hashes of their horizontal mirror (`phash_flip`, `dhash_flip`), and the
 distance used is the smaller of the two, so a flipped reuse is caught
-here too. Level-1 hits are always *confirmed* (`haut`).
+here too. Level-1 hits are *confirmed* (`haut`), unless both embeddings exist and their cosine is
+below `clip_similarity_floor`: two flat, white-background pictures can collide on one 8-bit hash by
+chance (a `dhash` at distance 8 matched a portrait with a packshot, CLIP 0.19), and CLIP overrules that.
 
 Level 1 is deliberately blunt about anything that changes the overall
 structure — a significant crop, a large overlay. Those fall to level 2.

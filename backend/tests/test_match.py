@@ -119,6 +119,22 @@ def test_vectorized_match_finds_identical_hash_and_skips_a_distant_one(config):
     assert all(hit[3] == 1.0 for hit in hits if hit[1] == 3)
 
 
+def test_a_hash_collision_between_unrelated_embeddings_is_not_a_match(config):
+    """A flat, white-background picture can fall within 8 dhash bits of an unrelated one: CLIP overrules the hash."""
+    from nyra.match import match_index_pairs
+
+    same = np.array([np.uint64(0xFFFF0000FFFF0000)], dtype=np.uint64)
+    ok = np.array([True])
+    unit = lambda *v: np.array([v], dtype=np.float32) / np.linalg.norm(v)  # noqa: E731
+    ref = unit(1.0, 0.0)
+
+    def run(site):
+        return match_index_pairs([1], same, same, ok, ok, ref, ok, [2], same, same, ok, ok, site, ok, config, True)
+
+    assert run(unit(1.0, 0.05)), "the same picture still matches"
+    assert run(unit(0.0, 1.0)) == [], "unrelated embeddings (cosine 0) reject the colliding hashes"
+
+
 def test_hamming_distance_none_when_missing():
     assert hamming_distance(None, "ffff0000ffff0000") is None
     assert hamming_distance("ffff0000ffff0000", None) is None

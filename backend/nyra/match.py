@@ -308,16 +308,21 @@ def compare(
         p_score = np.where(p_hit, 1.0 - (p_dist / 64.0), -1.0)
         d_score = np.where(d_hit, 1.0 - (d_dist / 64.0), -1.0)
         level1 = p_hit | d_hit
+        sims = None
+        if use_clip and refs.emb is not None and sites.emb is not None:
+            sims = refs.emb @ sites.emb[sl].T
+            both = refs.emb_ok[:, None] & sites.emb_ok[sl][None, :]
+            # Two flat, mostly white pictures can agree on one 64-bit hash by chance (a dhash of 8 bits off is
+            # enough). A pair the embeddings call unrelated is such a collision, not "the same image".
+            level1 = level1 & ~(both & (sims < config.clip_similarity_floor))
         prefer_p = p_score >= d_score
         for i, j in zip(*[axis.tolist() for axis in np.nonzero(level1)]):
             if prefer_p[i, j]:
                 hits.append((refs.ids[i], sites.ids[start + j], LEVEL_PHASH, float(p_score[i, j]), CONFIDENCE_HIGH))
             else:
                 hits.append((refs.ids[i], sites.ids[start + j], LEVEL_DHASH, float(d_score[i, j]), CONFIDENCE_HIGH))
-        if use_clip and refs.emb is not None and sites.emb is not None:
-            sims = refs.emb @ sites.emb[sl].T
-            both = (~level1) & refs.emb_ok[:, None] & sites.emb_ok[sl][None, :]
-            for i, j in zip(*[axis.tolist() for axis in np.nonzero(both & (sims >= config.clip_similarity_floor))]):
+        if sims is not None:
+            for i, j in zip(*[axis.tolist() for axis in np.nonzero((~level1) & both & (sims >= config.clip_similarity_floor))]):
                 similarity = float(sims[i, j])
                 hits.append((refs.ids[i], sites.ids[start + j], LEVEL_CLIP, similarity, confidence_for(similarity, config)))
         if progress:
@@ -391,6 +396,7 @@ def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[st
             (f"verified{config.geometric_min_inliers}/{config.geometric_review_coverage}/{config.geometric_confirm_coverage}"
              if use_clip and verified else "unverified"),
             "flip",
+            "hashguard" if use_clip else "hash-only",  # CLIP overrules a colliding hash: older matches are recomputed
             f"x{excluded}" if exclusions else "x0",
         ]
     )
