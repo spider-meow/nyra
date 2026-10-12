@@ -368,6 +368,30 @@ def cloud_staff(
     typer.secho(f"{email} has back office access{note}.", fg=typer.colors.GREEN)
 
 
+@app.command("cloud-usage")
+def cloud_usage(
+    brands: int = typer.Option(3, "--brands", min=1, help="How many brands to plan for."),
+    measure: bool = typer.Option(False, "--measure", help="Take the sizes from the database (DATABASE_URL) instead of assumptions."),
+    cache_mb: int = typer.Option(2048, "--cache-mb", help="The worker's image cache (NYRA_IMAGE_CACHE_MB); 0 without a persistent disk."),
+    set_: list[str] = typer.Option([], "--set", help="Override a figure, e.g. --set users=10 (repeatable)."),
+) -> None:
+    """Estimate a month of Supabase usage (egress by source, storage, database) for N brands."""
+    from nyra import capacity
+
+    brand = capacity.Brand()
+    if measure:
+        from nyra.cloud import db as cloud_db
+
+        with cloud_db.connect(_cloud_env(need_storage=False)["DATABASE_URL"]) as conn:
+            brand = capacity.measured(conn.execute(capacity.MEASURE_SQL).fetchone() or {})
+    try:
+        brand = capacity.override(brand, set_)
+    except ValueError as exc:
+        _fail(str(exc))
+    for line in capacity.render(capacity.estimate(brand, brands, cache_mb=cache_mb), brands, cache_mb):
+        typer.echo(line)
+
+
 @app.command("cloud-calibrate")
 def cloud_calibrate(
     org: str = typer.Option(..., "--org", help="Organization slug."),
