@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { CompareView } from "../components/CompareView";
 import { Modal } from "../components/feedback";
 import { Button, Card, EmptyState, Kbd, LinkButton, PageHeader, Skeleton } from "../components/ui";
@@ -54,10 +54,29 @@ function Results(props: { view: ReviewView; compare: ReactNode }) {
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,480px)]">
       <OccurrenceList view={props.view} />
       <div className="hidden lg:block">
-        <div className="sticky top-6">
+        <StickyPanel>
           <Card>{props.compare ?? <p className="text-sm text-muted">Sélectionnez une occurrence.</p>}</Card>
-        </div>
+        </StickyPanel>
       </div>
     </div>
   );
+}
+
+/** Sticks below the top of the screen and scrolls on its own, as tall as the screen left under it: before the page
+ * has scrolled it starts lower than the top, and a fixed height would push its end off screen. */
+function StickyPanel(props: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const fit = () => {
+      if (ref.current) ref.current.style.maxHeight = `${Math.max(240, window.innerHeight - Math.max(ref.current.getBoundingClientRect().top, 24) - 24)}px`;
+    };
+    fit();
+    window.addEventListener("scroll", fit, { passive: true });
+    window.addEventListener("resize", fit);
+    return () => {
+      window.removeEventListener("scroll", fit);
+      window.removeEventListener("resize", fit);
+    };
+  }, []);
+  return <div ref={ref} className="sticky top-6 overflow-y-auto overscroll-contain [scrollbar-width:none]">{props.children}</div>;
 }
