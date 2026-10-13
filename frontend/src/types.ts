@@ -89,6 +89,9 @@ export type Overview = {
   defaults: { max_pages: number; max_pages_limit: number; within_days: number };
 };
 
+/** A folder of the library (a shoot, a season); `parent_id` null = top level. */
+export type Collection = { id: string; parent_id: string | null; name: string };
+
 export type LibraryItem = {
   id: string;
   filename: string;
@@ -99,6 +102,7 @@ export type LibraryItem = {
   credit: string;
   notes: string;
   tags: string[];
+  collection_id: string | null;
   width: number | null;
   height: number | null;
   indexed: boolean;

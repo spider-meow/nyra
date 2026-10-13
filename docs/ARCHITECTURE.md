@@ -96,7 +96,7 @@ numbers and the report itself are pure functions over plain dicts in
 | `db.py` | SQLite schema and `LocalStore` for the CLI. |
 | `cloud/api.py` | The web process: `CloudSettings` and `create_app`, which wires the modules below in a fixed order (middleware, `/assets`, API routes, then the catch-all page). |
 | `cloud/routes/common.py` | What the route modules share: the request context (`Ctx`), the auth and brand dependencies, small helpers. |
-| `cloud/routes/` (`session`, `brands`, `members`, `library`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `reports_settings`) | The API routes, one module per domain, each exposing a `router`. |
+| `cloud/routes/` (`session`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `reports_settings`) | The API routes, one module per domain, each exposing a `router`. |
 | `cloud/routes/interface.py` | The built interface (single-page app), gzip and security headers, error handlers. |
 | `cloud/worker.py` | The job runner. |
 | `cloud/jobs.py` | The queue (enqueue, claim, heartbeat, cancel, reap). |
@@ -151,7 +151,7 @@ screen (200 names at most per call, 100 sent by the interface: thumbnail, else w
 original), and `GET .../library/{filename}/url` for an original when the edit
 modal opens. Signed URLs are remembered per organization (bounded) and handed
 out again only while they have at least 40 minutes left, so a browser keeps an
-image in its cache and never holds an expired link. Ceiling: metadata for about
+image in its cache and never holds an expired link. The same response carries the collections; the folder tree, its counts and the search (every word must match a name, tag, collection path or credit; a search ignores the folder being viewed) are computed in the browser. Ceiling: metadata for about
 10,000 references in one response; beyond that, filter and paginate on the
 server.
 

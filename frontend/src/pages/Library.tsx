@@ -7,6 +7,7 @@ import { useLibrary, useLibraryThumbs } from "../lib/queries";
 import type { LibraryItem } from "../types";
 import { EditReference } from "./library/EditReference";
 import { ImportCsv } from "./library/ImportCsv";
+import { CollectionTree } from "./library/CollectionTree";
 import { LibraryGrid } from "./library/Grid";
 import { SelectionBar, useBulkEdit, useRemoveReferences } from "./library/Selection";
 import { LibraryToolbar } from "./library/Toolbar";
@@ -19,9 +20,10 @@ export function Library() {
   const items = library.data?.items ?? [];
   const assignments = useAssignments("reference").data?.assignments;
   const labelsOf = useCallback((id: string) => assignments?.[id] ?? [], [assignments]);
-  const view = useLibraryView(items, labelsOf);
+  const collections = library.data?.collections ?? [];
+  const view = useLibraryView(items, collections, labelsOf);
   const labels = useLabels().data?.labels ?? [];
-  const up = useUpload();
+  const up = useUpload(view.scope === "all" || view.scope === "none" ? undefined : view.scope); // dropping in a collection files there
   const [picked, setPicked] = useState<Set<string>>(new Set());
   // Bulk actions only touch what is on screen: a card hidden by the search, a tag or a status filter is never acted on.
   const selected = useMemo(() => new Set(view.visible.filter((item) => picked.has(item.filename)).map((item) => item.filename)), [view.visible, picked]);
@@ -45,7 +47,7 @@ export function Library() {
     >
       <PageHeader
         title="Bibliothèque"
-        description="Les visuels sous droits, leur date d'expiration et leurs tags. C'est à eux que chaque page lue est comparée, même une fois expirés."
+        description="Les visuels sous droits, rangés par collection, avec leur date d'expiration et leurs tags. C'est à eux que chaque page lue est comparée, même une fois expirés."
         actions={<LibraryActions up={up} onImport={() => setImportOpen(true)} />}
       />
       <UploadNotices up={up} indexing={Boolean(library.data?.indexing)} />
@@ -61,12 +63,15 @@ export function Library() {
           action={admin ? <Button variant="primary" loading={up.uploader.uploading} onClick={up.pick}>Ajouter des visuels</Button> : undefined}
         />
       ) : (
-        <>
+        <div className="lg:grid lg:grid-cols-[14rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+          <CollectionTree view={view} />
+          <div className="min-w-0">
           <LibraryToolbar view={view} onTab={changeTab} />
-          {admin && selected.size ? <SelectionBar selected={selected} referenceIds={items.filter((item) => selected.has(item.filename)).map((item) => item.id)} labels={labels} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
+          {admin && selected.size ? <SelectionBar selected={selected} referenceIds={items.filter((item) => selected.has(item.filename)).map((item) => item.id)} labels={labels} folders={view.folders} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
           {thumbs.failed ? <p role="status" className="mb-3 text-[13px] text-muted">Vignettes indisponibles pour le moment.</p> : null}
           <LibraryGrid view={view} thumbs={thumbs.urls} labelsOf={labelsOf} selected={selected} setSelected={setPicked} onEdit={setEditing} onPick={up.pick} />
-        </>
+          </div>
+        </div>
       )}
 
       <EditReference item={editing} thumbUrl={editing ? thumbs.urls[editing.filename] : undefined} onClose={() => setEditing(null)} onDelete={(item) => void removeNames([item.filename])} />

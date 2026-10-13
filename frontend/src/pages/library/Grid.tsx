@@ -20,6 +20,8 @@ type Props = {
 export function LibraryGrid({ view, thumbs, labelsOf, selected, setSelected, onEdit, onPick }: Props) {
   const { admin } = useOrg();
   const { visible, shown, tab, filtering } = view;
+  // Which collection a card is in matters when the cards come from several: the whole library, or a search.
+  const showWhere = view.scope === "all" || Boolean(view.query.trim());
   const allVisibleSelected = visible.length > 0 && visible.every((item) => selected.has(item.filename));
 
   function toggle(filename: string, on: boolean) {
@@ -42,10 +44,10 @@ export function LibraryGrid({ view, thumbs, labelsOf, selected, setSelected, onE
           Tout sélectionner
         </label>
       ) : null}
-      <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+      <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
         {admin && tab === "active" && !filtering ? <DropTile onPick={onPick} /> : null}
         {visible.slice(0, shown).map((item) => (
-          <ReferenceCard key={item.id} item={item} labels={labelsOf(item.id)} thumbUrl={thumbs[item.filename]} checked={selected.has(item.filename)} anySelected={selected.size > 0} onEdit={onEdit} onToggle={toggle} />
+          <ReferenceCard key={item.id} item={item} where={showWhere && item.collection_id ? view.folders.path(item.collection_id) : ""} labels={labelsOf(item.id)} thumbUrl={thumbs[item.filename]} checked={selected.has(item.filename)} anySelected={selected.size > 0} onEdit={onEdit} onToggle={toggle} />
         ))}
       </ul>
       {visible.length > shown ? (
@@ -80,6 +82,7 @@ function DropTile({ onPick }: { onPick: () => void }) {
 
 type CardProps = {
   item: LibraryItem;
+  where: string;
   labels: ImageLabel[];
   /** Undefined until the signed URL arrives, and for good when the reference has no image to show. */
   thumbUrl: string | undefined;
@@ -89,7 +92,7 @@ type CardProps = {
   onToggle: (filename: string, checked: boolean) => void;
 };
 
-function ReferenceCard({ item, labels, thumbUrl, checked, anySelected, onEdit, onToggle }: CardProps) {
+function ReferenceCard({ item, where, labels, thumbUrl, checked, anySelected, onEdit, onToggle }: CardProps) {
   const { admin } = useOrg();
   return (
     <li
@@ -108,6 +111,7 @@ function ReferenceCard({ item, labels, thumbUrl, checked, anySelected, onEdit, o
         </span>
         <span className="flex flex-col gap-2 px-3.5 pt-3 pb-3.5">
           <span className="truncate text-[13.5px] font-medium" title={item.filename}>{item.filename}</span>
+          {where ? <span className="truncate text-[11.5px] text-muted" title={where}>{where}</span> : null}
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
             <StatusBadge status={item.status} label={item.status === "inconnue" ? undefined : rightsText(item.status, item.days_left)} />
             {item.expiry_date ? <span className="text-[11.5px] text-muted tabular">{formatDate(item.expiry_date)}</span> : null}

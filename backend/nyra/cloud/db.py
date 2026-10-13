@@ -468,7 +468,7 @@ def upsert_reference_image(
     return row["id"]
 
 
-_REF_LIST_COLUMNS = """id, filename, storage_path, thumb_path, work_path, expiry_date, unlimited_rights, credit, notes, tags, width,
+_REF_LIST_COLUMNS = """id, filename, storage_path, thumb_path, work_path, expiry_date, unlimited_rights, credit, notes, tags, collection_id, width,
     height, phash IS NOT NULL AS hashed, embedding IS NOT NULL AS embedded, compared_at, created_at, updated_at"""
 
 
@@ -477,6 +477,44 @@ def list_references(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     return conn.execute(
         f"SELECT {_REF_LIST_COLUMNS} FROM reference_images WHERE brand_id = %s ORDER BY lower(filename)", (brand_id,)
     ).fetchall()
+
+
+def list_collections(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
+    return conn.execute("SELECT id, parent_id, name FROM collections WHERE brand_id = %s ORDER BY lower(name)", (brand_id,)).fetchall()
+
+
+def get_collection(conn: psycopg.Connection, brand_id: uuid.UUID, collection_id: uuid.UUID) -> Optional[Row]:
+    return conn.execute("SELECT id, parent_id, name FROM collections WHERE brand_id = %s AND id = %s", (brand_id, collection_id)).fetchone()
+
+
+def collection_depth(conn: psycopg.Connection, collection_id: uuid.UUID) -> int:
+    """Levels from the top down to this collection (a top-level one is 1)."""
+    return conn.execute(
+        """WITH RECURSIVE up AS (SELECT id, parent_id, 1 AS depth FROM collections WHERE id = %s
+               UNION ALL SELECT c.id, c.parent_id, up.depth + 1 FROM collections c JOIN up ON c.id = up.parent_id)
+           SELECT max(depth) AS depth FROM up""", (collection_id,)).fetchone()["depth"]
+
+
+def add_collection(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, parent_id: Optional[uuid.UUID], name: str) -> Row:
+    """Raises psycopg.errors.UniqueViolation when a sibling already has this name."""
+    return conn.execute(
+        "INSERT INTO collections (org_id, brand_id, parent_id, name) VALUES (%s, %s, %s, %s) RETURNING id, parent_id, name",
+        (org_id, brand_id, parent_id, name),
+    ).fetchone()
+
+
+def rename_collection(conn: psycopg.Connection, brand_id: uuid.UUID, collection_id: uuid.UUID, name: str) -> bool:
+    return conn.execute("UPDATE collections SET name = %s WHERE brand_id = %s AND id = %s", (name, brand_id, collection_id)).rowcount > 0
+
+
+def delete_collection(conn: psycopg.Connection, brand_id: uuid.UUID, collection_id: uuid.UUID) -> bool:
+    return conn.execute("DELETE FROM collections WHERE brand_id = %s AND id = %s", (brand_id, collection_id)).rowcount > 0
+
+
+def set_reference_collection(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str], collection_id: Optional[uuid.UUID]) -> int:
+    return conn.execute(
+        "UPDATE reference_images SET collection_id = %s WHERE brand_id = %s AND filename = ANY(%s)", (collection_id, brand_id, filenames)
+    ).rowcount
 
 
 def reference_paths(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str]) -> list[Row]:

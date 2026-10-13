@@ -50,11 +50,12 @@ export function withoutDuplicates(files: File[], result: UploadResult): File[] {
 }
 
 /** One request: what the server saved or refused goes into `result`; a failed request refuses the whole batch. */
-export async function sendBatch(path: string, batch: File[], result: UploadResult, rights: UploadRights): Promise<void> {
+export async function sendBatch(path: string, batch: File[], result: UploadResult, rights: UploadRights, collectionId?: string): Promise<void> {
   const body = new FormData();
   for (const file of batch) body.append("files", file);
   if (rights.unlimited) body.append("unlimited_rights", "true");
   else if (rights.expiry) body.append("expiry_date", rights.expiry);
+  if (collectionId) body.append("collection_id", collectionId);
   try {
     const data = await api.post<UploadResult>(path, body);
     result.saved.push(...data.saved);
