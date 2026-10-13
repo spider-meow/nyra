@@ -71,7 +71,7 @@ export function Login() {
 
   if (mode === "sent") {
     return (
-      <Centered title="Vérifiez votre messagerie" body={`Si un compte existe pour ${email}, un lien pour choisir un nouveau mot de passe vient d'être envoyé.`}>
+      <Centered title="Vérifiez votre messagerie" body={`Si un compte existe pour ${email}, un lien pour choisir un nouveau mot de passe vient d'être envoyé. Pensez à regarder dans vos courriers indésirables.`}>
         <Button className="mt-5 w-full" onClick={() => setMode("password")}>Retour à la connexion</Button>
       </Centered>
     );
@@ -152,7 +152,7 @@ export function SetPassword() {
   if (auth.phase !== "signed-in") {
     return (
       <Centered title="Lien expiré" body="Ce lien n'est plus valide. Demandez-en un nouveau depuis la page de connexion.">
-        <Link to="/connexion" className="mt-5 block text-sm underline">Aller à la connexion</Link>
+        <Button variant="primary" className="mt-5 w-full" onClick={() => navigate("/connexion")}>Demander un nouveau lien</Button>
       </Centered>
     );
   }
@@ -176,11 +176,11 @@ export function SetPassword() {
     <Centered title="Choisissez votre mot de passe" body={`Pour le compte ${auth.email}.`}>
       <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div>
-          <FieldLabel htmlFor="new-password" hint="10 caractères minimum">Nouveau mot de passe</FieldLabel>
+          <FieldLabel htmlFor="new-password" hint={`${password.length}/10 caractères minimum`}>Nouveau mot de passe</FieldLabel>
           <PasswordInput id="new-password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
         </div>
         <div>
-          <FieldLabel htmlFor="confirm-password">Confirmation</FieldLabel>
+          <FieldLabel htmlFor="confirm-password" hint={confirm && password !== confirm ? "ne correspond pas" : undefined}>Confirmation</FieldLabel>
           <PasswordInput id="confirm-password" autoComplete="new-password" required value={confirm} onChange={(event) => setConfirm(event.target.value)} />
         </div>
         {error ? <p className="text-sm text-expired" role="alert">{error}</p> : null}
