@@ -50,7 +50,7 @@ export function LibraryToolbar(props: { view: LibraryView; onTab: (tab: Tab) => 
       ) : null}
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <SearchField id="lib-search" placeholder="Rechercher un nom ou un tag" className="w-full sm:w-72" value={view.query} onChange={view.setQuery} />
+        <SearchField id="lib-search" placeholder="Rechercher : classic decanter, winter…" className="w-full sm:w-72" value={view.query} onChange={view.setQuery} />
         {view.tab === "active" ? (
           <div className="flex gap-2 overflow-x-auto pb-0.5 [scrollbar-width:none]">
             {statusChips(view.activeItems).map((item) => (

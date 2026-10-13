@@ -1083,3 +1083,36 @@ def test_images_get_a_type_and_a_content_from_a_few_examples(labels_on, client, 
     assert refs[5] not in found  # refused
     assert client.delete(f"{base}/labels/{types['logo']}", headers=_headers(admin_id)).status_code == 404
     assert client.delete(f"{base}/labels/{carafe['id']}", headers=_headers(admin_id)).status_code == 200
+
+
+def test_collections_file_visuals_and_follow_the_rules(client, org_with_users, fake_storage_client):
+    _, base, admin_id, client_id, _ = org_with_users
+    admin, member = _headers(admin_id), _headers(client_id)
+
+    def upload(**form):
+        return client.post(f"{base}/library/upload", headers=admin, data=form, files=[("files", ("a.jpg", _upload_bytes(), "image/jpeg"))])
+
+    season = client.post(f"{base}/collections", headers=admin, json={"name": "  Winter  26-27 "}).json()["collection"]
+    assert season["name"] == "Winter 26-27" and season["parent_id"] is None
+    assert client.post(f"{base}/collections", headers=member, json={"name": "x"}).status_code == 403
+    assert client.post(f"{base}/collections", headers=admin, json={"name": "winter 26-27"}).status_code == 409
+    assert client.post(f"{base}/collections", headers=admin, json={"name": " "}).status_code == 400
+
+    child = client.post(f"{base}/collections", headers=admin, json={"name": "Packshots", "parent_id": season["id"]}).json()["collection"]
+    deep = client.post(f"{base}/collections", headers=admin, json={"name": "Classic", "parent_id": child["id"]}).json()["collection"]
+    assert client.post(f"{base}/collections", headers=admin, json={"name": "Too deep", "parent_id": deep["id"]}).status_code == 400
+    assert client.post(f"{base}/collections", headers=admin, json={"name": "Lost", "parent_id": str(uuid.uuid4())}).status_code == 404
+
+    assert upload(collection_id=child["id"]).status_code == 200
+    assert upload(collection_id=str(uuid.uuid4())).status_code == 404
+    library = client.get(f"{base}/library", headers=member).json()
+    assert library["items"][0]["collection_id"] == child["id"]
+    assert [c["name"] for c in library["collections"]] == ["Classic", "Packshots", "Winter 26-27"]
+
+    assert client.post(f"{base}/library/collection", headers=admin, json={"filenames": ["a.jpg"], "collection_id": season["id"]}).json() == {"updated": 1}
+    assert client.put(f"{base}/collections/{season['id']}", headers=admin, json={"name": "Winter 2026"}).status_code == 200
+    # Deleting a collection removes its sub-collections but never the visuals.
+    assert client.delete(f"{base}/collections/{season['id']}", headers=admin).status_code == 200
+    library = client.get(f"{base}/library", headers=member).json()
+    assert library["collections"] == [] and library["items"][0]["collection_id"] is None
+    assert client.delete(f"{base}/collections/{season['id']}", headers=admin).status_code == 404

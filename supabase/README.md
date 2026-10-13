@@ -22,6 +22,7 @@ supabase/migrations/
   20260929000015_insights.sql                    mesures des lectures, poids et format des images, équipe Nyra, vues `insights`
   20261009000019_unlimited_rights.sql            droits illimités (colonne `unlimited_rights`, contrôle date/illimité, vue `insights.library`)
   20261009000020_image_labels.sql                étiquettes (`labels`, `image_labels`) : types d'images du site et contenus
+  20261013000021_collections.sql                 collections (dossiers de la bibliothèque, 3 niveaux) et `reference_images.collection_id`
   20260930000016_reference_tags.sql              tags libres des références (colonne `tags text[]`, index GIN ; jamais lus par le matching)
 ```
 

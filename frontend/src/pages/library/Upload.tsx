@@ -17,9 +17,9 @@ function byReason(failures: Failure[]): [string, string[]][] {
 }
 
 /** Sends image files to the library (admins only, one batch at a time) and keeps what came back: refused files and replaced visuels. */
-export function useUpload() {
+export function useUpload(collectionId?: string) {
   const { admin } = useOrg();
-  const uploader = useReferenceUpload();
+  const uploader = useReferenceUpload(collectionId);
   const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   const [failures, setFailures] = useState<Failure[]>([]);

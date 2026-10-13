@@ -6,10 +6,11 @@ import { formatDate, plural, splitTags } from "../../lib/format";
 import { LABELS_ENABLED } from "../../lib/labels";
 import { useLibraryMutations } from "../../lib/queries";
 import type { LabelInfo } from "../../types";
+import type { CollectionIndex } from "./collections";
 
 /** Date and tag edits applied to the selected visuals. Lives in the page, not in the bar: the typed values survive a deselection. */
 export function useBulkEdit(selected: Set<string>, clear: () => void) {
-  const { setExpiry, setTags } = useLibraryMutations();
+  const { setExpiry, setTags, fileInCollection } = useLibraryMutations();
   const toast = useToast();
   const [date, setDate] = useState("");
   const [tag, setTag] = useState("");
@@ -50,7 +51,20 @@ export function useBulkEdit(selected: Set<string>, clear: () => void) {
     );
   }
 
-  return { date, setDate, tag, setTag, applyDate, applyTags, dateBusy: setExpiry.isPending, tagsBusy: setTags.isPending };
+  function applyCollection(collectionId: string | null) {
+    fileInCollection.mutate(
+      { filenames: [...selected], collection_id: collectionId },
+      {
+        onSuccess: (result) => {
+          toast.show({ tone: "success", message: collectionId ? "Visuels classés" : "Visuels sortis de leur collection", description: plural(result.updated, "visuel mis à jour", "visuels mis à jour") });
+          clear();
+        },
+        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
+      },
+    );
+  }
+
+  return { date, setDate, tag, setTag, applyDate, applyTags, applyCollection, collectionBusy: fileInCollection.isPending, dateBusy: setExpiry.isPending, tagsBusy: setTags.isPending };
 }
 
 /** Asks for confirmation, then deletes visuels by filename. `onRemoved` runs once they are gone. */
@@ -89,6 +103,7 @@ type Props = {
   selected: Set<string>;
   referenceIds: string[];
   labels: LabelInfo[];
+  folders: CollectionIndex;
   bulk: ReturnType<typeof useBulkEdit>;
   removing: boolean;
   onRemove: (names: string[]) => Promise<void>;
@@ -96,7 +111,7 @@ type Props = {
 };
 
 /** Floating bar over the selected visuels: deadline, tags, delete. */
-export function SelectionBar({ selected, referenceIds, labels, bulk, removing, onRemove, onClear }: Props) {
+export function SelectionBar({ selected, referenceIds, labels, folders, bulk, removing, onRemove, onClear }: Props) {
   return (
     <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-xl border border-line-strong bg-bar px-4 py-2.5 text-sm text-white shadow-float md:left-[calc(256px+3.5rem)]" role="region" aria-label="Actions sur la sélection">
       <span className="font-medium">{plural(selected.size, "sélectionné")}</span>
@@ -128,6 +143,22 @@ export function SelectionBar({ selected, referenceIds, labels, bulk, removing, o
         <button type="button" className="h-9 rounded-md px-3 text-[13.5px] text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => bulk.applyTags("remove")} disabled={bulk.tagsBusy || !splitTags(bulk.tag).length}>
           Retirer
         </button>
+      </span>
+      <span className="flex items-center gap-2">
+        <label htmlFor="bulk-collection" className="text-white/70">Classer dans</label>
+        <select
+          id="bulk-collection"
+          value=""
+          disabled={bulk.collectionBusy}
+          onChange={(event) => bulk.applyCollection(event.target.value === "none" ? null : event.target.value)}
+          className="h-9 max-w-48 rounded-md border border-white/20 bg-white/10 px-2 text-white [color-scheme:dark]"
+        >
+          <option value="" disabled>Choisir…</option>
+          <option value="none">Aucune (non classé)</option>
+          {[...folders.byId.keys()].map((id) => ({ id, path: folders.path(id) })).sort((a, b) => a.path.localeCompare(b.path, "fr", { numeric: true })).map((folder) => (
+            <option key={folder.id} value={folder.id}>{folder.path}</option>
+          ))}
+        </select>
       </span>
       {LABELS_ENABLED ? <ContentTagger labels={labels} images={{ referenceIds }} dark /> : null}
       <button type="button" className="h-9 rounded-md px-3 text-[13.5px] text-[#f4b3a8] hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" disabled={removing} onClick={() => void onRemove([...selected])}>

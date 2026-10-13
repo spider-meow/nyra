@@ -67,7 +67,7 @@ share of its budget) and exits 1 naming the chunk that went over.
 |---|---|---|
 | `firstLoadGzipKB`: every chunk of `index.html` | 210 | 191.4 |
 | `entryGzipKB`: the entry chunk alone | 24 | 21.9 |
-| `lazyChunkGzipKB`: the largest page chunk | 11.5 | 9.5 |
+| `lazyChunkGzipKB`: the largest page chunk | 15 | 13.5 (Library, with collections) |
 | `sentryGzipKB`: the Sentry chunk (lazy, off the critical path) | 68 | 61.7 |
 
 Each limit is the measure plus about 10%, except the page budget (about 20%:

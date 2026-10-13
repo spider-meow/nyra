@@ -10,6 +10,7 @@ import type {
   Hit,
   ImportRow,
   Job,
+  Collection,
   LibraryItem,
   Matches,
   Member,
@@ -79,11 +80,12 @@ const isLibraryItem = (value: unknown): value is LibraryItem =>
   isStatus(value.status) &&
   typeof value.credit === "string" && typeof value.notes === "string" &&
   Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string") &&
+  (value.collection_id === null || typeof value.collection_id === "string") &&
   typeof value.indexed === "boolean" && typeof value.compared === "boolean";
 
-type LibraryAnswer = { items: LibraryItem[]; indexing: boolean };
+type LibraryAnswer = { items: LibraryItem[]; collections: Collection[]; indexing: boolean };
 const isLibraryAnswer = (value: unknown): value is LibraryAnswer =>
-  isRecord(value) && typeof value.indexing === "boolean" && Array.isArray(value.items) && value.items.every(isLibraryItem);
+  isRecord(value) && typeof value.indexing === "boolean" && Array.isArray(value.items) && value.items.every(isLibraryItem) && Array.isArray(value.collections);
 
 export function useOverview() {
   const { apiPath, brand } = useOrg();
@@ -395,7 +397,7 @@ export function useReview() {
  * it runs and a summary when it's done. Rows appear in the library as each
  * batch lands; closing the tab mid-way asks first.
  */
-export function useReferenceUpload() {
+export function useReferenceUpload(collectionId?: string) {
   const { apiPath, brand } = useOrg();
   const invalidate = useInvalidate();
   const forgetImages = useForgetImages();
@@ -418,7 +420,7 @@ export function useReferenceUpload() {
     let done = 0;
     try {
       for (const batch of batches(files)) {
-        await sendBatch(apiPath("/library/upload"), batch, result, rights);
+        await sendBatch(apiPath("/library/upload"), batch, result, rights, collectionId);
         done += batch.length;
         setProgress({ done, total });
         if (total > 1) toast.update(id, { message: `Envoi des visuels · ${done} sur ${total}`, progress: done / total });
@@ -460,6 +462,22 @@ export function useLibraryMutations() {
     setTags: useMutation({
       mutationFn: (input: { filenames: string[]; add?: string[]; remove?: string[] }) =>
         api.post<{ updated: number }>(apiPath("/library/tags"), input),
+      onSuccess: () => invalidate("library"),
+    }),
+    addCollection: useMutation({
+      mutationFn: (input: { name: string; parent_id: string | null }) => api.post<{ collection: Collection }>(apiPath("/collections"), input),
+      onSuccess: () => invalidate("library"),
+    }),
+    renameCollection: useMutation({
+      mutationFn: (input: { id: string; name: string }) => api.put(apiPath(`/collections/${input.id}`), { name: input.name }),
+      onSuccess: () => invalidate("library"),
+    }),
+    removeCollection: useMutation({
+      mutationFn: (id: string) => api.del(apiPath(`/collections/${id}`)),
+      onSuccess: () => invalidate("library"),
+    }),
+    fileInCollection: useMutation({
+      mutationFn: (input: { filenames: string[]; collection_id: string | null }) => api.post<{ updated: number }>(apiPath("/library/collection"), input),
       onSuccess: () => invalidate("library"),
     }),
     importCsv: useMutation({

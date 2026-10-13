@@ -20,6 +20,7 @@ from nyra.refs import RefValidationError, change_tags, normalize_tags, parse_rig
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
 from .. import storage as cloud_storage
+from .collections import collection_json, require_collection
 from .common import (
     BRAND,
     MAX_UPLOAD_BYTES,
@@ -79,6 +80,7 @@ def library(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
     # Nothing is signed here: thumbnails come from `library/thumbs`, only for the cards on screen.
     with cloud_db.connect(ctx.settings.database_url) as conn:
         rows = cloud_db.list_references(conn, scope.brand_id)
+        collections = cloud_db.list_collections(conn, scope.brand_id)
         indexing = active_jobs(conn, scope.brand_id, ("index",))
     today = datetime.now(timezone.utc).date()
     items = []
@@ -95,12 +97,13 @@ def library(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
             "credit": row["credit"] or "",
             "notes": row["notes"] or "",
             "tags": list(row["tags"]),
+            "collection_id": str(row["collection_id"]) if row["collection_id"] else None,
             "width": row["width"],
             "height": row["height"],
             "indexed": bool(row["embedded"]),
             "compared": row["compared_at"] is not None,
         })
-    return {"items": items, "indexing": indexing}
+    return {"items": items, "collections": [collection_json(row) for row in collections], "indexing": indexing}
 
 
 @router.post(f"{BRAND}/library/thumbs")
@@ -185,6 +188,7 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
 
 @router.post(f"{BRAND}/library/upload")
 def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unlimited_rights: bool = Form(False),
+           collection_id: Optional[uuid.UUID] = Form(None),
            scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """Add visuals. A common expiry date (or unlimited rights) applies to these files only, replaced ones included;
     without one, a replaced visual keeps its own."""
@@ -194,6 +198,9 @@ def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unl
         raise HTTPException(status_code=400, detail="Aucun fichier.")
     if len(files) > MAX_FILES_PER_UPLOAD:
         raise HTTPException(status_code=400, detail=f"{MAX_FILES_PER_UPLOAD} fichiers au plus par envoi.")
+    if collection_id:
+        with cloud_db.connect(ctx.settings.database_url) as conn:
+            require_collection(conn, scope.brand_id, collection_id)
     client = ctx.settings.storage_client()
     saved: list[str] = []
     replaced: list[str] = []  # also in `saved`: a reference of that name was already in the library
@@ -220,6 +227,8 @@ def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unl
     job = None
     if saved:
         with cloud_db.connect(ctx.settings.database_url) as conn:
+            if collection_id:  # a replaced visual moves too: the person dropped it in that collection
+                cloud_db.set_reference_collection(conn, scope.brand_id, saved, collection_id)
             job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind="index",
                                      created_by=scope.member.user_id)
     return {"saved": saved, "replaced": replaced, "failed": failed, "job": job}
