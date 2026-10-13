@@ -181,7 +181,7 @@ export function SetPassword() {
           <FieldLabel htmlFor="new-password" hint={`${password.length}/10 caractères minimum`}>Nouveau mot de passe</FieldLabel>
           <PasswordInput id="new-password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
           <Suspense fallback={null}>
-            <PasswordStrength password={password} userInputs={(auth.email ?? "").split(/[@.]/)} />
+            <PasswordStrength password={password} userInputs={auth.email.split(/[@.]/)} />
           </Suspense>
         </div>
         <div>
