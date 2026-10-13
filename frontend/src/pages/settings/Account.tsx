@@ -1,11 +1,11 @@
 import { useState, type FormEvent } from "react";
 import { useToast } from "../../components/feedback";
-import { Button, Card, FieldLabel, Input } from "../../components/ui";
+import { Button, Card, FieldLabel, PasswordInput } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useOrg } from "../../lib/org";
 
-const MIN_PASSWORD = 8;
+const MIN_PASSWORD = 10;
 
 function ChangePassword() {
   const auth = useAuth();
@@ -31,7 +31,7 @@ function ChangePassword() {
     <form className="mt-5 flex max-w-md flex-wrap items-end gap-3" onSubmit={(event) => void submit(event)}>
       <div className="min-w-56 flex-1">
         <FieldLabel htmlFor="new-password" hint={`${MIN_PASSWORD} caractères au moins`}>Nouveau mot de passe</FieldLabel>
-        <Input id="new-password" type="password" autoComplete="new-password" minLength={MIN_PASSWORD} value={password} onChange={(event) => setPassword(event.target.value)} />
+        <PasswordInput id="new-password" autoComplete="new-password" minLength={MIN_PASSWORD} value={password} onChange={(event) => setPassword(event.target.value)} />
       </div>
       <Button type="submit" loading={saving} disabled={password.length < MIN_PASSWORD}>Changer</Button>
     </form>

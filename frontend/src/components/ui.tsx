@@ -238,6 +238,28 @@ export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputE
   return <input ref={ref} className={cx(fieldClass, className)} {...rest} />;
 });
 
+/** A password field with an eye button that shows or hides what is typed. */
+export const PasswordInput = forwardRef<HTMLInputElement, Omit<InputHTMLAttributes<HTMLInputElement>, "type">>(function PasswordInput(
+  { className, ...rest },
+  ref,
+) {
+  const [shown, setShown] = useState(false);
+  return (
+    <div className="relative">
+      <input ref={ref} type={shown ? "text" : "password"} className={cx(fieldClass, "pr-11", className)} {...rest} />
+      <button
+        type="button"
+        className="absolute inset-y-0 right-0 grid w-10 place-items-center text-muted hover:text-ink focus-visible:text-ink"
+        aria-label={shown ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+        aria-pressed={shown}
+        onClick={() => setShown(!shown)}
+      >
+        <Icon name={shown ? "eyeOff" : "eye"} size={18} />
+      </button>
+    </div>
+  );
+});
+
 export function Checkbox(props: { checked: boolean; onChange: (value: boolean) => void; label: ReactNode; disabled?: boolean; hint?: ReactNode }) {
   return (
     <label className="flex items-start gap-2.5 text-sm">

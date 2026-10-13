@@ -3,7 +3,7 @@ import { createContext, useContext, useState, type FormEvent, type ReactNode } f
 import { Link, Navigate, Outlet, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
 import { Logo } from "../components/Logo";
-import { Button, Card, FieldLabel, Input, Spinner } from "../components/ui";
+import { Button, Card, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
 import { api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { OrgProvider, brandLink, useMe, useOrganizations } from "../lib/org";
@@ -126,7 +126,7 @@ function LoginForm(props: LoginFormProps) {
       {mode === "password" ? (
         <div>
           <FieldLabel htmlFor="password">Mot de passe</FieldLabel>
-          <Input id="password" type="password" autoComplete="current-password" required value={props.password} onChange={(event) => props.onPassword(event.target.value)} />
+          <PasswordInput id="password" autoComplete="current-password" required value={props.password} onChange={(event) => props.onPassword(event.target.value)} />
         </div>
       ) : null}
       {props.error ? <p className="text-sm text-expired" role="alert">{props.error}</p> : null}
@@ -177,11 +177,11 @@ export function SetPassword() {
       <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div>
           <FieldLabel htmlFor="new-password" hint="10 caractères minimum">Nouveau mot de passe</FieldLabel>
-          <Input id="new-password" type="password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+          <PasswordInput id="new-password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
         </div>
         <div>
           <FieldLabel htmlFor="confirm-password">Confirmation</FieldLabel>
-          <Input id="confirm-password" type="password" autoComplete="new-password" required value={confirm} onChange={(event) => setConfirm(event.target.value)} />
+          <PasswordInput id="confirm-password" autoComplete="new-password" required value={confirm} onChange={(event) => setConfirm(event.target.value)} />
         </div>
         {error ? <p className="text-sm text-expired" role="alert">{error}</p> : null}
         <Button type="submit" variant="primary" size="lg" disabled={pending}>{pending ? "Enregistrement…" : "Enregistrer et continuer"}</Button>
