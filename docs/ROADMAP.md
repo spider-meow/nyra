@@ -11,7 +11,7 @@ Légende : `[ ]` à faire · `[~]` en cours · `[x]` fait.
 Ce qui manque pour présenter Nyra comme un service n'est pas la détection
 (solide, voir `MATCHING.md`) mais **la boucle qui rend le produit utile sans
 qu'on y pense** : aujourd'hui il faut se connecter et cliquer (audit du
-29 septembre, `AUDIT_PRODUIT.md`). Ordre proposé, du plus décisif au moins :
+29 septembre, `archive/AUDIT_PRODUIT.md`, archivé). Ordre proposé, du plus décisif au moins :
 
 1. **La boucle automatique** (idée 3) : le produit vient à l'utilisateur.
 2. **La valeur juridique** (idée 4) : de quoi demander un retrait.
@@ -231,7 +231,7 @@ image dont on a oublié de saisir la date, et fausse le suivi.
 
 Limitation de débit sur l'API, tests cloud en CI sur une vraie base, vraie
 adresse de contact du robot dans `config.yaml`, politique de conservation des
-images (`AUDIT_PRODUIT.md`, §3.2).
+images (`archive/AUDIT_PRODUIT.md`, archivé, §3.2).
 
 ## Propositions à discuter
 
