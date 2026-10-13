@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { useConfirm, useToast } from "../../components/feedback";
-import { Button, Card, FieldLabel, Input } from "../../components/ui";
+import { Button, FieldLabel, Input, SettingsBlock } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { brandLink, useOrg } from "../../lib/org";
 import { useBrandMutations } from "../../lib/queries";
@@ -38,15 +38,11 @@ export function Brands() {
   const { rename, save } = useBrandActions(editing, setEditing);
 
   return (
-    <Card padded={false}>
-      <div className="px-5 pt-5">
-        <h2 className="font-semibold">Marques</h2>
-        <p className="mt-1 max-w-2xl text-sm text-muted">
-          Chaque marque a sa bibliothèque et ses adresses (un site par marché, par exemple). Ses visuels ne sont comparés qu'aux images de ses
-          propres sites.
-        </p>
-      </div>
-      <ul className="mt-3 divide-y divide-line border-t border-line">
+    <SettingsBlock
+      title="Vos marques"
+      description="Chaque marque a sa bibliothèque et ses adresses (un site par marché, par exemple). Ses visuels ne sont comparés qu'aux images de ses propres sites."
+    >
+      <ul className="divide-y divide-line">
         {org.brands.map((brand) => (
           <li key={brand.id} className="flex flex-wrap items-center gap-3 px-5 py-2.5 text-sm">
             {editing?.id === brand.id ? (
@@ -72,7 +68,7 @@ export function Brands() {
         ))}
       </ul>
       {admin ? <NewBrand /> : null}
-    </Card>
+    </SettingsBlock>
   );
 }
 
@@ -111,7 +107,7 @@ function NewBrand() {
 
 /** Deleting a brand, apart from the everyday settings: it cannot be undone. */
 export function DeleteBrands() {
-  const { org, brand: current } = useOrg();
+  const { admin, org, brand: current } = useOrg();
   const { remove } = useBrandMutations();
   const navigate = useNavigate();
   const confirm = useConfirm();
@@ -143,15 +139,14 @@ export function DeleteBrands() {
     });
   }
 
+  if (!admin) return null;
   return (
-    <Card padded={false}>
-      <div className="px-5 pt-5">
-        <h2 className="font-semibold">Supprimer une marque</h2>
-        <p className="mt-1 max-w-2xl text-sm text-muted">
-          Efface sa bibliothèque, ses adresses, les images lues, les décisions et les rapports. Les autres marques ne sont pas touchées. Impossible à annuler.
-        </p>
-      </div>
-      <ul className="mt-3 divide-y divide-line border-t border-line">
+    <SettingsBlock
+      danger
+      title="Zone dangereuse"
+      description="Supprimer une marque efface sa bibliothèque, ses adresses, les images lues, les décisions et les rapports. Les autres marques ne sont pas touchées. Impossible à annuler."
+    >
+      <ul className="divide-y divide-line">
         {org.brands.map((brand) => (
           <li key={brand.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
             <span className="min-w-0 flex-1 truncate font-medium">{brand.name}</span>
@@ -161,6 +156,6 @@ export function DeleteBrands() {
           </li>
         ))}
       </ul>
-    </Card>
+    </SettingsBlock>
   );
 }

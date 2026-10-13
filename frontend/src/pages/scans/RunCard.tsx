@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useToast, type Toaster } from "../../components/feedback";
-import { Button, Card, Checkbox, FieldLabel, Input } from "../../components/ui";
+import { Button, Checkbox, FieldLabel, Input } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { approxDuration, hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -27,7 +27,7 @@ function compareOutcome(toast: Toaster) {
   };
 }
 
-/** Starts a read of the ticked addresses, or a comparison of what was already read. */
+/** The page's main action, on top: read the ticked addresses, or compare what was already read. Options stay folded. */
 export function RunCard(props: { list: Site[]; selected: Site[] }) {
   const { admin } = useOrg();
   const { list, selected } = props;
@@ -55,32 +55,41 @@ export function RunCard(props: { list: Site[]; selected: Site[] }) {
   }
 
   if (!admin || !list.length) return null;
+  const label = busy
+    ? "Une tâche est en cours"
+    : !selected.length
+      ? "Cochez une adresse"
+      : list.length === 1
+        ? "Lancer la lecture"
+        : `Lire ${plural(selected.length, "adresse")}`;
   return (
-    <Card className="mb-6">
-      <form className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_240px]" onSubmit={submit}>
-        <div className="grid content-start gap-2">
-          <h2 className="mb-1 font-semibold">Lire</h2>
-          <Checkbox checked={thenMatch} onChange={setThenMatch} label="Comparer à la bibliothèque dès la fin de la lecture" />
-          <Checkbox
-            checked={fresh}
-            onChange={setFresh}
-            label="Relire aussi les pages déjà lues"
-            hint="Sinon, seules les pages nouvelles sont lues : plus rapide, mais une image changée sur une page connue passe inaperçue."
-          />
-        </div>
-        <div className="grid content-start gap-4">
+    <form className="mb-6 rounded-xl border border-line bg-paper px-5 py-4" onSubmit={submit}>
+      <div className="flex flex-wrap items-center gap-3">
+        <Button type="submit" variant="primary" loading={start.isPending && start.variables?.kind === "crawl"} disabled={busy || start.isPending || noLibrary || !selected.length}>
+          {label}
+        </Button>
+        <Button onClick={compareNow} loading={start.isPending && start.variables?.kind === "match"} disabled={busy || start.isPending || !overview.data?.stats.site_images}>
+          Comparer sans relire
+        </Button>
+        {estimate.data && selected.length ? <EstimateLine estimate={estimate.data} sites={selected} thenMatch={thenMatch} /> : null}
+      </div>
+      {noLibrary ? <p className="mt-2 text-xs text-muted">Ajoutez d'abord des visuels à la bibliothèque.</p> : null}
+      <details className="mt-3">
+        <summary className="w-fit cursor-pointer text-sm text-muted hover:text-ink">Options de lecture</summary>
+        <div className="mt-3 grid gap-5 sm:grid-cols-2">
+          <div className="grid content-start gap-2">
+            <Checkbox checked={thenMatch} onChange={setThenMatch} label="Comparer à la bibliothèque dès la fin de la lecture" />
+            <Checkbox
+              checked={fresh}
+              onChange={setFresh}
+              label="Relire aussi les pages déjà lues"
+              hint="Sinon, seules les pages nouvelles sont lues : plus rapide, mais une image changée sur une page connue passe inaperçue."
+            />
+          </div>
           <MaxPages value={maxPages} onChange={setMaxPages} defaults={defaults} />
-          <Button type="submit" variant="primary" loading={start.isPending && start.variables?.kind === "crawl"} disabled={busy || start.isPending || noLibrary || !selected.length}>
-            {busy ? "Une tâche est en cours" : list.length === 1 ? "Lancer la lecture" : `Lire ${plural(selected.length, "adresse")}`}
-          </Button>
-          <Button onClick={compareNow} loading={start.isPending && start.variables?.kind === "match"} disabled={busy || start.isPending || !overview.data?.stats.site_images}>
-            Comparer sans relire
-          </Button>
-          {estimate.data ? <EstimateLine estimate={estimate.data} sites={selected} thenMatch={thenMatch} /> : null}
-          {noLibrary ? <p className="text-xs text-muted">Ajoutez d'abord des visuels à la bibliothèque.</p> : null}
         </div>
-      </form>
-    </Card>
+      </details>
+    </form>
   );
 }
 
@@ -109,9 +118,9 @@ function EstimateLine(props: { estimate: CrawlEstimate; sites: Site[]; thenMatch
   const known = sites.filter((site) => estimate.sites[site.id]);
   const unknown = sites.filter((site) => !estimate.sites[site.id]);
   const seconds = known.reduce((sum, site) => sum + (estimate.sites[site.id]?.seconds ?? 0), 0) + (estimate.compare_seconds ?? 0);
-  if (!known.length) return <p className="text-xs text-muted">Durée inconnue : pas encore assez de lectures pour la prévoir. Elle le sera après la première.</p>;
+  if (!known.length) return <p className="min-w-48 flex-1 text-xs text-muted">Durée inconnue : pas encore assez de lectures pour la prévoir. Elle le sera après la première.</p>;
   return (
-    <p className="text-xs text-muted">
+    <p className="min-w-48 flex-1 text-xs text-muted">
       Durée estimée : {unknown.length ? "au moins " : "environ "}{approxDuration(seconds)}, d'après les dernières lectures.
       {unknown.length ? ` Sans historique : ${unknown.map((site) => site.label || hostOf(site.url)).join(", ")}.` : ""}
       {props.thenMatch && estimate.compare_seconds === null ? " La comparaison n'est pas comptée (jamais mesurée)." : ""}

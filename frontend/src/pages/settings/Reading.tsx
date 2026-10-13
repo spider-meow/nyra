@@ -61,7 +61,7 @@ function Access(props: { form: OverridesForm }) {
         label="Respecter les consignes du site (robots.txt)"
         hint="À ne décocher que pour un site dont vous avez l'autorisation explicite."
       />
-      <details className="mt-1 max-w-xl rounded-xl border border-ink px-4 py-3">
+      <details className="mt-1 max-w-xl rounded-xl border border-line-strong px-4 py-3">
         <summary className="cursor-pointer text-sm font-medium">Un contrôle d'âge qui bloque quand même ?</summary>
         <div className="mt-3">
           <FieldLabel htmlFor="crawl.pre_actions" hint="un sélecteur CSS par ligne">Éléments à cliquer sur chaque page</FieldLabel>
@@ -84,10 +84,8 @@ export function Reading(props: { data: Settings }) {
   const form = useOverridesForm(props.data);
   const pace = currentPace(form);
   return (
-    <Card>
-      <h2 className="font-semibold">Lecture des sites</h2>
-      <p className="mt-1 max-w-2xl text-sm text-muted">Comment Nyra parcourt vos sites pour y trouver les images. Le changement s'applique à la prochaine lecture.</p>
-      <div className="mt-4">
+    <Card tone="quiet">
+      <div>
         <Segmented<Pace> label="Vitesse de lecture" value={pace as Pace} options={PACES} onChange={(value) => pick(form, value)} />
       </div>
       <p className="mt-3 text-sm">{pace === "custom" ? "Personnalisé : ces délais ont été réglés à la main." : PACES.find((item) => item.value === pace)?.effect}</p>

@@ -1,5 +1,5 @@
 import { useToast } from "../../components/feedback";
-import { Button, Card, Thumb } from "../../components/ui";
+import { Button, SettingsBlock, Thumb } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDate, hostOf } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -13,16 +13,12 @@ export function Exclusions() {
   const toast = useToast();
   const items = exclusions.data?.exclusions ?? [];
   return (
-    <Card padded={false}>
-      <div className="px-5 pt-5">
-        <h2 className="font-semibold">Images exclues{org.brands.length > 1 ? ` · ${brand.name}` : ""}</h2>
-        <p className="mt-1 max-w-2xl text-sm text-muted">
-          Faux positifs récurrents (logos, visuels génériques) qui ne sont plus jamais proposés, copies proches comprises.
-          On exclut une image depuis l'écran « À traiter ».
-        </p>
-      </div>
+    <SettingsBlock
+      title={`Images exclues${org.brands.length > 1 ? ` · ${brand.name}` : ""}`}
+      description="Faux positifs récurrents (logos, visuels génériques) qui ne sont plus jamais proposés, copies proches comprises. On exclut une image depuis l'écran « À traiter »."
+    >
       {items.length ? (
-        <ul className="mt-3 divide-y divide-line border-t border-line">
+        <ul className="divide-y divide-line">
           {items.map((item) => (
             <li key={item.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
               <Thumb src={item.thumb_url} size={40} />
@@ -53,8 +49,8 @@ export function Exclusions() {
           ))}
         </ul>
       ) : (
-        <p className="px-5 pt-2 pb-5 text-sm text-muted">Aucune image exclue.</p>
+        <p className="px-5 py-4 text-sm text-muted">Aucune image exclue.</p>
       )}
-    </Card>
+    </SettingsBlock>
   );
 }

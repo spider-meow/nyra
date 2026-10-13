@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useToast } from "../../components/feedback";
 import { Button, Card } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
@@ -23,11 +23,18 @@ function ChangePassword() {
     }
   }
 
+  return <Button loading={sending} onClick={() => void send()}>Recevoir un lien</Button>;
+}
+
+function Row(props: { label: string; hint?: string; children: ReactNode }) {
   return (
-    <div className="mt-5">
-      <p className="text-sm text-muted">Pour changer de mot de passe, nous vous envoyons un lien par e-mail.</p>
-      <Button className="mt-3" loading={sending} onClick={() => void send()}>Recevoir un lien</Button>
-    </div>
+    <li className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-sm">
+      <div>
+        <p className="font-medium">{props.label}</p>
+        {props.hint ? <p className="mt-0.5 text-muted">{props.hint}</p> : null}
+      </div>
+      {props.children}
+    </li>
   );
 }
 
@@ -36,13 +43,13 @@ export function Account() {
   const { admin, org } = useOrg();
   const auth = useAuth();
   return (
-    <Card>
-      <h2 className="font-semibold">Mon compte</h2>
-      <p className="mt-1 text-sm text-muted">
-        {auth.email} · {admin ? `administrateur de ${org.name}` : `lecture et validation, ${org.name}`}
-      </p>
-      <ChangePassword />
-      <Button className="mt-6" onClick={() => void auth.signOut()}>Se déconnecter</Button>
+    <Card padded={false} tone="quiet">
+      <ul className="divide-y divide-line">
+        <Row label="Adresse e-mail"><span className="text-muted">{auth.email}</span></Row>
+        <Row label="Droits"><span className="text-muted">{admin ? `Administrateur de ${org.name}` : `Lecture et validation, ${org.name}`}</span></Row>
+        <Row label="Mot de passe" hint="Nous vous envoyons un lien par e-mail pour en choisir un nouveau."><ChangePassword /></Row>
+        <Row label="Session"><Button onClick={() => void auth.signOut()}>Se déconnecter</Button></Row>
+      </ul>
     </Card>
   );
 }

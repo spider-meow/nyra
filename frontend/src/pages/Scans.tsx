@@ -22,14 +22,16 @@ export function Scans() {
     setSkipped(next);
   }
 
+  const toggleAll = (on: boolean) => setSkipped(on ? new Set() : new Set(list.map((site) => site.id)));
+
   return (
     <>
       <PageHeader
         title="Sites et lectures"
-        description={`Les adresses de ${brand.name}, un site par marché par exemple. Nyra les parcourt comme un visiteur (sitemaps puis liens internes, bandeaux cookies et contrôle d'âge compris), récupère chaque image et la compare à la bibliothèque de la marque.`}
+        description={`Les adresses de ${brand.name}, un site par marché par exemple. Nyra les parcourt comme un visiteur et compare chaque image à la bibliothèque de la marque.`}
       />
-      <SitesCard sites={sites} skipped={skipped} onToggle={toggle} />
       <RunCard list={list} selected={selected} />
+      <SitesCard sites={sites} skipped={skipped} onToggle={toggle} onToggleAll={toggleAll} />
       <h2 className="mb-3 font-semibold">Historique</h2>
       <ScanHistory />
     </>

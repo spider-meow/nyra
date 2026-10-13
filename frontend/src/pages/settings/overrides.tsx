@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useToast } from "../../components/feedback";
-import { Button } from "../../components/ui";
+import { Button, cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useSaveSettings } from "../../lib/queries";
 import type { Settings } from "../../types";
@@ -70,7 +70,13 @@ export function SaveBar(props: { form: OverridesForm; keys: string[] }) {
   const { form } = props;
   const customised = props.keys.some((name) => form.text(name) !== "");
   return (
-    <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+    <div
+      className={cx(
+        "mt-5 flex flex-wrap items-center gap-2",
+        form.dirty ? "sticky bottom-4 z-10 rounded-xl border border-line-strong bg-paper px-4 py-3 shadow-lg" : "border-t border-line pt-4",
+      )}
+    >
+      {form.dirty ? <span className="mr-auto text-sm text-muted">Modifications non enregistrées</span> : null}
       <Button variant="primary" loading={form.saving} disabled={!form.dirty} onClick={form.submit}>Enregistrer</Button>
       <Button disabled={!form.dirty} onClick={form.cancel}>Annuler les modifications</Button>
       <Button

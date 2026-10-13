@@ -40,7 +40,7 @@ function Advanced(props: { form: OverridesForm }) {
     </div>
   );
   return (
-    <details className="mt-5 rounded-xl border border-ink px-4 py-3">
+    <details className="mt-5 rounded-xl border border-line-strong px-4 py-3">
       <summary className="cursor-pointer text-sm font-medium">Réglages avancés</summary>
       <p className="mt-2 max-w-2xl text-sm text-muted">Les valeurs exactes derrière les trois niveaux. À toucher seulement si vous savez ce que vous faites.</p>
       <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -72,10 +72,8 @@ export function Detection(props: { data: Settings }) {
   const form = useOverridesForm(props.data);
   const level = currentLevel(form);
   return (
-    <Card>
-      <h2 className="font-semibold">Détection</h2>
-      <p className="mt-1 max-w-2xl text-sm text-muted">À partir de quelle ressemblance Nyra vous propose une image. Le changement s'applique à la prochaine comparaison.</p>
-      <div className="mt-4">
+    <Card tone="quiet">
+      <div>
         <Segmented<Level> label="Niveau de détection" value={level as Level} options={LEVELS} onChange={(value) => pick(form, value)} />
       </div>
       <p className="mt-3 text-sm">

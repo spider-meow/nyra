@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useSearchParams } from "react-router";
+import { Icon, type IconName } from "../components/icons";
 import { cx, EmptyState, PageHeader, Skeleton } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useOrg } from "../lib/org";
@@ -12,17 +13,46 @@ import { Exclusions } from "./settings/Exclusions";
 import { Reading } from "./settings/Reading";
 import { Team } from "./settings/Team";
 
-type Section = { id: string; label: string; adminOnly?: boolean; render: (data: SettingsData) => ReactNode };
-
-const stack = (...children: ReactNode[]) => <div className="grid gap-4">{children}</div>;
+type Section = { id: string; label: string; icon: IconName; description: string; adminOnly?: boolean; render: (data: SettingsData) => ReactNode };
 
 const SECTIONS: Section[] = [
-  { id: "marques", label: "Marques", render: () => stack(<Brands />, <Exclusions />) },
-  { id: "equipe", label: "Équipe", render: () => <Team /> },
-  { id: "compte", label: "Mon compte", render: () => <Account /> },
-  { id: "detection", label: "Détection", adminOnly: true, render: (data) => <Detection data={data} /> },
-  { id: "lecture", label: "Lecture des sites", adminOnly: true, render: (data) => <Reading data={data} /> },
-  { id: "donnees", label: "Données", adminOnly: true, render: () => <DeleteBrands /> },
+  {
+    id: "marques",
+    label: "Marques",
+    icon: "library",
+    description: "Les marques suivies par Nyra, les images qu'on a écartées, et la suppression d'une marque.",
+    render: () => (
+      <>
+        <Brands />
+        <Exclusions />
+        <DeleteBrands />
+      </>
+    ),
+  },
+  {
+    id: "equipe",
+    label: "Équipe",
+    icon: "users",
+    description: "Un administrateur gère la bibliothèque, les lectures et les réglages. Les autres consultent et valident les correspondances.",
+    render: () => <Team />,
+  },
+  { id: "compte", label: "Mon compte", icon: "user", description: "Votre adresse, vos droits et votre accès.", render: () => <Account /> },
+  {
+    id: "detection",
+    label: "Détection",
+    icon: "scan",
+    description: "À partir de quelle ressemblance Nyra vous propose une image. Le changement s'applique à la prochaine comparaison.",
+    adminOnly: true,
+    render: (data) => <Detection data={data} />,
+  },
+  {
+    id: "lecture",
+    label: "Lecture des sites",
+    icon: "eye",
+    description: "Comment Nyra parcourt vos sites pour y trouver les images. Le changement s'applique à la prochaine lecture.",
+    adminOnly: true,
+    render: (data) => <Reading data={data} />,
+  },
 ];
 
 function SectionLink(props: { section: Section; active: boolean; onPick: () => void }) {
@@ -32,10 +62,11 @@ function SectionLink(props: { section: Section; active: boolean; onPick: () => v
       aria-current={props.active ? "page" : undefined}
       onClick={props.onPick}
       className={cx(
-        "h-9 rounded-lg px-3 text-left text-sm whitespace-nowrap",
-        props.active ? "bg-yellow font-medium text-ink" : "text-muted hover:text-ink",
+        "flex h-9 items-center gap-2.5 rounded-lg px-3 text-left text-sm whitespace-nowrap",
+        props.active ? "bg-sunk font-medium text-ink" : "text-muted hover:bg-sunk hover:text-ink",
       )}
     >
+      <Icon name={props.section.icon} size={16} className={props.active ? "text-ink" : "text-faint"} />
       {props.section.label}
     </button>
   );
@@ -46,7 +77,7 @@ function Nav(props: { sections: Section[]; activeId: string; onPick: (id: string
   const admins = props.sections.filter((section) => section.adminOnly);
   const link = (section: Section) => <SectionLink key={section.id} section={section} active={section.id === props.activeId} onPick={() => props.onPick(section.id)} />;
   return (
-    <nav aria-label="Sections des réglages" className="flex gap-1 overflow-x-auto lg:sticky lg:top-6 lg:w-52 lg:shrink-0 lg:flex-col lg:self-start">
+    <nav aria-label="Sections des réglages" className="flex flex-wrap gap-1 lg:sticky lg:top-6 lg:w-52 lg:shrink-0 lg:flex-col lg:flex-nowrap lg:self-start">
       {everyone.map(link)}
       {admins.length ? <p className="hidden px-3 pt-4 pb-1 text-xs font-medium tracking-wide text-faint uppercase lg:block">Administrateurs</p> : null}
       {admins.map(link)}
@@ -69,7 +100,13 @@ export function Settings() {
       <PageHeader title="Réglages" description={`Propres à ${org.name}${org.brands.length > 1 ? ", communs à toutes ses marques" : ""}.`} />
       <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
         <Nav sections={visible} activeId={active.id} onPick={(id) => setParams({ section: id }, { replace: true })} />
-        <div className="min-w-0 flex-1">{active.render(settings.data)}</div>
+        <div className="min-w-0 flex-1">
+          <header className="mb-6">
+            <h2 className="text-lg font-semibold">{active.label}</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted">{active.description}</p>
+          </header>
+          {active.render(settings.data)}
+        </div>
       </div>
     </>
   );

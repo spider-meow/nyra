@@ -198,11 +198,26 @@ export function DecisionBadge(props: { decision: Decision | null }) {
   return <span className={cx("inline-flex rounded-md px-2 py-px text-xs font-medium whitespace-nowrap", decisionTone[props.decision])}>{decisionLabel[props.decision]}</span>;
 }
 
-export function Card(props: { children: ReactNode; className?: string; padded?: boolean }) {
+/** `quiet` is the soft border of the settings; `danger` frames what cannot be undone. */
+export function Card(props: { children: ReactNode; className?: string; padded?: boolean; tone?: "quiet" | "danger" }) {
+  const border = props.tone === "quiet" ? "border-line" : props.tone === "danger" ? "border-expired/40" : "border-ink";
   return (
-    <section className={cx("rounded-xl border border-ink bg-paper", props.padded !== false && "p-6", props.className)}>
+    <section className={cx("rounded-xl border bg-paper", border, props.padded !== false && "p-6", props.className)}>
       {props.children}
     </section>
+  );
+}
+
+/** One block of a settings section: what it is on the left, its controls in a quiet card on the right. */
+export function SettingsBlock(props: { title: ReactNode; description?: ReactNode; children: ReactNode; danger?: boolean }) {
+  return (
+    <div className="grid gap-4 border-t border-line py-8 first:border-t-0 first:pt-0 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-10">
+      <div>
+        <h3 className="font-semibold">{props.title}</h3>
+        {props.description ? <p className="mt-1.5 text-sm leading-relaxed text-muted">{props.description}</p> : null}
+      </div>
+      <Card padded={false} tone={props.danger ? "danger" : "quiet"} className="self-start">{props.children}</Card>
+    </div>
   );
 }
 
