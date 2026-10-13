@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { createContext, useContext, useState, type FormEvent, type ReactNode } from "react";
+import { Suspense, createContext, lazy, useContext, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
 import { Logo } from "../components/Logo";
@@ -8,6 +8,8 @@ import { api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { OrgProvider, brandLink, useMe, useOrganizations } from "../lib/org";
 import type { Brand, Organization } from "../types";
+
+const PasswordStrength = lazy(() => import("../components/PasswordStrength"));
 
 function Centered(props: { title: string; body?: ReactNode; children?: ReactNode }) {
   return (
@@ -178,6 +180,9 @@ export function SetPassword() {
         <div>
           <FieldLabel htmlFor="new-password" hint={`${password.length}/10 caractères minimum`}>Nouveau mot de passe</FieldLabel>
           <PasswordInput id="new-password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+          <Suspense fallback={null}>
+            <PasswordStrength password={password} userInputs={(auth.email ?? "").split(/[@.]/)} />
+          </Suspense>
         </div>
         <div>
           <FieldLabel htmlFor="confirm-password" hint={confirm && password !== confirm ? "ne correspond pas" : undefined}>Confirmation</FieldLabel>

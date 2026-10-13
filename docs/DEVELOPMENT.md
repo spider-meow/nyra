@@ -69,6 +69,7 @@ share of its budget) and exits 1 naming the chunk that went over.
 | `entryGzipKB`: the entry chunk alone | 26.5 | 24.2 (13 Oct) |
 | `lazyChunkGzipKB`: the largest page chunk | 11.5 | 9.5 |
 | `sentryGzipKB`: the Sentry chunk (lazy, off the critical path) | 68 | 61.7 |
+| `passwordMeterGzipKB`: the password strength meter (zxcvbn-ts, lazy, loaded only on the choose-a-password page) | 260 | 235.3 (13 Oct) |
 
 Each limit is the measure plus about 10%, except the page budget (about 20%:
 the largest page, the Library, is the one that grows with features, and 10%
