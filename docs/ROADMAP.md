@@ -239,6 +239,10 @@ images (`AUDIT_PRODUIT.md`, §3.2).
   miniatures des autres recadrages (dépend de l'idée 1).
 - [ ] **Étiquettes dans les rapports** : regrouper ou filtrer le rapport par
   étiquette (dépend de l'idée 2).
+- [x] **Collections dans la bibliothèque** (migration `20261013000021`) : dossiers sur 3 niveaux (une saison, un shooting),
+  un visuel dans une seule collection ; la recherche multi-mots (nom, tags, chemin de collection, crédit) couvre toute
+  la bibliothèque. **Reste** : déplacer une collection, glisser-déposer vers l'arbre, un champ « produit » (aujourd'hui
+  les tags, plus tard les étiquettes de contenu proposées depuis des exemples).
 - [ ] **Recherche par image dans la bibliothèque** : déposer une photo, voir
   les références proches (embeddings déjà disponibles).
 - [ ] **Détection de doublons dans la bibliothèque** : même regroupement que
