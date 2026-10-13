@@ -73,7 +73,7 @@ groupe ne peut pas encore être scindé à la main.
 
 **Désactivée pour l'instant** (9 octobre 2026) : le code est là mais l'API ne s'enregistre qu'avec `NYRA_LABELS=1` et l'interface qu'avec `VITE_LABELS=1`.
 
-**État (9 octobre 2026).** Code écrit et testé (`test_labels.py`, test d'API des étiquettes), pas encore commité ni
+**État (9 octobre 2026).** Code commité (`18101ab`) et testé (`test_labels.py`, test d'API des étiquettes), pas encore
 appliqué sur la base réelle (migration `20261009000020`). Le nom d'une étiquette de contenu se tape dans la barre de
 sélection de la bibliothèque ou de « Droits non vérifiés » : « Étiqueter » pose les exemples, « Pas ça » refuse une
 proposition ; trois exemples suffisent pour que les autres images soient proposées (pointillés et « ? » dans la
@@ -153,7 +153,7 @@ fabriquées, pas de vrais cas de réutilisation ; le rappel réel est inconnu.
 
 **Désactivée pour l'instant** (9 octobre 2026) : le code est là mais l'API ne s'enregistre qu'avec `NYRA_LABELS=1` et l'interface qu'avec `VITE_LABELS=1`.
 
-**État (9 octobre 2026).** Code écrit et testé, pas encore commité ni appliqué sur la base réelle. Quatre types fixes
+**État (9 octobre 2026).** Code commité (`18101ab`) et testé, pas encore appliqué sur la base réelle. Quatre types fixes
 par marque (logo, packshot, pictogramme, autre). Dans « Droits non vérifiés » : bouton « Étiqueter à la main » (une
 image à la fois, touches 1 à 4, images choisies pour être variées, tableau précision/rappel à la fin), boutons de type
 dans la barre de sélection, filtre par type et « Sans type ». L'algorithme propose un type aux autres images (badge en
@@ -190,7 +190,7 @@ découpé » dans `MATCHING.md`) ?
 
 ### [~] 8. Droits illimités (« libre d'usage »)
 
-**État (9 octobre 2026).** Code écrit et testé, pas encore commité ni appliqué sur la base réelle (migration
+**État (9 octobre 2026).** Code commité (`18101ab`) et testé, pas encore appliqué sur la base réelle (migration
 `20261009000019`). Une case « Droits illimités » (fiche, ajout depuis le site, sélection de la bibliothèque) ; dans le
 CSV, le mot `illimité` à la place de la date. Une date et des droits illimités s'excluent (un contrôle en base). Hors
 des urgences et du tableau de bord ; compté à part dans les statistiques. Retrouvée avec certitude (niveau
