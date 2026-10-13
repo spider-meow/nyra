@@ -61,6 +61,17 @@ async function bootstrap(stopped: () => boolean): Promise<Booted | null> {
   }
 }
 
+/** Supabase answers in English; these are the cases a person can run into. */
+const AUTH_ERRORS: [RegExp, string][] = [
+  [/Invalid login credentials/i, "Email ou mot de passe incorrect."],
+  [/after \d+ seconds|rate limit/i, "Trop de demandes. Patientez une minute avant de réessayer."],
+  [/different from the old/i, "Choisissez un mot de passe différent de l'ancien."],
+];
+
+function authError(message: string): Error {
+  return new Error(AUTH_ERRORS.find(([pattern]) => pattern.test(message))?.[1] ?? message);
+}
+
 type Actions = Pick<AuthState, "signIn" | "signOut" | "requestReset" | "setPassword">;
 
 function authActions(client: SupabaseClient | null, onPasswordSet: () => void): Actions {
@@ -68,7 +79,7 @@ function authActions(client: SupabaseClient | null, onPasswordSet: () => void): 
     async signIn(email, password) {
       if (!client) return;
       const { error } = await client.auth.signInWithPassword({ email, password });
-      if (error) throw new Error(error.message === "Invalid login credentials" ? "Email ou mot de passe incorrect." : error.message);
+      if (error) throw authError(error.message);
     },
     async signOut() {
       await client?.auth.signOut();
@@ -78,12 +89,12 @@ function authActions(client: SupabaseClient | null, onPasswordSet: () => void): 
       const { error } = await client.auth.resetPasswordForEmail(email, {
         redirectTo: `${window.location.origin}/mot-de-passe`,
       });
-      if (error) throw new Error(error.message);
+      if (error) throw authError(error.message);
     },
     async setPassword(password) {
       if (!client) return;
       const { error } = await client.auth.updateUser({ password });
-      if (error) throw new Error(error.message);
+      if (error) throw authError(error.message);
       onPasswordSet();
     },
   };

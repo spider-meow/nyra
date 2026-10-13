@@ -26,8 +26,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      # CPU torch keeps the install small. The CLIP end-to-end test
-      # downloads the model weights (~600 MB) once per run.
+      # CPU torch keeps the install small. torchvision comes from the same index:
+      # one from PyPI next to this torch fails on import ("torchvision::nms does not exist").
+      # The CLIP end-to-end test downloads the model weights (~600 MB) once per run.
       - run: pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2" torchvision
       - run: pip install -e ".[worker,dev]"
       - run: ruff check backend

@@ -2,13 +2,35 @@ import { useQuery } from "@tanstack/react-query";
 import { createContext, useContext, type ReactNode } from "react";
 import type { Brand, Organization } from "../types";
 import { api } from "./api";
+import { useAuth } from "./auth";
+import { isRecord, readStored, storageKey, writeStored } from "./storage";
 
+const ORGS_COPY_MAX_AGE_MS = 5 * 60_000;
+const isOrgsCopy = (value: unknown): value is { savedAt: number; answer: Organization[] } =>
+  isRecord(value) && typeof value.savedAt === "number" && Array.isArray(value.answer) && value.answer.every((org) => isRecord(org) && Array.isArray(org.brands));
+
+/**
+ * The organizations (and their brands) decide which page and which requests start, so every request waits for them.
+ * A copy from the last minutes is shown at once and refreshed straight away (`initialDataUpdatedAt: 0`);
+ * the server still checks every request.
+ */
 export function useOrganizations(enabled = true) {
+  const { session } = useAuth();
+  const key = session ? storageKey(session.user.id, "-", "orgs") : "";
   return useQuery({
     queryKey: ["orgs"],
-    queryFn: () => api.get<{ organizations: Organization[] }>("/orgs").then((data) => data.organizations),
+    queryFn: async ({ signal }) => {
+      const { organizations } = await api.get<{ organizations: Organization[] }>("/orgs");
+      if (key && !signal.aborted) writeStored("local", key, { savedAt: Date.now(), answer: organizations });
+      return organizations;
+    },
     enabled,
     staleTime: 5 * 60_000,
+    initialData: () => {
+      const copy = key ? readStored("local", key, isOrgsCopy) : undefined;
+      return copy && Date.now() - copy.savedAt <= ORGS_COPY_MAX_AGE_MS ? copy.answer : undefined;
+    },
+    initialDataUpdatedAt: 0,
   });
 }
 

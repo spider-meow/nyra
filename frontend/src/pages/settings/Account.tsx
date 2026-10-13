@@ -1,40 +1,33 @@
-import { useState, type FormEvent } from "react";
+import { useState } from "react";
 import { useToast } from "../../components/feedback";
-import { Button, Card, FieldLabel, Input } from "../../components/ui";
+import { Button, Card } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { useOrg } from "../../lib/org";
 
-const MIN_PASSWORD = 8;
-
+/** The password is chosen on the page the e-mailed link opens (with its strength meter), never typed here. */
 function ChangePassword() {
   const auth = useAuth();
   const toast = useToast();
-  const [password, setPassword] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    setSaving(true);
+  async function send() {
+    setSending(true);
     try {
-      await auth.setPassword(password);
-      setPassword("");
-      toast.show({ tone: "success", message: "Mot de passe modifié" });
+      await auth.requestReset(auth.email);
+      toast.show({ tone: "success", message: "Lien envoyé", description: `Consultez la messagerie de ${auth.email}.` });
     } catch (error) {
-      toast.show({ tone: "error", message: "Le mot de passe n'a pas été modifié", description: errorMessage(error) });
+      toast.show({ tone: "error", message: "Le lien n'a pas été envoyé", description: errorMessage(error) });
     } finally {
-      setSaving(false);
+      setSending(false);
     }
   }
 
   return (
-    <form className="mt-5 flex max-w-md flex-wrap items-end gap-3" onSubmit={(event) => void submit(event)}>
-      <div className="min-w-56 flex-1">
-        <FieldLabel htmlFor="new-password" hint={`${MIN_PASSWORD} caractères au moins`}>Nouveau mot de passe</FieldLabel>
-        <Input id="new-password" type="password" autoComplete="new-password" minLength={MIN_PASSWORD} value={password} onChange={(event) => setPassword(event.target.value)} />
-      </div>
-      <Button type="submit" loading={saving} disabled={password.length < MIN_PASSWORD}>Changer</Button>
-    </form>
+    <div className="mt-5">
+      <p className="text-sm text-muted">Pour changer de mot de passe, nous vous envoyons un lien par e-mail.</p>
+      <Button className="mt-3" loading={sending} onClick={() => void send()}>Recevoir un lien</Button>
+    </div>
   );
 }
 
