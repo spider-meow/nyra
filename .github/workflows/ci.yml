@@ -28,7 +28,7 @@ jobs:
           cache: pip
       # CPU torch keeps the install small. The CLIP end-to-end test
       # downloads the model weights (~600 MB) once per run.
-      - run: pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
+      - run: pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2" torchvision
       - run: pip install -e ".[worker,dev]"
       - run: ruff check backend
       - run: pytest -q
