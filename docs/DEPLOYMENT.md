@@ -35,9 +35,13 @@ a job lives in its memory.
 3. **Authentication > URL Configuration**: *Site URL* = your public
    address; add `<site>/connexion` and `<site>/mot-de-passe` to the
    redirect URLs (invitation and password-reset links land there).
-4. **Environment**: copy `.env.example` to `.env` and fill it in, including
+4. **Authentication > Emails > Templates**: paste `supabase/templates/recovery.html`
+   (*Reset password*) and `supabase/templates/invite.html` (*Invite user*) with
+   the subjects « Nouveau mot de passe — Nyra » and « Votre accès à Nyra ». The
+   logo is read from `<site>/nyra-logo.png`, so *Site URL* must be public.
+5. **Environment**: copy `.env.example` to `.env` and fill it in, including
    `NYRA_PUBLIC_URL`.
-5. **First organization**:
+6. **First organization**:
 
    ```bash
    docker compose run --rm web nyra cloud-provision-org \

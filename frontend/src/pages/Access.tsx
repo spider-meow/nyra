@@ -1,13 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { createContext, useContext, useState, type FormEvent, type ReactNode } from "react";
+import { Suspense, createContext, lazy, useContext, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
 import { Logo } from "../components/Logo";
-import { Button, Card, FieldLabel, Input, Spinner } from "../components/ui";
+import { Button, Card, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
 import { api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { OrgProvider, brandLink, useMe, useOrganizations } from "../lib/org";
 import type { Brand, Organization } from "../types";
+
+const PasswordStrength = lazy(() => import("../components/PasswordStrength"));
 
 function Centered(props: { title: string; body?: ReactNode; children?: ReactNode }) {
   return (
@@ -71,7 +73,7 @@ export function Login() {
 
   if (mode === "sent") {
     return (
-      <Centered title="Vérifiez votre messagerie" body={`Si un compte existe pour ${email}, un lien pour choisir un nouveau mot de passe vient d'être envoyé.`}>
+      <Centered title="Vérifiez votre messagerie" body={`Si un compte existe pour ${email}, un lien pour choisir un nouveau mot de passe vient d'être envoyé. Pensez à regarder dans vos courriers indésirables.`}>
         <Button className="mt-5 w-full" onClick={() => setMode("password")}>Retour à la connexion</Button>
       </Centered>
     );
@@ -126,7 +128,7 @@ function LoginForm(props: LoginFormProps) {
       {mode === "password" ? (
         <div>
           <FieldLabel htmlFor="password">Mot de passe</FieldLabel>
-          <Input id="password" type="password" autoComplete="current-password" required value={props.password} onChange={(event) => props.onPassword(event.target.value)} />
+          <PasswordInput id="password" autoComplete="current-password" required value={props.password} onChange={(event) => props.onPassword(event.target.value)} />
         </div>
       ) : null}
       {props.error ? <p className="text-sm text-expired" role="alert">{props.error}</p> : null}
@@ -152,7 +154,7 @@ export function SetPassword() {
   if (auth.phase !== "signed-in") {
     return (
       <Centered title="Lien expiré" body="Ce lien n'est plus valide. Demandez-en un nouveau depuis la page de connexion.">
-        <Link to="/connexion" className="mt-5 block text-sm underline">Aller à la connexion</Link>
+        <Button variant="primary" className="mt-5 w-full" onClick={() => navigate("/connexion")}>Demander un nouveau lien</Button>
       </Centered>
     );
   }
@@ -176,12 +178,15 @@ export function SetPassword() {
     <Centered title="Choisissez votre mot de passe" body={`Pour le compte ${auth.email}.`}>
       <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div>
-          <FieldLabel htmlFor="new-password" hint="10 caractères minimum">Nouveau mot de passe</FieldLabel>
-          <Input id="new-password" type="password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+          <FieldLabel htmlFor="new-password" hint={password.length < 10 ? `${password.length}/10 caractères minimum` : undefined}>Nouveau mot de passe</FieldLabel>
+          <PasswordInput id="new-password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
+          <Suspense fallback={null}>
+            <PasswordStrength password={password} userInputs={auth.email.split(/[@.]/)} />
+          </Suspense>
         </div>
         <div>
-          <FieldLabel htmlFor="confirm-password">Confirmation</FieldLabel>
-          <Input id="confirm-password" type="password" autoComplete="new-password" required value={confirm} onChange={(event) => setConfirm(event.target.value)} />
+          <FieldLabel htmlFor="confirm-password" hint={confirm && password !== confirm ? "ne correspond pas" : undefined}>Confirmation</FieldLabel>
+          <PasswordInput id="confirm-password" autoComplete="new-password" required value={confirm} onChange={(event) => setConfirm(event.target.value)} />
         </div>
         {error ? <p className="text-sm text-expired" role="alert">{error}</p> : null}
         <Button type="submit" variant="primary" size="lg" disabled={pending}>{pending ? "Enregistrement…" : "Enregistrer et continuer"}</Button>

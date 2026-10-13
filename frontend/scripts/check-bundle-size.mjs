@@ -41,9 +41,17 @@ const lazy = readdirSync(new URL("assets/", dist))
   .map((name) => measure(`assets/${name}`));
 const isSentry = (chunk) => /^sentry-[\w-]{8}\.js$/.test(chunk.file);
 const sentry = lazy.filter(isSentry);
-const otherLazy = lazy.filter((chunk) => !isSentry(chunk));
+// The password strength meter (zxcvbn-ts word lists), loaded only on the choose-a-password page.
+const isStrength = (chunk) => /^PasswordStrength-[\w-]{8}\.js$/.test(chunk.file);
+const strength = lazy.filter(isStrength);
+const otherLazy = lazy.filter((chunk) => !isSentry(chunk) && !isStrength(chunk));
 if (!sentry.length) {
   console.error("No lazy `sentry-<hash>.js` chunk in dist/assets: the Sentry SDK must be its own chunk, loaded after the page (src/lib/sentry.ts, imported only by src/lib/monitoring.ts), and it is either missing or loaded up front by index.html.");
+  process.exit(1);
+}
+
+if (!strength.length) {
+  console.error("No lazy `PasswordStrength-<hash>.js` chunk in dist/assets: the meter must be loaded with lazy() (src/pages/Access.tsx), not bundled into another file.");
   process.exit(1);
 }
 
@@ -56,6 +64,7 @@ const checks = [
   ["entry chunk", firstLoad[0], firstLoad[0].gzip, budget.entryGzipKB],
   ["largest lazy chunk (a page)", largest(otherLazy), largest(otherLazy).gzip, budget.lazyChunkGzipKB],
   ["Sentry chunk (lazy, off the critical path)", largest(sentry), largest(sentry).gzip, budget.sentryGzipKB],
+  ["password meter chunk (lazy, one page only)", largest(strength), largest(strength).gzip, budget.passwordMeterGzipKB],
 ];
 
 const shareOf = (gzip, limit) => `${Math.round((gzip / limit) * 100)}%`;
@@ -65,6 +74,7 @@ const rows = [
   ...firstLoad.map((chunk) => ["first", chunk, budget.firstLoadGzipKB]),
   ...otherLazy.map((chunk) => ["lazy", chunk, budget.lazyChunkGzipKB]),
   ...sentry.map((chunk) => ["lazy", chunk, budget.sentryGzipKB]),
+  ...strength.map((chunk) => ["lazy", chunk, budget.passwordMeterGzipKB]),
 ];
 for (const [load, chunk, limit] of rows) {
   console.log(`${chunk.file.padEnd(34)}${load.padEnd(8)}${chunk.raw.toFixed(1).padStart(9)}${chunk.gzip.toFixed(1).padStart(9)}${shareOf(chunk.gzip, limit).padStart(15)}`);

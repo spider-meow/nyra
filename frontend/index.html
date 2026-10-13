@@ -7,9 +7,11 @@
     <title>Nyra</title>
     <link rel="icon" href="/nyra-logo.ico" />
     <link rel="apple-touch-icon" href="/nyra-logo.png" />
+    <!-- The public configuration is the first thing the page needs: ask for it now, not once the scripts have run. -->
+    <link rel="preload" href="/api/auth/config" as="fetch" crossorigin="anonymous" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bricolage+Grotesque:wght@800&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Bricolage+Grotesque:wght@800&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" media="print" data-fonts />
   </head>
   <body>
     <div id="root"></div>
