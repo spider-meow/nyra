@@ -10,6 +10,9 @@ Avant d'écrire ou de modifier du code, lire :
 3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) : comment le produit est
    construit.
 
+`docs/archive/` contient des documents périmés, gardés pour mémoire : ne pas
+les lire, ne pas s'y fier, ne pas les mettre à jour.
+
 Avant de déclarer une tâche terminée, ces commandes passent sans
 avertissement :
 
