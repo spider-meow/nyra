@@ -237,6 +237,11 @@ images (`archive/AUDIT_PRODUIT.md`, archivé, §3.2).
 
 - [ ] **Aperçu des occurrences dans la liste** : survol d'une carte groupée =
   miniatures des autres recadrages (dépend de l'idée 1).
+- [ ] **Trier par catégorie de page** : filtrer « À traiter » et « Droits non
+  vérifiés » selon la section du site où l'image se trouve (ex. Louis XIII :
+  `/news` ou `/products`). Piste : le premier segment du chemin de la page
+  d'origine, que le crawl garde déjà ; même mécanique que le filtre par pays
+  (l'étiquette d'un site).
 - [ ] **Étiquettes dans les rapports** : regrouper ou filtrer le rapport par
   étiquette (dépend de l'idée 2).
 - [x] **Collections dans la bibliothèque** (migration `20261013000021`) : dossiers sur 3 niveaux (une saison, un shooting),
