@@ -19,7 +19,7 @@ export default function PasswordStrength(props: { password: string; userInputs?:
   return (
     <div className="mt-2" aria-live="polite">
       <div className="flex gap-1" aria-hidden>
-        {[1, 2, 3, 4].map((step) => (
+        {[0, 1, 2, 3, 4].map((step) => (
           <span key={step} className={cx("h-1.5 flex-1 rounded-full", score >= step ? COLORS[score] : "bg-line")} />
         ))}
       </div>

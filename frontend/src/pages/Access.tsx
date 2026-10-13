@@ -178,7 +178,7 @@ export function SetPassword() {
     <Centered title="Choisissez votre mot de passe" body={`Pour le compte ${auth.email}.`}>
       <form className="mt-6 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div>
-          <FieldLabel htmlFor="new-password" hint={`${password.length}/10 caractères minimum`}>Nouveau mot de passe</FieldLabel>
+          <FieldLabel htmlFor="new-password" hint={password.length < 10 ? `${password.length}/10 caractères minimum` : undefined}>Nouveau mot de passe</FieldLabel>
           <PasswordInput id="new-password" autoComplete="new-password" required value={password} onChange={(event) => setPassword(event.target.value)} />
           <Suspense fallback={null}>
             <PasswordStrength password={password} userInputs={auth.email.split(/[@.]/)} />
