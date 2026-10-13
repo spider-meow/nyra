@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { StrictMode, Suspense, lazy, useEffect, type ReactNode } from "react";
+import { StrictMode, useEffect, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Navigate, RouterProvider, useMatches, useRouteError } from "react-router";
 import { ConfirmProvider, ToastProvider } from "./components/feedback";
@@ -13,19 +13,16 @@ import { Button, Spinner } from "./components/ui";
 import "./index.css";
 
 // Dashboard (the landing page) and the access screens stay in the entry chunk;
-// every other page is fetched the first time it is opened.
-const BackOffice = lazy(() => import("./pages/BackOffice").then((m) => ({ default: m.BackOffice })));
-const Library = lazy(() => import("./pages/Library").then((m) => ({ default: m.Library })));
-const Reports = lazy(() => import("./pages/Reports").then((m) => ({ default: m.Reports })));
-const Review = lazy(() => import("./pages/Review").then((m) => ({ default: m.Review })));
-const Scans = lazy(() => import("./pages/Scans").then((m) => ({ default: m.Scans })));
-const Settings = lazy(() => import("./pages/Settings").then((m) => ({ default: m.Settings })));
-const SiteImages = lazy(() => import("./pages/SiteImages").then((m) => ({ default: m.SiteImages })));
-const Statistics = lazy(() => import("./pages/Statistics").then((m) => ({ default: m.Statistics })));
+// every other page is fetched when its address is opened (`lazyPage` below).
+
+// The font stylesheet is third-party: it must not hold back the first paint (the text swaps once it has loaded).
+document.querySelector("link[data-fonts]")?.setAttribute("media", "all");
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      // A page opened right after another one reuses what the shell just fetched (overview, jobs) instead of asking again.
+      staleTime: 20_000,
       retry: (count, error) => !(error instanceof ApiError && error.status < 500) && count < 2,
       refetchOnWindowFocus: true,
     },
@@ -34,21 +31,14 @@ const queryClient = new QueryClient({
 
 const hasTitle = (handle: unknown): handle is { title: string } => isRecord(handle) && typeof handle.title === "string";
 
-/**
- * Sets the tab title from the deepest route's `handle.title`. The Suspense sits
- * inside the route element, so under the layout only the page area waits.
- */
+/** Sets the tab title from the deepest route's `handle.title`. */
 function Titled(props: { children: ReactNode }) {
   const matches = useMatches();
   const title = [...matches].reverse().map((match) => match.handle).find(hasTitle)?.title;
   useEffect(() => {
     document.title = title ? `${title} · Nyra` : "Nyra";
   }, [title]);
-  return (
-    <Suspense fallback={<div className="p-8"><Spinner label="Chargement de la page…" /></div>}>
-      {props.children}
-    </Suspense>
-  );
+  return props.children;
 }
 
 /** A page that cannot load (typically a file replaced by a new deploy): offer a reload instead of the router's developer screen. */
@@ -68,9 +58,20 @@ function PageError() {
 
 const page = (element: ReactNode) => <Titled>{element}</Titled>;
 
+/**
+ * A page fetched when its address is opened. The router waits for the file before it shows the route, in parallel
+ * with the rest of the start-up: a `React.lazy` page would first show a fallback, and React holds the real page
+ * back for about 300 ms after a fallback was shown.
+ */
+const lazyPage = (load: () => Promise<ComponentType>) => async () => {
+  const Page = await load();
+  return { element: page(<Page />) };
+};
+
 const router = createBrowserRouter([
   {
     errorElement: <PageError />,
+    HydrateFallback: () => <div className="p-8"><Spinner label="Chargement…" /></div>,
     children: [
       { path: "/connexion", element: page(<Login />), handle: { title: "Connexion" } },
       { path: "/mot-de-passe", element: page(<SetPassword />), handle: { title: "Mot de passe" } },
@@ -78,7 +79,7 @@ const router = createBrowserRouter([
         element: <RequireSession />,
         children: [
           { path: "/", element: page(<OrgHome />) },
-          { path: "/interne", element: page(<BackOffice />), handle: { title: "Back office" } },
+          { path: "/interne", lazy: lazyPage(() => import("./pages/BackOffice").then((module) => module.BackOffice)), handle: { title: "Back office" } },
           {
             path: "/o/:slug",
             element: <OrgShell />,
@@ -90,13 +91,13 @@ const router = createBrowserRouter([
                 children: [
                   { index: true, element: <Navigate to="tableau-de-bord" replace /> },
                   { path: "tableau-de-bord", element: page(<Dashboard />), handle: { title: "Tableau de bord" } },
-                  { path: "a-traiter", element: page(<Review />), handle: { title: "À traiter" } },
-                  { path: "bibliotheque", element: page(<Library />), handle: { title: "Bibliothèque" } },
-                  { path: "images-du-site", element: page(<SiteImages />), handle: { title: "Droits non vérifiés" } },
-                  { path: "lectures", element: page(<Scans />), handle: { title: "Sites et lectures" } },
-                  { path: "rapports", element: page(<Reports />), handle: { title: "Rapports" } },
-                  { path: "statistiques", element: page(<Statistics />), handle: { title: "Statistiques" } },
-                  { path: "reglages", element: page(<Settings />), handle: { title: "Réglages" } },
+                  { path: "a-traiter", lazy: lazyPage(() => import("./pages/Review").then((module) => module.Review)), handle: { title: "À traiter" } },
+                  { path: "bibliotheque", lazy: lazyPage(() => import("./pages/Library").then((module) => module.Library)), handle: { title: "Bibliothèque" } },
+                  { path: "images-du-site", lazy: lazyPage(() => import("./pages/SiteImages").then((module) => module.SiteImages)), handle: { title: "Droits non vérifiés" } },
+                  { path: "lectures", lazy: lazyPage(() => import("./pages/Scans").then((module) => module.Scans)), handle: { title: "Sites et lectures" } },
+                  { path: "rapports", lazy: lazyPage(() => import("./pages/Reports").then((module) => module.Reports)), handle: { title: "Rapports" } },
+                  { path: "statistiques", lazy: lazyPage(() => import("./pages/Statistics").then((module) => module.Statistics)), handle: { title: "Statistiques" } },
+                  { path: "reglages", lazy: lazyPage(() => import("./pages/Settings").then((module) => module.Settings)), handle: { title: "Réglages" } },
                   { path: "*", element: page(<NotFound />), handle: { title: "Page introuvable" } },
                 ],
               },
