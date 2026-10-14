@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, Outlet } from "react-router";
 import {
   CompareFacts,
   CountList,
@@ -13,51 +13,41 @@ import {
   httpLabel,
   type HistoryMetric,
 } from "../components/insights";
-import { Button, EmptyState, Spinner } from "../components/ui";
+import { Frame } from "../components/Layout";
+import { StaffSidebar } from "../components/layout/StaffSidebar";
+import { EmptyState, PageHeader, Spinner } from "../components/ui";
 import { api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { useMe } from "../lib/org";
 import type { PlatformInsights } from "../types";
 import { BackOfficeSkeleton, BrandsSection, HealthBanner, PlatformStats, RunningAndFailures } from "./BackOfficeSections";
 
-/** /interne — every organization side by side and the health of the job queue. Nyra team only. */
+/** /interne/*: the back office's frame (side column, then the page); Nyra team only. */
 export function BackOffice() {
   const me = useMe();
   const auth = useAuth();
-  if (me.isLoading) return <Shell><Spinner /></Shell>;
+  if (me.isLoading) return <div className="p-8"><Spinner /></div>;
   if (!me.data?.staff) {
     return (
-      <Shell>
-        <EmptyState title="Réservé à l'équipe Nyra" body={`Le compte ${auth.email} n'a pas accès au back office (nyra cloud-staff --email …).`} action={<Link to="/" className="text-sm underline">Revenir à l'accueil</Link>} />
-      </Shell>
+      <div className="p-8">
+        <EmptyState title="Réservé à l'équipe Nyra" body={`Le compte ${auth.email} n'est pas platform admin (nyra cloud-staff --email …).`} action={<Link to="/" className="text-sm underline">Revenir à l'accueil</Link>} />
+      </div>
     );
   }
   return (
-    <Shell>
-      <BackOfficeContent />
-    </Shell>
+    <Frame title="Back office" sidebar={(close) => <StaffSidebar onNavigate={close} />}>
+      <Outlet />
+    </Frame>
   );
 }
 
-function Shell(props: { children: React.ReactNode }) {
-  const auth = useAuth();
+/** /interne — every organization side by side and the health of the job queue. */
+export function Overview() {
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-line bg-side">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 md:px-10">
-          <div>
-            <p className="text-[15px] font-semibold tracking-tight">Nyra · back office</p>
-            <p className="text-xs text-muted">Toutes les marques, la file de tâches, les performances</p>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-muted">
-            <Link to="/" className="hover:text-ink">Espaces clients</Link>
-            <span className="hidden sm:inline">{auth.email}</span>
-            <Button size="sm" variant="ghost" onClick={() => void auth.signOut()}>Se déconnecter</Button>
-          </div>
-        </div>
-      </header>
-      <main className="mx-auto max-w-7xl px-4 py-6 md:px-10 md:py-8">{props.children}</main>
-    </div>
+    <>
+      <PageHeader title="Vue d'ensemble" />
+      <BackOfficeContent />
+    </>
   );
 }
 
@@ -79,6 +69,7 @@ function BackOfficeContent() {
   return (
     <>
       <HealthBanner queue={queue} running={running} />
+      <RunningAndFailures running={running} failures={failures} />
       <PlatformStats totals={totals} crawls={crawls} />
       <BrandsSection brands={brands} total={data.total_brands} />
 
@@ -111,7 +102,6 @@ function BackOfficeContent() {
         <MatchingTable matching={data.matching} />
       </Section>
 
-      <RunningAndFailures running={running} failures={failures} />
     </>
   );
 }

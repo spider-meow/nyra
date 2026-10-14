@@ -1,0 +1,125 @@
+"""The Nyra team's back office: clients and their brands, accounts, and who is a platform admin.
+
+Everything here is for platform admins only (`platform_staff`). The people of one organization are
+managed with the ordinary `/api/orgs/{org_id}/members` routes, which accept a platform admin too.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections import defaultdict
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
+
+from .. import db as cloud_db
+from .. import insights as cloud_insights
+from .common import Ctx, get_ctx, iso, staff_dep
+from .members import find_or_invite_user
+
+router = APIRouter()
+
+
+class OrganizationBody(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    slug: str = Field(default="", max_length=63)
+    admin_email: str = Field(min_length=3, max_length=254)
+
+
+class EmailBody(BaseModel):
+    email: str = Field(min_length=3, max_length=254)
+
+
+def _checked_email(raw: str) -> str:
+    email = raw.strip().lower()
+    if "@" not in email or " " in email:
+        raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
+    return email
+
+
+def _find_or_invite(ctx: Ctx, email: str) -> tuple[uuid.UUID, bool]:
+    s = ctx.settings
+    try:
+        user_id, invited = find_or_invite_user(s.database_url, s.supabase_url, s.service_role_key, s.public_url, email)
+    except Exception as exc:  # noqa: BLE001 - the provider's refusal (bad address, rate limit) is shown to the platform admin
+        raise HTTPException(status_code=502, detail=f"L'invitation n'a pas pu être envoyée : {str(exc)[:200]}") from exc
+    return uuid.UUID(user_id), invited
+
+
+@router.get("/api/staff/organizations")
+def list_organizations(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Every client with its brands (name, creation date, who created it): the base of the billing."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        orgs, brands = cloud_db.organizations_overview(conn)
+    by_org = defaultdict(list)
+    for brand in brands:
+        by_org[brand["org_id"]].append({
+            "id": str(brand["id"]), "name": brand["name"], "slug": brand["slug"],
+            "created_at": iso(brand["created_at"]), "created_by": brand["created_by"],
+        })
+    return {"organizations": [
+        {"id": str(org["id"]), "name": org["name"], "slug": org["slug"], "created_at": iso(org["created_at"]),
+         "members": org["members"], "brands": by_org[org["id"]]}
+        for org in orgs
+    ]}
+
+
+@router.post("/api/staff/organizations")
+def create_organization(body: OrganizationBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """A client organization with a first brand of the same name (billed like any brand) and its first admin."""
+    name = body.name.strip()
+    try:
+        slug = cloud_db.slugify(body.slug or name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Identifiant invalide : lettres, chiffres et tirets.") from exc
+    email = _checked_email(body.admin_email)
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        if cloud_db.get_organization_by_slug(conn, slug):
+            raise HTTPException(status_code=409, detail=f"Une organisation utilise déjà l'identifiant {slug}.")
+    user_id, invited = _find_or_invite(ctx, email)
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        org_id = cloud_db.create_organization(conn, name=name, slug=slug, created_by=claims.user_id)
+        cloud_db.add_membership(conn, user_id=user_id, org_id=org_id, role="admin")
+    return {"id": str(org_id), "slug": slug, "invited": invited}
+
+
+@router.get("/api/staff/users")
+def list_users(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        users, memberships, staff = cloud_db.users_overview(conn)
+    by_user = defaultdict(list)
+    for m in memberships:
+        by_user[m["user_id"]].append({"org_id": str(m["org_id"]), "org_name": m["org_name"], "role": m["role"]})
+    return {"users": [
+        {"user_id": str(u["id"]), "email": u["email"] or "", "last_sign_in_at": iso(u["last_sign_in_at"]),
+         "staff": u["id"] in staff, "memberships": by_user[u["id"]]}
+        for u in users
+    ]}
+
+
+@router.get("/api/staff/admins")
+def list_admins(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        rows = conn.execute(
+            "SELECT s.user_id, u.email FROM platform_staff s JOIN auth.users u ON u.id = s.user_id ORDER BY lower(u.email)"
+        ).fetchall()
+    return {"admins": [{"user_id": str(row["user_id"]), "email": row["email"], "you": row["user_id"] == claims.user_id} for row in rows]}
+
+
+@router.post("/api/staff/admins")
+def add_admin(body: EmailBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    user_id, invited = _find_or_invite(ctx, _checked_email(body.email))
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        cloud_insights.set_staff(conn, user_id, True)
+    return {"invited": invited}
+
+
+@router.delete("/api/staff/admins/{user_id}")
+def remove_admin(user_id: uuid.UUID, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    if user_id == claims.user_id:
+        raise HTTPException(status_code=409, detail="Vous ne pouvez pas vous retirer vous-même.")
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        if not cloud_insights.is_staff(conn, user_id):
+            raise HTTPException(status_code=404, detail="Cette personne n'est pas platform admin.")
+        cloud_insights.set_staff(conn, user_id, False)
+    return {"removed": True}

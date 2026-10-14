@@ -142,12 +142,41 @@ def slugify(value: str) -> str:
     return text
 
 
-def create_organization(conn: psycopg.Connection, *, name: str, slug: str) -> uuid.UUID:
+def create_organization(conn: psycopg.Connection, *, name: str, slug: str, created_by: Optional[uuid.UUID] = None) -> uuid.UUID:
     """A new organization, with a first brand of the same name."""
     slug = slugify(slug)
     row = conn.execute("INSERT INTO organizations (name, slug) VALUES (%s, %s) RETURNING id", (name, slug)).fetchone()
-    create_brand(conn, org_id=row["id"], name=name, slug=slug)
+    create_brand(conn, org_id=row["id"], name=name, slug=slug, created_by=created_by)
     return row["id"]
+
+
+def organizations_overview(conn: psycopg.Connection) -> tuple[list[Row], list[Row]]:
+    """(every organization with its member count, every brand with who created it): the back office's lists."""
+    orgs = conn.execute(
+        """
+        SELECT o.id, o.name, o.slug, o.created_at, (SELECT count(*) FROM memberships m WHERE m.org_id = o.id) AS members
+        FROM organizations o ORDER BY lower(o.name)
+        """
+    ).fetchall()
+    brands = conn.execute(
+        """
+        SELECT b.id, b.org_id, b.name, b.slug, b.created_at, u.email AS created_by
+        FROM brands b LEFT JOIN auth.users u ON u.id = b.created_by ORDER BY b.created_at DESC
+        """
+    ).fetchall()
+    return orgs, brands
+
+
+def users_overview(conn: psycopg.Connection) -> tuple[list[Row], list[Row], set[uuid.UUID]]:
+    """(every account, every membership, the platform admins' ids). `to_jsonb` reads the last sign-in whatever the auth schema holds."""
+    users = conn.execute(
+        "SELECT u.id, u.email, (to_jsonb(u) ->> 'last_sign_in_at')::timestamptz AS last_sign_in_at FROM auth.users u ORDER BY lower(u.email)"
+    ).fetchall()
+    memberships = conn.execute(
+        "SELECT m.user_id, m.org_id, m.role, o.name AS org_name FROM memberships m JOIN organizations o ON o.id = m.org_id ORDER BY lower(o.name)"
+    ).fetchall()
+    staff = {row["user_id"] for row in conn.execute("SELECT user_id FROM platform_staff").fetchall()}
+    return users, memberships, staff
 
 
 def get_organization(conn: psycopg.Connection, org_id: uuid.UUID) -> Optional[Row]:
@@ -236,9 +265,11 @@ def set_overrides(conn: psycopg.Connection, org_id: uuid.UUID, overrides: dict, 
 
 # --- brands ---------------------------------------------------------------
 
-def create_brand(conn: psycopg.Connection, *, org_id: uuid.UUID, name: str, slug: str) -> uuid.UUID:
+def create_brand(conn: psycopg.Connection, *, org_id: uuid.UUID, name: str, slug: str,
+                 created_by: Optional[uuid.UUID] = None) -> uuid.UUID:
     row = conn.execute(
-        "INSERT INTO brands (org_id, name, slug) VALUES (%s, %s, %s) RETURNING id", (org_id, name.strip(), slugify(slug))
+        "INSERT INTO brands (org_id, name, slug, created_by) VALUES (%s, %s, %s, %s) RETURNING id",
+        (org_id, name.strip(), slugify(slug), created_by),
     ).fetchone()
     return row["id"]
 
@@ -249,8 +280,27 @@ def get_brand(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID) 
 
 def list_brands(conn: psycopg.Connection, org_ids: list[uuid.UUID]) -> list[Row]:
     return conn.execute(
-        "SELECT id, org_id, name, slug, created_at FROM brands WHERE org_id = ANY(%s) ORDER BY lower(name)", (org_ids,)
+        """
+        SELECT b.id, b.org_id, b.name, b.slug, b.created_at, l.data_uri AS logo
+        FROM brands b LEFT JOIN brand_logos l ON l.brand_id = b.id
+        WHERE b.org_id = ANY(%s) ORDER BY lower(b.name)
+        """,
+        (org_ids,),
     ).fetchall()
+
+
+def set_brand_logo(conn: psycopg.Connection, brand_id: uuid.UUID, data_uri: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO brand_logos (brand_id, data_uri) VALUES (%s, %s)
+        ON CONFLICT (brand_id) DO UPDATE SET data_uri = excluded.data_uri, updated_at = now()
+        """,
+        (brand_id, data_uri),
+    )
+
+
+def delete_brand_logo(conn: psycopg.Connection, brand_id: uuid.UUID) -> None:
+    conn.execute("DELETE FROM brand_logos WHERE brand_id = %s", (brand_id,))
 
 
 def update_brand(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, *, name: str, slug: str) -> bool:

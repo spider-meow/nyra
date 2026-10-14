@@ -2,7 +2,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Suspense, createContext, lazy, useContext, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
-import { Logo } from "../components/Logo";
 import { Button, Card, Checkbox, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
 import { api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -16,11 +15,10 @@ function Centered(props: { title: string; body?: ReactNode; children?: ReactNode
     <div className="grid min-h-screen place-items-center px-4 py-10">
       <div className="w-full max-w-[400px]">
         <div className="mb-8 flex flex-col items-center gap-1.5">
-          <div className="flex items-center gap-2.5">
-            <Logo size={44} />
-            <p className="font-display text-[30px] leading-none">Nyra</p>
-          </div>
-          <p className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase">by Axel Project</p>
+          <p className="font-display text-[40px] leading-none">Nyra</p>
+          <a href="https://axelproject.fr" target="_blank" rel="noopener noreferrer" className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase underline-offset-4 transition-colors hover:text-ink hover:underline">
+            by Axel Project
+          </a>
         </div>
         <Card className="p-8 shadow-float">
           <h1 className="font-display text-[34px] leading-none">{props.title}</h1>
@@ -297,6 +295,7 @@ function NoBrand(props: { org: Organization }) {
   const auth = useAuth();
   const client = useQueryClient();
   const navigate = useNavigate();
+  const staff = Boolean(useMe().data?.staff);
   const [name, setName] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
@@ -315,9 +314,9 @@ function NoBrand(props: { org: Organization }) {
     }
   }
 
-  if (org.role !== "admin") {
+  if (!staff) {
     return (
-      <Centered title="Aucune marque" body={`${org.name} n'a encore aucune marque. Un administrateur doit en créer une.`}>
+      <Centered title="Aucune marque" body={`${org.name} n'a encore aucune marque. Contactez l'équipe Nyra pour en créer une.`}>
         <Button className="mt-5 w-full" onClick={() => void auth.signOut()}>Se déconnecter</Button>
       </Centered>
     );

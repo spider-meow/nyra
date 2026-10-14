@@ -1,13 +1,11 @@
 import { useState } from "react";
 import { PageHeader } from "../components/ui";
-import { useOrg } from "../lib/org";
 import { useSites } from "../lib/queries";
 import { ScanHistory } from "./scans/History";
 import { RunCard } from "./scans/RunCard";
 import { SitesCard } from "./scans/SitesCard";
 
 export function Scans() {
-  const { brand } = useOrg();
   const sites = useSites();
   // Every address is read unless unticked.
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
@@ -28,7 +26,6 @@ export function Scans() {
     <>
       <PageHeader
         title="Sites et lectures"
-        description={`Les adresses de ${brand.name}, un site par marché par exemple. Nyra les parcourt comme un visiteur et compare chaque image à la bibliothèque de la marque.`}
       />
       <RunCard list={list} selected={selected} />
       <SitesCard sites={sites} skipped={skipped} onToggle={toggle} onToggleAll={toggleAll} />

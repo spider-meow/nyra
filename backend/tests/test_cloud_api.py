@@ -7,6 +7,7 @@ in-memory fake Storage.
 
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import time
@@ -19,6 +20,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("psycopg")
 
 import jwt as pyjwt
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from nyra.cloud import db as cloud_db
@@ -51,7 +53,7 @@ def client(cloud_database_url, fake_storage_client):
 
 @pytest.fixture()
 def org_with_users(cloud_database_url, cloud_org, cloud_brand):
-    """(org_id, brand API prefix, admin, client, outsider)."""
+    """(org_id, brand API prefix, admin, client, outsider). The admin is also a platform admin (creates brands)."""
     admin_id, client_id, outsider_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute(
@@ -60,6 +62,7 @@ def org_with_users(cloud_database_url, cloud_org, cloud_brand):
         )
         cloud_db.add_membership(conn, user_id=admin_id, org_id=cloud_org, role="admin")
         cloud_db.add_membership(conn, user_id=client_id, org_id=cloud_org, role="client")
+        conn.execute("INSERT INTO platform_staff (user_id) VALUES (%s)", (admin_id,))
     return cloud_org, f"/api/orgs/{cloud_org}/brands/{cloud_brand}", admin_id, client_id, outsider_id
 
 
@@ -105,7 +108,7 @@ def test_list_orgs_includes_slug_role_and_brands(client, org_with_users, cloud_b
     orgs = client.get("/api/orgs", headers=_headers(admin_id)).json()["organizations"]
     slug = orgs[0]["slug"]
     assert orgs == [{"org_id": str(org_id), "name": "Test Org", "slug": slug, "role": "admin",
-                     "brands": [{"id": str(cloud_brand), "name": "Test Org", "slug": slug}]}]
+                     "brands": [{"id": str(cloud_brand), "name": "Test Org", "slug": slug, "logo": None}]}]
 
 
 def test_session_membership_and_brand_are_enforced(client, org_with_users, cloud_database_url):
@@ -121,12 +124,24 @@ def test_session_membership_and_brand_are_enforced(client, org_with_users, cloud
     assert client.get(f"/api/orgs/{org_id}/brands/{other_brand}/library", headers=_headers(admin_id)).status_code == 404
 
 
-def test_brands_are_created_renamed_and_admin_only(client, org_with_users):
-    org_id, _, admin_id, client_id, _ = org_with_users
+def test_brands_are_created_and_deleted_by_platform_admins_and_renamed_by_org_admins(
+        client, org_with_users, cloud_database_url):
+    org_id, _, admin_id, client_id, outsider_id = org_with_users
     url = f"/api/orgs/{org_id}/brands"
+    with cloud_db.connect(cloud_database_url) as conn:
+        org_admin_id = uuid.uuid4()
+        conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (org_admin_id, f"{org_admin_id}@x.com"))
+        cloud_db.add_membership(conn, user_id=org_admin_id, org_id=org_id, role="admin")
     assert client.post(url, headers=_headers(client_id), json={"name": "Louis XIII"}).status_code == 403
+    assert client.post(url, headers=_headers(org_admin_id), json={"name": "Louis XIII"}).status_code == 403  # not a platform admin
+    assert client.post(f"/api/orgs/{uuid.uuid4()}/brands", headers=_headers(admin_id), json={"name": "X"}).status_code == 404
     brand = client.post(url, headers=_headers(admin_id), json={"name": "Louis XIII"}).json()["brand"]
     assert brand["slug"] == "louis-xiii"
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT created_by FROM brands WHERE id = %s", (brand["id"],)).fetchone()["created_by"] == admin_id
+    assert client.delete(f"{url}/{brand['id']}", headers=_headers(org_admin_id)).status_code == 403
+    assert client.delete(f"{url}/{brand['id']}", headers=_headers(admin_id)).status_code == 200
+    brand = client.post(url, headers=_headers(admin_id), json={"name": "Louis XIII"}).json()["brand"]
     assert client.post(url, headers=_headers(admin_id), json={"name": "Louis  XIII"}).status_code == 409
     renamed = client.put(f"{url}/{brand['id']}", headers=_headers(admin_id), json={"name": "Louis XIII Cognac"}).json()
     assert renamed["brand"] == {"id": brand["id"], "name": "Louis XIII Cognac", "slug": "louis-xiii-cognac"}
@@ -1119,3 +1134,72 @@ def test_collections_file_visuals_and_follow_the_rules(client, org_with_users, f
     library = client.get(f"{base}/library", headers=member).json()
     assert library["collections"] == [] and library["items"][0]["collection_id"] is None
     assert client.delete(f"{base}/collections/{season['id']}", headers=admin).status_code == 404
+
+
+def test_back_office_lists_are_for_platform_admins_who_also_look_after_any_organizations_people(
+        client, org_with_users, cloud_database_url, monkeypatch):
+    org_id, _, admin_id, client_id, outsider_id = org_with_users  # admin_id is a platform admin
+    monkeypatch.setattr("nyra.cloud.routes.staff.find_or_invite_user", lambda *args: (str(outsider_id), True))
+    for path in ("organizations", "users", "admins"):
+        assert client.get(f"/api/staff/{path}").status_code == 401
+        assert client.get(f"/api/staff/{path}", headers=_headers(client_id)).status_code == 403
+
+    orgs = client.get("/api/staff/organizations", headers=_headers(admin_id)).json()["organizations"]
+    assert str(org_id) in {o["id"] for o in orgs}
+    users = {u["user_id"]: u for u in client.get("/api/staff/users", headers=_headers(admin_id)).json()["users"]}
+    assert users[str(admin_id)]["staff"] is True and users[str(client_id)]["memberships"][0]["role"] == "client"
+
+    # A new client: its first brand is billed to the platform admin who created it.
+    made = client.post("/api/staff/organizations", headers=_headers(admin_id),
+                       json={"name": "Hennessy", "admin_email": "boss@hennessy.com"})
+    assert made.status_code == 200 and made.json()["slug"] == "hennessy" and made.json()["invited"] is True
+    assert client.post("/api/staff/organizations", headers=_headers(admin_id),
+                       json={"name": "Hennessy", "admin_email": "boss@hennessy.com"}).status_code == 409
+    new = next(o for o in client.get("/api/staff/organizations", headers=_headers(admin_id)).json()["organizations"]
+               if o["slug"] == "hennessy")
+    assert new["members"] == 1 and new["brands"][0]["created_by"] == f"{admin_id}@x.com"
+
+    # The people of an organization the platform admin is not a member of.
+    members = f"/api/orgs/{new['id']}/members"
+    assert client.get(members, headers=_headers(client_id)).status_code == 403
+    assert len(client.get(members, headers=_headers(admin_id)).json()["members"]) == 1
+    assert client.get(f"/api/orgs/{uuid.uuid4()}/members", headers=_headers(admin_id)).status_code == 404
+
+    # Platform admins: add, list, remove; never oneself.
+    assert client.post("/api/staff/admins", headers=_headers(admin_id), json={"email": "pas-un-mail"}).status_code == 400
+    assert client.post("/api/staff/admins", headers=_headers(admin_id), json={"email": "o@x.com"}).status_code == 200
+    admins = client.get("/api/staff/admins", headers=_headers(admin_id)).json()["admins"]
+    assert {a["user_id"] for a in admins} == {str(admin_id), str(outsider_id)}
+    assert client.delete(f"/api/staff/admins/{admin_id}", headers=_headers(admin_id)).status_code == 409
+    assert client.delete(f"/api/staff/admins/{outsider_id}", headers=_headers(admin_id)).status_code == 200
+    assert client.delete(f"/api/staff/admins/{outsider_id}", headers=_headers(admin_id)).status_code == 404
+
+
+def test_a_logo_upload_becomes_a_small_png_and_unreadable_files_are_refused():
+    from nyra.cloud.routes.brands import LOGO_SIZE, _logo_data_uri
+
+    big = io.BytesIO()
+    Image.new("RGBA", (900, 300), (200, 10, 10, 255)).save(big, format="PNG")
+    uri = _logo_data_uri(big.getvalue())
+    assert uri.startswith("data:image/png;base64,") and len(uri) < 20_000
+    shrunk = Image.open(io.BytesIO(base64.b64decode(uri.split(",", 1)[1])))
+    assert max(shrunk.size) == LOGO_SIZE and shrunk.size[0] > shrunk.size[1]  # proportions kept
+    with pytest.raises(HTTPException) as refused:
+        _logo_data_uri(b"not an image")
+    assert refused.value.status_code == 400
+
+
+def test_admins_set_and_remove_the_logo_of_their_brand_and_it_comes_with_the_brands(client, org_with_users):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    png = io.BytesIO()
+    Image.new("RGB", (200, 200), (10, 10, 200)).save(png, format="PNG")
+    files = {"file": ("logo.png", png.getvalue(), "image/png")}
+    assert client.put(f"{base}/logo", headers=_headers(client_id), files=files).status_code == 403
+    done = client.put(f"{base}/logo", headers=_headers(admin_id), files=files)
+    assert done.status_code == 200 and done.json()["logo"].startswith("data:image/png;base64,")
+    assert client.put(f"{base}/logo", headers=_headers(admin_id), files={"file": ("x.txt", b"hello", "text/plain")}).status_code == 400
+    listed = client.get("/api/orgs", headers=_headers(client_id)).json()["organizations"][0]["brands"]
+    assert listed[0]["logo"] == done.json()["logo"]
+    assert client.delete(f"{base}/logo", headers=_headers(client_id)).status_code == 403
+    assert client.delete(f"{base}/logo", headers=_headers(admin_id)).status_code == 200
+    assert client.get("/api/orgs", headers=_headers(client_id)).json()["organizations"][0]["brands"][0]["logo"] is None

@@ -41,7 +41,8 @@ before September 26, 2026 still point at their original.
 |---|---|---|
 | `organizations` | Clients | `slug` (lowercase, hyphens, unique) |
 | `memberships` | User ↔ organization | `role` ∈ {admin, client} |
-| `brands` | Brands of an organization | `slug` (unique per org) |
+| `brands` | Brands of an organization | `slug` (unique per org), `created_by` (the platform admin who created it: the billing record) |
+| `brand_logos` | A brand's logo, shrunk by the API to a 128 px PNG and kept as a data URI (it travels with the list of brands) | `brand_id` (primary key, deleted with the brand), `data_uri` |
 | `org_settings` | Per-organization overrides of `config.yaml`, shared by its brands | `overrides` jsonb (whitelisted keys only) |
 | `sites` | A brand's addresses | `brand_id`, `url` (canonical, unique per org: an address belongs to one brand), `label` (US, FR...) |
 | `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `unlimited_rights` (never expires; excludes a date: a check forbids both), `collection_id` (its folder, null = unfiled), `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |

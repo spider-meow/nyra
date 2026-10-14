@@ -1,5 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useNavigate } from "react-router";
+import { BrandMark } from "../../components/BrandMark";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Button, FieldLabel, Input, SettingsBlock } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
@@ -32,8 +33,48 @@ function useBrandActions(editing: Editing, setEditing: (editing: Editing) => voi
   return { rename, save };
 }
 
+/** The brand's logo: shown at the top of the side column. A picture of any size is shrunk by the server. */
+function LogoActions(props: { brand: Brand }) {
+  const { brand } = props;
+  const { setLogo, removeLogo } = useBrandMutations();
+  const toast = useToast();
+  const file = useRef<HTMLInputElement>(null);
+
+  function pick(event: ChangeEvent<HTMLInputElement>) {
+    const picked = event.target.files?.[0];
+    event.target.value = "";
+    if (!picked) return;
+    setLogo.mutate(
+      { id: brand.id, file: picked },
+      {
+        onSuccess: () => toast.show({ tone: "success", message: `Logo de ${brand.name} enregistré`, duration: 3000 }),
+        onError: (error) => toast.show({ tone: "error", message: "Le logo n'a pas été enregistré", description: errorMessage(error) }),
+      },
+    );
+  }
+
+  return (
+    <>
+      <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden aria-label={`Logo de ${brand.name}`} onChange={pick} />
+      <Button size="sm" variant="ghost" loading={setLogo.isPending} onClick={() => file.current?.click()}>
+        {brand.logo ? "Changer le logo" : "Ajouter un logo"}
+      </Button>
+      {brand.logo ? (
+        <Button
+          size="sm"
+          variant="ghost"
+          loading={removeLogo.isPending}
+          onClick={() => removeLogo.mutate(brand.id, { onError: (error) => toast.show({ tone: "error", message: "Le logo n'a pas été retiré", description: errorMessage(error) }) })}
+        >
+          Retirer le logo
+        </Button>
+      ) : null}
+    </>
+  );
+}
+
 export function Brands() {
-  const { admin, org, brand: current } = useOrg();
+  const { admin, platformAdmin, org, brand: current } = useOrg();
   const [editing, setEditing] = useState<Editing>(null);
   const { rename, save } = useBrandActions(editing, setEditing);
 
@@ -53,12 +94,14 @@ export function Brands() {
               </form>
             ) : (
               <>
+                <BrandMark brand={brand} size={28} />
                 <span className="min-w-0 flex-1 truncate">
                   <span className="font-medium">{brand.name}</span>
                   {brand.id === current.id ? <span className="text-muted"> · affichée</span> : null}
                 </span>
                 {admin ? (
-                  <span className="flex gap-1">
+                  <span className="flex flex-wrap gap-1">
+                    <LogoActions brand={brand} />
                     <Button size="sm" variant="ghost" onClick={() => setEditing({ id: brand.id, name: brand.name })}>Renommer</Button>
                   </span>
                 ) : null}
@@ -67,7 +110,10 @@ export function Brands() {
           </li>
         ))}
       </ul>
-      {admin ? <NewBrand /> : null}
+      {platformAdmin ? <NewBrand /> : null}
+      {admin && !platformAdmin ? (
+        <p className="border-t border-line px-5 py-4 text-sm text-muted">Pour ajouter une marque, contactez l'équipe Nyra.</p>
+      ) : null}
     </SettingsBlock>
   );
 }
@@ -107,7 +153,7 @@ function NewBrand() {
 
 /** Deleting a brand, apart from the everyday settings: it cannot be undone. */
 export function DeleteBrands() {
-  const { admin, org, brand: current } = useOrg();
+  const { platformAdmin, org, brand: current } = useOrg();
   const { remove } = useBrandMutations();
   const navigate = useNavigate();
   const confirm = useConfirm();
@@ -139,7 +185,7 @@ export function DeleteBrands() {
     });
   }
 
-  if (!admin) return null;
+  if (!platformAdmin) return null;
   return (
     <SettingsBlock
       danger

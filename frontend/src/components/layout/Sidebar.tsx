@@ -3,12 +3,12 @@ import { useAuth } from "../../lib/auth";
 import { brandLink, useMe, useOrg } from "../../lib/org";
 import { useOverview } from "../../lib/queries";
 import type { Organization } from "../../types";
+import { BrandMark, initials } from "../BrandMark";
 import { Dropdown } from "../Dropdown";
 import { Icon, type IconName } from "../icons";
-import { Logo } from "../Logo";
 import { cx } from "../ui";
 
-type NavItem = { to: string; label: string; icon: IconName; count?: number; tone?: "alert" | "neutral" | "muted" | "warn" };
+export type NavItem = { to: string; label: string; icon: IconName; count?: number; tone?: "alert" | "neutral" | "muted" | "warn"; newTab?: boolean };
 
 /** The main entries (with their counters) and the rarely needed ones that sit at the bottom, next to the account. */
 export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
@@ -17,7 +17,7 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
   const overview = useOverview();
   const pending = overview.data?.dashboard.pending_review ?? 0;
   const expired = overview.data?.dashboard.expired_online ?? 0;
-  const staffItems: NavItem[] = me.data?.staff ? [{ to: "/interne", label: "Back office Nyra", icon: "backoffice" }] : [];
+  const staffItems: NavItem[] = me.data?.staff ? [{ to: "/interne", label: "Back office Nyra", icon: "backoffice", newTab: true }] : [];
   const adminFooterItems: NavItem[] = admin ? [{ to: link("statistiques"), label: "Stats pour les nerds", icon: "stats" }] : [];
   return {
     items: [
@@ -26,53 +26,59 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
       { to: link("bibliotheque"), label: "Bibliothèque", icon: "library", count: overview.data?.stats.reference_images, tone: "muted" },
       { to: link("images-du-site"), label: "Droits non vérifiés", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
       { to: link("lectures"), label: "Sites et lectures", icon: "scan" },
-      ...staffItems,
     ],
     footerItems: [
       { to: link("rapports"), label: "Rapports", icon: "report" },
       ...adminFooterItems,
       { to: link("reglages"), label: "Réglages", icon: "settings" },
+      ...staffItems,
     ],
   };
 }
 
-function NavItems(props: { list: NavItem[]; onNavigate: () => void }) {
-  return props.list.map((item) => (
-    <NavLink
-      key={item.to}
-      to={item.to}
-      onClick={props.onNavigate}
-      className={({ isActive }) =>
-        cx(
-          "group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm transition-colors",
-          isActive ? "bg-yellow font-medium text-ink" : "text-ink-soft hover:bg-sunk hover:text-ink",
-        )
-      }
-    >
-      {({ isActive }) => (
-        <>
-          <Icon name={item.icon} className={isActive ? "text-ink" : "text-muted group-hover:text-ink-soft"} />
-          <span className="flex-1">{item.label}</span>
-          {item.count ? (
-            <span
-              className={cx(
-                "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11.5px] tabular",
-                item.tone === "alert" && "bg-expired-soft font-medium text-expired",
-                item.tone === "neutral" && "bg-ink font-medium text-paper",
-                item.tone === "muted" && "font-normal text-muted",
-                item.tone === "warn" && "bg-urgent-soft font-medium text-urgent",
-              )}
-            >
-              {item.count}
-            </span>
-          ) : null}
-        </>
-      )}
-    </NavLink>
-  ));
+const navItemClass = (isActive: boolean) =>
+  cx(
+    "group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm transition-colors",
+    isActive ? "bg-yellow font-medium text-ink" : "text-ink-soft hover:bg-sunk hover:text-ink",
+  );
+
+export function NavItems(props: { list: NavItem[]; onNavigate: () => void; end?: boolean }) {
+  return props.list.map((item) =>
+    item.newTab ? (
+      // Another page of the product, opened beside this one: never "active", and the arrow says so.
+      <a key={item.to} href={item.to} target="_blank" rel="noopener noreferrer" className={navItemClass(false)}>
+        <Icon name={item.icon} className="text-muted group-hover:text-ink-soft" />
+        <span className="flex-1">{item.label}</span>
+        <Icon name="external" size={15} className="text-muted group-hover:text-ink-soft" />
+        <span className="sr-only">(s'ouvre dans un nouvel onglet)</span>
+      </a>
+    ) : (
+      <NavLink key={item.to} to={item.to} end={props.end} onClick={props.onNavigate} className={({ isActive }) => navItemClass(isActive)}>
+        {({ isActive }) => (
+          <>
+            <Icon name={item.icon} className={isActive ? "text-ink" : "text-muted group-hover:text-ink-soft"} />
+            <span className="flex-1">{item.label}</span>
+            {item.count ? (
+              <span
+                className={cx(
+                  "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11.5px] tabular",
+                  item.tone === "alert" && "bg-expired-soft font-medium text-expired",
+                  item.tone === "neutral" && "bg-ink font-medium text-paper",
+                  item.tone === "muted" && "font-normal text-muted",
+                  item.tone === "warn" && "bg-urgent-soft font-medium text-urgent",
+                )}
+              >
+                {item.count}
+              </span>
+            ) : null}
+          </>
+        )}
+      </NavLink>
+    ),
+  );
 }
 
-/** The brand on screen, the thing people switch most: its initials and name; with several brands, a list to switch (same page, other brand). */
+/** The brand on screen, at the top where the product's name used to be: its logo and name; with several brands, a list to switch (same page, other brand). */
 function BrandSwitcher() {
   const { org, brand, link } = useOrg();
   const navigate = useNavigate();
@@ -81,17 +87,15 @@ function BrandSwitcher() {
   const page = location.pathname.slice(link().length + 1) || "tableau-de-bord";
   const identity = (
     <span className="flex min-w-0 items-center gap-2.5">
-      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-peach text-[13px] font-semibold text-bark-800" aria-hidden>
-        {initials(brand.name)}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[15px] font-medium">{brand.name}</span>
+      <BrandMark brand={brand} size={30} />
+      <span className="min-w-0 flex-1 truncate font-display text-[24px] leading-none" title={brand.name}>{brand.name}</span>
     </span>
   );
   if (org.brands.length <= 1) return <div className="flex h-12 items-center px-2.5">{identity}</div>;
   return (
     <Dropdown
       aria-label="Changer de marque"
-      className="h-12 rounded-xl border border-line-strong bg-paper px-2.5 hover:bg-sunk"
+      className="h-12 rounded-md px-2.5 transition-colors hover:bg-sunk"
       trigger={identity}
       value={brand.slug}
       options={org.brands.map((item) => ({ value: item.slug, label: item.name }))}
@@ -122,6 +126,7 @@ function OrgLine(props: { orgs: Organization[] | undefined }) {
 
 function Account(props: { orgs: Organization[] | undefined }) {
   const auth = useAuth();
+  const { platformAdmin } = useOrg();
   return (
     <div className="flex items-center gap-2.5 border-t border-line-strong px-2.5 pt-3.5">
       <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-peach text-xs font-semibold text-bark-800" aria-hidden>
@@ -130,6 +135,7 @@ function Account(props: { orgs: Organization[] | undefined }) {
       <span className="min-w-0 flex-1 leading-tight">
         <span className="block truncate text-[13px]" title={auth.email}>{auth.email}</span>
         <OrgLine orgs={props.orgs} />
+        {platformAdmin ? <span className="block text-xs font-medium">platform admin</span> : null}
         <button type="button" className="text-xs text-muted hover:text-ink hover:underline" onClick={() => void auth.signOut()}>
           Se déconnecter
         </button>
@@ -147,10 +153,7 @@ export function Sidebar(props: { nav: ReturnType<typeof useNavItems>; orgs: Orga
   const { nav, onNavigate } = props;
   return (
     <div className="flex h-full flex-col gap-6 px-3.5 py-5">
-      <div className="flex items-center gap-2.5 px-2.5">
-        <Logo size={36} />
-        <p className="font-display text-[26px] leading-none">Nyra</p>
-      </div>
+      <p className="-mb-3 px-2.5 font-display text-xs leading-none text-muted">Nyra</p>
       <BrandSwitcher />
       <nav aria-label="Navigation principale" className="grid gap-0.5">
         <NavItems list={nav.items} onNavigate={onNavigate} />
@@ -161,9 +164,4 @@ export function Sidebar(props: { nav: ReturnType<typeof useNavItems>; orgs: Orga
       <Account orgs={props.orgs} />
     </div>
   );
-}
-
-function initials(text: string): string {
-  const words = text.split("@")[0].split(/[\s._-]+/).filter(Boolean);
-  return (words.length > 1 ? words[0][0] + words[1][0] : (words[0] ?? "?").slice(0, 2)).toUpperCase();
 }

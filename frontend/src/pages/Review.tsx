@@ -29,7 +29,6 @@ export function Review() {
     <>
       <PageHeader
         title="À traiter"
-        description="Les visuels de la bibliothèque retrouvés sur le site, du plus urgent au moins urgent. Décidez occurrence par occurrence."
         actions={<span className="hidden items-center gap-1.5 text-xs text-muted md:flex"><Kbd>J</Kbd><Kbd>K</Kbd> naviguer · <Kbd>R</Kbd> à retirer · <Kbd>F</Kbd> faux positif · <Kbd>T</Kbd> retiré</span>}
       />
       <ReviewFilters view={view} />

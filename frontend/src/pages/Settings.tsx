@@ -13,14 +13,13 @@ import { Exclusions } from "./settings/Exclusions";
 import { Reading } from "./settings/Reading";
 import { Team } from "./settings/Team";
 
-type Section = { id: string; label: string; icon: IconName; description: string; adminOnly?: boolean; render: (data: SettingsData) => ReactNode };
+type Section = { id: string; label: string; icon: IconName; adminOnly?: boolean; render: (data: SettingsData) => ReactNode };
 
 const SECTIONS: Section[] = [
   {
     id: "marques",
     label: "Marques",
     icon: "library",
-    description: "Les marques suivies par Nyra, les images qu'on a écartées, et la suppression d'une marque.",
     render: () => (
       <>
         <Brands />
@@ -33,15 +32,13 @@ const SECTIONS: Section[] = [
     id: "equipe",
     label: "Équipe",
     icon: "users",
-    description: "Un administrateur gère la bibliothèque, les lectures et les réglages. Les autres consultent et valident les correspondances.",
     render: () => <Team />,
   },
-  { id: "compte", label: "Mon compte", icon: "user", description: "Votre adresse, vos droits et votre accès.", render: () => <Account /> },
+  { id: "compte", label: "Mon compte", icon: "user", render: () => <Account /> },
   {
     id: "detection",
     label: "Détection",
     icon: "scan",
-    description: "À partir de quelle ressemblance Nyra vous propose une image. Le changement s'applique à la prochaine comparaison.",
     adminOnly: true,
     render: (data) => <Detection data={data} />,
   },
@@ -49,7 +46,6 @@ const SECTIONS: Section[] = [
     id: "lecture",
     label: "Lecture des sites",
     icon: "eye",
-    description: "Comment Nyra parcourt vos sites pour y trouver les images. Le changement s'applique à la prochaine lecture.",
     adminOnly: true,
     render: (data) => <Reading data={data} />,
   },
@@ -86,7 +82,7 @@ function Nav(props: { sections: Section[]; activeId: string; onPick: (id: string
 }
 
 export function Settings() {
-  const { admin, org } = useOrg();
+  const { admin } = useOrg();
   const settings = useSettings();
   const [params, setParams] = useSearchParams();
 
@@ -97,13 +93,12 @@ export function Settings() {
   const active = visible.find((section) => section.id === params.get("section")) ?? visible[0];
   return (
     <>
-      <PageHeader title="Réglages" description={`Propres à ${org.name}${org.brands.length > 1 ? ", communs à toutes ses marques" : ""}.`} />
+      <PageHeader title="Réglages" />
       <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
         <Nav sections={visible} activeId={active.id} onPick={(id) => setParams({ section: id }, { replace: true })} />
         <div className="min-w-0 flex-1">
           <header className="mb-6">
             <h2 className="text-lg font-semibold">{active.label}</h2>
-            <p className="mt-1 max-w-2xl text-sm leading-relaxed text-muted">{active.description}</p>
           </header>
           {active.render(settings.data)}
         </div>

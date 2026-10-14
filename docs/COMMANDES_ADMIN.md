@@ -33,7 +33,24 @@ Dans l'interface (Réglages > Équipe, administrateur) : lister, inviter, change
 
 Rôles : `admin` = bibliothèque, crawls, rapports, réglages. `client` = lecture et décisions.
 
-## Accès back office Nyra (`/interne`)
+## Platform admin et back office Nyra (`/interne`)
+
+Cette commande donne le rôle **Platform admin** (affiché dans la barre latérale) : accès au back office
+et, seul, le droit de **créer et supprimer des marques** (chaque marque est facturée ; l'auteur est
+enregistré dans `brands.created_by`). Pour créer une marque chez un client, ajoute-toi d'abord à son
+organisation avec `nyra cloud-invite --role admin`.
+
+Le back office a sa propre barre latérale, sans commande à lancer :
+
+| Page | Ce qu'on y fait |
+|---|---|
+| Vue d'ensemble | Santé de la file de tâches, échecs en haut, statistiques de toutes les marques |
+| Organisations | Créer un client (avec son administrateur) ou une marque, supprimer une marque |
+| Facturation | Les marques créées par mois (date, auteur), export CSV |
+| Comptes | Tous les comptes ; ajouter une personne à une organisation, changer un rôle, la retirer (même sans être membre) |
+| Platform admins | Ajouter ou retirer un platform admin (jamais soi-même) |
+
+Les mêmes actions existent en ligne de commande :
 
 | Action | Commande |
 |---|---|
@@ -42,10 +59,11 @@ Rôles : `admin` = bibliothèque, crawls, rapports, réglages. `client` = lectur
 
 ## Marques et sites
 
-Pas de commande CLI : tout se fait dans l'interface, **Réglages** d'une organisation (admin).
+Pas de commande CLI : tout se fait dans l'interface, **Réglages** d'une organisation.
 Endpoints API équivalents : `POST/PUT/DELETE /api/orgs/{org_id}/brands[/{brand_id}]` et
 `.../brands/{brand_id}/sites`.
 
+- Créer et supprimer une marque : **Platform admin** uniquement. Renommer une marque et gérer ses sites : admin de l'organisation.
 - Supprimer une marque supprime aussi ses données (refuse s'il y a une tâche en cours).
 
 ## Ce qui n'existe pas en commande (à faire en SQL sur Supabase)

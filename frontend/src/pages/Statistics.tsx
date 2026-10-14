@@ -14,7 +14,7 @@ import {
 } from "../components/insights";
 import { EmptyState, PageHeader } from "../components/ui";
 import { errorMessage } from "../lib/api";
-import { formatDateTime, num } from "../lib/format";
+import { num } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useInsights } from "../lib/queries";
 import { AnatomySection, DecisionsAndLibrary, FormatsSection, LastCrawlSection, StatisticsSkeleton, StatisticsStats } from "./StatisticsSections";
@@ -27,7 +27,6 @@ export function Statistics() {
 }
 
 function StatisticsContent() {
-  const { brand } = useOrg();
   const insights = useInsights();
   const [metric, setMetric] = useState<HistoryMetric>("duration_seconds");
 
@@ -42,7 +41,6 @@ function StatisticsContent() {
     <>
       <PageHeader
         title="Statistiques"
-        description={last ? <>Lectures des {num(site.sites)} site(s) de {brand.name}, bibliothèque et comparaisons. Dernière lecture le {formatDateTime(last.started_at)}.</> : `Lectures des sites de ${brand.name}, bibliothèque et comparaisons.`}
       />
 
       <StatisticsStats insights={insights.data} />

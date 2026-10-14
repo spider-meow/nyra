@@ -554,6 +554,15 @@ export function useBrandMutations() {
       mutationFn: (id: string) => api.del(orgApiPath(`/brands/${id}`)),
       onSuccess: done,
     }),
+    setLogo: useMutation({
+      mutationFn: (input: { id: string; file: File }) => {
+        const body = new FormData();
+        body.append("file", input.file);
+        return api.put<{ logo: string }>(orgApiPath(`/brands/${input.id}/logo`), body);
+      },
+      onSuccess: done,
+    }),
+    removeLogo: useMutation({ mutationFn: (id: string) => api.del(orgApiPath(`/brands/${id}/logo`)), onSuccess: done }),
   };
 }
 

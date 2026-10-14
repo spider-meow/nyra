@@ -99,6 +99,30 @@ def staff_dep(claims: cloud_auth.Claims = Depends(user_dep), ctx: Ctx = Depends(
     return claims
 
 
+def _org_member_or_staff(org_id: uuid.UUID, token: str, ctx: Ctx, admin_only: bool) -> cloud_auth.Member:
+    """A platform admin acts as an admin of any organization (to look after its people); anyone else needs their own role."""
+    claims = ctx.user(token)
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        staff = cloud_insights.is_staff(conn, claims.user_id)
+        known = cloud_db.get_organization(conn, org_id) is not None
+    if staff:
+        if not known:
+            raise HTTPException(status_code=404, detail="Organisation introuvable.")
+        return cloud_auth.Member(user_id=claims.user_id, org_id=org_id, role="admin")
+    member = ctx.member(org_id, token)
+    return ctx.admin(member) if admin_only else member
+
+
+def member_or_staff_dep(org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
+                        ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
+    return _org_member_or_staff(org_id, token, ctx, admin_only=False)
+
+
+def admin_or_staff_dep(org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
+                       ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
+    return _org_member_or_staff(org_id, token, ctx, admin_only=True)
+
+
 def rights_from_body(expiry_date: str, unlimited_rights: bool) -> tuple[Optional[str], bool]:
     """(expiry date, unlimited rights) of a request: a date and unlimited rights exclude each other."""
     try:
@@ -135,7 +159,7 @@ def iso(value) -> Optional[str]:
 
 
 def brand_json(row: dict) -> dict:
-    return {"id": str(row["id"]), "name": row["name"], "slug": row["slug"]}
+    return {"id": str(row["id"]), "name": row["name"], "slug": row["slug"], "logo": row.get("logo")}
 
 
 def site_json(row: dict) -> dict:

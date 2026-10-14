@@ -8,7 +8,7 @@ export function Start(props: { noLibrary: boolean; neverCrawled: boolean }) {
   const { noLibrary, neverCrawled } = props;
   return (
     <>
-      <PageHeader title="Tableau de bord" description="Les visuels dont les droits expirent, et ceux qui sont encore en ligne." />
+      <PageHeader title="Tableau de bord" />
       <Card>
         <h2 className="font-display text-3xl">Mise en route</h2>
         <p className="mt-1 text-sm text-muted">Trois étapes pour savoir quels visuels retirer du site.</p>

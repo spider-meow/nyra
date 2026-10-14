@@ -4,7 +4,6 @@ import { Link } from "react-router";
 import { confidenceHelp, confidenceLabel, decisionLabel, statusLabel } from "../lib/format";
 import type { Confidence, Decision, Status } from "../types";
 import { Icon } from "./icons";
-import { Logo } from "./Logo";
 
 export function cx(...parts: (string | false | null | undefined)[]): string {
   return parts.filter(Boolean).join(" ");
@@ -221,13 +220,12 @@ export function SettingsBlock(props: { title: ReactNode; description?: ReactNode
   );
 }
 
-export function PageHeader(props: { title: string; description?: ReactNode; actions?: ReactNode; eyebrow?: ReactNode }) {
+export function PageHeader(props: { title: string; actions?: ReactNode; eyebrow?: ReactNode }) {
   return (
     <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
       <div className="min-w-0">
         {props.eyebrow ? <p className="mb-1.5 text-[13px] text-muted">{props.eyebrow}</p> : null}
         <h1 className="font-display text-[32px] leading-none md:text-4xl">{props.title}</h1>
-        {props.description ? <p className="mt-2.5 max-w-2xl text-[14.5px] leading-relaxed text-muted">{props.description}</p> : null}
       </div>
       {props.actions ? <div className="flex flex-wrap items-center gap-2">{props.actions}</div> : null}
     </header>
@@ -296,7 +294,6 @@ export function Checkbox(props: { checked: boolean; onChange: (value: boolean) =
 export function EmptyState(props: { title: string; body?: ReactNode; action?: ReactNode }) {
   return (
     <div className="rounded-xl border border-dashed border-line-strong bg-sunk px-6 py-12 text-center">
-      <Logo size={48} className="mx-auto mb-3 opacity-90" />
       <p className="font-display text-2xl">{props.title}</p>
       {props.body ? <p className="mx-auto mt-1 max-w-md text-sm text-muted">{props.body}</p> : null}
       {props.action ? <div className="mt-4 flex justify-center">{props.action}</div> : null}

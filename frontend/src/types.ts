@@ -1,6 +1,6 @@
 export type Role = "admin" | "client";
 
-export type Brand = { id: string; name: string; slug: string };
+export type Brand = { id: string; name: string; slug: string; logo?: string | null };
 
 export type Organization = { org_id: string; name: string; slug: string; role: Role; brands: Brand[] };
 
@@ -477,3 +477,14 @@ export type PlatformInsights = {
   running: { id: string; org_name: string; brand_name: string | null; kind: JobKind; message: string; started_at: string; heartbeat_age_seconds: number | null }[];
   failures: { id: string; org_name: string; brand_name: string | null; kind: JobKind; error: string | null; finished_at: string | null }[];
 };
+
+export type StaffBrand = { id: string; name: string; slug: string; created_at: string; created_by: string | null };
+export type StaffOrg = { id: string; name: string; slug: string; created_at: string; members: number; brands: StaffBrand[] };
+export type StaffUser = {
+  user_id: string;
+  email: string;
+  last_sign_in_at: string | null;
+  staff: boolean;
+  memberships: { org_id: string; org_name: string; role: Member["role"] }[];
+};
+export type StaffAdmin = { user_id: string; email: string; you: boolean };

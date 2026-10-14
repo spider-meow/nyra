@@ -79,7 +79,18 @@ const router = createBrowserRouter([
         element: <RequireSession />,
         children: [
           { path: "/", element: page(<OrgHome />) },
-          { path: "/interne", lazy: lazyPage(() => import("./pages/BackOffice").then((module) => module.BackOffice)), handle: { title: "Back office" } },
+          {
+            path: "/interne",
+            lazy: lazyPage(() => import("./pages/BackOffice").then((module) => module.BackOffice)),
+            handle: { title: "Back office" },
+            children: [
+              { index: true, lazy: lazyPage(() => import("./pages/BackOffice").then((module) => module.Overview)), handle: { title: "Back office" } },
+              { path: "organisations", lazy: lazyPage(() => import("./pages/backoffice/Organizations").then((module) => module.Organizations)), handle: { title: "Organisations et marques" } },
+              { path: "facturation", lazy: lazyPage(() => import("./pages/backoffice/Billing").then((module) => module.Billing)), handle: { title: "Facturation" } },
+              { path: "comptes", lazy: lazyPage(() => import("./pages/backoffice/Accounts").then((module) => module.Accounts)), handle: { title: "Comptes" } },
+              { path: "platform-admins", lazy: lazyPage(() => import("./pages/backoffice/Admins").then((module) => module.Admins)), handle: { title: "Platform admins" } },
+            ],
+          },
           {
             path: "/o/:slug",
             element: <OrgShell />,

@@ -32,7 +32,6 @@ export function Reports() {
     <>
       <PageHeader
         title="Rapports"
-        description="Un instantané daté, à transmettre tel quel : un rapport lisible hors ligne (imprimable en PDF) et deux fichiers CSV. Les faux positifs n'y figurent pas."
       />
 
       {admin ? (

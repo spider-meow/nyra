@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import base64
+import io
 import uuid
 from urllib.parse import urlparse
 
 import psycopg
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from PIL import Image, ImageOps
 from pydantic import BaseModel, Field
 
 from nyra import netguard
@@ -29,10 +32,15 @@ from .common import (
     get_ctx,
     iso,
     site_json,
+    staff_dep,
     unreferenced_images,
 )
 
 router = APIRouter()
+
+
+LOGO_MAX_BYTES = 4_000_000
+LOGO_SIZE = 128  # px: shown at 30, so this stays sharp on a dense screen and weighs a few KB
 
 
 class BrandBody(BaseModel):
@@ -72,11 +80,14 @@ def _checked_site_url(raw: str) -> str:
 
 
 @router.post("/api/orgs/{org_id}/brands")
-def create_brand(org_id: uuid.UUID, body: BrandBody, member=Depends(admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def create_brand(org_id: uuid.UUID, body: BrandBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Platform admins only: each brand is billed, so an organization cannot add its own."""
     name, slug = _brand_name_and_slug(body)
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
-            brand_id = cloud_db.create_brand(conn, org_id=org_id, name=name, slug=slug)
+            if cloud_db.get_organization(conn, org_id) is None:
+                raise HTTPException(status_code=404, detail="Organisation introuvable.")
+            brand_id = cloud_db.create_brand(conn, org_id=org_id, name=name, slug=slug, created_by=claims.user_id)
             brand = cloud_db.get_brand(conn, org_id, brand_id)
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(status_code=409, detail=f"Une marque utilise déjà l'identifiant {slug}.") from exc
@@ -98,9 +109,9 @@ def update_brand(org_id: uuid.UUID, brand_id: uuid.UUID, body: BrandBody, member
 
 
 @router.delete("/api/orgs/{org_id}/brands/{brand_id}")
-def delete_brand(org_id: uuid.UUID, brand_id: uuid.UUID, member=Depends(admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def delete_brand(org_id: uuid.UUID, brand_id: uuid.UUID, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """The brand and everything that belongs to it, nothing else: a crawled image
-    another brand also found keeps its file."""
+    another brand also found keeps its file. Platform admins only."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if active_jobs(conn, brand_id, tuple(cloud_jobs.KINDS)):
             raise HTTPException(status_code=409, detail="Une tâche est en cours sur cette marque. Arrêtez-la d'abord.")
@@ -110,6 +121,38 @@ def delete_brand(org_id: uuid.UUID, brand_id: uuid.UUID, member=Depends(admin_de
     ctx.remove_files(cloud_storage.BUCKET_REFS, orphans.refs)
     ctx.remove_files(cloud_storage.BUCKET_SITE_IMAGES, orphans.site_images)
     ctx.remove_files(cloud_storage.BUCKET_REPORTS, orphans.reports)
+    return {"ok": True}
+
+
+def _logo_data_uri(raw: bytes) -> str:
+    """The upload as a small PNG (transparency kept, orientation applied) in a data URI."""
+    try:
+        image = Image.open(io.BytesIO(raw))
+        image.load()
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise HTTPException(status_code=400, detail="Ce fichier n'est pas une image lisible (PNG, JPEG ou WebP).") from exc
+    image = ImageOps.exif_transpose(image).convert("RGBA")
+    image.thumbnail((LOGO_SIZE, LOGO_SIZE))
+    out = io.BytesIO()
+    image.save(out, format="PNG", optimize=True)
+    return "data:image/png;base64," + base64.b64encode(out.getvalue()).decode("ascii")
+
+
+@router.put(f"{BRAND}/logo")
+def set_logo(file: UploadFile = File(...), scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    raw = file.file.read(LOGO_MAX_BYTES + 1)
+    if len(raw) > LOGO_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Image trop lourde : 4 Mo au plus.")
+    data_uri = _logo_data_uri(raw)
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        cloud_db.set_brand_logo(conn, scope.brand_id, data_uri)
+    return {"logo": data_uri}
+
+
+@router.delete(f"{BRAND}/logo")
+def remove_logo(scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        cloud_db.delete_brand_logo(conn, scope.brand_id)
     return {"ok": True}
 
 

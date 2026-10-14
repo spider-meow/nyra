@@ -19,7 +19,7 @@ import { LabelingMode, TypeButtons, TypeFilter, typeOf } from "./site-images/Typ
  * expiry date) or is set aside as not rights-managed (logo, pictogram).
  */
 export function SiteImages() {
-  const { admin, brand } = useOrg();
+  const { admin } = useOrg();
   const images = useSiteImages();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState<SiteImage[] | null>(null);
@@ -44,7 +44,6 @@ export function SiteImages() {
     <div className={cx(admin && chosen.length > 0 && "pb-20")}>
       <PageHeader
         title="Droits non vérifiés"
-        description={`Les images en ligne sur les sites de ${brand.name} qui ne correspondent à aucun visuel de la bibliothèque : personne n'a encore vérifié leurs droits, et certaines sont peut-être expirées. Ajoutez celles qui sont sous droits, avec leur échéance, et ignorez le reste (logos, pictogrammes, visuels maison).`}
         actions={admin && LABELS_ENABLED ? <Button onClick={() => setTyping(true)}>Étiqueter à la main</Button> : undefined}
       />
       {images.isLoading ? (

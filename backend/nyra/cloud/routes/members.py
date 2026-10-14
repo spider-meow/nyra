@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from .. import db as cloud_db
 from .. import storage as cloud_storage
-from .common import Ctx, admin_dep, get_ctx, member_dep
+from .common import Ctx, admin_or_staff_dep, get_ctx, member_or_staff_dep
 
 router = APIRouter()
 
@@ -42,14 +42,14 @@ def _member_json(row: dict, caller: uuid.UUID) -> dict:
 
 
 @router.get(MEMBER)
-def list_members(org_id: uuid.UUID, member=Depends(member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def list_members(org_id: uuid.UUID, member=Depends(member_or_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         rows = cloud_db.list_members(conn, org_id)
     return {"members": [_member_json(row, member.user_id) for row in rows]}
 
 
 @router.post(MEMBER)
-def invite_member(org_id: uuid.UUID, body: InviteBody, member=Depends(admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def invite_member(org_id: uuid.UUID, body: InviteBody, member=Depends(admin_or_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     email = body.email.strip().lower()
     if "@" not in email or " " in email:
         raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
@@ -76,7 +76,7 @@ def _keep_one_admin(conn, org_id: uuid.UUID, user_id: uuid.UUID) -> None:
 
 
 @router.put(MEMBER + "/{user_id}")
-def change_role(org_id: uuid.UUID, user_id: uuid.UUID, body: RoleBody, member=Depends(admin_dep),
+def change_role(org_id: uuid.UUID, user_id: uuid.UUID, body: RoleBody, member=Depends(admin_or_staff_dep),
                 ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if body.role != "admin":
@@ -87,7 +87,7 @@ def change_role(org_id: uuid.UUID, user_id: uuid.UUID, body: RoleBody, member=De
 
 
 @router.delete(MEMBER + "/{user_id}")
-def remove_member(org_id: uuid.UUID, user_id: uuid.UUID, member=Depends(admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def remove_member(org_id: uuid.UUID, user_id: uuid.UUID, member=Depends(admin_or_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     if user_id == member.user_id:
         raise HTTPException(status_code=409, detail="Vous ne pouvez pas vous retirer vous-même.")
     with cloud_db.connect(ctx.settings.database_url) as conn:

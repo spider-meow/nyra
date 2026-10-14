@@ -48,7 +48,6 @@ export function Library() {
     >
       <PageHeader
         title="Bibliothèque"
-        description="Les visuels sous droits, rangés par collection, avec leur date d'expiration et leurs tags. C'est à eux que chaque page lue est comparée, même une fois expirés."
         actions={<LibraryActions up={up} onImport={() => setImportOpen(true)} />}
       />
       <UploadNotices up={up} indexing={Boolean(library.data?.indexing)} folders={view.folders} current={openFolder} />
