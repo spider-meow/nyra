@@ -51,3 +51,5 @@ jobs:
       # First-load JS budget (frontend/size-budget.json) and the browser-monitoring scrubbers.
       - run: npm run size
       - run: npm run check:scrub
+      - run: npx playwright install --with-deps chromium
+      - run: npm run check:remember
