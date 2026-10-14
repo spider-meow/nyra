@@ -29,6 +29,7 @@ import { useAuth } from "./auth";
 import { useOrg } from "./org";
 import { isRecord, oneOf, readStored, removeOtherBrands, removeStored, storageKey, writeStored } from "./storage";
 import { batches, reportUnanswered, sendBatch, summary, withoutDuplicates, type UploadResult, type UploadRights } from "./upload";
+import { SHRINK_ABOVE_BYTES, shrinkAll } from "./shrink";
 
 // Copies of the Library and Overview answers in localStorage, so those pages open at once.
 // They hold no signed URL (thumbnails come from `useLibraryThumbs`). Older than this, a copy is ignored.
@@ -411,15 +412,23 @@ export function useReferenceUpload() {
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);
     setProgress({ done: 0, total });
+    const sending = total > 1 ? `Envoi de ${total} visuels vers ${brand.name}…` : `Envoi du visuel vers ${brand.name}…`;
     const id = toast.show({
       tone: "loading",
-      message: total > 1 ? `Envoi de ${total} visuels vers ${brand.name}…` : `Envoi du visuel vers ${brand.name}…`,
+      message: sending,
       description: "Vous pouvez continuer à naviguer. Gardez simplement cet onglet ouvert.",
       progress: total > 1 ? 0 : undefined,
     });
     let done = 0;
     try {
-      for (const batch of batches(files)) {
+      let ready = files;
+      if (files.some((file) => file.size > SHRINK_ABOVE_BYTES)) {
+        // Heavy images are lightened here, before they leave: the server (and a serverless host) takes light files only.
+        toast.update(id, { message: "Préparation des visuels…", description: "Les images lourdes sont allégées avant l'envoi.", progress: 0 });
+        ready = await shrinkAll(files, (count) => toast.update(id, { message: `Préparation des visuels · ${count} sur ${total}`, progress: count / total }));
+        toast.update(id, { message: sending, progress: total > 1 ? 0 : undefined });
+      }
+      for (const batch of batches(ready)) {
         await sendBatch(apiPath("/library/upload"), batch, result, rights, collectionId);
         done += batch.length;
         setProgress({ done, total });
