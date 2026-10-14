@@ -34,7 +34,8 @@ export function JobToasts() {
     }
     seen.current = activeIds;
 
-    const rows = toastRows(data.active);
+    // An index job still queued is no news: it starts by itself once a worker is there (no toast, no worker warning).
+    const rows = toastRows(data.active).filter((row) => row[0].kind !== "index" || row[0].status !== "queued");
     const leads = new Set(rows.map((row) => row[0].id));
     for (const [id, toastId] of toastFor.current) {
       if (!leads.has(id)) {

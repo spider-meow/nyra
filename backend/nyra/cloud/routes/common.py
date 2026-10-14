@@ -185,10 +185,10 @@ def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename
     )
 
 
-def active_jobs(conn, brand_id: uuid.UUID, kinds: tuple[str, ...]) -> bool:
+def active_jobs(conn, brand_id: uuid.UUID, kinds: tuple[str, ...], statuses: tuple[str, ...] = cloud_jobs.ACTIVE) -> bool:
     return bool(conn.execute(
         "SELECT 1 FROM jobs WHERE brand_id = %s AND kind = ANY(%s) AND status = ANY(%s) LIMIT 1",
-        (brand_id, list(kinds), list(cloud_jobs.ACTIVE)),
+        (brand_id, list(kinds), list(statuses)),
     ).fetchone())
 
 

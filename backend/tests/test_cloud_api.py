@@ -212,7 +212,7 @@ def test_deleting_a_brand_removes_only_what_belongs_to_it(client, org_with_users
 
 
 def test_upload_is_admin_only_stores_a_thumbnail_and_queues_indexing(client, org_with_users, cloud_brand,
-                                                                     fake_storage_client):
+                                                                     fake_storage_client, cloud_database_url):
     org_id, base, admin_id, client_id, _ = org_with_users
     files = [("files", ("a.jpg", _upload_bytes(), "image/jpeg"))]
     assert client.post(f"{base}/library/upload", headers=_headers(client_id), files=files).status_code == 403
@@ -232,7 +232,10 @@ def test_upload_is_admin_only_stores_a_thumbnail_and_queues_indexing(client, org
     assert ("refs", f"{org_id}/{cloud_brand}/work/a.jpg.jpg") in fake_storage_client.store
 
     library = client.get(f"{base}/library", headers=_headers(client_id)).json()
-    assert library["indexing"] is True
+    assert library["indexing"] is False  # queued, no worker on it yet: not work in progress
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'running' WHERE id = %s", (body["job"]["id"],))
+    assert client.get(f"{base}/library", headers=_headers(client_id)).json()["indexing"] is True
     item = library["items"][0]
     assert item["indexed"] is False
     assert "thumb_url" not in item and "url" not in item  # signed on demand, see the next tests

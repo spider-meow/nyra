@@ -81,7 +81,8 @@ def library(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
     with cloud_db.connect(ctx.settings.database_url) as conn:
         rows = cloud_db.list_references(conn, scope.brand_id)
         collections = cloud_db.list_collections(conn, scope.brand_id)
-        indexing = active_jobs(conn, scope.brand_id, ("index",))
+        # Only while a worker is on it: a queued index job (no worker yet) must not look like work in progress.
+        indexing = active_jobs(conn, scope.brand_id, ("index",), ("running",))
     today = datetime.now(timezone.utc).date()
     items = []
     for row in rows:
