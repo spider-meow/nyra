@@ -304,3 +304,23 @@ def test_crawl_progress_total_never_shrinks_and_pace_starts_at_the_first_page(mo
     progress.report(CrawlStats(pages_visited=7, pages_queued=0))
     # First page done at t=110 (1 page); at t=150, 6 more pages in 40 s: 42 - 7 = 35 left at 6.67 s each.
     assert sent[-1]["done"] == 7 and sent[-1]["eta_seconds"] == round(35 * 40 / 6)
+
+
+def test_a_heavy_reference_is_kept_as_a_lighter_copy_and_a_light_one_untouched():
+    def noisy(size, fmt, mode="RGB"):
+        img = Image.effect_noise(size, 80).convert(mode)
+        buf = io.BytesIO()
+        img.save(buf, format=fmt)
+        return buf.getvalue()
+
+    big = noisy((4000, 3000), "JPEG")
+    kept, kind = fetch.make_stored_original(Image.open(io.BytesIO(big)), big, "image/jpeg")
+    assert kind == "image/jpeg" and len(kept) < len(big)
+    assert max(Image.open(io.BytesIO(kept)).size) == fetch.STORED_SIDE
+
+    small = noisy((800, 600), "JPEG")
+    assert fetch.make_stored_original(Image.open(io.BytesIO(small)), small, "image/jpeg") == (small, "image/jpeg")
+
+    transparent = noisy((3000, 2000), "PNG", "RGBA")
+    kept, kind = fetch.make_stored_original(Image.open(io.BytesIO(transparent)), transparent, "image/png")
+    assert kind == "image/png" and Image.open(io.BytesIO(kept)).mode == "RGBA"

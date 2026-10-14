@@ -131,6 +131,33 @@ def make_working_copy(img: Image.Image, side: int = WORKING_SIDE) -> bytes:
     return buf.getvalue()
 
 
+STORED_SIDE = 2048
+STORED_BYTES = 1_500_000
+
+
+def make_stored_original(img: Image.Image, data: bytes, content_type: Optional[str]) -> tuple[bytes, Optional[str]]:
+    """What is kept of a reference's file: the file itself when it is light, else a copy at most `STORED_SIDE` px.
+
+    A 15 MB studio export is not worth its weight: matching reads the 1024 px working copy, and the
+    edit screen only shows the image. JPEG, or PNG when there is transparency to keep. Animations and
+    anything the copy would not make lighter stay as sent.
+    """
+    if (max(img.size) <= STORED_SIDE and len(data) <= STORED_BYTES) or getattr(img, "n_frames", 1) > 1:
+        return data, content_type
+    flat = ImageOps.exif_transpose(img)
+    alpha = flat.mode in ("RGBA", "LA", "PA") or "transparency" in flat.info
+    flat = flat.convert("RGBA" if alpha else "RGB")
+    flat.thumbnail((STORED_SIDE, STORED_SIDE))
+    buf = io.BytesIO()
+    if alpha:
+        flat.save(buf, format="PNG", optimize=True)
+    else:
+        flat.save(buf, format="JPEG", quality=88, optimize=True)
+    if len(buf.getvalue()) >= len(data):
+        return data, content_type
+    return buf.getvalue(), "image/png" if alpha else "image/jpeg"
+
+
 @dataclass
 class ProcessedImage:
     content_hash: str

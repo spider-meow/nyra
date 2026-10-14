@@ -173,7 +173,8 @@ def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename
     storage_path = cloud_storage.ref_path(org_id, brand_id, filename)
     thumb_path = cloud_storage.ref_thumb_path(org_id, brand_id, filename)
     work_path = cloud_storage.ref_work_path(org_id, brand_id, filename)
-    cloud_storage.upload(client, cloud_storage.BUCKET_REFS, storage_path, data, content_type=content_type)
+    kept, kept_type = fetch.make_stored_original(img, data, content_type)
+    cloud_storage.upload(client, cloud_storage.BUCKET_REFS, storage_path, kept, content_type=kept_type)
     cloud_storage.upload(client, cloud_storage.BUCKET_REFS, thumb_path, fetch.make_thumbnail(img),
                          content_type="image/jpeg")
     cloud_storage.upload(client, cloud_storage.BUCKET_REFS, work_path, fetch.make_working_copy(img),
@@ -181,7 +182,7 @@ def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename
     return dict(
         storage_path=storage_path, phash=features.phash, dhash=features.dhash,
         phash_flip=features.phash_flip, dhash_flip=features.dhash_flip,
-        embedding=None, width=width, height=height, thumb_path=thumb_path, work_path=work_path, byte_size=len(data),
+        embedding=None, width=width, height=height, thumb_path=thumb_path, work_path=work_path, byte_size=len(kept),
     )
 
 
