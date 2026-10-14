@@ -9,6 +9,7 @@ route functions can live at module level instead of inside `create_app`.
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -228,11 +229,10 @@ def enqueue(ctx: Ctx, scope: BrandScope, kind: str, params: dict) -> dict:
         raise HTTPException(status_code=409, detail=f"{label} est déjà en cours ou en attente.") from exc
 
 
-def unreferenced_images(conn, brand_id: uuid.UUID, config: Config) -> list[dict]:
-    """Images of the brand's sites that match nothing in its library and weren't set aside,
-    one entry per photo: the same bytes under several URLs, and the crops and resizes of one photo
-    (`variant_group`), count once. The lead of an entry is its largest image."""
-    rows = cloud_db.unmatched_site_images(conn, brand_id)
+def _group_unreferenced(conn, brand_id: uuid.UUID, config: Config, rows: list[dict]) -> list[dict]:
+    """`rows` (unmatched site images) without the ones set aside, one entry per photo: the same bytes under
+    several URLs, and the crops and resizes of one photo (`variant_group`), count once.
+    The lead of an entry is its largest image."""
     excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
     shown = [row for row in rows if row["id"] not in excluded]
     # A twin of a grouped file (same bytes, new address) joins the group before the worker has seen it.
@@ -244,6 +244,36 @@ def unreferenced_images(conn, brand_id: uuid.UUID, config: Config) -> list[dict]
     for members in groups.values():
         members.sort(key=lambda row: -image_pixels(row))  # stable: the lead is the first row of the largest file
     return [{"lead": members[0], "rows": members} for members in groups.values()]
+
+
+def unreferenced_images(conn, brand_id: uuid.UUID, config: Config) -> list[dict]:
+    """Images of the brand's sites that match nothing in its library and weren't set aside, one entry per photo
+    (see `_group_unreferenced`), with a sample of the pages each one is on."""
+    return _group_unreferenced(conn, brand_id, config, cloud_db.unmatched_site_images(conn, brand_id))
+
+
+# The counter of the side column asks for this on every page: the number is worked out again only when the images,
+# their groups, their matches or the exclusions changed (a fingerprint computed in the database says so), never
+# by fetching thousands of rows to count them. Per (brand, the two thresholds that decide what an exclusion covers).
+_unreferenced_counts: dict[tuple, tuple[str, int]] = {}
+_unreferenced_lock = threading.Lock()
+UNREFERENCED_COUNTS_MAX = 512
+
+
+def unreferenced_count(conn, brand_id: uuid.UUID, config: Config) -> int:
+    """How many entries `unreferenced_images` would list, without listing them."""
+    key = (brand_id, config.match.phash_threshold, config.match.dhash_threshold)
+    signature = cloud_db.unreferenced_signature(conn, brand_id)  # before the rows: they can only be newer than it
+    with _unreferenced_lock:
+        cached = _unreferenced_counts.get(key)
+    if cached and cached[0] == signature:
+        return cached[1]
+    count = len(_group_unreferenced(conn, brand_id, config, cloud_db.unmatched_site_image_keys(conn, brand_id)))
+    with _unreferenced_lock:
+        if len(_unreferenced_counts) >= UNREFERENCED_COUNTS_MAX:
+            del _unreferenced_counts[next(iter(_unreferenced_counts))]
+        _unreferenced_counts[key] = (signature, count)
+    return count
 
 
 def image_pixels(row: dict) -> int:

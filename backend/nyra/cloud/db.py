@@ -885,22 +885,28 @@ def occurrence_summary(conn: psycopg.Connection, brand_id: uuid.UUID, reference_
     ).fetchone()
 
 
+# Pages listed per image: a logo is on every page of a site, and a screen only shows a few.
+SITE_IMAGE_PAGE_SAMPLE = 20
+
+
 def unmatched_site_images(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     """Images read on the brand's sites that match nothing in its library, with their pages.
 
     The same bytes found under several URLs come back once per URL; callers
     group them by `variant_group` (crops of one photo), else `content_hash`.
+    Each row carries the first `SITE_IMAGE_PAGE_SAMPLE` pages (`pages`) and the exact number of pages
+    (`page_count`): the database sends the sample, not the thousands of addresses behind a logo.
     """
     rows = conn.execute(
         """
         SELECT si.id, si.url, si.content_hash, si.storage_path, si.thumb_path, si.width, si.height,
                si.phash, si.dhash, si.variant_group, si.compared_at IS NOT NULL AS compared, si.first_seen, si.last_seen,
                s.id AS site_id, s.url AS site_url, s.label AS site_label,
-               COALESCE(pg.urls, ARRAY[]::text[]) AS pages
+               COALESCE(pg.urls, ARRAY[]::text[]) AS pages, pg.n AS page_count
         FROM site_images si
         JOIN sites s ON s.id = si.site_id
         LEFT JOIN LATERAL (
-            SELECT array_agg(p.url ORDER BY p.url) AS urls
+            SELECT (array_agg(p.url ORDER BY p.url))[1:%s] AS urls, count(*) AS n
             FROM image_pages ip JOIN pages p ON p.id = ip.page_id
             WHERE ip.image_id = si.id
         ) pg ON true
@@ -908,11 +914,47 @@ def unmatched_site_images(conn: psycopg.Connection, brand_id: uuid.UUID) -> list
           AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.site_image_id = si.id)
         ORDER BY si.first_seen DESC, si.url
         """,
-        (brand_id,),
+        (SITE_IMAGE_PAGE_SAMPLE, brand_id),
     ).fetchall()
     for row in rows:
         row["pages"] = list(row["pages"])
     return rows
+
+
+def unmatched_site_image_keys(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
+    """The same images as `unmatched_site_images`, in the same order, with only what counting them takes:
+    no address, no path, no pages (a tenth of the weight)."""
+    return conn.execute(
+        """
+        SELECT si.id, si.content_hash, si.variant_group, si.width, si.height, si.phash, si.dhash
+        FROM site_images si
+        JOIN sites s ON s.id = si.site_id
+        WHERE s.brand_id = %s AND si.phash IS NOT NULL AND si.storage_path IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.site_image_id = si.id)
+        ORDER BY si.first_seen DESC, si.url
+        """,
+        (brand_id,),
+    ).fetchall()
+
+
+def unreferenced_signature(conn: psycopg.Connection, brand_id: uuid.UUID) -> str:
+    """A short fingerprint that changes whenever the set of unreferenced images does: an image read, matched,
+    regrouped or excluded. Computed inside the database, so only a few dozen characters come out."""
+    row = conn.execute(
+        """
+        SELECT
+            (SELECT md5(COALESCE(string_agg(
+                        si.id::text || ':' || COALESCE(si.content_hash, '') || ':' || COALESCE(si.variant_group::text, '') || ':'
+                        || COALESCE(si.phash, '') || ':' || COALESCE(si.dhash, '') || ':'
+                        || EXISTS (SELECT 1 FROM matches m WHERE m.site_image_id = si.id)::text, ',' ORDER BY si.id), ''))
+               FROM site_images si JOIN sites s ON s.id = si.site_id
+              WHERE s.brand_id = %(brand)s AND si.phash IS NOT NULL AND si.storage_path IS NOT NULL) AS images,
+            (SELECT md5(COALESCE(string_agg(e.hash || ':' || e.hash_type, ',' ORDER BY e.hash, e.hash_type), ''))
+               FROM excluded_hashes e WHERE e.brand_id = %(brand)s) AS exclusions
+        """,
+        {"brand": brand_id},
+    ).fetchone()
+    return f"{row['images']}{row['exclusions']}"
 
 
 def site_images_by_id(conn: psycopg.Connection, brand_id: uuid.UUID, ids: list[uuid.UUID]) -> list[Row]:

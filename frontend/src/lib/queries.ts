@@ -100,6 +100,10 @@ export function useOverview() {
     },
     initialData: copy.read,
     initialDataUpdatedAt: 0,
+    // Asked by the side column on every page: kept a minute, and not asked again when the window is merely focused.
+    // Decisions, uploads and the end of a reading still refresh it (they invalidate it).
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -218,6 +222,7 @@ export function useMatches(withinDays: number, countries: string[] = []) {
     queryFn: () => api.get<Matches>(apiPath(`/matches?within_days=${withinDays}${countries.map((item) => `&country=${encodeURIComponent(item)}`).join("")}`)),
     placeholderData: (previous) => previous,
     staleTime: 60_000,
+    refetchOnWindowFocus: false,
     refetchInterval: 30 * 60_000,
   });
 }
@@ -257,7 +262,8 @@ export function useSiteImages() {
     queryKey: ["site-images", brand.id],
     queryFn: () => api.get<{ items: SiteImage[] }>(apiPath("/site-images")),
     // Signed image URLs last an hour; refresh well before that.
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
     refetchInterval: 30 * 60_000,
   });
 }

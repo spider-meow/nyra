@@ -90,7 +90,7 @@ def original_from_site(url: str, config: Config) -> Optional[bytes]:
     return got[0] if got else None
 
 
-MAX_WHERE = 20
+MAX_WHERE = cloud_db.SITE_IMAGE_PAGE_SAMPLE
 
 
 def _site_name(row: dict) -> str:
@@ -106,6 +106,14 @@ def _variants(rows: list[dict]) -> list[dict]:
     return list(files.values())
 
 
+def _distinct_pages(listed: int, rows: list[dict]) -> int:
+    """How many distinct pages `rows` hold, given the `listed` ones. A row carries a sample of its pages and its exact
+    number: when every row is whole, the union is exact; otherwise the largest row is the best figure known."""
+    if all(row["page_count"] <= len(row["pages"]) for row in rows):
+        return listed
+    return max(listed, max(row["page_count"] for row in rows))
+
+
 def _variant_item(members: list[dict], urls: dict[str, str]) -> dict:
     lead = members[0]
     # One line per site and page: two addresses of the same bytes read on one page are one occurrence.
@@ -119,7 +127,7 @@ def _variant_item(members: list[dict], urls: dict[str, str]) -> dict:
         "thumb": urls.get(lead["thumb_path"] or "") or urls.get(lead["storage_path"] or "", ""),
         "image": urls.get(lead["storage_path"] or "", ""),
         "where": [{"site": site, "page": page} for site, page in where[:MAX_WHERE]],
-        "where_count": len(where),
+        "where_count": _distinct_pages(len(where), members),
     }
 
 
@@ -136,7 +144,7 @@ def _site_image_item(group: dict, urls: dict[str, str]) -> dict:
         "url_count": len(rows),
         "filename": filename_from_url(lead["url"], lead["storage_path"] or ""),
         "pages": pages[:20],
-        "page_count": len(pages),
+        "page_count": _distinct_pages(len(pages), rows),
         "site_ids": [str(site_id) for site_id in sites],
         "sites": list(sites.values()),
         "width": lead["width"],

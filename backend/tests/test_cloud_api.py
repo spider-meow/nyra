@@ -922,6 +922,8 @@ def test_site_images_without_a_reference_are_listed_and_can_join_the_library(
     logo = str(images["https://t.test/logo.png"])
     client.post(f"{base}/exclusions", headers=_headers(admin_id), json={"site_image_id": logo, "reason": "Logo"})
     assert [item["url_count"] for item in client.get(f"{base}/site-images", headers=_headers(admin_id)).json()["items"]] == [2]
+    # The counter of the side column is cached, yet it follows the exclusion at once.
+    assert client.get(f"{base}/overview", headers=_headers(client_id)).json()["dashboard"]["unreferenced_online"] == 1
 
     body = {"site_image_ids": [campaign["id"]], "expiry_date": "2020-01-01", "credit": "Studio"}
     assert client.post(f"{base}/site-images/adopt", headers=_headers(client_id), json=body).status_code == 403
@@ -991,6 +993,38 @@ def test_crops_of_one_photo_are_one_entry_listing_each_version_and_where_it_was_
     assert len(items) == 2
     large = next(item for item in items if len(item["variants"]) == 2)["variants"][0]
     assert large["url_count"] == 2 and large["where_count"] == 1
+
+
+def test_an_image_on_many_pages_lists_a_sample_and_the_exact_number(
+    client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client
+):
+    org_id, base, _, client_id, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand, "https://t.test/fr/")
+        path = f"{org_id}/logo.jpg"
+        fake_storage_client.store[("site-images", path)] = _upload_bytes().getvalue()
+        image = conn.execute(
+            """INSERT INTO site_images (org_id, site_id, url, storage_path, content_hash, phash, dhash)
+               VALUES (%s, %s, 'https://t.test/logo.png', %s, 'logo', 'ffff0000ffff0000', 'ffff0000ffff0000') RETURNING id""",
+            (org_id, site, path),
+        ).fetchone()["id"]
+        for number in range(45):
+            page = conn.execute("INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, %s, 'done') RETURNING id",
+                                (org_id, site, f"https://t.test/p{number:02d}")).fetchone()["id"]
+            cloud_db.link_image_page(conn, image, page)
+    item = client.get(f"{base}/site-images", headers=_headers(client_id)).json()["items"][0]
+    assert item["page_count"] == 45 and len(item["pages"]) == cloud_db.SITE_IMAGE_PAGE_SAMPLE and item["pages"][0] == "https://t.test/p00"
+    variant = item["variants"][0]
+    assert variant["where_count"] == 45 and len(variant["where"]) == cloud_db.SITE_IMAGE_PAGE_SAMPLE
+
+
+def test_distinct_pages_are_exact_when_every_row_is_whole_and_a_lower_bound_otherwise():
+    from nyra.cloud.routes.site_images import _distinct_pages
+
+    whole = [{"pages": ["a", "b"], "page_count": 2}, {"pages": ["b", "c"], "page_count": 2}]
+    assert _distinct_pages(3, whole) == 3  # the union of what every row listed
+    sampled = [{"pages": ["a"] * 20, "page_count": 45}, {"pages": ["b", "c"], "page_count": 2}]
+    assert _distinct_pages(22, sampled) == 45  # the largest row's own number is the best known
 
 
 @pytest.fixture()
