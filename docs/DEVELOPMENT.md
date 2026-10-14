@@ -95,6 +95,20 @@ first.
 row, and the decision filter or a reference listed twice never makes a row list itself. Same method as
 `check:scrub` (compiled in memory, no test framework). Run it after touching that file.
 
+### Interface addresses
+
+The interface's addresses are English (`/login`, `/set-password`, `/back-office/...`,
+`/o/<org>/b/<brand>/library`; query parameters `window`, `status`, `tab`, `country`; settings sections
+`general`, `team`, `detection`, `reading`, `account`). Until October 2026 they were French
+(`/connexion`, `/o/<org>/m/<brand>/bibliotheque`, `?fenetre=`...), and every old address still works:
+`src/lib/paths.ts` holds the table of old names and turns an old address into its new one, keeping the
+fragment (the key of an e-mailed sign-in link sits there) and renaming the query parameters. The router
+sends the old addresses to `src/pages/Legacy.tsx`, fetched only then.
+
+`npm run check:paths` runs that conversion on every old address, checks the router has every new page,
+and fails if an old name is left in `src/`. Run it after touching the routes or a link. A new page needs no
+entry in the table: only a renamed one does.
+
 ### Browser monitoring: scrubbing
 
 `npm run check:scrub` runs the browser-monitoring scrubbers

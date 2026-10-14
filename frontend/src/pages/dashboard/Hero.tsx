@@ -26,8 +26,8 @@ export function Hero(props: { overview: Overview }) {
             : "D'après la dernière lecture. Les faux positifs et les visuels déjà retirés ne sont pas comptés."}
         </p>
         {hero ? (
-          // The dashboard counts every deadline, so the list it opens does too (fenetre=3650).
-          <LinkButton to={`${link("a-traiter")}?statut=expire&fenetre=3650`} variant="primary" size="lg" className="mt-6">
+          // The dashboard counts every deadline, so the list it opens does too (window=3650).
+          <LinkButton to={`${link("review")}?status=expire&window=3650`} variant="primary" size="lg" className="mt-6">
             Commencer le tri
             <Icon name="arrow" size={16} strokeWidth={2} />
           </LinkButton>
@@ -35,7 +35,7 @@ export function Hero(props: { overview: Overview }) {
         {dashboard.unreferenced_online ? (
           <p className="mt-5 max-w-xl border-t border-line pt-4 text-sm text-ink-soft">
             {hero ? "Par ailleurs, " : "Attention : "}
-            <Link className="font-medium text-ink underline underline-offset-2" to={link("images-du-site")}>
+            <Link className="font-medium text-ink underline underline-offset-2" to={link("site-images")}>
               {plural(dashboard.unreferenced_online, "image en ligne n'a", "images en ligne n'ont")} jamais eu ses droits vérifiés
             </Link>
             . Certaines sont peut-être expirées : elles ne sont pas comptées ici tant qu'elles ne sont pas dans la bibliothèque.

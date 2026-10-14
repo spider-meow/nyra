@@ -33,7 +33,7 @@ Dans l'interface (Réglages > Équipe, administrateur) : lister, inviter, change
 
 Rôles : `admin` = bibliothèque, crawls, rapports, réglages. `client` = lecture et décisions.
 
-## Platform admin et back office Nyra (`/interne`)
+## Platform admin et back office Nyra (`/back-office`)
 
 Cette commande donne le rôle **Platform admin** (affiché dans la barre latérale) : accès au back office
 et, seul, le droit de **créer et supprimer des marques** (chaque marque est facturée ; l'auteur est

@@ -96,6 +96,8 @@ cd frontend && npx tsc --noEmit    # types stricts (strict, noUnusedLocals…)
 cd frontend && npm run build
 cd frontend && npm run size        # budget de taille du premier chargement
 cd frontend && npm run check:scrub # le masquage des données client dans Sentry
+cd frontend && npm run check:rows  # le regroupement par photo de « À traiter »
+cd frontend && npm run check:paths # les adresses de l'interface et la redirection des anciennes
 pytest -q                          # sans warning non justifié
 ```
 

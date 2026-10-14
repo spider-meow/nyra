@@ -33,10 +33,10 @@ const SECTIONS: Section[] = [
       </>
     ),
   },
-  { id: "equipe", label: "Équipe", icon: "users", group: "organisation", render: () => <Team /> },
+  { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Team /> },
   { id: "detection", label: "Détection", icon: "scan", group: "organisation", adminOnly: true, render: (data) => <Detection data={data} /> },
-  { id: "lecture", label: "Lecture des sites", icon: "eye", group: "organisation", adminOnly: true, render: (data) => <Reading data={data} /> },
-  { id: "compte", label: "Mon compte", icon: "user", group: "moi", render: () => <Account /> },
+  { id: "reading", label: "Lecture des sites", icon: "eye", group: "organisation", adminOnly: true, render: (data) => <Reading data={data} /> },
+  { id: "account", label: "Mon compte", icon: "user", group: "moi", render: () => <Account /> },
 ];
 
 function SectionLink(props: { section: Section; active: boolean; onPick: () => void }) {

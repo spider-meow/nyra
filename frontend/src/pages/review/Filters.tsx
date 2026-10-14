@@ -9,7 +9,7 @@ export function ReviewFilters(props: { view: ReviewView }) {
     <div className={cx("mb-4 grid gap-3 sm:grid-cols-2", countries.length || selectedCountries.length ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
       <div>
         <FieldLabel htmlFor="window">Échéance</FieldLabel>
-        <Select id="window" value={String(withinDays)} onChange={(event) => setParam("fenetre", event.target.value)}>
+        <Select id="window" value={String(withinDays)} onChange={(event) => setParam("window", event.target.value)}>
           {!WINDOWS.includes(withinDays) ? <option value={withinDays}>Expirés ou sous {withinDays} jours</option> : null}
           {WINDOWS.slice(0, -1).map((days) => <option key={days} value={days}>Expirés ou sous {days} jours</option>)}
           <option value="3650">Toutes les échéances</option>
@@ -17,7 +17,7 @@ export function ReviewFilters(props: { view: ReviewView }) {
       </div>
       <div>
         <FieldLabel htmlFor="status">Statut</FieldLabel>
-        <Select id="status" value={statusFilter} onChange={(event) => setParam("statut", event.target.value === "all" ? null : event.target.value)}>
+        <Select id="status" value={statusFilter} onChange={(event) => setParam("status", event.target.value === "all" ? null : event.target.value)}>
           <option value="all">Tous</option>
           <option value="expire">Expirés</option>
           <option value="<30j">Moins de 30 jours</option>
@@ -70,7 +70,7 @@ export function ReviewTabs(props: { view: ReviewView }) {
           type="button"
           role="tab"
           aria-selected={tab === value}
-          onClick={() => setParam("onglet", value === "found" ? null : value)}
+          onClick={() => setParam("tab", value === "found" ? null : value)}
           className={cx(
             "inline-flex h-9 shrink-0 items-center gap-2 rounded-full px-4 text-[13.5px] whitespace-nowrap transition-colors",
             tab === value ? "bg-ink font-medium text-paper" : "border border-ink bg-paper text-ink hover:bg-yellow",

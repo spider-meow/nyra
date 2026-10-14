@@ -30,13 +30,13 @@ function Centered(props: { title: string; body?: ReactNode; children?: ReactNode
   );
 }
 
-/** Everything behind a session. Signed-out visitors go to /connexion. */
+/** Everything behind a session. Signed-out visitors go to /login. */
 export function RequireSession() {
   const auth = useAuth();
   if (auth.phase === "loading") return <Centered title="Un instant"><div className="mt-4"><Spinner label="Vérification de la session…" /></div></Centered>;
   if (auth.phase === "unconfigured") return <Centered title="Service indisponible" body={auth.problem} />;
-  if (auth.phase === "signed-out") return <Navigate to="/connexion" replace />;
-  if (auth.mustSetPassword) return <Navigate to="/mot-de-passe" replace />;
+  if (auth.phase === "signed-out") return <Navigate to="/login" replace />;
+  if (auth.mustSetPassword) return <Navigate to="/set-password" replace />;
   return <Outlet />;
 }
 
@@ -49,7 +49,7 @@ export function Login() {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
-  if (auth.phase === "signed-in") return <Navigate to={auth.mustSetPassword ? "/mot-de-passe" : "/"} replace />;
+  if (auth.phase === "signed-in") return <Navigate to={auth.mustSetPassword ? "/set-password" : "/"} replace />;
   if (auth.phase === "unconfigured") return <Centered title="Service indisponible" body={auth.problem} />;
 
   async function submit(event: FormEvent) {
@@ -158,7 +158,7 @@ export function SetPassword() {
   if (auth.phase !== "signed-in") {
     return (
       <Centered title="Lien expiré" body="Ce lien n'est plus valide. Demandez-en un nouveau depuis la page de connexion.">
-        <Button variant="primary" className="mt-5 w-full" onClick={() => navigate("/connexion")}>Demander un nouveau lien</Button>
+        <Button variant="primary" className="mt-5 w-full" onClick={() => navigate("/login")}>Demander un nouveau lien</Button>
       </Centered>
     );
   }
@@ -209,7 +209,7 @@ export function OrgHome() {
   const list = orgs.data ?? [];
   const staff = Boolean(me.data?.staff);
   if (list.length === 1 && !staff) return <Navigate to={`/o/${list[0].slug}`} replace />;
-  if (list.length === 0 && staff) return <Navigate to="/interne" replace />;
+  if (list.length === 0 && staff) return <Navigate to="/back-office" replace />;
   if (list.length === 0) {
     return (
       <Centered title="Aucune organisation" body={`Le compte ${auth.email} n'est rattaché à aucune organisation. Demandez à votre administrateur de vous inviter.`}>
@@ -227,7 +227,7 @@ export function OrgHome() {
           </Link>
         ))}
         {staff ? (
-          <Link to="/interne" className="rounded-xl border border-dashed border-ink bg-paper px-4 py-3 text-sm font-medium hover:bg-yellow">
+          <Link to="/back-office" className="rounded-xl border border-dashed border-ink bg-paper px-4 py-3 text-sm font-medium hover:bg-yellow">
             Back office Nyra
             <span className="block text-xs font-normal text-muted">Toutes les marques, la file de tâches, les performances</span>
           </Link>
@@ -239,7 +239,7 @@ export function OrgHome() {
 
 const ShellOrg = createContext<Organization | null>(null);
 
-function useShellOrg(): Organization {
+export function useShellOrg(): Organization {
   const org = useContext(ShellOrg);
   if (!org) throw new Error("OrgShell manquant.");
   return org;
@@ -264,19 +264,15 @@ export function OrgShell() {
   );
 }
 
-/**
- * /o/:slug, and addresses from before brands (/o/:slug/bibliotheque): the
- * same page of the organization's first brand.
- */
+/** /o/:slug: the dashboard of the organization's first brand (links from before brands: Legacy.tsx). */
 export function FirstBrand() {
   const org = useShellOrg();
-  const params = useParams();
   const first = org.brands[0];
   if (!first) return <NoBrand org={org} />;
-  return <Navigate to={brandLink(org, first.slug, params["*"] || "tableau-de-bord")} replace />;
+  return <Navigate to={brandLink(org, first.slug, "dashboard")} replace />;
 }
 
-/** /o/:slug/m/:brand/*: resolves the brand, then renders the app shell. */
+/** /o/:slug/b/:brand/*: resolves the brand, then renders the app shell. */
 export function BrandShell() {
   const org = useShellOrg();
   const { brand: slug } = useParams();
@@ -307,7 +303,7 @@ function NoBrand(props: { org: Organization }) {
     try {
       const { brand } = await api.post<{ brand: Brand }>(`/orgs/${org.org_id}/brands`, { name });
       await client.invalidateQueries({ queryKey: ["orgs"] });
-      navigate(brandLink(org, brand.slug, "tableau-de-bord"), { replace: true });
+      navigate(brandLink(org, brand.slug, "dashboard"), { replace: true });
     } catch (err) {
       setError(errorMessage(err));
       setPending(false);

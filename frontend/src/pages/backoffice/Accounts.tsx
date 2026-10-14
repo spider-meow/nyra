@@ -107,7 +107,7 @@ function UserRow(props: { user: StaffUser }) {
   );
 }
 
-/** /interne/comptes — every account and the organizations it belongs to. */
+/** /back-office/accounts — every account and the organizations it belongs to. */
 export function Accounts() {
   const users = useStaffUsers();
   const [search, setSearch] = useState("");

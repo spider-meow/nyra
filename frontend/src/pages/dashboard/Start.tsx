@@ -13,9 +13,9 @@ export function Start(props: { noLibrary: boolean; neverCrawled: boolean }) {
         <h2 className="font-display text-3xl">Mise en route</h2>
         <p className="mt-1 text-sm text-muted">Trois étapes pour savoir quels visuels retirer du site.</p>
         <ol className="mt-5 grid gap-4 text-[15px]">
-          <Step done={!noLibrary} index={1} title="Déposer les visuels sous droits et leur date d'expiration" to={link("bibliotheque")} cta="Ouvrir la bibliothèque" />
-          <Step done={!neverCrawled} index={2} title="Ajouter les sites sur lesquels ils pourraient encore apparaître, puis les lire" to={link("lectures")} cta="Sites et lectures" disabled={noLibrary || !admin} />
-          <Step done={false} index={3} title="Traiter les correspondances trouvées" to={link("a-traiter")} cta="Voir les correspondances" disabled={neverCrawled} />
+          <Step done={!noLibrary} index={1} title="Déposer les visuels sous droits et leur date d'expiration" to={link("library")} cta="Ouvrir la bibliothèque" />
+          <Step done={!neverCrawled} index={2} title="Ajouter les sites sur lesquels ils pourraient encore apparaître, puis les lire" to={link("scans")} cta="Sites et lectures" disabled={noLibrary || !admin} />
+          <Step done={false} index={3} title="Traiter les correspondances trouvées" to={link("review")} cta="Voir les correspondances" disabled={neverCrawled} />
         </ol>
       </Card>
     </>

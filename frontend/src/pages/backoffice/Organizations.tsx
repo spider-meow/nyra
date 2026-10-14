@@ -111,7 +111,7 @@ function OrganizationCard(props: { org: StaffOrg }) {
   );
 }
 
-/** /interne/organisations — every client, its brands, and where a brand is created (each one is billed). */
+/** /back-office/organizations — every client, its brands, and where a brand is created (each one is billed). */
 export function Organizations() {
   const orgs = useStaffOrgs();
   return (

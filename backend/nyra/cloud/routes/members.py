@@ -33,7 +33,7 @@ def find_or_invite_user(database_url: str, supabase_url: str, service_key: str, 
     if row is not None:
         return str(row["id"]), False
     client = cloud_storage.get_client(supabase_url, service_key)
-    options = {"redirect_to": public_url.rstrip("/") + "/connexion"} if public_url else {}
+    options = {"redirect_to": public_url.rstrip("/") + "/login"} if public_url else {}
     return str(client.auth.admin.invite_user_by_email(email, options).user.id), True
 
 

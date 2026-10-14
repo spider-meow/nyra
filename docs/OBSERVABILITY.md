@@ -4,8 +4,8 @@ Three layers, each answering a different question:
 
 | Question | Where | Setup |
 |---|---|---|
-| How does a brand's site and pipeline behave? (image count, average weight, images per second, crawl duration, false positives…) | **Statistiques** page of each brand, `/o/<org>/m/<brand>/statistiques`, organization admins | nothing: built in |
-| How is the whole platform doing? (every brand of every organization side by side, job queue, failures, throughput) | **Back office**, `/interne`, Nyra team only | `nyra cloud-staff --email …` |
+| How does a brand's site and pipeline behave? (image count, average weight, images per second, crawl duration, false positives…) | **Statistiques** page of each brand, `/o/<org>/b/<brand>/statistics`, organization admins | nothing: built in |
+| How is the whole platform doing? (every brand of every organization side by side, job queue, failures, throughput) | **Back office**, `/back-office`, Nyra team only | `nyra cloud-staff --email …` |
 | Is it up? What broke, and when? Are pages slow for real users? Trends over months, alerts | **Grafana** (metrics, logs, SQL) + **Sentry** (exceptions on the server and in the browser, page speed) | below |
 
 ## What is measured
@@ -46,7 +46,7 @@ nyra cloud-staff --email arthur@example.com           # grant (invites if no acc
 nyra cloud-staff --email arthur@example.com --remove  # revoke
 ```
 
-Staff see `/interne` (and a "Back office Nyra" link in the sidebar). The
+Staff see `/back-office` (and a "Back office Nyra" link in the sidebar). The
 list lives in `platform_staff`, readable only by the backend. Staff are not
 members of every organization: "Détail" on a brand opens its Statistiques
 page only if the account is also admin there (`nyra cloud-invite --role
@@ -99,7 +99,7 @@ the server cannot: it sees what the browser sees (network, rendering).
   before the SDK has finished downloading is kept, up to 10, and sent when it
   starts);
 - *spans*, streamed by the SDK (its default mode): one per page load and per
-  navigation, named by route pattern (`/o/:slug/m/:brand/bibliotheque`), the
+  navigation, named by route pattern (`/o/:slug/b/:brand/library`), the
   page-load timeline (`browser.dns`, `.connect`, `.request`, `.response`,
   DOMContentLoaded, load event, first paint), long animation frames
   (`ui.long_animation_frame`), and each API call (`http.client`: the span

@@ -45,7 +45,7 @@ export function LibraryToolbar(props: { view: LibraryView; onTab: (tab: Tab) => 
         <p className="mb-4 rounded-xl bg-side px-4 py-3 text-sm text-ink-soft">
           Ces visuels ne sont plus sous droits, mais les sites continuent d'être comparés à eux : ceux qui y sont encore en ligne sont dans « À traiter ».
           {admin ? " Pour en renouveler un, donnez-lui une nouvelle échéance : il revient dans les visuels actifs." : ""}{" "}
-          <Link to={`${link("a-traiter")}?statut=expire`} className="font-medium text-ink underline underline-offset-2">Voir ce qui est encore en ligne</Link>
+          <Link to={`${link("review")}?status=expire`} className="font-medium text-ink underline underline-offset-2">Voir ce qui est encore en ligne</Link>
         </p>
       ) : null}
 

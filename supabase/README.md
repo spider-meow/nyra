@@ -66,7 +66,8 @@ miroir : le worker les complète via une tâche `index` (voir
 - **Authentication > Providers > Email** : désactiver *Allow new users to
   sign up*. L'accès se fait sur invitation (`nyra cloud-invite`).
 - **Authentication > URL Configuration** : *Site URL* et redirections
-  `<site>/connexion`, `<site>/mot-de-passe`.
+  `<site>/login`, `<site>/set-password` (et les anciennes
+  `<site>/connexion`, `<site>/mot-de-passe`, pour les liens déjà envoyés).
 
 ## Modèle
 

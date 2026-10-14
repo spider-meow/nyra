@@ -12,7 +12,7 @@ export { captureException } from "@sentry/react";
 /** Hosts of the page's own fonts (index.html): they keep their name in what is sent. */
 const FONT_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"];
 
-/** `/o/remy-martin/m/louis-xiii/bibliotheque` -> `/o/:slug/m/:brand/bibliotheque`, from the router's own routes. */
+/** `/o/remy-martin/b/louis-xiii/library` -> `/o/:slug/b/:brand/library`, from the router's own routes. */
 function routePattern(router: Router, pathname: string): string {
   const parts = matchRoutes(router.routes, pathname)?.map((match) => match.route.path ?? "") ?? ["*"];
   return `/${parts.join("/").split("/").filter(Boolean).join("/")}`;

@@ -22,7 +22,7 @@ import { useMe } from "../lib/org";
 import type { PlatformInsights } from "../types";
 import { BackOfficeSkeleton, BrandsSection, HealthBanner, PlatformStats, RunningAndFailures } from "./BackOfficeSections";
 
-/** /interne/*: the back office's frame (side column, then the page); Nyra team only. */
+/** /back-office/*: the back office's frame (side column, then the page); Nyra team only. */
 export function BackOffice() {
   const me = useMe();
   const auth = useAuth();
@@ -41,7 +41,7 @@ export function BackOffice() {
   );
 }
 
-/** /interne — every organization side by side and the health of the job queue. */
+/** /back-office — every organization side by side and the health of the job queue. */
 export function Overview() {
   return (
     <>

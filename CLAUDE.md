@@ -18,7 +18,7 @@ avertissement :
 
 ```bash
 ruff check backend
-cd frontend && npx tsc --noEmit && npm run build && npm run size && npm run check:scrub && npm run check:rows
+cd frontend && npx tsc --noEmit && npm run build && npm run size && npm run check:scrub && npm run check:rows && npm run check:paths
 pytest -q    # les tests cloud demandent TEST_DATABASE_URL (voir backend/tests/conftest.py)
 ```
 

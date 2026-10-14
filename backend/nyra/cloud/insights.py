@@ -2,9 +2,9 @@
 
 Two audiences, one source:
 - `brand_insights` — one brand's numbers, for its organization's admins
-  (`/o/<org>/m/<brand>/statistiques`);
+  (`/o/<org>/b/<brand>/statistics`);
 - `platform_insights` — every brand of every organization side by side,
-  plus the health of the job queue, for the Nyra team (`/interne`,
+  plus the health of the job queue, for the Nyra team (`/back-office`,
   `platform_staff` only).
 
 The views live in `supabase/migrations/20260929000015_insights.sql`;

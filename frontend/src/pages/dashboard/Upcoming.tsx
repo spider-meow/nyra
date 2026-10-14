@@ -19,7 +19,7 @@ export function Upcoming(props: { items: UpcomingItem[] }) {
     <Card padded={false} className="mt-6 overflow-hidden">
       <div className="flex items-center justify-between border-b border-line px-6 py-4">
         <h2 className="text-[17px] font-semibold tracking-tight">Échéances des 90 prochains jours</h2>
-        <Link to={link("bibliotheque")} className="text-[13.5px] font-medium text-ink underline underline-offset-2">Toute la bibliothèque</Link>
+        <Link to={link("library")} className="text-[13.5px] font-medium text-ink underline underline-offset-2">Toute la bibliothèque</Link>
       </div>
       {props.items.length ? (
         <ul className="divide-y divide-line">

@@ -16,7 +16,7 @@ export type Scope = {
   origin: string;
   /** The host names that keep their name: this page's, Supabase's, the font hosts. Any other host becomes `[external]`. */
   hosts: string[];
-  /** A path of the app -> its route pattern (`/o/:slug/m/:brand/bibliotheque`). */
+  /** A path of the app -> its route pattern (`/o/:slug/b/:brand/library`). */
   routeOf: (pathname: string) => string;
   /** Names of this client's own data (organizations, brands, slugs, the user's e-mail), read on every use: they load after the page. */
   names: () => string[];

@@ -17,20 +17,20 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
   const overview = useOverview();
   const pending = overview.data?.dashboard.pending_review ?? 0;
   const expired = overview.data?.dashboard.expired_online ?? 0;
-  const staffItems: NavItem[] = me.data?.staff ? [{ to: "/interne", label: "Back office Nyra", icon: "backoffice", newTab: true }] : [];
-  const adminFooterItems: NavItem[] = admin ? [{ to: link("statistiques"), label: "Stats pour les nerds", icon: "stats" }] : [];
+  const staffItems: NavItem[] = me.data?.staff ? [{ to: "/back-office", label: "Back office Nyra", icon: "backoffice", newTab: true }] : [];
+  const adminFooterItems: NavItem[] = admin ? [{ to: link("statistics"), label: "Stats pour les nerds", icon: "stats" }] : [];
   return {
     items: [
-      { to: link("tableau-de-bord"), label: "Tableau de bord", icon: "dashboard", count: expired, tone: "alert" },
-      { to: `${link("a-traiter")}?fenetre=3650`, label: "À traiter", icon: "review", count: pending, tone: "neutral" },
-      { to: link("bibliotheque"), label: "Bibliothèque", icon: "library", count: overview.data?.stats.reference_images, tone: "muted" },
-      { to: link("images-du-site"), label: "Droits non vérifiés", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
-      { to: link("lectures"), label: "Sites et lectures", icon: "scan" },
+      { to: link("dashboard"), label: "Tableau de bord", icon: "dashboard", count: expired, tone: "alert" },
+      { to: `${link("review")}?window=3650`, label: "À traiter", icon: "review", count: pending, tone: "neutral" },
+      { to: link("library"), label: "Bibliothèque", icon: "library", count: overview.data?.stats.reference_images, tone: "muted" },
+      { to: link("site-images"), label: "Droits non vérifiés", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
+      { to: link("scans"), label: "Sites et lectures", icon: "scan" },
     ],
     footerItems: [
-      { to: link("rapports"), label: "Rapports", icon: "report" },
+      { to: link("reports"), label: "Rapports", icon: "report" },
       ...adminFooterItems,
-      { to: link("reglages"), label: "Réglages", icon: "settings" },
+      { to: link("settings"), label: "Réglages", icon: "settings" },
       ...staffItems,
     ],
   };
@@ -83,12 +83,12 @@ function BrandSwitcher() {
   const { org, brand, link } = useOrg();
   const navigate = useNavigate();
   const location = useLocation();
-  // Same page, other brand: /o/x/m/a/bibliotheque -> /o/x/m/b/bibliotheque
-  const page = location.pathname.slice(link().length + 1) || "tableau-de-bord";
+  // Same page, other brand: /o/x/b/a/library -> /o/x/b/other/library
+  const page = location.pathname.slice(link().length + 1) || "dashboard";
   const identity = (
     <span className="flex min-w-0 items-center gap-2.5">
       <BrandMark brand={brand} size={30} />
-      <span className="min-w-0 flex-1 truncate font-display text-[24px] leading-none" title={brand.name}>{brand.name}</span>
+      <span className="min-w-0 flex-1 truncate font-display text-[16px] leading-none" title={brand.name}>{brand.name}</span>
     </span>
   );
   if (org.brands.length <= 1) return <div className="flex h-12 items-center px-2.5">{identity}</div>;

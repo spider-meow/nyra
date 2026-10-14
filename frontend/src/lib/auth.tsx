@@ -108,7 +108,7 @@ function authActions(client: SupabaseClient | null, onPasswordSet: () => void): 
     async requestReset(email) {
       if (!client) return;
       const { error } = await client.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/mot-de-passe`,
+        redirectTo: `${window.location.origin}/set-password`,
       });
       if (error) throw authError(error.message);
     },

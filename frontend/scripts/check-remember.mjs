@@ -25,14 +25,14 @@ try {
   for (const remember of [true, false]) {
     const context = await mocked(browser);
     const page = await context.newPage();
-    await page.goto(`${origin}/connexion`);
+    await page.goto(`${origin}/login`);
     await page.fill("#email", "a@b.co");
     await page.fill("#password", "password123");
     const box = page.getByLabel("Rester connecté");
     assert.equal(await box.isChecked(), true, "ticked by default");
     if (!remember) await box.click();
     await page.click("button[type=submit]");
-    await page.waitForFunction(() => !location.pathname.startsWith("/connexion"));
+    await page.waitForFunction(() => !location.pathname.startsWith("/login"));
     const where = await page.evaluate(() => ({ local: localStorage.getItem("sb-sb-auth-token") !== null, session: sessionStorage.getItem("sb-sb-auth-token") !== null }));
     assert.deepEqual(where, { local: remember, session: !remember });
 
@@ -41,7 +41,7 @@ try {
     await next.goto(`${origin}/`);
     await next.waitForFunction(() => location.pathname !== "/" || document.body.innerText.length > 0);
     await next.waitForTimeout(1000);
-    assert.equal(new URL(next.url()).pathname.startsWith("/connexion"), !remember, `after restart (remember=${remember})`);
+    assert.equal(new URL(next.url()).pathname.startsWith("/login"), !remember, `after restart (remember=${remember})`);
     await context.close();
     await restarted.close();
   }

@@ -88,7 +88,7 @@ function NameRow() {
         onSuccess: ({ brand: renamed }) => {
           toast.show({ tone: "success", message: `Marque renommée : ${renamed.name}`, duration: 3000 });
           // The address of the brand on screen follows its new slug.
-          navigate(`${brandLink(org, renamed.slug, "reglages")}?section=general`, { replace: true });
+          navigate(`${brandLink(org, renamed.slug, "settings")}?section=general`, { replace: true });
         },
         onError: (error) => toast.show({ tone: "error", message: "La marque n'a pas été renommée", description: errorMessage(error) }),
       },
@@ -120,7 +120,7 @@ export function Profile() {
       <LogoRow />
       <NameRow />
       <SettingsRow label="Adresse dans Nyra">
-        <code className="text-[13px] text-muted">/o/{org.slug}/m/{brand.slug}</code>
+        <code className="text-[13px] text-muted">/o/{org.slug}/b/{brand.slug}</code>
       </SettingsRow>
       {admin && !platformAdmin ? <p className="border-t border-line px-5 py-3 text-[13px] text-muted">Pour ajouter une marque, contactez l'équipe Nyra.</p> : null}
     </SettingsBlock>

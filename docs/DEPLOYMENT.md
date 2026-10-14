@@ -33,8 +33,10 @@ a job lives in its memory.
    sign up*. Access is by invitation only; the backend has no sign-up
    route, and this closes the direct path through the public anon key.
 3. **Authentication > URL Configuration**: *Site URL* = your public
-   address; add `<site>/connexion` and `<site>/mot-de-passe` to the
-   redirect URLs (invitation and password-reset links land there).
+   address; add `<site>/login` and `<site>/set-password` to the
+   redirect URLs (invitation and password-reset links land there). Keep
+   `<site>/connexion` and `<site>/mot-de-passe` as well: links e-mailed
+   before October 2026 still point there, and the app redirects them.
 4. **Authentication > Emails > Templates**: paste `supabase/templates/recovery.html`
    (*Reset password*) and `supabase/templates/invite.html` (*Invite user*) with
    the subjects « Nouveau mot de passe — Nyra » and « Votre accès à Nyra ». The

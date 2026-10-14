@@ -97,7 +97,7 @@ def add_pages(app: FastAPI, dist: Path) -> None:
     def index() -> Response:
         return index_page()
 
-    # Client-side routes (/o/remy-martin/bibliotheque, /connexion, ...) all
+    # Client-side routes (/o/remy-martin/b/louis-xiii/library, /login, ...) all
     # get the app shell; the router renders its own "page not found". A path
     # that looks like a file and isn't one gets a real 404.
     @app.get("/{full_path:path}", response_model=None)

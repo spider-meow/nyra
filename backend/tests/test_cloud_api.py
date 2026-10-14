@@ -848,7 +848,9 @@ def test_overview_leads_with_the_dashboard(client, org_with_users, cloud_brand, 
 
 
 def test_client_routes_get_the_app_shell_and_security_headers(client):
-    r = client.get("/o/some-org/m/some-brand/bibliotheque")
+    # The app shell answers any client-side address, the old French ones too (the browser then redirects them).
+    assert client.get("/o/some-org/m/some-brand/bibliotheque").status_code == 200
+    r = client.get("/o/some-org/b/some-brand/library")
     assert r.status_code == 200
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
     assert r.headers["x-content-type-options"] == "nosniff"

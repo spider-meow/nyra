@@ -21,7 +21,7 @@ function download(lines: Line[], month: string) {
   URL.revokeObjectURL(link.href);
 }
 
-/** /interne/facturation — the brands created, by month: what to invoice. */
+/** /back-office/billing — the brands created, by month: what to invoice. */
 export function Billing() {
   const orgs = useStaffOrgs();
   const [month, setMonth] = useState("");

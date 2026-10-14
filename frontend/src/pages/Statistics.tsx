@@ -19,7 +19,7 @@ import { useOrg } from "../lib/org";
 import { useInsights } from "../lib/queries";
 import { AnatomySection, DecisionsAndLibrary, FormatsSection, LastCrawlSection, StatisticsSkeleton, StatisticsStats } from "./StatisticsSections";
 
-/** /o/:slug/statistiques — how the organization's site and pipeline behave, for its admins. */
+/** /o/:slug/b/:brand/statistics — how the organization's site and pipeline behave, for its admins. */
 export function Statistics() {
   const { admin } = useOrg();
   if (!admin) return <EmptyState title="Réservé aux administrateurs" body="Les statistiques détaillées sont visibles par les administrateurs de l'organisation." />;

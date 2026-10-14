@@ -3,11 +3,11 @@ import { initials } from "../BrandMark";
 import { NavItems, type NavItem } from "./Sidebar";
 
 const STAFF_ITEMS: NavItem[] = [
-  { to: "/interne", label: "Vue d'ensemble", icon: "backoffice" },
-  { to: "/interne/organisations", label: "Organisations", icon: "library" },
-  { to: "/interne/facturation", label: "Facturation", icon: "report" },
-  { to: "/interne/comptes", label: "Comptes", icon: "users" },
-  { to: "/interne/platform-admins", label: "Platform admins", icon: "user" },
+  { to: "/back-office", label: "Vue d'ensemble", icon: "backoffice" },
+  { to: "/back-office/organizations", label: "Organisations", icon: "library" },
+  { to: "/back-office/billing", label: "Facturation", icon: "report" },
+  { to: "/back-office/accounts", label: "Comptes", icon: "users" },
+  { to: "/back-office/platform-admins", label: "Platform admins", icon: "user" },
   { to: "/", label: "Espaces clients", icon: "arrow" },
 ];
 

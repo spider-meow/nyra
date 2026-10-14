@@ -58,6 +58,9 @@ function PageError() {
 
 const page = (element: ReactNode) => <Titled>{element}</Titled>;
 
+/** An address from before English paths (`/connexion`, `/o/x/m/y/bibliotheque`): its new one (pages/Legacy.tsx, fetched only then). */
+const legacy = () => import("./pages/Legacy").then((module) => ({ Component: module.LegacyRedirect }));
+
 /**
  * A page fetched when its address is opened. The router waits for the file before it shows the route, in parallel
  * with the rest of the start-up: a `React.lazy` page would first show a fallback, and React holds the real page
@@ -73,21 +76,26 @@ const router = createBrowserRouter([
     errorElement: <PageError />,
     HydrateFallback: () => <div className="p-8"><Spinner label="Chargement…" /></div>,
     children: [
-      { path: "/connexion", element: page(<Login />), handle: { title: "Connexion" } },
-      { path: "/mot-de-passe", element: page(<SetPassword />), handle: { title: "Mot de passe" } },
+      { path: "/login", element: page(<Login />), handle: { title: "Connexion" } },
+      { path: "/set-password", element: page(<SetPassword />), handle: { title: "Mot de passe" } },
+      // The French addresses of before: bookmarks and e-mails already sent keep working (see paths.ts).
+      { path: "/connexion", lazy: legacy },
+      { path: "/mot-de-passe", lazy: legacy },
+      { path: "/interne/*", lazy: legacy },
+      { path: "/o/:slug/m/*", lazy: legacy },
       {
         element: <RequireSession />,
         children: [
           { path: "/", element: page(<OrgHome />) },
           {
-            path: "/interne",
+            path: "/back-office",
             lazy: lazyPage(() => import("./pages/BackOffice").then((module) => module.BackOffice)),
             handle: { title: "Back office" },
             children: [
               { index: true, lazy: lazyPage(() => import("./pages/BackOffice").then((module) => module.Overview)), handle: { title: "Back office" } },
-              { path: "organisations", lazy: lazyPage(() => import("./pages/backoffice/Organizations").then((module) => module.Organizations)), handle: { title: "Organisations et marques" } },
-              { path: "facturation", lazy: lazyPage(() => import("./pages/backoffice/Billing").then((module) => module.Billing)), handle: { title: "Facturation" } },
-              { path: "comptes", lazy: lazyPage(() => import("./pages/backoffice/Accounts").then((module) => module.Accounts)), handle: { title: "Comptes" } },
+              { path: "organizations", lazy: lazyPage(() => import("./pages/backoffice/Organizations").then((module) => module.Organizations)), handle: { title: "Organisations et marques" } },
+              { path: "billing", lazy: lazyPage(() => import("./pages/backoffice/Billing").then((module) => module.Billing)), handle: { title: "Facturation" } },
+              { path: "accounts", lazy: lazyPage(() => import("./pages/backoffice/Accounts").then((module) => module.Accounts)), handle: { title: "Comptes" } },
               { path: "platform-admins", lazy: lazyPage(() => import("./pages/backoffice/Admins").then((module) => module.Admins)), handle: { title: "Platform admins" } },
             ],
           },
@@ -97,23 +105,23 @@ const router = createBrowserRouter([
             children: [
               { index: true, element: <FirstBrand /> },
               {
-                path: "m/:brand",
+                path: "b/:brand",
                 element: <BrandShell />,
                 children: [
-                  { index: true, element: <Navigate to="tableau-de-bord" replace /> },
-                  { path: "tableau-de-bord", element: page(<Dashboard />), handle: { title: "Tableau de bord" } },
-                  { path: "a-traiter", lazy: lazyPage(() => import("./pages/Review").then((module) => module.Review)), handle: { title: "À traiter" } },
-                  { path: "bibliotheque", lazy: lazyPage(() => import("./pages/Library").then((module) => module.Library)), handle: { title: "Bibliothèque" } },
-                  { path: "images-du-site", lazy: lazyPage(() => import("./pages/SiteImages").then((module) => module.SiteImages)), handle: { title: "Droits non vérifiés" } },
-                  { path: "lectures", lazy: lazyPage(() => import("./pages/Scans").then((module) => module.Scans)), handle: { title: "Sites et lectures" } },
-                  { path: "rapports", lazy: lazyPage(() => import("./pages/Reports").then((module) => module.Reports)), handle: { title: "Rapports" } },
-                  { path: "statistiques", lazy: lazyPage(() => import("./pages/Statistics").then((module) => module.Statistics)), handle: { title: "Statistiques" } },
-                  { path: "reglages", lazy: lazyPage(() => import("./pages/Settings").then((module) => module.Settings)), handle: { title: "Réglages" } },
+                  { index: true, element: <Navigate to="dashboard" replace /> },
+                  { path: "dashboard", element: page(<Dashboard />), handle: { title: "Tableau de bord" } },
+                  { path: "review", lazy: lazyPage(() => import("./pages/Review").then((module) => module.Review)), handle: { title: "À traiter" } },
+                  { path: "library", lazy: lazyPage(() => import("./pages/Library").then((module) => module.Library)), handle: { title: "Bibliothèque" } },
+                  { path: "site-images", lazy: lazyPage(() => import("./pages/SiteImages").then((module) => module.SiteImages)), handle: { title: "Droits non vérifiés" } },
+                  { path: "scans", lazy: lazyPage(() => import("./pages/Scans").then((module) => module.Scans)), handle: { title: "Sites et lectures" } },
+                  { path: "reports", lazy: lazyPage(() => import("./pages/Reports").then((module) => module.Reports)), handle: { title: "Rapports" } },
+                  { path: "statistics", lazy: lazyPage(() => import("./pages/Statistics").then((module) => module.Statistics)), handle: { title: "Statistiques" } },
+                  { path: "settings", lazy: lazyPage(() => import("./pages/Settings").then((module) => module.Settings)), handle: { title: "Réglages" } },
                   { path: "*", element: page(<NotFound />), handle: { title: "Page introuvable" } },
                 ],
               },
-              // Links from before brands: /o/:slug/bibliotheque -> the first brand's library.
-              { path: "*", element: <FirstBrand /> },
+              // Links from before brands (/o/:slug/library, or the old /o/:slug/bibliotheque) -> that page of the first brand.
+              { path: "*", lazy: () => import("./pages/Legacy").then((module) => ({ Component: module.FirstBrandPage })) },
             ],
           },
         ],

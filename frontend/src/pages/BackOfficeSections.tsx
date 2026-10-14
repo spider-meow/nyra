@@ -5,7 +5,7 @@ import { Button, Skeleton, Stat, cx } from "../components/ui";
 import { bytes, duration, formatDateTime, jobLabel, num, percent } from "../lib/format";
 import type { PlatformInsights } from "../types";
 
-/** The blocks of the back office page (/interne), top to bottom around the shared charts. */
+/** The blocks of the back office page (/back-office), top to bottom around the shared charts. */
 
 function health(queue: PlatformInsights["queue"], running: PlatformInsights["running"]): { tone: "ok" | "warn" | "alert"; label: string; detail: string } {
   const stale = running.some((job) => (job.heartbeat_age_seconds ?? 0) > 120);
@@ -123,7 +123,7 @@ export function BrandsSection(props: { brands: PlatformInsights["brands"]; total
           num(org.matches),
           percent(org.false_positive_rate),
           org.failed_jobs_30d ? <span className="text-expired">{num(org.failed_jobs_30d)} / {num(org.jobs_30d)}</span> : `0 / ${num(org.jobs_30d)}`,
-          <Link to={`/o/${org.org_slug}/m/${org.slug}/statistiques`} className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline">Détail</Link>,
+          <Link to={`/o/${org.org_slug}/b/${org.slug}/statistics`} className="text-xs text-muted underline-offset-2 hover:text-ink hover:underline">Détail</Link>,
         ])}
         empty="Aucune marque."
       />

@@ -34,9 +34,9 @@ export function useOrganizations(enabled = true) {
   });
 }
 
-/** Interface path of a brand: brandLink(org, "louis-xiii", "bibliotheque") -> /o/<org>/m/louis-xiii/bibliotheque */
+/** Interface path of a brand: brandLink(org, "louis-xiii", "library") -> /o/<org>/b/louis-xiii/library */
 export function brandLink(org: Organization, brandSlug: string, path = ""): string {
-  return `/o/${org.slug}/m/${brandSlug}${path ? `/${path}` : ""}`;
+  return `/o/${org.slug}/b/${brandSlug}${path ? `/${path}` : ""}`;
 }
 
 /** The signed-in account: whether it belongs to the Nyra team (back office). */
@@ -60,7 +60,7 @@ type OrgState = {
   apiPath: (path: string) => string;
   /** API path under the organization (settings, brands): orgApiPath("/settings") -> /orgs/<id>/settings */
   orgApiPath: (path: string) => string;
-  /** Interface path under this brand: link("bibliotheque") -> /o/<org>/m/<brand>/bibliotheque */
+  /** Interface path under this brand: link("library") -> /o/<org>/b/<brand>/library */
   link: (path?: string) => string;
 };
 

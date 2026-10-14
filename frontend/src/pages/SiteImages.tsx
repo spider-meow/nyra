@@ -239,7 +239,7 @@ function AllVerified() {
     <EmptyState
       title="Toutes les images en ligne ont des droits vérifiés"
       body="Chaque image trouvée sur les sites correspond à un visuel de la bibliothèque, ou a été ignorée. Relisez les sites pour vérifier les nouveautés."
-      action={<Link className="text-sm underline" to={link("lectures")}>Sites et lectures</Link>}
+      action={<Link className="text-sm underline" to={link("scans")}>Sites et lectures</Link>}
     />
   );
 }

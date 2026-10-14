@@ -42,12 +42,12 @@ function useFilters() {
   const [savedWindow, setSavedWindow] = usePersistedState("review.window", 0, "local", isWindow);
   // An address can say anything: a value that makes no sense falls back to the default instead of breaking the page.
   const pick = <T extends string>(name: string, allowed: readonly T[], fallback: T): T => allowed.find((item) => item === params.get(name)) ?? fallback;
-  const urlWindow = Number(params.get("fenetre"));
+  const urlWindow = Number(params.get("window"));
   const withinDays = Number.isInteger(urlWindow) && urlWindow > 0 && urlWindow <= 3650 ? urlWindow : savedWindow || defaultWindow;
-  const statusFilter = pick<Status | "all">("statut", ["all", "expire", "<30j", "<90j", "inconnue"], "all");
+  const statusFilter = pick<Status | "all">("status", ["all", "expire", "<30j", "<90j", "inconnue"], "all");
   const decisionFilter = pick("decision", decisionFilters.map((item) => item.value), "open");
-  const tab = pick<Tab>("onglet", ["found", "verify", "missing", "later", "free"], "found");
-  const selectedCountries = params.getAll("pays").sort();
+  const tab = pick<Tab>("tab", ["found", "verify", "missing", "later", "free"], "found");
+  const selectedCountries = params.getAll("country").sort();
   const [query, setQuery] = usePersistedState("review.query", "", "session", isShortText);
   const [shown, setShown] = useState(100);
 
@@ -56,15 +56,15 @@ function useFilters() {
     if (value === null) next.delete(name);
     else next.set(name, value);
     setParams(next, { replace: true });
-    if (name === "fenetre" && value !== null) setSavedWindow(Number(value));
+    if (name === "window" && value !== null) setSavedWindow(Number(value));
     setShown(100);
   }
 
   /** The countries kept (none = every country), in the address. */
   function setCountries(labels: string[]) {
     const next = new URLSearchParams(params);
-    next.delete("pays");
-    for (const item of labels) next.append("pays", item);
+    next.delete("country");
+    for (const item of labels) next.append("country", item);
     setParams(next, { replace: true });
     setShown(100);
   }

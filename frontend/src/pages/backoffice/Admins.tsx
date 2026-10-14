@@ -60,7 +60,7 @@ function AddAdmin() {
   );
 }
 
-/** /interne/platform-admins — who runs the platform: creates brands, opens the back office. */
+/** /back-office/platform-admins — who runs the platform: creates brands, opens the back office. */
 export function Admins() {
   const admins = useStaffAdmins();
   return (

@@ -54,7 +54,7 @@ function Results(props: { view: ReviewView; compare: ReactNode }) {
       <EmptyState
         title={noMatches ? "Aucune correspondance pour l'instant" : "Rien ne correspond à ces filtres"}
         body={noMatches ? "Lancez une lecture du site pour comparer la bibliothèque à ce qui est en ligne." : "Élargissez l'échéance ou choisissez « Toutes » les décisions."}
-        action={noMatches ? <LinkButton to={link("lectures")} variant="primary">Lire le site</LinkButton> : undefined}
+        action={noMatches ? <LinkButton to={link("scans")} variant="primary">Lire le site</LinkButton> : undefined}
       />
     );
   }

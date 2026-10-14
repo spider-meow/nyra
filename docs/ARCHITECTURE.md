@@ -46,7 +46,8 @@ and its references are only ever compared with images read on its own
 sites. Exclusions, reports and the job queue are per brand; settings and
 memberships per organization. Product routes live under
 `/api/orgs/{org_id}/brands/{brand_id}/...`, the interface under
-`/o/{org}/m/{brand}/...`.
+`/o/{org}/b/{brand}/...` (English since October 2026; the old French addresses
+redirect, see `frontend/src/lib/paths.ts`).
 
 ## Pipeline
 

@@ -15,7 +15,7 @@ let names = ["Remy Martin", "remy-martin", "Louis XIII", "louis-xiii", "a@x.com"
 const scope = {
   origin: "https://nyra.test",
   hosts: ["nyra.test", "x.supabase.co", "fonts.googleapis.com", "fonts.gstatic.com"],
-  routeOf: (path) => (path.startsWith("/o/") ? path.replace(/^\/o\/[^/]+\/m\/[^/]+/, "/o/:slug/m/:brand") : "/*"), // like the router: unknown paths match `*`
+  routeOf: (path) => (path.startsWith("/o/") ? path.replace(/^\/o\/[^/]+\/b\/[^/]+/, "/o/:slug/b/:brand") : "/*"), // like the router: unknown paths match `*`
   names: () => names,
 };
 const PRIVATE = ["bouteille-secrete", "remy-martin", "remy_martin", "louis-xiii", "Remy Martin", "Louis XIII", "a@x.com", "marie@client.org", ORG, BRAND, ".jpg", "token=", "#access", "SECRETTOKEN", "secret-site", "remymartin"];
@@ -38,7 +38,7 @@ assert.equal(url(`${api}/bouteille.pdf/url/deeper/still`), `${LIB}/:file/url/:fi
 assert.equal(url(`https://x.supabase.co/storage/v1/sign/refs/${ORG}/bouteille-secrete.jpg?token=abc`), "https://x.supabase.co");
 assert.equal(url("https://fonts.gstatic.com/s/geist/v1/abc.woff2"), "https://fonts.gstatic.com");
 assert.equal(url(`${SITE}/img/Louis XIII bottle.jpg`), "[external]");
-assert.equal(url("https://nyra.test/o/remy-martin/m/louis-xiii/bibliotheque?q=remy-martin#access_token=abc"), "https://nyra.test/o/:slug/m/:brand/bibliotheque");
+assert.equal(url("https://nyra.test/o/remy-martin/b/louis-xiii/library?q=remy-martin#access_token=abc"), "https://nyra.test/o/:slug/b/:brand/library");
 assert.equal(url("blob:https://nyra.test/" + ORG), "[url]");
 // Built files keep their name; any other /assets path falls through to the route pattern.
 assert.equal(url("https://nyra.test/assets/index-abc12345.js"), "https://nyra.test/assets/index-abc12345.js");
@@ -56,7 +56,7 @@ assert.equal(text("GET nyra.test"), "GET nyra.test");
 assert.equal(text(`Trop gros pour marie@client.org (${ORG})`), "Trop gros pour [email] (:id)");
 assert.equal(text(`Impossible de lire bouteille-secrete-2026.jpg pour a@x.com (${ORG})`), "[text naming a file]");
 assert.equal(text('body > div#root > img.thumb[alt="bouteille-secrete"][aria-label="Louis XIII"]'), "body > div#root > img.thumb");
-assert.equal(text("Erreur sur /o/autre-client/m/autre-marque/bibliotheque."), "Erreur sur /o/:slug/m/:brand/bibliotheque."); // a path of the app, for a client not in the names
+assert.equal(text("Erreur sur /o/autre-client/b/autre-marque/library."), "Erreur sur /o/:slug/b/:brand/library."); // a path of the app, for a client not in the names
 assert.equal(text(`Échec pour ${SITE}/page`), "Échec pour [external]");
 assert.equal(text("Failed to fetch (www.remymartin-secret-site.com)"), "Failed to fetch ([external])");
 assert.equal(text("Failed to fetch (x.supabase.co)"), "Failed to fetch (x.supabase.co)");
@@ -86,7 +86,7 @@ const spans = [
   span("Largest contentful paint", { "sentry.op": "ui.webvital.lcp", "browser.web_vital.lcp.value": 4732, "browser.web_vital.lcp.url": `https://x.supabase.co/storage/v1/sign/refs/${ORG}/bouteille-secrete-2026.jpg?token=SECRETTOKEN`, "browser.web_vital.lcp.element": 'img[aria-label="Louis XIII"][title="Bouteille Secrete.jpg"][alt="Bouteille Secrete"]' }),
   span("Click", { "sentry.op": "ui.interaction.click", "browser.web_vital.inp.target": 'button.save[aria-label="Remy Martin"]', "browser.web_vital.inp.value": 264 }),
   span("Layout shift", { "browser.web_vital.cls.source.1": 'body > div#root > img[alt="remy-martin"]', "browser.web_vital.cls.value": 0.61 }),
-  span("/o/remy-martin/m/louis-xiii/bibliotheque", { "sentry.op": "navigation", "url.path": "/o/remy-martin/m/louis-xiii/bibliotheque", "url.full": "https://nyra.test/o/remy-martin/m/louis-xiii/bibliotheque?q=remy-martin", "sentry.segment.name": "/o/remy-martin/m/louis-xiii/bibliotheque" }),
+  span("/o/remy-martin/b/louis-xiii/library", { "sentry.op": "navigation", "url.path": "/o/remy-martin/b/louis-xiii/library", "url.full": "https://nyra.test/o/remy-martin/b/louis-xiii/library?q=remy-martin", "sentry.segment.name": "/o/remy-martin/b/louis-xiii/library" }),
   span("Main UI thread blocked", { "code.file.path": `${SITE}/tracker.js`, "browser.script.invoker": "https://nyra.test/assets/index-abc12345.js" }),
 ];
 assert.equal(spans[0].name, "GET [external]");
@@ -103,8 +103,8 @@ assert.equal(spans[3].attributes["browser.web_vital.lcp.value"], 4732);
 assert.equal(spans[3].attributes["browser.web_vital.lcp.element"], "img");
 assert.equal(spans[4].attributes["browser.web_vital.inp.target"], "button.save");
 assert.equal(spans[5].attributes["browser.web_vital.cls.source.1"], "body > div#root > img");
-assert.equal(spans[6].name, "/o/:slug/m/:brand/bibliotheque");
-assert.equal(spans[6].attributes["url.full"], "https://nyra.test/o/:slug/m/:brand/bibliotheque");
+assert.equal(spans[6].name, "/o/:slug/b/:brand/library");
+assert.equal(spans[6].attributes["url.full"], "https://nyra.test/o/:slug/b/:brand/library");
 assert.equal(spans[7].attributes["code.file.path"], "[external]");
 assert.equal(spans[7].attributes["browser.script.invoker"], "https://nyra.test/assets/index-abc12345.js");
 assert.doesNotThrow(() => scrub.scrubSpan({ name: "no attributes" }, scope));
@@ -115,13 +115,13 @@ const crumbs = [
   { category: "ui.click", message: 'img[alt="Louis XIII"]' },
   { category: "fetch", data: { url: `${api}/bouteille-secrete-2026.jpg/url?x=1`, method: "GET", status_code: 400 } },
   { category: "fetch", data: { url: `${SITE}/x`, request_body_size: 12 } },
-  { category: "navigation", data: { from: "/o/remy-martin/m/louis-xiii/bibliotheque", to: "/o/remy-martin/m/louis-xiii/reglages" } },
+  { category: "navigation", data: { from: "/o/remy-martin/b/louis-xiii/library", to: "/o/remy-martin/b/louis-xiii/settings" } },
 ].map((crumb) => scrub.scrubBreadcrumb(crumb, scope));
 assert.deepEqual(crumbs.map(Boolean), [false, false, true, true, true]);
 assert.equal(crumbs[2].data.url, "/api/orgs/:id/brands/:id/library/:file/url?x");
 assert.equal(crumbs[2].data.status_code, 400);
 assert.deepEqual(crumbs[3].data, { url: "[external]" }); // the size of a body is dropped with the rest of what the key says is a body
-assert.deepEqual(crumbs[4].data, { from: "/o/:slug/m/:brand/bibliotheque", to: "/o/:slug/m/:brand/reglages" });
+assert.deepEqual(crumbs[4].data, { from: "/o/:slug/b/:brand/library", to: "/o/:slug/b/:brand/settings" });
 
 const live = { url: `${SITE}/x`, method: "GET" }; // a failed fetch lends the SDK's own object: it must come back untouched
 scrub.scrubBreadcrumb({ category: "fetch", data: live }, scope);
@@ -131,9 +131,9 @@ const event = (values) => ({
   message: "bouteille-secrete-2026.jpg",
   user: { id: ORG, email: "a@x.com" },
   extra: { filename: "bouteille-secrete-2026.jpg" },
-  transaction: "/o/remy-martin/m/louis-xiii/bibliotheque",
-  request: { url: "https://nyra.test/o/remy-martin/m/louis-xiii/bibliotheque#access_token=abc", headers: { Referer: "https://nyra.test/o/remy-martin" }, cookies: { a: "b" } },
-  contexts: { trace: { description: "/o/remy-martin/m/louis-xiii/x", data: { "url.full": `${SITE}/a.png`, "lcp.element": 'img[alt="x"]' } } },
+  transaction: "/o/remy-martin/b/louis-xiii/library",
+  request: { url: "https://nyra.test/o/remy-martin/b/louis-xiii/library#access_token=abc", headers: { Referer: "https://nyra.test/o/remy-martin" }, cookies: { a: "b" } },
+  contexts: { trace: { description: "/o/remy-martin/b/louis-xiii/x", data: { "url.full": `${SITE}/a.png`, "lcp.element": 'img[alt="x"]' } } },
   exception: { values },
   breadcrumbs: [{ category: "console", message: "Remy Martin" }, { category: "xhr", data: { url: `${api}/x.jpg` } }],
 });
@@ -142,10 +142,10 @@ const chain = scrub.scrubEvent(event([{ type: "Error", value: "Échec pour Remy 
 assert.deepEqual(chain.exception.values, [{ type: "ApiError", value: "HTTP 400" }, { type: "ApiError", value: "HTTP 400" }]);
 assert.equal(chain.user, undefined);
 assert.equal(chain.request.headers, undefined);
-assert.equal(chain.transaction, "/o/:slug/m/:brand/bibliotheque");
+assert.equal(chain.transaction, "/o/:slug/b/:brand/library");
 assert.equal(chain.breadcrumbs.length, 1);
 assert.equal(chain.contexts.trace.data["url.full"], "[external]");
-assert.equal(chain.contexts.trace.description, "/o/:slug/m/:brand/x");
+assert.equal(chain.contexts.trace.description, "/o/:slug/b/:brand/x");
 
 const other = scrub.scrubEvent(event([{ type: "Remy Martin Error", value: "x is undefined in Louis XIII.jpg" }, { type: "TypeError", value: "Failed to fetch (www.remymartin-secret-site.com)" }]), scope);
 assert.deepEqual(other.exception.values, [{ type: "[name] Error", value: "[text naming a file]" }, { type: "TypeError", value: "Failed to fetch ([external])" }]);
