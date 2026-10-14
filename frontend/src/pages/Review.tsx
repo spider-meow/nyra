@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CompareView } from "../components/CompareView";
 import { Modal } from "../components/feedback";
 import { Button, Card, EmptyState, Kbd, LinkButton, PageHeader, Skeleton } from "../components/ui";
@@ -7,14 +7,23 @@ import { useOrg } from "../lib/org";
 import { useDecide, useShortcuts } from "./review/decide";
 import { ReviewFilters, ReviewTabs } from "./review/Filters";
 import { MissingList, OccurrenceList } from "./review/List";
-import { useReviewView, type ReviewView } from "./review/view";
+import { RelatedReferences } from "./review/Related";
+import { focusOn, useReviewView, type ReviewView } from "./review/view";
 
 export function Review() {
   const view = useReviewView();
   const decide = useDecide(view);
   useShortcuts(view, decide);
   const { selected, review, panelOpen, setPanelOpen } = view;
-  const compare = selected ? <CompareView group={selected.group} hit={selected.hit} busy={review.isPending} onDecide={(decision, everywhere) => decide(selected, decision, everywhere)} /> : null;
+  // Which of the photo's references is being compared: kept for the selected photo only.
+  const [focus, setFocus] = useState<{ key: string; reference: string } | null>(null);
+  const active = selected ? focusOn(selected, focus?.key === selected.key ? focus.reference : null) : null;
+  const compare = selected && active ? (
+    <div className="flex flex-col gap-4">
+      <RelatedReferences pairs={[selected, ...selected.others]} activeId={active.group.reference_id} onPick={(reference) => setFocus({ key: active.key, reference })} />
+      <CompareView group={active.group} hit={active.hit} related={active.others.length} busy={review.isPending} onDecide={(decision, everywhere) => decide(active, decision, everywhere)} />
+    </div>
+  ) : null;
 
   return (
     <>

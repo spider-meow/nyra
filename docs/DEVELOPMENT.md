@@ -89,6 +89,12 @@ a budget on a file that is not there would pass with 0 KB. It reads every
 `<script type="module">` and `modulepreload` tag of `index.html`, not only the
 first.
 
+### "À traiter": grouping by photo
+
+`npm run check:rows` checks `src/pages/review/rows.ts`: several references that match one photo share one
+row, and the decision filter or a reference listed twice never makes a row list itself. Same method as
+`check:scrub` (compiled in memory, no test framework). Run it after touching that file.
+
 ### Browser monitoring: scrubbing
 
 `npm run check:scrub` runs the browser-monitoring scrubbers

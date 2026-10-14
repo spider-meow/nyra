@@ -13,11 +13,13 @@ type Props = {
   group: MatchGroup;
   hit: Hit;
   onDecide: (decision: Decision | "", everywhere?: boolean) => void;
+  /** How many other references match this same photo: a decision covers them too. */
+  related?: number;
   busy?: boolean;
 };
 
 /** The reference and what was found on the site, big enough to judge a crop. */
-export function CompareView({ group, hit, onDecide, busy }: Props) {
+export function CompareView({ group, hit, onDecide, related, busy }: Props) {
   const [mode, setMode] = useState<Mode>("side");
   const [zoom, setZoom] = useState<Zoom | null>(null);
   const [excluding, setExcluding] = useState(false);
@@ -55,7 +57,7 @@ export function CompareView({ group, hit, onDecide, busy }: Props) {
       </div>
 
       <PageList hit={hit} />
-      <DecisionPanel hit={hit} others={group.hits.length - 1} busy={busy} onDecide={onDecide} />
+      <DecisionPanel hit={hit} others={group.hits.length - 1} related={related} busy={busy} onDecide={onDecide} />
 
       {admin ? (
         <p className="text-[13px] text-muted">

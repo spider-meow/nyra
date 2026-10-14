@@ -1,9 +1,9 @@
 import { DecisionBadge, cx } from "../ui";
 import type { Decision, Hit } from "../../types";
 
-/** The three decision buttons, and "all occurrences of this visual" when there are others. */
-export function DecisionPanel(props: { hit: Hit; others: number; busy?: boolean; onDecide: (decision: Decision | "", everywhere?: boolean) => void }) {
-  const { hit, others, busy, onDecide } = props;
+/** The three decision buttons (for the photo's other references too, when it has some), and "all occurrences of this visual" when there are others. */
+export function DecisionPanel(props: { hit: Hit; others: number; related?: number; busy?: boolean; onDecide: (decision: Decision | "", everywhere?: boolean) => void }) {
+  const { hit, others, related = 0, busy, onDecide } = props;
   return (
     <div className="rounded-xl bg-sunk p-3.5">
       <div className="flex items-center justify-between gap-2">
@@ -15,6 +15,7 @@ export function DecisionPanel(props: { hit: Hit; others: number; busy?: boolean;
         <DecisionButton label="Faux positif" shortcut="F" active={hit.decision === "ecarte"} disabled={busy} onClick={() => onDecide(hit.decision === "ecarte" ? "" : "ecarte")} />
         <DecisionButton label="Retiré" shortcut="T" active={hit.decision === "traite"} disabled={busy} onClick={() => onDecide(hit.decision === "traite" ? "" : "traite")} />
       </div>
+      {related > 0 ? <p className="mt-3 text-[13px] text-muted">S'applique aussi aux {related} autre{related > 1 ? "s" : ""} référence{related > 1 ? "s" : ""} de cette photo.</p> : null}
       {others > 0 ? (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[13px] text-muted">
           <span>{others} autre{others > 1 ? "s" : ""} occurrence{others > 1 ? "s" : ""} de ce visuel :</span>

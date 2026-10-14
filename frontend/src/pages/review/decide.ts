@@ -5,33 +5,37 @@ import { decisionLabel, plural } from "../../lib/format";
 import type { Decision } from "../../types";
 import { keep, type Row, type ReviewView } from "./view";
 
-/** Records a decision on one occurrence, or on every occurrence of the visual; "Annuler" puts each one back. */
+/**
+ * Records a decision on a photo: for each reference that matches it, or, with `everywhere`, on every occurrence of
+ * the shown reference. "Annuler" puts each one back.
+ */
 export function useDecide(view: ReviewView) {
   const toast = useToast();
   const { review, rows, selectedIndex, setSelectedKey, decisionFilter } = view;
 
   return function decide(row: Row, decision: Decision | "", everywhere = false) {
-    const hits = everywhere ? row.group.hits : [row.hit];
-    const ids = hits.flatMap((hit) => hit.site_image_ids);
+    const targets = everywhere
+      ? [{ group: row.group, hits: row.group.hits }]
+      : [{ group: row.group, hits: [row.hit] }, ...row.others.map((pair) => ({ group: pair.group, hits: [pair.hit] }))];
     const nextKey = rows[selectedIndex + 1]?.key ?? rows[selectedIndex - 1]?.key ?? null;
-    // What each occurrence was before, so "Annuler" puts every one back.
-    const before = new Map<Decision | "", string[]>();
-    for (const hit of hits) before.set(hit.decision ?? "", [...(before.get(hit.decision ?? "") ?? []), ...hit.site_image_ids]);
+    const send = (target: (typeof targets)[number], value: Decision | "", ids: string[]) =>
+      review.mutateAsync({ referenceId: target.group.reference_id, siteImageIds: ids, decision: value });
     const undo = () => {
-      for (const [previous, siteImageIds] of before) {
-        void review
-          .mutateAsync({ referenceId: row.group.reference_id, siteImageIds, decision: previous })
-          .catch((error) => toast.show({ tone: "error", message: "L'annulation n'a pas abouti", description: errorMessage(error) }));
+      for (const target of targets) {
+        // What each occurrence was before, so every one goes back to its own decision.
+        const before = new Map<Decision | "", string[]>();
+        for (const hit of target.hits) before.set(hit.decision ?? "", [...(before.get(hit.decision ?? "") ?? []), ...hit.site_image_ids]);
+        for (const [previous, ids] of before) {
+          void send(target, previous, ids).catch((error) => toast.show({ tone: "error", message: "L'annulation n'a pas abouti", description: errorMessage(error) }));
+        }
       }
     };
     // `mutateAsync`, not `mutate(…, { onSuccess })`: per-call callbacks only run for the latest call, and decisions come in fast with the keyboard.
-    void review.mutateAsync({ referenceId: row.group.reference_id, siteImageIds: ids, decision }).then(
+    void Promise.all(targets.map((target) => send(target, decision, target.hits.flatMap((hit) => hit.site_image_ids)))).then(
       () =>
         toast.show({
           tone: "success",
-          message: decision
-            ? `${decisionLabel[decision]}${hits.length > 1 ? ` · ${plural(hits.length, "occurrence")}` : ""}`
-            : "Décision retirée",
+          message: decision ? `${decisionLabel[decision]}${suffix(everywhere, targets.length, row.group.hits.length)}` : "Décision retirée",
           description: row.group.filename,
           action: { label: "Annuler", onClick: undo },
           duration: 5000,
@@ -42,6 +46,12 @@ export function useDecide(view: ReviewView) {
     // Move on when the decided row will leave the current filter.
     if (decision && !keep({ ...row.hit, decision }, decisionFilter)) setSelectedKey(nextKey);
   };
+}
+
+/** " · 3 références" for a photo several references match, " · 5 occurrences" for "all occurrences", else nothing. */
+function suffix(everywhere: boolean, references: number, occurrences: number): string {
+  if (everywhere) return occurrences > 1 ? ` · ${plural(occurrences, "occurrence")}` : "";
+  return references > 1 ? ` · ${plural(references, "référence")}` : "";
 }
 
 /** J/K to move, R/F/T/U to decide on the selected row. */

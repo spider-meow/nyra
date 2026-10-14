@@ -43,7 +43,10 @@ function OccurrenceRow(props: { row: Row; selected: boolean; onSelect: (key: str
         <Thumb src={row.hit.site_thumb} size={46} />
       </span>
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{row.group.filename}</span>
+        <span className="block truncate text-sm font-medium">
+          {row.group.filename}
+          {row.others.length ? <span className="ml-1.5 font-normal text-muted">+ {plural(row.others.length, "autre référence", "autres références")}</span> : null}
+        </span>
         <span className="mt-0.5 block truncate font-mono text-[11.5px] text-muted">
           {hostOf(row.hit.site_url)} · {row.hit.pages[0] ? pathOf(row.hit.pages[0]) : pathOf(row.hit.site_url)}
           {row.hit.page_count > 1 ? ` et ${row.hit.page_count - 1} autre(s) page(s)` : ""}

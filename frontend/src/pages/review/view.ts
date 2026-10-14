@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useMatches, useOverview, useReview } from "../../lib/queries";
 import { isShortText, usePersistedState } from "../../lib/storage";
-import type { Decision, Hit, Matches, MatchGroup, Status } from "../../types";
+import type { Decision, Hit, Matches, Status } from "../../types";
+import { photoRows, type Row } from "./rows";
+
+export { focusOn, type Pair, type Row } from "./rows";
 
 type Tab = "found" | "verify" | "missing" | "later" | "free";
 type DecisionFilter = "open" | "undecided" | Decision | "all";
@@ -18,8 +21,6 @@ export const decisionFilters: { value: DecisionFilter; label: string }[] = [
 
 export const WINDOWS = [30, 90, 180, 365, 3650];
 const isWindow = (value: unknown): value is number => typeof value === "number" && WINDOWS.includes(value);
-
-export type Row = { key: string; group: MatchGroup; hit: Hit };
 
 export function keep(hit: Hit, filter: DecisionFilter): boolean {
   if (filter === "all") return true;
@@ -71,20 +72,14 @@ function useFilters() {
   return { withinDays, statusFilter, decisionFilter, selectedCountries, setCountries, tab, query, setQuery, shown, setShown, setParam };
 }
 
-/** One row per occurrence of the tab being looked at, and the references not found. */
+/** One row per photo found on the site in the tab being looked at (several references can match one photo), and the references not found. */
 function useRows(data: Matches | undefined, filters: ReturnType<typeof useFilters>) {
   const { tab, statusFilter, decisionFilter } = filters;
   const needle = filters.query.trim().toLowerCase();
 
   const rows: Row[] = useMemo(() => {
     const source = tab === "found" ? data?.confirmed : tab === "verify" ? data?.to_verify : tab === "later" ? data?.later : tab === "free" ? data?.unlimited : [];
-    const out: Row[] = [];
-    for (const group of (source ?? []).filter((item) => passes(item, statusFilter, needle))) {
-      for (const hit of group.hits) {
-        if (keep(hit, decisionFilter)) out.push({ key: `${group.reference_id}:${hit.site_image_id}`, group, hit });
-      }
-    }
-    return out;
+    return photoRows((source ?? []).filter((item) => passes(item, statusFilter, needle)), (hit) => keep(hit, decisionFilter));
   }, [data, tab, statusFilter, decisionFilter, needle]);
 
   const missing = useMemo(() => (data?.not_found ?? []).filter((item) => passes(item, statusFilter, needle)), [data, statusFilter, needle]);
