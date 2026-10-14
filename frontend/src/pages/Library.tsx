@@ -23,7 +23,8 @@ export function Library() {
   const collections = library.data?.collections ?? [];
   const view = useLibraryView(items, collections, labelsOf);
   const labels = useLabels().data?.labels ?? [];
-  const up = useUpload(view.scope === "all" || view.scope === "none" ? undefined : view.scope); // dropping in a collection files there
+  const up = useUpload(view.setScope); // after an import, the library shows the collection it went to
+  const openFolder = view.scope === "all" || view.scope === "none" ? undefined : view.scope; // dropping in a collection proposes it
   const [picked, setPicked] = useState<Set<string>>(new Set());
   // Bulk actions only touch what is on screen: a card hidden by the search, a tag or a status filter is never acted on.
   const selected = useMemo(() => new Set(view.visible.filter((item) => picked.has(item.filename)).map((item) => item.filename)), [view.visible, picked]);
@@ -50,7 +51,7 @@ export function Library() {
         description="Les visuels sous droits, rangés par collection, avec leur date d'expiration et leurs tags. C'est à eux que chaque page lue est comparée, même une fois expirés."
         actions={<LibraryActions up={up} onImport={() => setImportOpen(true)} />}
       />
-      <UploadNotices up={up} indexing={Boolean(library.data?.indexing)} />
+      <UploadNotices up={up} indexing={Boolean(library.data?.indexing)} folders={view.folders} current={openFolder} />
 
       {library.isLoading ? (
         <div className="grid gap-2">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-14" />)}</div>

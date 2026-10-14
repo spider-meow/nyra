@@ -397,14 +397,14 @@ export function useReview() {
  * it runs and a summary when it's done. Rows appear in the library as each
  * batch lands; closing the tab mid-way asks first.
  */
-export function useReferenceUpload(collectionId?: string) {
+export function useReferenceUpload() {
   const { apiPath, brand } = useOrg();
   const invalidate = useInvalidate();
   const forgetImages = useForgetImages();
   const toast = useToast();
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
-  async function run(sent: File[], rights: UploadRights): Promise<UploadResult> {
+  async function run(sent: File[], rights: UploadRights, collectionId?: string): Promise<UploadResult> {
     const result: UploadResult = { saved: [], replaced: [], failed: [] };
     const files = withoutDuplicates(sent, result);
     const total = files.length;

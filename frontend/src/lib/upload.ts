@@ -27,6 +27,9 @@ export function batches(files: File[]): File[][] {
 export type UploadRights = { expiry: string; unlimited: boolean };
 export const NO_RIGHTS: UploadRights = { expiry: "", unlimited: false };
 
+/** Where an upload goes: an existing collection, a new one (created just before sending), or nowhere. */
+export type Destination = { collectionId?: string; newName?: string };
+
 export type UploadResult = {
   saved: string[];
   /** Also in `saved`: a visual of that name was already in the library and has been replaced. */

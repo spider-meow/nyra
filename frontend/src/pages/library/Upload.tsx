@@ -3,8 +3,10 @@ import { useToast } from "../../components/feedback";
 import { Button, Card } from "../../components/ui";
 import { plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
-import { useReferenceUpload } from "../../lib/queries";
-import { NO_RIGHTS, type UploadRights } from "../../lib/upload";
+import { errorMessage } from "../../lib/api";
+import { useLibraryMutations, useReferenceUpload } from "../../lib/queries";
+import { NO_RIGHTS, type Destination, type UploadRights } from "../../lib/upload";
+import type { CollectionIndex } from "./collections";
 import { ImportDialog } from "./ImportDialog";
 
 type Failure = { filename: string; reason: string };
@@ -16,10 +18,14 @@ function byReason(failures: Failure[]): [string, string[]][] {
   return [...groups];
 }
 
-/** Sends image files to the library (admins only, one batch at a time) and keeps what came back: refused files and replaced visuels. */
-export function useUpload(collectionId?: string) {
+/**
+ * Sends image files to the library (admins only, one batch at a time) and keeps what came back: refused files and replaced visuels.
+ * `onFiled` is told which collection the files go to, so the page can show it.
+ */
+export function useUpload(onFiled: (collectionId: string) => void) {
   const { admin } = useOrg();
-  const uploader = useReferenceUpload(collectionId);
+  const uploader = useReferenceUpload();
+  const { addCollection } = useLibraryMutations();
   const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
   const [failures, setFailures] = useState<Failure[]>([]);
@@ -30,23 +36,36 @@ export function useUpload(collectionId?: string) {
   // The files waiting for the common rights to be chosen (the dialog), and the rights of the last send, for a retry.
   const [staged, setStaged] = useState<File[]>([]);
   const [lastRights, setLastRights] = useState<UploadRights>(NO_RIGHTS);
+  const [lastCollection, setLastCollection] = useState<string | undefined>();
 
   function stage(files: File[]) {
     if (admin && files.length) setStaged(files);
   }
 
-  function upload(files: File[], rights: UploadRights = lastRights) {
-    if (!admin || !files.length) return;
+  async function upload(files: File[], rights: UploadRights = lastRights, destination: Destination = { collectionId: lastCollection }) {
+    if (!admin || !files.length || addCollection.isPending) return; // a double click must not create the collection twice
     if (uploader.uploading) {
       toast.show({ message: "Un envoi est déjà en cours", description: "Ajoutez ces fichiers dès qu'il est terminé." });
       return;
     }
+    let collectionId = destination.collectionId;
+    if (destination.newName !== undefined) {
+      try {
+        // Created before sending, and kept for a retry: a second try must not make a second collection.
+        collectionId = (await addCollection.mutateAsync({ name: destination.newName, parent_id: null })).collection.id;
+      } catch (error) {
+        toast.show({ tone: "error", message: "La collection n'a pas pu être créée", description: errorMessage(error) });
+        return; // the dialog stays open: the name can be changed
+      }
+    }
+    if (collectionId) onFiled(collectionId);
     setFailures([]);
     setRetryable([]);
     setReplaced([]);
     setStaged([]);
     setLastRights(rights);
-    void uploader.run(files, rights).then((result) => {
+    setLastCollection(collectionId);
+    void uploader.run(files, rights, collectionId).then((result) => {
       setFailures(result.failed);
       setReplaced(result.replaced);
       const refused = new Set(result.failed.map((item) => item.filename));
@@ -120,7 +139,7 @@ export function LibraryActions({ up, onImport }: { up: Upload; onImport: () => v
 }
 
 /** Banners above the library: drop hint, indexing in progress, replaced visuels, refused files. */
-export function UploadNotices(props: { up: Upload; indexing: boolean }) {
+export function UploadNotices(props: { up: Upload; indexing: boolean; folders: CollectionIndex; current?: string }) {
   const { brand } = useOrg();
   const { up } = props;
   return (
@@ -138,7 +157,7 @@ export function UploadNotices(props: { up: Upload; indexing: boolean }) {
         </p>
       ) : null}
 
-      <ImportDialog files={up.staged} onCancel={up.cancelStaged} onSend={up.upload} />
+      <ImportDialog files={up.staged} folders={props.folders} current={props.current} onCancel={up.cancelStaged} onSend={up.upload} />
       {up.replaced.length ? <ReplacedNotice names={up.replaced} onClose={up.closeReplaced} /> : null}
       {up.failures.length ? <FailedNotice up={up} /> : null}
     </>
