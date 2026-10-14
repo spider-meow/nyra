@@ -3,7 +3,7 @@ import { Suspense, createContext, lazy, useContext, useState, type FormEvent, ty
 import { Link, Navigate, Outlet, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
 import { Logo } from "../components/Logo";
-import { Button, Card, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
+import { Button, Card, Checkbox, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
 import { api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { OrgProvider, brandLink, useMe, useOrganizations } from "../lib/org";
@@ -47,6 +47,7 @@ export function Login() {
   const [mode, setMode] = useState<"password" | "reset" | "sent">("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [remember, setRemember] = useState(true);
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -59,7 +60,7 @@ export function Login() {
     setError("");
     try {
       if (mode === "password") {
-        await auth.signIn(email, password);
+        await auth.signIn(email, password, remember);
       } else {
         await auth.requestReset(email);
         setMode("sent");
@@ -88,11 +89,13 @@ export function Login() {
         mode={mode}
         email={email}
         password={password}
+        remember={remember}
         error={error}
         pending={pending}
         disabled={pending || auth.phase === "loading"}
         onEmail={setEmail}
         onPassword={setPassword}
+        onRemember={setRemember}
         onSubmit={(event) => void submit(event)}
         onToggle={() => {
           setError("");
@@ -107,11 +110,13 @@ type LoginFormProps = {
   mode: "password" | "reset";
   email: string;
   password: string;
+  remember: boolean;
   error: string;
   pending: boolean;
   disabled: boolean;
   onEmail: (value: string) => void;
   onPassword: (value: string) => void;
+  onRemember: (value: boolean) => void;
   onSubmit: (event: FormEvent) => void;
   onToggle: () => void;
 };
@@ -131,6 +136,7 @@ function LoginForm(props: LoginFormProps) {
           <PasswordInput id="password" autoComplete="current-password" required value={props.password} onChange={(event) => props.onPassword(event.target.value)} />
         </div>
       ) : null}
+      {mode === "password" ? <Checkbox checked={props.remember} onChange={props.onRemember} label="Rester connecté" /> : null}
       {props.error ? <p className="text-sm text-expired" role="alert">{props.error}</p> : null}
       <Button type="submit" variant="primary" size="lg" disabled={props.disabled}>
         {props.pending ? "Un instant…" : mode === "password" ? "Se connecter" : "Envoyer le lien"}

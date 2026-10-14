@@ -14,7 +14,7 @@ type AuthState = {
   /** True after arriving from an invitation or a password-reset link. */
   mustSetPassword: boolean;
   problem: string;
-  signIn: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string, remember: boolean) => Promise<void>;
   signOut: () => Promise<void>;
   requestReset: (email: string) => Promise<void>;
   setPassword: (password: string) => Promise<void>;
@@ -26,7 +26,27 @@ const AuthContext = createContext<AuthState | null>(null);
 // links it e-mails. Read it before the client consumes the fragment.
 const arrivedToSetPassword = /type=(invite|recovery)/.test(window.location.hash);
 
-type Booted = { client: SupabaseClient; session: Session | null } | { problem: string };
+/**
+ * "Rester connecté": the session lives in localStorage (survives closing the
+ * browser) or, when unchecked, in sessionStorage (ends with the tab). The
+ * choice is made at sign-in; Supabase's token refreshes follow it.
+ */
+const REMEMBER_KEY = "nyra-remember";
+const remembered = () => window.localStorage.getItem(REMEMBER_KEY) !== "0";
+const sessionStore: Pick<Storage, "getItem" | "setItem" | "removeItem"> = {
+  getItem: (key) => window.sessionStorage.getItem(key) ?? window.localStorage.getItem(key),
+  setItem(key, value) {
+    const [keep, drop] = remembered() ? [window.localStorage, window.sessionStorage] : [window.sessionStorage, window.localStorage];
+    keep.setItem(key, value);
+    drop.removeItem(key);
+  },
+  removeItem(key) {
+    window.sessionStorage.removeItem(key);
+    window.localStorage.removeItem(key);
+  },
+};
+
+type Booted ={ client: SupabaseClient; session: Session | null } | { problem: string };
 
 /**
  * Reads the public config, creates the Supabase client and restores the session.
@@ -39,7 +59,7 @@ async function connect(stopped: () => boolean): Promise<Booted | null> {
     return { problem: "Le serveur n'a pas de clé publique Supabase (SUPABASE_ANON_KEY). Voir .env.example." };
   }
   const supabase = createClient(config.supabaseUrl, config.anonKey, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, storage: sessionStore },
   });
   // Bind before any render can fire a request: child effects run before
   // this provider's own effects, so binding in an effect would be too late.
@@ -76,8 +96,9 @@ type Actions = Pick<AuthState, "signIn" | "signOut" | "requestReset" | "setPassw
 
 function authActions(client: SupabaseClient | null, onPasswordSet: () => void): Actions {
   return {
-    async signIn(email, password) {
+    async signIn(email, password, remember) {
       if (!client) return;
+      window.localStorage.setItem(REMEMBER_KEY, remember ? "1" : "0");
       const { error } = await client.auth.signInWithPassword({ email, password });
       if (error) throw authError(error.message);
     },
