@@ -15,6 +15,8 @@ type DropdownProps = {
   disabled?: boolean;
   /** Classes of the button. */
   className?: string;
+  /** Opens the list above the button, for one that sits at the bottom of the screen. */
+  up?: boolean;
 };
 
 /** Open state, the highlighted option and the keyboard, so the component below only draws. */
@@ -82,7 +84,7 @@ export function Dropdown(props: DropdownProps) {
         <Icon name="chevrons" size={14} className="shrink-0 text-muted" />
       </button>
       {list.open ? (
-        <ul id={listId} role="listbox" className="absolute top-full right-0 left-0 z-50 mt-1 max-h-64 min-w-max overflow-auto rounded-md border border-ink bg-paper p-1 shadow-float">
+        <ul id={listId} role="listbox" className={cx("absolute right-0 left-0 z-50 max-h-64 min-w-max overflow-auto rounded-md border border-ink bg-paper p-1 shadow-float", props.up ? "bottom-full mb-1" : "top-full mt-1")}>
           {props.options.map((option, index) => (
             <li
               key={option.value}

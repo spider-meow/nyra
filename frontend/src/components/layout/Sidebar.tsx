@@ -72,30 +72,47 @@ function NavItems(props: { list: NavItem[]; onNavigate: () => void }) {
   ));
 }
 
-const SWITCHER = "w-full rounded-md border border-ink bg-paper px-2.5";
+/** The brand on screen, the thing people switch most: its initials and name; with several brands, a list to switch (same page, other brand). */
+function BrandSwitcher() {
+  const { org, brand, link } = useOrg();
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Same page, other brand: /o/x/m/a/bibliotheque -> /o/x/m/b/bibliotheque
+  const page = location.pathname.slice(link().length + 1) || "tableau-de-bord";
+  const identity = (
+    <span className="flex min-w-0 items-center gap-2.5">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-peach text-[13px] font-semibold text-bark-800" aria-hidden>
+        {initials(brand.name)}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-[15px] font-medium">{brand.name}</span>
+    </span>
+  );
+  if (org.brands.length <= 1) return <div className="flex h-12 items-center px-2.5">{identity}</div>;
+  return (
+    <Dropdown
+      aria-label="Changer de marque"
+      className="h-12 rounded-xl border border-line-strong bg-paper px-2.5 hover:bg-sunk"
+      trigger={identity}
+      value={brand.slug}
+      options={org.brands.map((item) => ({ value: item.slug, label: item.name }))}
+      onChange={(slug) => navigate(brandLink(org, slug, page))}
+    />
+  );
+}
 
-/** The organization on screen; with several, a list to switch. */
-function OrgSwitcher(props: { orgs: Organization[] | undefined }) {
+/** The organization and the role in it, as one quiet line under the email; with several organizations, a list (opening upwards) to switch. */
+function OrgLine(props: { orgs: Organization[] | undefined }) {
   const { org } = useOrg();
   const navigate = useNavigate();
   const { orgs } = props;
-  const identity = (
-    <span className="flex min-w-0 items-center gap-2.5">
-      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-ink text-xs font-semibold text-paper" aria-hidden>
-        {initials(org.name)}
-      </span>
-      <span className="min-w-0 flex-1 leading-tight">
-        <span className="block truncate text-[13.5px] font-medium">{org.name}</span>
-        <span className="block text-[11.5px] text-muted">{org.role === "admin" ? "Administrateur" : "Lecture et validation"}</span>
-      </span>
-    </span>
-  );
-  if (!orgs || orgs.length < 2) return <div className={cx(SWITCHER, "flex h-12 items-center")}>{identity}</div>;
+  const line = `${org.name} · ${org.role === "admin" ? "Admin" : "Lecture"}`;
+  if (!orgs || orgs.length < 2) return <span className="block truncate text-xs text-muted" title={line}>{line}</span>;
   return (
     <Dropdown
+      up
       aria-label="Changer d'organisation"
-      className={cx(SWITCHER, "h-12")}
-      trigger={identity}
+      className="text-xs text-muted hover:text-ink"
+      trigger={line}
       value={org.slug}
       options={orgs.map((item) => ({ value: item.slug, label: item.name }))}
       onChange={(slug) => navigate(`/o/${slug}`)}
@@ -103,36 +120,7 @@ function OrgSwitcher(props: { orgs: Organization[] | undefined }) {
   );
 }
 
-/** With several brands, a list to switch (same page, other brand); with one named differently, its name. */
-function BrandSwitcher() {
-  const { org, brand, link } = useOrg();
-  const navigate = useNavigate();
-  const location = useLocation();
-  // Same page, other brand: /o/x/m/a/bibliotheque -> /o/x/m/b/bibliotheque
-  const page = location.pathname.slice(link().length + 1) || "tableau-de-bord";
-  if (org.brands.length <= 1) {
-    return brand.name !== org.name ? <p className="-mt-4 px-2.5 text-[12.5px] text-muted">{brand.name}</p> : null;
-  }
-  return (
-    <div className="-mt-3">
-      <Dropdown
-        aria-label="Changer de marque"
-        className={cx(SWITCHER, "h-11")}
-        trigger={
-          <span className="block leading-tight">
-            <span className="block text-[11.5px] text-muted">Marque</span>
-            <span className="block truncate text-[13.5px] font-medium">{brand.name}</span>
-          </span>
-        }
-        value={brand.slug}
-        options={org.brands.map((item) => ({ value: item.slug, label: item.name }))}
-        onChange={(slug) => navigate(brandLink(org, slug, page))}
-      />
-    </div>
-  );
-}
-
-function Account() {
+function Account(props: { orgs: Organization[] | undefined }) {
   const auth = useAuth();
   return (
     <div className="flex items-center gap-2.5 border-t border-line-strong px-2.5 pt-3.5">
@@ -141,6 +129,7 @@ function Account() {
       </span>
       <span className="min-w-0 flex-1 leading-tight">
         <span className="block truncate text-[13px]" title={auth.email}>{auth.email}</span>
+        <OrgLine orgs={props.orgs} />
         <button type="button" className="text-xs text-muted hover:text-ink hover:underline" onClick={() => void auth.signOut()}>
           Se déconnecter
         </button>
@@ -150,7 +139,7 @@ function Account() {
 }
 
 /**
- * Brand identity, switchers, navigation and account. The queries are read by
+ * The brand on screen, navigation, and the account block (with the organization). The queries are read by
  * the layout (always mounted) and passed down: this block is rendered twice
  * (side column and mobile menu) and opening the menu must not refetch anything.
  */
@@ -162,7 +151,6 @@ export function Sidebar(props: { nav: ReturnType<typeof useNavItems>; orgs: Orga
         <Logo size={36} />
         <p className="font-display text-[26px] leading-none">Nyra</p>
       </div>
-      <OrgSwitcher orgs={props.orgs} />
       <BrandSwitcher />
       <nav aria-label="Navigation principale" className="grid gap-0.5">
         <NavItems list={nav.items} onNavigate={onNavigate} />
@@ -170,7 +158,7 @@ export function Sidebar(props: { nav: ReturnType<typeof useNavItems>; orgs: Orga
       <nav aria-label="Compte et réglages" className="mt-auto -mb-3 grid gap-0.5">
         <NavItems list={nav.footerItems} onNavigate={onNavigate} />
       </nav>
-      <Account />
+      <Account orgs={props.orgs} />
     </div>
   );
 }
