@@ -1,6 +1,7 @@
-import { Card, Checkbox, FieldLabel, Input, Segmented } from "../../components/ui";
-import { numberProps, SaveBar, useOverridesForm, type OverridesForm } from "./overrides";
+import { SettingsBlock, SettingsRow } from "../../components/SettingsBlock";
+import { Checkbox, FieldLabel, Input, Segmented } from "../../components/ui";
 import type { Settings } from "../../types";
+import { numberProps, ResetButton, SaveIndicator, useOverridesForm, type OverridesForm } from "./overrides";
 
 type Level = "strict" | "balanced" | "wide";
 
@@ -40,30 +41,31 @@ function Advanced(props: { form: OverridesForm }) {
     </div>
   );
   return (
-    <details className="mt-5 rounded-xl border border-line-strong px-4 py-3">
-      <summary className="cursor-pointer text-sm font-medium">Réglages avancés</summary>
-      <p className="mt-2 max-w-2xl text-sm text-muted">Les valeurs exactes derrière les trois niveaux. À toucher seulement si vous savez ce que vous faites.</p>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {field("match.phash_threshold", "Tolérance, empreinte de forme", "0 à 32 · plus haut = plus tolérant")}
-        {field("match.dhash_threshold", "Tolérance, empreinte de contours", "0 à 32 · plus haut = plus tolérant")}
-        {field("match.clip_similarity_high", "Ressemblance « confirmé »", "0 à 1", "0.01")}
-        {field("match.clip_similarity_medium", "Ressemblance « probable »", "0 à 1", "0.01")}
-        {field("match.clip_similarity_floor", "Ressemblance « à vérifier »", "minimum, 0 à 1", "0.01")}
-      </div>
-      <div className="mt-5 grid gap-4">
-        <Checkbox
-          checked={form.boolOf(VERIFY[0])}
-          onChange={(value) => form.set(VERIFY[0], String(value))}
-          label="Vérifier chaque ressemblance sur les détails de l'image"
-          hint="Écarte les autres prises de vue d'un même produit. Recommandé."
-        />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {field(VERIFY[1], "Points communs minimum", "nombre")}
-          {field(VERIFY[2], "Part commune pour « à vérifier »", "0 à 1", "0.01")}
-          {field(VERIFY[3], "Part commune pour « confirmé »", "0 à 1", "0.01")}
+    <SettingsBlock title="Réglages avancés" description="Les valeurs exactes derrière les trois niveaux. À toucher seulement si vous savez ce que vous faites.">
+      <details className="px-5 py-4">
+        <summary className="cursor-pointer text-sm font-medium">Afficher les valeurs</summary>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {field("match.phash_threshold", "Tolérance, empreinte de forme", "0 à 32 · plus haut = plus tolérant")}
+          {field("match.dhash_threshold", "Tolérance, empreinte de contours", "0 à 32 · plus haut = plus tolérant")}
+          {field("match.clip_similarity_high", "Ressemblance « confirmé »", "0 à 1", "0.01")}
+          {field("match.clip_similarity_medium", "Ressemblance « probable »", "0 à 1", "0.01")}
+          {field("match.clip_similarity_floor", "Ressemblance « à vérifier »", "minimum, 0 à 1", "0.01")}
         </div>
-      </div>
-    </details>
+        <div className="mt-5 grid gap-4">
+          <Checkbox
+            checked={form.boolOf(VERIFY[0])}
+            onChange={(value) => form.set(VERIFY[0], String(value))}
+            label="Vérifier chaque ressemblance sur les détails de l'image"
+            hint="Écarte les autres prises de vue d'un même produit. Recommandé."
+          />
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {field(VERIFY[1], "Points communs minimum", "nombre")}
+            {field(VERIFY[2], "Part commune pour « à vérifier »", "0 à 1", "0.01")}
+            {field(VERIFY[3], "Part commune pour « confirmé »", "0 à 1", "0.01")}
+          </div>
+        </div>
+      </details>
+    </SettingsBlock>
   );
 }
 
@@ -72,20 +74,26 @@ export function Detection(props: { data: Settings }) {
   const form = useOverridesForm(props.data);
   const level = currentLevel(form);
   return (
-    <Card tone="quiet">
-      <div>
-        <Segmented<Level> label="Niveau de détection" value={level as Level} options={LEVELS} onChange={(value) => pick(form, value)} />
-      </div>
-      <p className="mt-3 text-sm">
-        {level === "custom" ? "Personnalisé : les valeurs avancées ne correspondent à aucun niveau." : LEVELS.find((item) => item.value === level)?.effect}
-      </p>
-      <div className="mt-6 max-w-xs">
-        <FieldLabel htmlFor="report.default_within_days" hint="en jours">Expirations à surveiller par défaut</FieldLabel>
-        <Input {...numberProps(form, "report.default_within_days")} />
-        <p className="mt-1 text-xs text-muted">Les visuels qui expirent dans ce délai apparaissent dans « À traiter » et dans les rapports.</p>
-      </div>
+    <>
+      <SettingsBlock
+        title="Niveau de détection"
+        description="À partir de quelle ressemblance Nyra vous propose une image. Le changement s'applique à la prochaine comparaison."
+        aside={<SaveIndicator form={form} />}
+      >
+        <div className="p-5">
+          <Segmented<Level> label="Niveau de détection" value={level as Level} options={LEVELS} onChange={(value) => pick(form, value)} />
+          <p className="mt-3 text-sm">
+            {level === "custom" ? "Personnalisé : les valeurs avancées ne correspondent à aucun niveau." : LEVELS.find((item) => item.value === level)?.effect}
+          </p>
+        </div>
+      </SettingsBlock>
+      <SettingsBlock title="Expirations à surveiller">
+        <SettingsRow label="Délai par défaut, en jours" hint="Les visuels qui expirent dans ce délai apparaissent dans « À traiter » et dans les rapports.">
+          <Input {...numberProps(form, "report.default_within_days")} aria-label="Délai par défaut, en jours" className="w-28" />
+        </SettingsRow>
+      </SettingsBlock>
       <Advanced form={form} />
-      <SaveBar form={form} keys={[...THRESHOLDS, ...VERIFY, "report.default_within_days"]} />
-    </Card>
+      <ResetButton form={form} keys={[...THRESHOLDS, ...VERIFY, "report.default_within_days"]} />
+    </>
   );
 }

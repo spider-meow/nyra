@@ -7,48 +7,36 @@ import { useOrg } from "../lib/org";
 import { useSettings } from "../lib/queries";
 import type { Settings as SettingsData } from "../types";
 import { Account } from "./settings/Account";
-import { Brands, DeleteBrands } from "./settings/Brands";
+import { DangerZone } from "./settings/DangerZone";
 import { Detection } from "./settings/Detection";
 import { Exclusions } from "./settings/Exclusions";
+import { Profile } from "./settings/Profile";
 import { Reading } from "./settings/Reading";
 import { Team } from "./settings/Team";
 
-type Section = { id: string; label: string; icon: IconName; adminOnly?: boolean; render: (data: SettingsData) => ReactNode };
+/** What a section is about: the brand on screen, the whole organization, or the signed-in person. */
+type Group = "marque" | "organisation" | "moi";
+
+type Section = { id: string; label: string; icon: IconName; group: Group; adminOnly?: boolean; render: (data: SettingsData) => ReactNode };
 
 const SECTIONS: Section[] = [
   {
-    id: "marques",
-    label: "Marques",
+    id: "general",
+    label: "Général",
     icon: "library",
+    group: "marque",
     render: () => (
       <>
-        <Brands />
+        <Profile />
         <Exclusions />
-        <DeleteBrands />
+        <DangerZone />
       </>
     ),
   },
-  {
-    id: "equipe",
-    label: "Équipe",
-    icon: "users",
-    render: () => <Team />,
-  },
-  { id: "compte", label: "Mon compte", icon: "user", render: () => <Account /> },
-  {
-    id: "detection",
-    label: "Détection",
-    icon: "scan",
-    adminOnly: true,
-    render: (data) => <Detection data={data} />,
-  },
-  {
-    id: "lecture",
-    label: "Lecture des sites",
-    icon: "eye",
-    adminOnly: true,
-    render: (data) => <Reading data={data} />,
-  },
+  { id: "equipe", label: "Équipe", icon: "users", group: "organisation", render: () => <Team /> },
+  { id: "detection", label: "Détection", icon: "scan", group: "organisation", adminOnly: true, render: (data) => <Detection data={data} /> },
+  { id: "lecture", label: "Lecture des sites", icon: "eye", group: "organisation", adminOnly: true, render: (data) => <Reading data={data} /> },
+  { id: "compte", label: "Mon compte", icon: "user", group: "moi", render: () => <Account /> },
 ];
 
 function SectionLink(props: { section: Section; active: boolean; onPick: () => void }) {
@@ -69,14 +57,22 @@ function SectionLink(props: { section: Section; active: boolean; onPick: () => v
 }
 
 function Nav(props: { sections: Section[]; activeId: string; onPick: (id: string) => void }) {
-  const everyone = props.sections.filter((section) => !section.adminOnly);
-  const admins = props.sections.filter((section) => section.adminOnly);
-  const link = (section: Section) => <SectionLink key={section.id} section={section} active={section.id === props.activeId} onPick={() => props.onPick(section.id)} />;
+  const { org, brand } = useOrg();
+  const titles: Record<Group, string> = { marque: brand.name, organisation: org.name, moi: "Moi" };
   return (
     <nav aria-label="Sections des réglages" className="flex flex-wrap gap-1 lg:sticky lg:top-6 lg:w-52 lg:shrink-0 lg:flex-col lg:flex-nowrap lg:self-start">
-      {everyone.map(link)}
-      {admins.length ? <p className="hidden px-3 pt-4 pb-1 text-xs font-medium tracking-wide text-faint uppercase lg:block">Administrateurs</p> : null}
-      {admins.map(link)}
+      {(Object.keys(titles) as Group[])
+        .filter((group) => props.sections.some((section) => section.group === group))
+        .map((group, index) => (
+          <div key={group} className="contents">
+            <p className={cx("hidden truncate px-3 pb-1 text-xs font-medium tracking-wide text-faint uppercase lg:block", index > 0 && "pt-4")} title={titles[group]}>{titles[group]}</p>
+            {props.sections
+              .filter((section) => section.group === group)
+              .map((section) => (
+                <SectionLink key={section.id} section={section} active={section.id === props.activeId} onPick={() => props.onPick(section.id)} />
+              ))}
+          </div>
+        ))}
     </nav>
   );
 }
@@ -96,10 +92,8 @@ export function Settings() {
       <PageHeader title="Réglages" />
       <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
         <Nav sections={visible} activeId={active.id} onPick={(id) => setParams({ section: id }, { replace: true })} />
-        <div className="min-w-0 flex-1">
-          <header className="mb-6">
-            <h2 className="text-lg font-semibold">{active.label}</h2>
-          </header>
+        <div className="min-w-0 max-w-3xl flex-1">
+          <h2 className="mb-6 text-xl font-semibold tracking-tight">{active.label}</h2>
           {active.render(settings.data)}
         </div>
       </div>

@@ -1,5 +1,6 @@
 import { useToast } from "../../components/feedback";
-import { Button, SettingsBlock, Thumb } from "../../components/ui";
+import { SettingsBlock } from "../../components/SettingsBlock";
+import { Button, Thumb } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDate, hostOf } from "../../lib/format";
 import { useOrg } from "../../lib/org";

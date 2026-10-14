@@ -207,19 +207,6 @@ export function Card(props: { children: ReactNode; className?: string; padded?: 
   );
 }
 
-/** One block of a settings section: what it is on the left, its controls in a quiet card on the right. */
-export function SettingsBlock(props: { title: ReactNode; description?: ReactNode; children: ReactNode; danger?: boolean }) {
-  return (
-    <div className="grid gap-4 border-t border-line py-8 first:border-t-0 first:pt-0 lg:grid-cols-[14rem_minmax(0,1fr)] lg:gap-10">
-      <div>
-        <h3 className="font-semibold">{props.title}</h3>
-        {props.description ? <p className="mt-1.5 text-sm leading-relaxed text-muted">{props.description}</p> : null}
-      </div>
-      <Card padded={false} tone={props.danger ? "danger" : "quiet"} className="self-start">{props.children}</Card>
-    </div>
-  );
-}
-
 export function PageHeader(props: { title: string; actions?: ReactNode; eyebrow?: ReactNode }) {
   return (
     <header className="mb-8 flex flex-wrap items-end justify-between gap-4">
