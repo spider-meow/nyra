@@ -19,6 +19,7 @@ class CountingBucket:
 
     def upload(self, path, file, file_options=None):
         self.owner.objects[(self.bucket, path)] = file
+        self.owner.options[(self.bucket, path)] = file_options
 
     def remove(self, paths):
         for path in paths:
@@ -31,7 +32,7 @@ class CountingBucket:
 
 class CountingClient:
     def __init__(self):
-        self.objects, self.downloads, self.signings = {}, 0, 0
+        self.objects, self.options, self.downloads, self.signings = {}, {}, 0, 0
         self.storage = self
 
     def from_(self, bucket):
@@ -132,3 +133,11 @@ def test_a_url_in_use_is_the_last_to_be_evicted(monkeypatch):
         assert kept == {"org/a", "org/c", "org/d"}
     finally:
         storage._signed.clear()
+
+
+def test_only_hash_named_site_images_get_a_long_cache_control():
+    client = CountingClient()
+    storage.upload(client, "site-images", "o/thumbs/h.jpg", b"x", content_type="image/jpeg")
+    storage.upload(client, "refs", "o/b/a.jpg", b"x", content_type="image/jpeg")
+    assert client.options[("site-images", "o/thumbs/h.jpg")]["cache-control"] == "31536000"
+    assert "cache-control" not in client.options[("refs", "o/b/a.jpg")]

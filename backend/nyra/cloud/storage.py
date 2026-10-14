@@ -89,6 +89,10 @@ def site_thumb_path(org_id: uuid.UUID, content_hash: str) -> str:
 
 UPLOAD_ATTEMPTS = 3
 
+# Site images are named by content hash: the object at a path never changes, so the
+# browser may keep it for a year instead of Storage's one-hour default.
+IMMUTABLE_CACHE_SECONDS = str(365 * 24 * 3600)
+
 
 def is_transient(exc: Exception) -> bool:
     """A network hiccup worth another try (reset connection, busy socket, timeout), not a refusal."""
@@ -100,6 +104,8 @@ def is_transient(exc: Exception) -> bool:
 def upload(client: Client, bucket: str, path: str, data: bytes, *, content_type: Optional[str] = None) -> None:
     """Upsert, so trying again is harmless: a dropped connection is retried twice before giving up."""
     options = {"upsert": "true"}
+    if bucket == BUCKET_SITE_IMAGES:
+        options["cache-control"] = IMMUTABLE_CACHE_SECONDS
     if content_type:
         options["content-type"] = content_type
     for attempt in range(1, UPLOAD_ATTEMPTS + 1):
