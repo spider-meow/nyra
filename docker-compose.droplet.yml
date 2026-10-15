@@ -1,0 +1,34 @@
+# Droplet (DigitalOcean or any VPS): HTTPS in front of web, and a restart for a container that turns unhealthy.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.droplet.yml up -d --build
+#
+# Needs NYRA_DOMAIN in .env, a DNS A record pointing at the Droplet, ports 80 and 443 open.
+
+services:
+  web:
+    ports: !reset []   # only Caddy is reachable from outside
+
+  caddy:
+    image: caddy:2
+    env_file: .env
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data   # keeps the certificates across restarts
+    depends_on:
+      - web
+    restart: unless-stopped
+
+  # Plain compose only reports "unhealthy"; this restarts a hung worker (see docs/DEPLOYMENT.md).
+  autoheal:
+    image: willfarrell/autoheal:1.2.0
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: all
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

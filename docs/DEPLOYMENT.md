@@ -18,6 +18,37 @@ Render, Kubernetes). Terminate TLS in front of `web` (the platform's load
 balancer, or Caddy/nginx). `web` can run several instances; nothing about
 a job lives in its memory.
 
+## DigitalOcean
+
+One Droplet runs everything (web, worker, HTTPS, restart of a hung worker); Postgres, Auth and
+Storage stay on Supabase.
+
+1. Create a Droplet, Ubuntu 24.04 with the Docker image from the Marketplace, **4 GB / 2 vCPU**
+   (Basic, $24/month). Add a DNS A record for your domain pointing at it.
+2. `git clone` the repository, copy `.env.example` to `.env`, fill it in, set `NYRA_DOMAIN`
+   and `NYRA_PUBLIC_URL=https://<NYRA_DOMAIN>`.
+3. `docker compose -f docker-compose.yml -f docker-compose.droplet.yml up -d --build`
+   (the first build is long: Chromium, torch and the CLIP weights).
+4. Do the Supabase setup below, then check `https://<NYRA_DOMAIN>/api/healthz`.
+5. Firewall (Networking > Firewalls): inbound 22, 80, 443 only.
+
+`autoheal` reads the Docker socket to restart containers marked `unhealthy`; drop it from
+`docker-compose.droplet.yml` if you would rather not give a container that access.
+
+Monthly cost, Basic Droplet prices of October 2026 (check
+[digitalocean.com/pricing](https://www.digitalocean.com/pricing/droplets)):
+
+| Setup | Droplet | Backups (weekly, +20%) | Total |
+|---|---|---|---|
+| Small: 1 worker, a few brands | 4 GB / 2 vCPU, $24 | $4.80 | about $29 |
+| Comfortable: `--scale worker=2` | 8 GB / 4 vCPU, $48 | $9.60 | about $58 |
+| Split: web apart from the worker | 1 GB, $6 + 4 GB, $24 | | about $30 |
+
+Supabase is billed separately. App Platform also works (web service on `--target web`,
+worker component on `--target worker`) but the worker needs at least the 2 GB container ($25) and
+more comfortably the 4 GB one ($50), plus the web service ($5-10): roughly twice the Droplet for
+the same work. The Droplet is the recommended path.
+
 ## Resources
 
 - **web**: 256–512 MB, a fraction of a CPU.
