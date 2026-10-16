@@ -22,8 +22,8 @@ function statusChips(items: LibraryItem[]): { value: Filter; label: string; dot?
   ];
 }
 
-/** Tabs, search, status chips, sort and tag filters, plus the `#library-tags` suggestions the tag fields use. */
-export function LibraryToolbar(props: { view: LibraryView; onTab: (tab: Tab) => void }) {
+/** Tabs, search, status chips, sort and tag filters, plus the `#library-tags` suggestions the tag fields use. On the landing only the tabs and the search stay: the filters act on a grid that is not shown. */
+export function LibraryToolbar(props: { view: LibraryView; onTab: (tab: Tab) => void; landing: boolean }) {
   const { admin, link } = useOrg();
   const labels = useLabels().data?.labels ?? [];
   const view = props.view;
@@ -51,7 +51,7 @@ export function LibraryToolbar(props: { view: LibraryView; onTab: (tab: Tab) => 
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <SearchField id="lib-search" placeholder="Rechercher : classic decanter, winter…" className="w-full sm:w-72" value={view.query} onChange={view.setQuery} />
-        {view.tab === "active" ? (
+        {view.tab === "active" && !props.landing ? (
           <div className="flex gap-2 overflow-x-auto pb-0.5 [scrollbar-width:none]">
             {statusChips(view.activeItems).map((item) => (
               <Chip key={item.value} active={view.filter === item.value} dot={item.dot} count={item.count} onClick={() => view.setFilter(item.value)}>
@@ -60,13 +60,19 @@ export function LibraryToolbar(props: { view: LibraryView; onTab: (tab: Tab) => 
             ))}
           </div>
         ) : null}
-        <div className="ml-auto">
-          <Segmented label="Trier par" value={view.sort} onChange={view.setSort} options={[{ value: "expiry", label: "Échéance" }, { value: "name", label: "Nom" }]} />
-        </div>
+        {props.landing ? null : (
+          <div className="ml-auto">
+            <Segmented label="Trier par" value={view.sort} onChange={view.setSort} options={[{ value: "expiry", label: "Échéance" }, { value: "name", label: "Nom" }]} />
+          </div>
+        )}
       </div>
 
-      <TagFilters view={view} />
-      <ContentFilter labels={labels} counts={view.contentCounts} value={view.content} onChange={view.setContent} />
+      {props.landing ? <div className="mb-5" /> : (
+        <>
+          <TagFilters view={view} />
+          <ContentFilter labels={labels} counts={view.contentCounts} value={view.content} onChange={view.setContent} />
+        </>
+      )}
 
       <datalist id="library-tags">
         {view.libraryTags.map(([tag]) => <option key={tag} value={tag} />)}

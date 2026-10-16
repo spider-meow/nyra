@@ -107,6 +107,8 @@ export type LibraryItem = {
   height: number | null;
   indexed: boolean;
   compared: boolean;
+  /** When the visual was added to the library (ISO date and time). */
+  created_at: string;
 };
 
 export type Hit = {

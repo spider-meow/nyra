@@ -13,11 +13,34 @@ const isFilter = oneOf<Filter>(["all", "expire", "<30j", "<90j", "ok", "inconnue
 export type Tab = "active" | "expired";
 export const TAGS_SHOWN = 12;
 
+/** The most recently added visuals, newest first. */
+export function newest(items: LibraryItem[], count: number): LibraryItem[] {
+  return [...items].sort((a, b) => b.created_at.localeCompare(a.created_at) || a.filename.localeCompare(b.filename, "fr")).slice(0, count);
+}
+
 /** Tags with the number of visuals carrying each, most used first. */
 function tagCounts(items: LibraryItem[]): [string, number][] {
   const counts = new Map<string, number>();
   for (const item of items) for (const tag of item.tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
   return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "fr"));
+}
+
+/**
+ * Visuals of the tab per folder, for the tree and the tiles: how many, and how many in each status. A visual counts for its folder
+ * and every folder above it; "all" and "none" (unfiled) are counted too.
+ */
+function folderTotals(pool: LibraryItem[], folders: CollectionIndex) {
+  const counts: Record<string, number> = { all: pool.length, none: 0 };
+  const statuses: Record<string, Partial<Record<Status, number>>> = {};
+  for (const item of pool) {
+    if (!item.collection_id) counts.none += 1;
+    for (let id: string | null = item.collection_id; id; id = folders.byId.get(id)?.parent_id ?? null) {
+      counts[id] = (counts[id] ?? 0) + 1;
+      const row = (statuses[id] ??= {});
+      row[item.status] = (row[item.status] ?? 0) + 1;
+    }
+  }
+  return { counts, statuses };
 }
 
 type Criteria = { tab: Tab; filter: Filter; sort: Sort; query: string; activeTags: string[]; untagged: boolean; content: string; scope: Scope; subtree: Set<string>; folders: CollectionIndex };
@@ -80,15 +103,7 @@ export function useLibraryView(items: LibraryItem[], collections: Collection[], 
   // A remembered folder can have been deleted since: fall back to the whole library.
   const scope: Scope = scopeSaved === "all" || scopeSaved === "none" || folders.byId.has(scopeSaved) ? scopeSaved : "all";
   const subtree = useMemo(() => new Set(scope === "all" || scope === "none" ? [] : folders.subtree(scope)), [scope, folders]);
-  // Visuals of the tab per folder (a visual counts for its folder and every folder above it), for the tree.
-  const folderCounts = useMemo(() => {
-    const counts: Record<string, number> = { all: pool.length, none: 0 };
-    for (const item of pool) {
-      if (!item.collection_id) counts.none += 1;
-      for (let id: string | null = item.collection_id; id; id = folders.byId.get(id)?.parent_id ?? null) counts[id] = (counts[id] ?? 0) + 1;
-    }
-    return counts;
-  }, [pool, folders]);
+  const { counts: folderCounts, statuses: folderStatuses } = useMemo(() => folderTotals(pool, folders), [pool, folders]);
   const visible = useMemo(() => visibleItems(pool, { tab, filter, sort, query, activeTags, untagged, content, scope, subtree, folders }, labelsOf), [pool, tab, filter, sort, query, activeTags, untagged, content, scope, subtree, folders, labelsOf]);
   // How many visuals of the tab carry each content label (a label that no visual carries has no chip to filter on).
   const contentCounts = useMemo(() => {
@@ -112,7 +127,7 @@ export function useLibraryView(items: LibraryItem[], collections: Collection[], 
   }
 
   return {
-    tab, filter, sort, query, activeTags, untagged, content, contentCounts, allTags, shown, scope, folders, folderCounts,
+    tab, filter, sort, query, activeTags, untagged, content, contentCounts, allTags, shown, scope, folders, folderCounts, folderStatuses,
     activeItems, expiredItems, libraryTags, poolTags, untaggedCount, visible,
     filtering: filter !== "all" || scope !== "all" || Boolean(query) || activeTags.length > 0 || untagged || content !== "all",
     changeTab, toggleTag, setSort,

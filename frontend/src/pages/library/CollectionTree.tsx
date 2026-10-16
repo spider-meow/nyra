@@ -1,8 +1,9 @@
 import { Link } from "react-router";
 import { Icon } from "../../components/icons";
-import { Button, cx } from "../../components/ui";
+import { Button, cx, statusDot } from "../../components/ui";
+import { statusLabel } from "../../lib/format";
 import { useOrg } from "../../lib/org";
-import type { Collection } from "../../types";
+import type { Collection, Status } from "../../types";
 import { MAX_DEPTH } from "./collections";
 import { NameField, useFolderActions } from "./folderEdit";
 import type { LibraryView } from "./view";
@@ -53,7 +54,7 @@ export function FolderBar({ view }: { view: LibraryView }) {
     const collection = folders.byId.get(id);
     if (collection) trail.unshift(collection);
   }
-  const kids = folders.children.get(scope === "all" ? null : scope) ?? [];
+  const kids = scope === "all" ? [] : folders.children.get(scope) ?? []; // at the top the side menu already lists them
   const canAdd = admin && scope !== "all" && folders.depth(scope) === MAX_DEPTH - 1;
   const adding = editing !== null && "add" in editing && editing.add === scope;
   return (
@@ -69,15 +70,36 @@ export function FolderBar({ view }: { view: LibraryView }) {
         <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
           {kids.map((child) => (
             <li key={child.id}>
-              <button type="button" onClick={() => view.setScope(child.id)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-line bg-paper px-4 py-3 text-left text-[13.5px] text-ink hover:border-line-strong">
-                <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{child.name}</span>
-                <span className="text-[12px] text-muted tabular">{(folderCounts[child.id] ?? 0).toLocaleString("fr-FR")}</span>
-              </button>
+              <FolderTile folder={child} count={folderCounts[child.id] ?? 0} subNames={(folders.children.get(child.id) ?? []).map((sub) => sub.name).join(" · ")} statuses={view.folderStatuses[child.id] ?? {}} onOpen={() => view.setScope(child.id)} />
             </li>
           ))}
         </ul>
       ) : null}
     </div>
+  );
+}
+
+// Worst first, so the bar reads left to right from what needs attention to what does not.
+const SEGMENTS: Status[] = ["expire", "<30j", "<90j", "inconnue", "ok", "illimite"];
+
+/** A folder as a tile: its name, how many visuals, its sub-folders, and a bar of how healthy the rights of what it holds are. */
+function FolderTile(props: { folder: Collection; count: number; subNames: string; statuses: Partial<Record<Status, number>>; onOpen: () => void }) {
+  const { statuses } = props;
+  const present = SEGMENTS.filter((status) => statuses[status]);
+  const summary = present.map((status) => `${statuses[status]} · ${statusLabel[status].toLowerCase()}`).join(", ");
+  return (
+    <button type="button" onClick={props.onOpen} className="flex h-full w-full flex-col gap-2 rounded-xl border border-line bg-paper p-4 text-left transition-shadow hover:shadow-float">
+      <span className="flex w-full items-start justify-between gap-3">
+        <span className="font-display min-w-0 text-lg leading-tight [overflow-wrap:anywhere]">{props.folder.name}</span>
+        <span className="text-sm text-ink-soft tabular">{props.count.toLocaleString("fr-FR")}</span>
+      </span>
+      {props.subNames ? <span className="line-clamp-2 text-[12px] text-ink-soft [overflow-wrap:anywhere]">{props.subNames}</span> : null}
+      {present.length ? (
+        <span role="img" aria-label={summary} title={summary} className="mt-auto flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-sunk">
+          {present.map((status) => <span key={status} className={cx("h-full", statusDot[status], status === "illimite" && "opacity-45")} style={{ flexGrow: statuses[status] }} />)}
+        </span>
+      ) : null}
+    </button>
   );
 }
 

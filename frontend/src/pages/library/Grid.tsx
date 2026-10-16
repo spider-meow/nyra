@@ -13,11 +13,10 @@ type Props = {
   selected: Set<string>;
   setSelected: (selected: Set<string>) => void;
   onEdit: (item: LibraryItem) => void;
-  onPick: () => void;
 };
 
 /** "Select all" box, the visuels (first page of them), "show more" and the empty-result message. */
-export function LibraryGrid({ view, thumbs, labelsOf, selected, setSelected, onEdit, onPick }: Props) {
+export function LibraryGrid({ view, thumbs, labelsOf, selected, setSelected, onEdit }: Props) {
   const { admin } = useOrg();
   const { visible, shown, tab, filtering } = view;
   // Which collection a card is in matters when the cards come from several: the whole library, or a search.
@@ -45,7 +44,6 @@ export function LibraryGrid({ view, thumbs, labelsOf, selected, setSelected, onE
         </label>
       ) : null}
       <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
-        {admin && tab === "active" && !filtering ? <DropTile onPick={onPick} /> : null}
         {visible.slice(0, shown).map((item) => (
           <ReferenceCard key={item.id} item={item} where={showWhere && item.collection_id ? view.folders.path(item.collection_id) : ""} labels={labelsOf(item.id)} thumbUrl={thumbs[item.filename]} checked={selected.has(item.filename)} anySelected={selected.size > 0} onEdit={onEdit} onToggle={toggle} />
         ))}
@@ -64,19 +62,20 @@ export function LibraryGrid({ view, thumbs, labelsOf, selected, setSelected, onE
   );
 }
 
-function DropTile({ onPick }: { onPick: () => void }) {
+/** The landing: the newest visuals on a single row (the cards that do not fit the columns of the screen are hidden), then the way to the whole library. */
+export function RecentCards(props: { items: LibraryItem[]; total: number; thumbs: Record<string, string>; labelsOf: (id: string) => ImageLabel[]; onEdit: (item: LibraryItem) => void; onAll: () => void }) {
   return (
-    <li>
-      <button
-        type="button"
-        onClick={onPick}
-        className="flex h-full min-h-56 w-full flex-col items-center justify-center gap-2.5 rounded-xl border-[1.5px] border-dashed border-line-strong bg-sunk p-4 text-center transition-colors hover:border-bark hover:bg-peach-soft/40"
-      >
-        <span className="grid h-11 w-11 place-items-center rounded-xl bg-peach-soft text-bark-700"><Icon name="upload" size={20} /></span>
-        <span className="text-sm font-medium">Déposez des images</span>
-        <span className="text-[12.5px] leading-snug text-muted">ou cliquez pour choisir. JPG, PNG, WebP…</span>
-      </button>
-    </li>
+    <section aria-label="Derniers ajouts">
+      {props.items.length ? <h2 className="mb-3 text-sm font-semibold">Derniers ajouts</h2> : null}
+      <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4 max-xl:[&>li:nth-child(n+4)]:hidden max-sm:[&>li:nth-child(n+3)]:hidden">
+        {props.items.map((item) => (
+          <ReferenceCard key={item.id} item={item} where="" labels={props.labelsOf(item.id)} thumbUrl={props.thumbs[item.filename]} onEdit={props.onEdit} />
+        ))}
+      </ul>
+      <div className="mt-6 text-center">
+        <Button onClick={props.onAll}>Afficher tous les visuels ({props.total.toLocaleString("fr-FR")})</Button>
+      </div>
+    </section>
   );
 }
 
@@ -86,13 +85,14 @@ type CardProps = {
   labels: ImageLabel[];
   /** Undefined until the signed URL arrives, and for good when the reference has no image to show. */
   thumbUrl: string | undefined;
-  checked: boolean;
-  anySelected: boolean;
+  checked?: boolean;
+  anySelected?: boolean;
   onEdit: (item: LibraryItem) => void;
-  onToggle: (filename: string, checked: boolean) => void;
+  /** Absent: the card cannot be ticked. */
+  onToggle?: (filename: string, checked: boolean) => void;
 };
 
-function ReferenceCard({ item, where, labels, thumbUrl, checked, anySelected, onEdit, onToggle }: CardProps) {
+function ReferenceCard({ item, where, labels, thumbUrl, checked = false, anySelected = false, onEdit, onToggle }: CardProps) {
   const { admin } = useOrg();
   return (
     <li
@@ -128,7 +128,7 @@ function ReferenceCard({ item, where, labels, thumbUrl, checked, anySelected, on
           {!item.indexed ? <span className="text-[11.5px] text-urgent">Indexation en attente</span> : null}
         </span>
       </button>
-      {admin ? (
+      {admin && onToggle ? (
         <input
           type="checkbox"
           className={cx("absolute top-2.5 left-2.5 h-5 w-5 accent-ink transition-opacity", checked || anySelected ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100")}

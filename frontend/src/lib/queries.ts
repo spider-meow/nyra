@@ -82,7 +82,7 @@ const isLibraryItem = (value: unknown): value is LibraryItem =>
   typeof value.credit === "string" && typeof value.notes === "string" &&
   Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string") &&
   (value.collection_id === null || typeof value.collection_id === "string") &&
-  typeof value.indexed === "boolean" && typeof value.compared === "boolean";
+  typeof value.indexed === "boolean" && typeof value.compared === "boolean" && typeof value.created_at === "string";
 
 type LibraryAnswer = { items: LibraryItem[]; collections: Collection[]; indexing: boolean };
 const isLibraryAnswer = (value: unknown): value is LibraryAnswer =>

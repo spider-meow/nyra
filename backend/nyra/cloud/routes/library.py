@@ -103,6 +103,7 @@ def library(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
             "height": row["height"],
             "indexed": bool(row["embedded"]),
             "compared": row["compared_at"] is not None,
+            "created_at": iso(row["created_at"]),
         })
     return {"items": items, "collections": [collection_json(row) for row in collections], "indexing": indexing}
 
