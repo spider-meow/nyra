@@ -54,7 +54,7 @@ where = ["backend"]
 include = ["nyra*"]
 
 [tool.setuptools.package-data]
-nyra = ["templates/*"]
+nyra = ["templates/*", "resources/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests"]

@@ -50,8 +50,10 @@ def _row(row: Optional[dict]) -> Optional[dict]:
 
 def enqueue(
     conn: psycopg.Connection, *, org_id: uuid.UUID, brand_id: uuid.UUID, kind: str,
-    params: Optional[dict] = None, created_by: Optional[uuid.UUID] = None,
+    params: Optional[dict] = None, created_by: Optional[uuid.UUID] = None, behind_running: bool = False,
 ) -> dict:
+    """Queue a job. `behind_running`: only a job of the same kind still *waiting* is a conflict, so one can be queued behind
+    the one that runs: for a change the running job did not see, which the next one must pick up."""
     if kind not in KINDS:
         raise ValueError(f"unknown job kind {kind}")
     # Serialize enqueues per brand so two clicks can't both pass the check.
@@ -67,7 +69,7 @@ def enqueue(
             return _row(waiting)
     elif conn.execute(
         "SELECT 1 FROM jobs WHERE brand_id = %s AND kind = %s AND status = ANY(%s) LIMIT 1",
-        (brand_id, kind, list(ACTIVE)),
+        (brand_id, kind, ["queued"] if behind_running else list(ACTIVE)),
     ).fetchone():
         raise JobConflict(kind)
     row = conn.execute(

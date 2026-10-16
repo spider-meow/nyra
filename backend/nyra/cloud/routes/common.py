@@ -27,6 +27,7 @@ from .. import auth as cloud_auth
 from .. import db as cloud_db
 from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
+from .. import logos as cloud_logos
 from .. import storage as cloud_storage
 
 if TYPE_CHECKING:
@@ -233,7 +234,7 @@ def _group_unreferenced(conn, brand_id: uuid.UUID, config: Config, rows: list[di
     """`rows` (unmatched site images) without the ones set aside, one entry per photo: the same bytes under
     several URLs, and the crops and resizes of one photo (`variant_group`), count once.
     The lead of an entry is its largest image."""
-    excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
+    excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match) | cloud_logos.set_aside_ids(conn, brand_id)
     shown = [row for row in rows if row["id"] not in excluded]
     # A twin of a grouped file (same bytes, new address) joins the group before the worker has seen it.
     group_of = {row["content_hash"]: row["variant_group"] for row in shown if row["variant_group"] and row["content_hash"]}
@@ -263,7 +264,8 @@ UNREFERENCED_COUNTS_MAX = 512
 def unreferenced_count(conn, brand_id: uuid.UUID, config: Config) -> int:
     """How many entries `unreferenced_images` would list, without listing them."""
     key = (brand_id, config.match.phash_threshold, config.match.dhash_threshold)
-    signature = cloud_db.unreferenced_signature(conn, brand_id)  # before the rows: they can only be newer than it
+    # before the rows: they can only be newer than it
+    signature = cloud_db.unreferenced_signature(conn, brand_id) + cloud_logos.fingerprint(conn, brand_id)
     with _unreferenced_lock:
         cached = _unreferenced_counts.get(key)
     if cached and cached[0] == signature:
