@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import unquote, urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from nyra import fetch, netguard
@@ -17,22 +17,25 @@ from nyra.config import Config
 
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
+from .. import logos as cloud_logos
 from .. import storage as cloud_storage
 from .common import (
     BRAND,
     IMAGE_SUFFIXES,
     MAX_UPLOAD_BYTES,
+    VIEWS,
     BrandScope,
     Ctx,
     brand_admin_dep,
     brand_member_dep,
     get_ctx,
+    group_status,
     iso,
     log,
+    online_images,
     put_reference_files,
     rights_from_body,
     safe_filename,
-    unreferenced_images,
     upload_failure,
 )
 
@@ -153,18 +156,69 @@ def _site_image_item(group: dict, urls: dict[str, str]) -> dict:
         "first_seen": iso(min(row["first_seen"] for row in rows)),
         "thumb": urls.get(lead["thumb_path"] or "") or urls.get(lead["storage_path"] or "", ""),
         "image": urls.get(lead["storage_path"] or "", ""),
+        "status": group_status(rows),
+        "logo": _logo(rows),
     }
 
 
+def _logo(rows: list[dict]) -> Optional[dict]:
+    """What the logo detector says about an entry (None when none of its images looks like a logo): its best score, and
+    whether every address recognised as a logo was put back into the comparison."""
+    recognised = [row for row in rows if row["recognised"]]
+    if not recognised:
+        return None
+    return {"score": round(max(float(row["logo_score"]) for row in recognised), 3), "kept": all(row["logo_kept"] for row in recognised)}
+
+
+def _wanted(group: dict, site: Optional[uuid.UUID], needle: str) -> bool:
+    """Whether an entry is on the site version and holds the text (in a file name or a page) asked for."""
+    rows = group["rows"]
+    if site is not None and not any(row["site_id"] == site for row in rows):
+        return False
+    if not needle:
+        return True
+    name = filename_from_url(group["lead"]["url"], group["lead"]["storage_path"] or "").lower()
+    # Only the sample of pages each row carries (see `SITE_IMAGE_PAGE_SAMPLE`) is searched.
+    return needle in name or any(needle in page.lower() for row in rows for page in row["pages"])
+
+
+def _site_tabs(groups: list[dict]) -> list[dict]:
+    """The site versions (US, FR, INT...) the entries are on, with how many entries each has."""
+    sites: dict[Any, dict] = {}
+    for group in groups:
+        for site_id in {row["site_id"] for row in group["rows"]}:
+            label = next(_site_name(row) for row in group["rows"] if row["site_id"] == site_id)
+            sites.setdefault(site_id, {"id": str(site_id), "label": label, "count": 0})["count"] += 1
+    return list(sites.values())
+
+
 @router.get(f"{BRAND}/site-images")
-def site_images(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    """What was read on the brand's sites without any counterpart in its library: rights unknown."""
+def site_images(view: str = "qualify", offset: int = Query(0, ge=0), limit: int = Query(60, ge=1, le=200),
+                site: Optional[uuid.UUID] = None, q: str = Query("", max_length=200),
+                scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """One tab of "Images en ligne", `limit` entries from `offset`: `qualify` (read on the sites, nothing in the library
+    matches it: rights unknown), `found` (a visual of the library is in it), `logos`, `ignored`, or `all`. `site` and `q`
+    narrow the entries; `counts` are the totals of every tab and `sites` the site versions of this tab, whatever `site`
+    and `q`. Only the thumbnails of the entries returned are signed."""
+    if view not in VIEWS:
+        raise HTTPException(status_code=400, detail="Onglet inconnu.")
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)
-        groups = unreferenced_images(conn, scope.brand_id, config)
-    leads = [variant[0] for group in groups for variant in _variants(group["rows"])]
+        tabs = online_images(conn, scope.brand_id, config)
+        logos_set_aside = cloud_logos.is_enabled(conn, scope.brand_id)
+    needle = q.strip().lower()
+    wanted = [group for group in tabs[view] if _wanted(group, site, needle)]
+    page = wanted[offset : offset + limit]
+    leads = [variant[0] for group in page for variant in _variants(group["rows"])]
     urls = ctx.sign(cloud_storage.BUCKET_SITE_IMAGES, [row["thumb_path"] for row in leads] + [row["storage_path"] for row in leads])
-    return {"items": [_site_image_item(group, urls) for group in groups]}
+    return {
+        "view": view,
+        "items": [_site_image_item(group, urls) for group in page],
+        "total": len(wanted),
+        "counts": {name: len(groups) for name, groups in tabs.items()},
+        "sites": _site_tabs(tabs[view]),
+        "logos_set_aside": logos_set_aside,
+    }
 
 
 def _adopt_one(ctx: Ctx, scope: BrandScope, client, config: Config, body: AdoptBody, expiry: Optional[str],

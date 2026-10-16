@@ -106,7 +106,7 @@ def assignments(target: str = Query("site", pattern="^(site|reference)$"), scope
 @router.get(f"{BRAND}/labels/sample")
 def sample(count: int = Query(40, ge=1, le=SAMPLE_MAX), scope: BrandScope = Depends(brand_member_dep),
            ctx: Ctx = Depends(get_ctx)) -> dict:
-    """Images of "Droits non vérifiés" to type by hand: unlike each other and unlike the ones already typed,
+    """Images of the "À qualifier" tab of "Images en ligne" to type by hand: unlike each other and unlike the ones already typed,
     so a few dozen answers teach the most."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)

@@ -157,6 +157,8 @@ image in its cache and never holds an expired link. The same response carries th
 10,000 references in one response; beyond that, filter and paginate on the
 server.
 
+**One page for every image read ("Images en ligne").** Tabs: `qualify` (matches nothing in the library, not ignored, and not a logo when the brand sets them aside), `found` (a visual of the library is in it), `logos` (every recognised logo), `ignored` (exclusions) and `all`. `GET .../site-images?view=` returns one tab, `limit` entries from the start, narrowed by `site` and `q`, with the totals of every tab; only the thumbnails of the entries returned are signed. The entries are grouped one per photo (same bytes under several addresses, crops of one photo), in `routes/common.py` (`online_images`).
+
 **Bounded jobs.** The index job reads its candidates in chunks (keyset on `id`,
 so an image that can never be read cannot loop the job) and writes each batch
 in one transaction; the back office totals are SQL aggregates and its brand

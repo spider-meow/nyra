@@ -907,36 +907,45 @@ def occurrence_summary(conn: psycopg.Connection, brand_id: uuid.UUID, reference_
 SITE_IMAGE_PAGE_SAMPLE = 20
 
 
-def unmatched_site_images(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
-    """Images read on the brand's sites that match nothing in its library, with their pages.
+def site_images_with_pages(conn: psycopg.Connection, brand_id: uuid.UUID, *, matched: Optional[bool] = None) -> list[Row]:
+    """The images read on the brand's sites (the ones that were stored), with their pages, newest first: every one, or only
+    those where a visual of the library was found (`matched=True`) or was not (`False`).
 
     The same bytes found under several URLs come back once per URL; callers
     group them by `variant_group` (crops of one photo), else `content_hash`.
     Each row carries the first `SITE_IMAGE_PAGE_SAMPLE` pages (`pages`) and the exact number of pages
     (`page_count`): the database sends the sample, not the thousands of addresses behind a logo.
+    The `matched` key of a row says whether a visual of the library was found in it; `logo_score` / `logo_kept`: see `cloud/logos.py`.
     """
     rows = conn.execute(
         """
         SELECT si.id, si.url, si.content_hash, si.storage_path, si.thumb_path, si.width, si.height,
                si.phash, si.dhash, si.variant_group, si.compared_at IS NOT NULL AS compared, si.first_seen, si.last_seen,
+               si.logo_score, si.logo_kept, EXISTS (SELECT 1 FROM matches m WHERE m.site_image_id = si.id) AS matched,
                s.id AS site_id, s.url AS site_url, s.label AS site_label,
                COALESCE(pg.urls, ARRAY[]::text[]) AS pages, pg.n AS page_count
         FROM site_images si
         JOIN sites s ON s.id = si.site_id
         LEFT JOIN LATERAL (
-            SELECT (array_agg(p.url ORDER BY p.url))[1:%s] AS urls, count(*) AS n
+            SELECT (array_agg(p.url ORDER BY p.url))[1:%(sample)s] AS urls, count(*) AS n
             FROM image_pages ip JOIN pages p ON p.id = ip.page_id
             WHERE ip.image_id = si.id
         ) pg ON true
-        WHERE s.brand_id = %s AND si.phash IS NOT NULL AND si.storage_path IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM matches m WHERE m.site_image_id = si.id)
+        WHERE s.brand_id = %(brand)s AND si.phash IS NOT NULL AND si.storage_path IS NOT NULL
+          AND (%(matched)s::boolean IS NULL
+               OR EXISTS (SELECT 1 FROM matches m WHERE m.site_image_id = si.id) = %(matched)s::boolean)
         ORDER BY si.first_seen DESC, si.url
         """,
-        (SITE_IMAGE_PAGE_SAMPLE, brand_id),
+        {"sample": SITE_IMAGE_PAGE_SAMPLE, "brand": brand_id, "matched": matched},
     ).fetchall()
     for row in rows:
         row["pages"] = list(row["pages"])
     return rows
+
+
+def unmatched_site_images(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
+    """The images of the brand's sites that match nothing in its library, with their pages."""
+    return site_images_with_pages(conn, brand_id, matched=False)
 
 
 def unmatched_site_image_keys(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:

@@ -35,7 +35,7 @@ export function Hero(props: { overview: Overview }) {
         {dashboard.unreferenced_online ? (
           <p className="mt-5 max-w-xl border-t border-line pt-4 text-sm text-ink-soft">
             {hero ? "Par ailleurs, " : "Attention : "}
-            <Link className="font-medium text-ink underline underline-offset-2" to={link("site-images")}>
+            <Link className="font-medium text-ink underline underline-offset-2" to={link("online-images")}>
               {plural(dashboard.unreferenced_online, "image en ligne n'a", "images en ligne n'ont")} jamais eu ses droits vérifiés
             </Link>
             . Certaines sont peut-être expirées : elles ne sont pas comptées ici tant qu'elles ne sont pas dans la bibliothèque.

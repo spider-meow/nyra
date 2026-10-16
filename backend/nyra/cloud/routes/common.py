@@ -19,6 +19,7 @@ import psycopg
 from fastapi import Depends, HTTPException, Request
 
 from nyra import fetch
+from nyra import logos as detector
 from nyra import match as match_module
 from nyra.config import Config, with_overrides
 from nyra.refs import RefValidationError, parse_expiry, reference_features
@@ -230,12 +231,9 @@ def enqueue(ctx: Ctx, scope: BrandScope, kind: str, params: dict) -> dict:
         raise HTTPException(status_code=409, detail=f"{label} est déjà en cours ou en attente.") from exc
 
 
-def _group_unreferenced(conn, brand_id: uuid.UUID, config: Config, rows: list[dict]) -> list[dict]:
-    """`rows` (unmatched site images) without the ones set aside, one entry per photo: the same bytes under
-    several URLs, and the crops and resizes of one photo (`variant_group`), count once.
-    The lead of an entry is its largest image."""
-    excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match) | cloud_logos.set_aside_ids(conn, brand_id)
-    shown = [row for row in rows if row["id"] not in excluded]
+def group_rows(shown: list[dict]) -> list[dict]:
+    """One entry per photo: the same bytes under several URLs, and the crops and resizes of one photo (`variant_group`),
+    count once. The lead of an entry is its largest image."""
     # A twin of a grouped file (same bytes, new address) joins the group before the worker has seen it.
     group_of = {row["content_hash"]: row["variant_group"] for row in shown if row["variant_group"] and row["content_hash"]}
     groups: dict[Any, list[dict]] = {}
@@ -245,6 +243,52 @@ def _group_unreferenced(conn, brand_id: uuid.UUID, config: Config, rows: list[di
     for members in groups.values():
         members.sort(key=lambda row: -image_pixels(row))  # stable: the lead is the first row of the largest file
     return [{"lead": members[0], "rows": members} for members in groups.values()]
+
+
+def _qualify(rows: list[dict], left_out: set) -> list[dict]:
+    """The entries still to qualify among `rows`: no visual of the library found in them, and not among `left_out` (the images
+    ignored by hand and the logos set aside). The one rule behind the tab "À qualifier", its counter and the sample to type."""
+    return group_rows([row for row in rows if not row.get("matched") and row["id"] not in left_out])
+
+
+def _group_unreferenced(conn, brand_id: uuid.UUID, config: Config, rows: list[dict]) -> list[dict]:
+    """`rows` (unmatched site images) without the ones set aside, one entry per photo (see `_qualify`)."""
+    excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match) | cloud_logos.set_aside_ids(conn, brand_id)
+    return _qualify(rows, excluded)
+
+
+# The tabs of "Images en ligne", and what each lists. A row's `status` is the first that applies: found in the library
+# (`found`), set aside by hand (`ignored`), recognised as a logo (`logo`), else still to qualify (`qualify`).
+VIEWS = ("qualify", "found", "logos", "ignored", "all")
+STATUS_ORDER = ("found", "ignored", "logo", "qualify")
+
+
+def group_status(rows: list[dict]) -> str:
+    """The status of an entry: the first of STATUS_ORDER that one of its images has."""
+    return min((row["status"] for row in rows), key=STATUS_ORDER.index)
+
+
+def online_images(conn, brand_id: uuid.UUID, config: Config) -> dict[str, list[dict]]:
+    """Every image read on the brand's sites, one entry per photo, under each tab. `qualify` is `unreferenced_images`:
+    what matches nothing in the library, was not set aside and, when the brand asks for it, is not a logo. The logos tab
+    lists every recognised logo whether or not the brand sets them aside.
+
+    ponytail: reads and groups every image of the brand on each request (measured on a test database, without exclusions:
+    0.3 s for 10,000 images, 1 s for 30,000, growing in step with them). Past that, count the tabs in SQL and group only
+    the tab asked for, or cache by a fingerprint like `unreferenced_count` does."""
+    rows = cloud_db.site_images_with_pages(conn, brand_id)
+    excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
+    aside = cloud_logos.set_aside_ids(conn, brand_id)
+    for row in rows:
+        row["recognised"] = row["logo_score"] is not None and row["logo_score"] >= detector.THRESHOLD
+        row["status"] = "found" if row["matched"] else "ignored" if row["id"] in excluded else "logo" if row["recognised"] else "qualify"
+    return {
+        "qualify": _qualify(rows, excluded | aside),
+        "found": group_rows([row for row in rows if row["matched"]]),
+        "logos": group_rows([row for row in rows if row["recognised"]]),
+        "ignored": group_rows([row for row in rows if row["id"] in excluded]),
+        "all": group_rows(rows),
+    }
 
 
 def unreferenced_images(conn, brand_id: uuid.UUID, config: Config) -> list[dict]:

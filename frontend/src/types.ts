@@ -243,6 +243,24 @@ export type SiteImage = {
   first_seen: string;
   thumb: string;
   image: string;
+  /** Why the image is where it is: found in the library, set aside by hand, recognised as a logo, or still to qualify. */
+  status: SiteImageStatus;
+  /** What the logo detector says (null when no image of the entry looks like a logo); `kept`: put back into the comparison. */
+  logo: { score: number; kept: boolean } | null;
+};
+
+export type SiteImageStatus = "qualify" | "found" | "logo" | "ignored";
+/** The tabs of "Images en ligne". */
+export type SiteImageView = "qualify" | "found" | "logos" | "ignored" | "all";
+/** One page of one tab, with the total of every tab and the site versions (US, FR...) of this one. */
+export type SiteImagesPage = {
+  view: SiteImageView;
+  items: SiteImage[];
+  total: number;
+  counts: Record<SiteImageView, number>;
+  sites: { id: string; label: string; count: number }[];
+  /** Whether the brand leaves the logos out of the comparison (Réglages > Logos). */
+  logos_set_aside: boolean;
 };
 
 // --- labels (types of site image, contents) ---
