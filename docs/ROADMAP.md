@@ -286,7 +286,8 @@ Entre le 16 et le 17 octobre 2026 (détails dans les documents indiqués) :
 
 Ouvert au 17 octobre 2026 :
 
-- **PR #7** (« Images en ligne », avec le correctif des scores de logos) : à relire et fusionner. La migration
+- **PR #8** (calcul des scores de logos à l'ouverture de « Images en ligne », sans quoi l'onglet Logos reste à 0 ; plus cette
+  documentation) : à relire et fusionner. La PR #7 (« Images en ligne ») est déjà fusionnée. La migration
   `20261017000024_set_aside_logos.sql` doit être appliquée **avant** de démarrer le nouveau code, partout (elle l'est sur la
   base de développement).
 - **Logos** : le seuil de 0,95 est mesuré sur **une seule marque** (Louis XIII : 10 fichiers, 18 adresses, tous de vrais logos) : à vérifier
