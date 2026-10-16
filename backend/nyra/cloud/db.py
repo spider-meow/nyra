@@ -545,6 +545,24 @@ def collection_depth(conn: psycopg.Connection, collection_id: uuid.UUID) -> int:
            SELECT max(depth) AS depth FROM up""", (collection_id,)).fetchone()["depth"]
 
 
+def lock_collections(conn: psycopg.Connection, brand_id: uuid.UUID) -> None:
+    """Until the end of the transaction, one change at a time to a brand's collections: two moves checked side by side could otherwise close a loop or pass three levels."""
+    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"collections:{brand_id}",))
+
+
+def collection_subtree(conn: psycopg.Connection, collection_id: uuid.UUID) -> dict[uuid.UUID, int]:
+    """The collection and everything below it, each with its level below the collection (the collection itself is 1)."""
+    rows = conn.execute(
+        """WITH RECURSIVE down AS (SELECT id, 1 AS depth FROM collections WHERE id = %s
+               UNION ALL SELECT c.id, down.depth + 1 FROM collections c JOIN down ON c.parent_id = down.id)
+           SELECT id, depth FROM down""", (collection_id,)).fetchall()
+    return {row["id"]: row["depth"] for row in rows}
+
+
+def move_collection(conn: psycopg.Connection, brand_id: uuid.UUID, collection_id: uuid.UUID, parent_id: Optional[uuid.UUID]) -> bool:
+    return conn.execute("UPDATE collections SET parent_id = %s WHERE brand_id = %s AND id = %s", (parent_id, brand_id, collection_id)).rowcount > 0
+
+
 def add_collection(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, parent_id: Optional[uuid.UUID], name: str) -> Row:
     """Raises psycopg.errors.UniqueViolation when a sibling already has this name."""
     return conn.execute(

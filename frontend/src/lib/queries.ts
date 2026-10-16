@@ -487,6 +487,10 @@ export function useLibraryMutations() {
       mutationFn: (input: { id: string; name: string }) => api.put(apiPath(`/collections/${input.id}`), { name: input.name }),
       onSuccess: () => invalidate("library"),
     }),
+    moveCollection: useMutation({
+      mutationFn: (input: { id: string; parent_id: string | null }) => api.post(apiPath(`/collections/${input.id}/move`), { parent_id: input.parent_id }),
+      onSuccess: () => invalidate("library"),
+    }),
     removeCollection: useMutation({
       mutationFn: (id: string) => api.del(apiPath(`/collections/${id}`)),
       onSuccess: () => invalidate("library"),

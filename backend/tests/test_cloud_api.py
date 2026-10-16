@@ -1172,6 +1172,30 @@ def test_collections_file_visuals_and_follow_the_rules(client, org_with_users, f
     assert client.delete(f"{base}/collections/{season['id']}", headers=admin).status_code == 404
 
 
+def test_collections_move_under_another_within_three_levels(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    admin = _headers(admin_id)
+
+    def add(name, parent=None):
+        return client.post(f"{base}/collections", headers=admin, json={"name": name, "parent_id": parent}).json()["collection"]["id"]
+
+    def move(collection, parent):
+        return client.post(f"{base}/collections/{collection}/move", headers=admin, json={"parent_id": parent})
+
+    hub, other, season = add("Lifestyle"), add("Products"), add("Winter 25-26")
+    inner = add("Packshots", season)  # season + inner = a subtree two levels high
+    assert move(season, hub).status_code == 200  # a top-level collection goes under a hub, its sub-collection follows
+    parents = {c["id"]: c["parent_id"] for c in client.get(f"{base}/library", headers=admin).json()["collections"]}
+    assert parents[season] == hub and parents[inner] == season
+    assert client.post(f"{base}/collections/{season}/move", headers=_headers(client_id), json={"parent_id": other}).status_code == 403
+    assert move(season, season).status_code == 400 and move(hub, inner).status_code == 400  # never into itself or below
+    assert move(hub, other).status_code == 400  # hub, season and inner would be on four levels
+    assert move(season, str(uuid.uuid4())).status_code == 404 and move(str(uuid.uuid4()), other).status_code == 404
+    assert move(season, None).status_code == 200  # back to the top
+    add("Winter 25-26", hub)
+    assert move(season, hub).status_code == 409  # a sibling already has that name
+
+
 def test_back_office_lists_are_for_platform_admins_who_also_look_after_any_organizations_people(
         client, org_with_users, cloud_database_url, monkeypatch):
     org_id, _, admin_id, client_id, outsider_id = org_with_users  # admin_id is a platform admin

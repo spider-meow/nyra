@@ -22,6 +22,10 @@ class CollectionBody(BaseModel):
     parent_id: Optional[uuid.UUID] = None  # ignored when renaming
 
 
+class MoveBody(BaseModel):
+    parent_id: Optional[uuid.UUID] = None  # None = the top level
+
+
 class FileBody(BaseModel):
     filenames: list[str] = Field(default_factory=list, max_length=5000)
     collection_id: Optional[uuid.UUID] = None  # None un-files
@@ -51,6 +55,7 @@ def require_collection(conn, brand_id: uuid.UUID, collection_id: uuid.UUID) -> N
 def add_collection(body: CollectionBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     name = _name(body.name)
     with cloud_db.connect(ctx.settings.database_url) as conn:
+        cloud_db.lock_collections(conn, scope.brand_id)
         if body.parent_id:
             require_collection(conn, scope.brand_id, body.parent_id)
             if cloud_db.collection_depth(conn, body.parent_id) >= MAX_DEPTH:
@@ -72,6 +77,29 @@ def rename_collection(collection_id: uuid.UUID, body: CollectionBody, scope: Bra
         except psycopg.errors.UniqueViolation as exc:
             raise _taken() from exc
     if not found:
+        raise HTTPException(status_code=404, detail="Collection introuvable.")
+    return {"ok": True}
+
+
+@router.post(f"{BRAND}/collections/{{collection_id}}/move")
+def move_collection(collection_id: uuid.UUID, body: MoveBody, scope: BrandScope = Depends(brand_admin_dep),
+                    ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Moves the collection, with everything in it, under another one (or to the top with no `parent_id`)."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        cloud_db.lock_collections(conn, scope.brand_id)
+        require_collection(conn, scope.brand_id, collection_id)
+        if body.parent_id:
+            require_collection(conn, scope.brand_id, body.parent_id)
+            below = cloud_db.collection_subtree(conn, collection_id)
+            if body.parent_id in below:
+                raise HTTPException(status_code=400, detail="Une collection ne peut pas aller dans elle-même ni dans l'une de ses sous-collections.")
+            if cloud_db.collection_depth(conn, body.parent_id) + max(below.values()) > MAX_DEPTH:
+                raise HTTPException(status_code=400, detail=f"Les collections vont sur {MAX_DEPTH} niveaux au plus.")
+        try:
+            moved = cloud_db.move_collection(conn, scope.brand_id, collection_id, body.parent_id)
+        except psycopg.errors.UniqueViolation as exc:
+            raise _taken() from exc
+    if not moved:
         raise HTTPException(status_code=404, detail="Collection introuvable.")
     return {"ok": True}
 

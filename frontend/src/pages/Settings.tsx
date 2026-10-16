@@ -7,6 +7,7 @@ import { useOrg } from "../lib/org";
 import { useSettings } from "../lib/queries";
 import type { Settings as SettingsData } from "../types";
 import { Account } from "./settings/Account";
+import { Collections } from "./settings/Collections";
 import { DangerZone } from "./settings/DangerZone";
 import { Detection } from "./settings/Detection";
 import { Exclusions } from "./settings/Exclusions";
@@ -33,6 +34,7 @@ const SECTIONS: Section[] = [
       </>
     ),
   },
+  { id: "collections", label: "Collections", icon: "library", group: "marque", adminOnly: true, render: () => <Collections /> },
   { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Team /> },
   { id: "detection", label: "Détection", icon: "scan", group: "organisation", adminOnly: true, render: (data) => <Detection data={data} /> },
   { id: "reading", label: "Lecture des sites", icon: "eye", group: "organisation", adminOnly: true, render: (data) => <Reading data={data} /> },

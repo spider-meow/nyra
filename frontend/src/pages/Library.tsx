@@ -7,7 +7,7 @@ import { useLibrary, useLibraryThumbs } from "../lib/queries";
 import type { LibraryItem } from "../types";
 import { EditReference } from "./library/EditReference";
 import { ImportCsv } from "./library/ImportCsv";
-import { CollectionTree } from "./library/CollectionTree";
+import { CollectionTree, FolderBar } from "./library/CollectionTree";
 import { LibraryGrid } from "./library/Grid";
 import { SelectionBar, useBulkEdit, useRemoveReferences } from "./library/Selection";
 import { LibraryToolbar } from "./library/Toolbar";
@@ -59,13 +59,14 @@ export function Library() {
       ) : !items.length ? (
         <EmptyState
           title="Aucun visuel pour l'instant"
-          body={admin ? "Glissez vos images ici, ou utilisez « Ajouter des visuels ». Vous renseignerez ensuite leur date d'expiration, une par une ou par import CSV." : "Un administrateur doit d'abord déposer les visuels à surveiller."}
+          body={admin ? "Glissez vos images ici, ou utilisez « Ajouter des visuels ». Vous renseignerez ensuite leur date d'expiration, une par une." : "Un administrateur doit d'abord déposer les visuels à surveiller."}
           action={admin ? <Button variant="primary" loading={up.uploader.uploading} onClick={up.pick}>Ajouter des visuels</Button> : undefined}
         />
       ) : (
-        <div className="lg:grid lg:grid-cols-[14rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+        <div className="lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8">
           <CollectionTree view={view} />
           <div className="min-w-0">
+          <FolderBar view={view} />
           <LibraryToolbar view={view} onTab={changeTab} />
           {admin && selected.size ? <SelectionBar selected={selected} referenceIds={items.filter((item) => selected.has(item.filename)).map((item) => item.id)} labels={labels} folders={view.folders} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
           {thumbs.failed ? <p role="status" className="mb-3 text-[13px] text-muted">Vignettes indisponibles pour le moment.</p> : null}
