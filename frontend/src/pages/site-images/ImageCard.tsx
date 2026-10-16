@@ -1,9 +1,17 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { LabelChips } from "../../components/Labels";
 import { Button, Card, cx } from "../../components/ui";
 import { Modal } from "../../components/feedback";
 import { formatDate, pathOf, plural } from "../../lib/format";
-import type { ImageLabel, SiteImage, SiteImageVariant } from "../../types";
+import type { ImageLabel, SiteImage, SiteImageStatus, SiteImageVariant } from "../../types";
+
+/** Why an image is listed: its status, in words. */
+const PILLS: Record<SiteImageStatus, { label: string; tone: string }> = {
+  qualify: { label: "Droits non vérifiés", tone: "bg-urgent-soft text-urgent" },
+  found: { label: "Dans la bibliothèque", tone: "bg-ok-soft text-ok" },
+  logo: { label: "Logo", tone: "bg-unknown-soft text-unknown" },
+  ignored: { label: "Ignorée", tone: "bg-unknown-soft text-unknown" },
+};
 
 export function ImageCard(props: {
   item: SiteImage;
@@ -13,6 +21,8 @@ export function ImageCard(props: {
   onOpen: () => void;
   onAdd?: () => void;
   onIgnore?: () => void;
+  /** Actions of the tab the card is shown in, in place of "Ajouter" and "Ignorer". */
+  footer?: ReactNode;
 }) {
   const { item } = props;
   return (
@@ -42,7 +52,7 @@ export function ImageCard(props: {
         ) : null}
       </div>
       <div className="flex flex-1 flex-col gap-1 p-3">
-        <span className="w-fit rounded-full bg-urgent-soft px-2 py-0.5 text-[11px] font-medium text-urgent">Droits non vérifiés</span>
+        <StatusPill item={item} />
         <p className="truncate text-sm font-medium" title={item.filename}>{item.filename}</p>
         <LabelChips labels={props.labels} />
         <p className="text-xs text-muted">
@@ -54,14 +64,26 @@ export function ImageCard(props: {
             {pathOf(item.pages[0])}
           </a>
         ) : null}
-        {props.onAdd ? (
-          <div className="mt-auto flex items-center gap-3 pt-1.5 text-[13px]">
-            <button type="button" className="font-medium text-ink underline-offset-2 hover:underline" onClick={props.onAdd}>+ Ajouter</button>
-            <button type="button" className="text-muted underline-offset-2 hover:text-ink hover:underline" onClick={props.onIgnore}>Ignorer</button>
-          </div>
-        ) : null}
+        {props.footer ?? (props.onAdd ? <AddOrIgnore onAdd={props.onAdd} onIgnore={props.onIgnore} /> : null)}
       </div>
     </Card>
+  );
+}
+
+function StatusPill({ item }: { item: SiteImage }) {
+  return (
+    <span className={cx("w-fit rounded-full px-2 py-0.5 text-[11px] font-medium", PILLS[item.status].tone)}>
+      {item.status === "logo" && item.logo?.kept ? "Logo remis dans la comparaison" : PILLS[item.status].label}
+    </span>
+  );
+}
+
+function AddOrIgnore(props: { onAdd: () => void; onIgnore?: () => void }) {
+  return (
+    <div className="mt-auto flex items-center gap-3 pt-1.5 text-[13px]">
+      <button type="button" className="font-medium text-ink underline-offset-2 hover:underline" onClick={props.onAdd}>+ Ajouter</button>
+      <button type="button" className="text-muted underline-offset-2 hover:text-ink hover:underline" onClick={props.onIgnore}>Ignorer</button>
+    </div>
   );
 }
 

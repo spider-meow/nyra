@@ -6,6 +6,9 @@ Une idée terminée est cochée avec la date et le commit ; on ne la supprime pa
 
 Légende : `[ ]` à faire · `[~]` en cours · `[x]` fait.
 
+La page « Droits non vérifiés » s'appelle désormais **« Images en ligne »** : une page par marque avec des onglets (À qualifier,
+Retrouvées, Logos, Ignorées, Toutes). Les idées ci-dessous gardent l'ancien nom ; « Droits non vérifiés » y désigne l'onglet « À qualifier ».
+
 ## Cap : un service qu'on peut présenter
 
 Ce qui manque pour présenter Nyra comme un service n'est pas la détection

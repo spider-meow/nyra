@@ -1,7 +1,7 @@
 """The database side of setting logos aside: score the site images, say which ones are set aside, put one back.
 
 A brand that turns `set_aside_logos` on keeps the images `nyra.logos` recognises as logos out of the comparison and out of
-"Droits non vérifiés". Off by default; nothing here changes what is shown or compared until it is on.
+the "À qualifier" tab of "Images en ligne". Off by default; nothing here changes what is shown or compared until it is on.
 """
 
 from __future__ import annotations
@@ -88,14 +88,16 @@ def list_recognised(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     return sorted(rows, key=lambda row: -row["logo_score"])[:LIST_LIMIT]
 
 
-def keep(conn: psycopg.Connection, brand_id: uuid.UUID, site_image_id: uuid.UUID, kept: bool) -> Optional[int]:
-    """Put an image (and every address serving the same bytes) back into the comparison, or set it aside again.
-    The number of rows changed; None when the image is not one of this brand's."""
-    image = conn.execute(
-        "SELECT si.content_hash FROM site_images si JOIN sites s ON s.id = si.site_id WHERE si.id = %s AND s.brand_id = %s",
-        (site_image_id, brand_id),
-    ).fetchone()
-    if image is None:
+def keep(conn: psycopg.Connection, brand_id: uuid.UUID, site_image_ids: list[uuid.UUID], kept: bool) -> Optional[int]:
+    """Put images back into the comparison, or set them aside again: each file named and every address of the brand serving
+    the same bytes (one photo can be several files: crops, resizes). The number of rows changed; None when none of the
+    images is one of this brand's."""
+    rows = conn.execute(
+        """SELECT si.id, si.content_hash FROM site_images si JOIN sites s ON s.id = si.site_id
+           WHERE s.brand_id = %s AND si.id = ANY(%s)""",
+        (brand_id, site_image_ids),
+    ).fetchall()
+    if not rows:
         return None
-    ids = cloud_db.same_image_ids(conn, brand_id, image["content_hash"], site_image_id)
-    return conn.execute("UPDATE site_images SET logo_kept = %s WHERE id = ANY(%s)", (kept, ids)).rowcount
+    ids = {uuid_ for row in rows for uuid_ in cloud_db.same_image_ids(conn, brand_id, row["content_hash"], row["id"])}
+    return conn.execute("UPDATE site_images SET logo_kept = %s WHERE id = ANY(%s)", (kept, list(ids))).rowcount

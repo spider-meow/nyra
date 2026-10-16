@@ -9,7 +9,7 @@ import ts from "typescript";
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(read("../src/lib/paths.ts"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
 const paths = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
-const { legacyTarget, legacySearch, currentPage, LEGACY_PAGES, LEGACY_BACK_OFFICE } = paths;
+const { legacyTarget, legacySearch, currentPage, LEGACY_PAGES, LEGACY_BACK_OFFICE, RENAMED_PAGES } = paths;
 
 // --- sign-in pages: the fragment (the key of an e-mailed link) survives ---------------------------------------
 assert.equal(legacyTarget("/connexion"), "/login");
@@ -34,6 +34,12 @@ assert.equal(legacyTarget("/o/remy-martin/m/louis-xiii/"), "/o/remy-martin/b/lou
 assert.equal(legacyTarget("/o/remy-martin/m"), "/o/remy-martin");
 assert.equal(legacyTarget("/o/m/m/b/reglages"), "/o/m/b/b/settings"); // an organization or a brand named like a path word
 assert.equal(legacyTarget("/o/remy-martin/m/louis-xiii/page-inconnue"), "/o/remy-martin/b/louis-xiii/page-inconnue"); // its own "page not found" then
+
+// --- a page renamed after the move to English keeps its address as a redirect, query and fragment kept -------------------
+assert.equal(legacyTarget("/o/remy-martin/b/louis-xiii/site-images"), "/o/remy-martin/b/louis-xiii/online-images");
+assert.equal(legacyTarget("/o/remy-martin/b/louis-xiii/site-images", "?view=logos", "#x"), "/o/remy-martin/b/louis-xiii/online-images?view=logos#x");
+assert.equal(legacyTarget("/o/remy-martin/m/louis-xiii/images-du-site"), "/o/remy-martin/b/louis-xiii/online-images");
+assert.equal(legacyTarget("/o/remy-martin/b/louis-xiii/online-images"), null);
 
 // --- query: names renamed, values and order kept, repeated parameters kept ------------------------------------
 assert.equal(
@@ -61,11 +67,11 @@ assert.equal(currentPage("constructor"), "constructor"); // not taken for a key 
 
 // --- the router knows every new page, and keeps the old ones only as redirects ---------------------------------
 const main = read("../src/main.tsx");
-for (const page of [...Object.values(LEGACY_PAGES), ...Object.values(LEGACY_BACK_OFFICE), "platform-admins"]) {
+for (const page of [...Object.values(LEGACY_PAGES), ...Object.values(RENAMED_PAGES), ...Object.values(LEGACY_BACK_OFFICE), "platform-admins"]) {
   assert.ok(main.includes(`path: "${page}"`), `the router has no page "${page}"`);
 }
 for (const path of ["/login", "/set-password", "/back-office", "b/:brand"]) assert.ok(main.includes(`path: "${path}"`), `the router has no "${path}"`);
-for (const old of ["/connexion", "/mot-de-passe", "/interne/*", "/o/:slug/m/*"]) {
+for (const old of ["/connexion", "/mot-de-passe", "/interne/*", "/o/:slug/m/*", ...Object.keys(RENAMED_PAGES)]) {
   assert.ok(main.includes(`path: "${old}", lazy: legacy }`), `"${old}" must redirect`);
 }
 

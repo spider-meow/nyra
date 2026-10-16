@@ -733,9 +733,9 @@ def test_logos_are_set_aside_only_when_the_brand_asks_and_can_be_put_back(
     assert store.set_aside_ids() == {ids["logo"], ids["twin"]}
 
     # Put back by a person: both addresses return; set aside again: both go.
-    keep = {"site_image_id": str(state["items"][0]["id"]), "kept": True}
+    keep = {"site_image_ids": [str(state["items"][0]["id"])], "kept": True}
     assert client.post(f"{base}/logos/keep", headers=_headers(client_id), json=keep).status_code == 403
-    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={**keep, "site_image_id": str(uuid.uuid4())}).status_code == 404
+    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={**keep, "site_image_ids": [str(uuid.uuid4())]}).status_code == 404
     assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json=keep).status_code == 200
     assert len(listed()) == 2 and unreferenced() == 2 and store.set_aside_ids() == set()
     assert client.get(f"{base}/logos", headers=_headers(admin_id)).json()["items"][0]["kept"] is True
@@ -789,13 +789,101 @@ def test_a_file_read_again_under_a_new_address_is_not_shown_as_put_back(
 
         first = read("https://t.test/logo.png")
     listed = lambda: client.get(f"{base}/logos", headers=_headers(admin_id)).json()["items"]  # noqa: E731
-    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={"site_image_id": str(first), "kept": True}).status_code == 200
+    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={"site_image_ids": [str(first)], "kept": True}).status_code == 200
     assert [item["kept"] for item in listed()] == [True]
     with cloud_db.connect(cloud_database_url) as conn:
         read("https://t.test/logo-new-address.png")  # the same bytes, read after the person put the logo back
     assert [item["kept"] for item in listed()] == [False]  # the new address is set aside: the file is not shown as put back
-    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={"site_image_id": str(first), "kept": True}).status_code == 200
+    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={"site_image_ids": [str(first)], "kept": True}).status_code == 200
     assert [item["kept"] for item in listed()] == [True]  # putting it back again covers every address
+
+
+def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
+    client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client
+):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    data = _upload_bytes().getvalue()
+    ids = {}
+    with cloud_db.connect(cloud_database_url) as conn:
+        fr, uk = _site(conn, org_id, cloud_brand, "https://t.test/fr/"), _site(conn, org_id, cloud_brand, "https://t.test/uk/")
+        # Far apart in the hashes, so that ignoring one never swallows another.
+        for name, site, url, phash in (
+            ("plain", fr, "https://t.test/media/plain.jpg", "0000000000000000"),
+            ("found", fr, "https://t.test/media/found.jpg", "ffffffffffffffff"),
+            ("logo", fr, "https://t.test/media/logo.png", "f0f0f0f0f0f0f0f0"),
+            ("ignored", uk, "https://t.test/media/ignored.jpg", "0f0f0f0f0f0f0f0f"),
+        ):
+            fake_storage_client.store[("site-images", f"{org_id}/{name}.jpg")] = data
+            ids[name] = conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, url, f"{org_id}/{name}.jpg", f"{org_id}/thumbs/{name}.jpg", name, phash, phash),
+            ).fetchone()["id"]
+        ref = cloud_db.upsert_reference_image(conn, org_id=org_id, brand_id=cloud_brand, filename="r.jpg", storage_path=f"{org_id}/r.jpg",
+                                              expiry_date=None, credit=None, notes=None)
+        cloud_db.write_matches(conn, org_id, [(ref, ids["found"], "phash", 1.0, "haut")])
+        conn.execute("UPDATE site_images SET logo_score = 0.99 WHERE id = %s", (ids["logo"],))
+    assert client.post(f"{base}/exclusions", headers=_headers(admin_id), json={"site_image_id": str(ids["ignored"])}).status_code == 200
+
+    def tab(view, **query):
+        params = "&".join(f"{key}={value}" for key, value in {"view": view, **query}.items())
+        return client.get(f"{base}/site-images?{params}", headers=_headers(client_id)).json()
+
+    def listed(view, **query):
+        return {item["id"] for item in tab(view, **query)["items"]}
+
+    # Every tab with its total; the logo is still to qualify while the brand does not set logos aside.
+    counts = tab("qualify")["counts"]
+    assert counts == {"qualify": 2, "found": 1, "logos": 1, "ignored": 1, "all": 4}
+    assert listed("qualify") == {str(ids["plain"]), str(ids["logo"])}
+    assert listed("found") == {str(ids["found"])} and listed("logos") == {str(ids["logo"])} and listed("ignored") == {str(ids["ignored"])}
+    assert len(listed("all")) == 4
+    assert client.get(f"{base}/site-images?view=bogus", headers=_headers(client_id)).status_code == 400
+
+    # Each entry says why it is where it is; a logo carries the detector's answer.
+    statuses = {item["id"]: item["status"] for item in tab("all")["items"]}
+    assert statuses == {str(ids["plain"]): "qualify", str(ids["found"]): "found", str(ids["logo"]): "logo", str(ids["ignored"]): "ignored"}
+    logo = tab("logos")["items"][0]
+    assert logo["logo"] == {"score": 0.99, "kept": False} and next(i for i in tab("qualify")["items"] if i["id"] == str(ids["plain"]))["logo"] is None
+
+    # Pages, the text search and the site version narrow the entries; the totals of the tabs do not move.
+    first, second = tab("all", limit=3), tab("all", limit=3, offset=3)
+    assert first["total"] == 4 and len(first["items"]) == 3 and len(second["items"]) == 1
+    assert {i["id"] for i in first["items"]} | {i["id"] for i in second["items"]} == set(statuses)
+    assert listed("all", q="PLAIN") == {str(ids["plain"])} and tab("all", q="PLAIN")["counts"]["all"] == 4
+    assert listed("all", site=str(uk)) == {str(ids["ignored"])}
+    assert sorted((entry["label"], entry["count"]) for entry in tab("all")["sites"]) == [("t.test", 1), ("t.test", 3)]
+
+    # Setting the logos aside takes them out of the tab to qualify, not out of the logos tab.
+    assert client.put(f"{base}/logos/setting", headers=_headers(admin_id), json={"enabled": True}).status_code == 200
+    assert tab("qualify")["counts"]["qualify"] == 1 and listed("qualify") == {str(ids["plain"])} and listed("logos") == {str(ids["logo"])}
+
+
+def test_putting_a_logo_back_covers_every_file_of_the_photo(
+    client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client
+):
+    org_id, base, admin_id, _, _ = org_with_users
+    group = uuid.uuid4()
+    ids = []
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand, "https://t.test/fr/")
+        for name, side in (("big", 800), ("small", 200)):  # two files of one photo: a crop is another file
+            fake_storage_client.store[("site-images", f"{org_id}/{name}.jpg")] = _upload_bytes().getvalue()
+            ids.append(str(conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash,
+                                            width, height, variant_group, logo_score)
+                   VALUES (%s, %s, %s, %s, %s, %s, '0f0f0f0f0f0f0f0f', '0f0f0f0f0f0f0f0f', %s, %s, %s, 0.99) RETURNING id""",
+                (org_id, site, f"https://t.test/{name}.png", f"{org_id}/{name}.jpg", f"{org_id}/thumbs/{name}.jpg", name, side, side, group),
+            ).fetchone()["id"]))
+    logo = lambda: client.get(f"{base}/site-images?view=logos", headers=_headers(admin_id)).json()["items"][0]  # noqa: E731
+    item = logo()
+    assert len(item["variants"]) == 2 and item["logo"]["kept"] is False
+    keep = client.post(f"{base}/logos/keep", headers=_headers(admin_id),
+                       json={"site_image_ids": [variant["id"] for variant in item["variants"]], "kept": True})
+    assert keep.status_code == 200
+    assert logo()["logo"]["kept"] is True  # both files went back: the entry is shown as put back
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert [row["logo_kept"] for row in conn.execute("SELECT logo_kept FROM site_images WHERE id = ANY(%s)", (ids,)).fetchall()] == [True, True]
 
 
 def test_each_brand_has_its_own_queue(client, org_with_users, cloud_brand, cloud_database_url):

@@ -71,7 +71,7 @@ cocktails, cellars and vineyards, checked by eye.
 ## Grouping the crops of a site photo
 
 The same two steps also run between site images (`nyra/variants.py`,
-`cloud/variants.py`), after each comparison, so "Droits non vérifiés" shows
+`cloud/variants.py`), after each comparison, so the "À qualifier" tab of "Images en ligne" shows
 a photo once however many crops or sizes the sites serve. For each image not
 yet checked (`variants_checked_at` NULL): its 5 closest images by CLIP
 (cosine ≥ `clip_similarity_floor`) are the candidates, the keypoint check
@@ -126,7 +126,7 @@ prompt instead of examples) are not done.
 
 Is a whole site image a logo, so that it can be set aside instead of compared? Without any per-brand setup. Wired in
 behind a per-brand setting, **off by default** (Réglages > Logos, administrators): when on, the images above the threshold
-are left out of the comparison, of "Droits non vérifiés" and of the search for a reference's copies, and the match
+are left out of the comparison, of the "À qualifier" tab of "Images en ligne" and of the search for a reference's copies, and the match
 signature changes (a full pass follows). They are listed in the settings, where one can be put back (`logo_kept`, for
 every address serving the same bytes; an address of the same file read later is still set aside, and the list then shows the
 file as not put back). Scores are filled in on demand: when the setting is turned on, at each comparison while it is on, and

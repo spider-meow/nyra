@@ -11,12 +11,15 @@ export const LEGACY_PAGES: Record<string, string> = {
   "tableau-de-bord": "dashboard",
   "a-traiter": "review",
   bibliotheque: "library",
-  "images-du-site": "site-images",
+  "images-du-site": "online-images",
   lectures: "scans",
   rapports: "reports",
   statistiques: "statistics",
   reglages: "settings",
 };
+
+/** Pages of a brand renamed since the addresses are English: old segment -> new one (`/o/<org>/b/<brand>/site-images`). */
+export const RENAMED_PAGES: Record<string, string> = { "site-images": "online-images" };
 
 /** Pages of the back office (`/interne/…`, now `/back-office/…`). */
 export const LEGACY_BACK_OFFICE: Record<string, string> = { organisations: "organizations", facturation: "billing", comptes: "accounts" };
@@ -51,6 +54,7 @@ function legacySegments(segments: string[]): string[] | null {
   if (head === "interne") return ["back-office", ...rest.map((segment, index) => (index === 0 ? renamed(LEGACY_BACK_OFFICE, segment) : segment))];
   if (head !== "o" || !rest.length) return null;
   const [org, kind, brand, page, ...tail] = rest;
+  if (kind === "b" && brand && page !== undefined && Object.hasOwn(RENAMED_PAGES, page)) return ["o", org, "b", brand, RENAMED_PAGES[page], ...tail];
   if (kind === "m") return brand ? ["o", org, "b", brand, ...(page ? [currentPage(page), ...tail] : [])] : ["o", org];
   // From before brands: /o/<org>/bibliotheque (the organization's first brand takes it from there).
   if (kind !== undefined && Object.hasOwn(LEGACY_PAGES, kind)) return ["o", org, LEGACY_PAGES[kind], ...rest.slice(2)];

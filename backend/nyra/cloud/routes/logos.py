@@ -6,7 +6,7 @@ import uuid
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from nyra import logos as detector
 
@@ -24,7 +24,7 @@ class SettingBody(BaseModel):
 
 
 class KeepBody(BaseModel):
-    site_image_id: uuid.UUID
+    site_image_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)  # the files of one photo
     kept: bool
 
 
@@ -82,9 +82,9 @@ def set_setting(body: SettingBody, scope: BrandScope = Depends(brand_admin_dep),
 
 @router.post(f"{BRAND}/logos/keep")
 def keep_logo(body: KeepBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    """Put an image recognised as a logo back into the comparison (`kept`), or set it aside again."""
+    """Put the images of a logo (every file of the photo) back into the comparison (`kept`), or set them aside again."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        if cloud_logos.keep(conn, scope.brand_id, body.site_image_id, body.kept) is None:
+        if cloud_logos.keep(conn, scope.brand_id, body.site_image_ids, body.kept) is None:
             raise HTTPException(status_code=404, detail="Image introuvable.")
         if not body.kept:
             _drop_matches(conn, scope.org_id, cloud_logos.set_aside_ids(conn, scope.brand_id))

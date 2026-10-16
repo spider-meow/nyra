@@ -21,7 +21,6 @@ import type {
   Scan,
   Settings,
   Site,
-  SiteImage,
   Status,
 } from "../types";
 import { api, errorMessage } from "./api";
@@ -254,18 +253,6 @@ export function useInsights() {
 export function useSettings() {
   const { orgApiPath, brand } = useOrg();
   return useQuery({ queryKey: ["settings", brand.id], queryFn: () => api.get<Settings>(orgApiPath("/settings")) });
-}
-
-export function useSiteImages() {
-  const { apiPath, brand } = useOrg();
-  return useQuery({
-    queryKey: ["site-images", brand.id],
-    queryFn: () => api.get<{ items: SiteImage[] }>(apiPath("/site-images")),
-    // Signed image URLs last an hour; refresh well before that.
-    staleTime: 5 * 60_000,
-    refetchOnWindowFocus: false,
-    refetchInterval: 30 * 60_000,
-  });
 }
 
 export function useSiteImageMutations() {
@@ -636,35 +623,6 @@ export function useExclusionMutations() {
     }),
     remove: useMutation({
       mutationFn: (id: string) => api.del(apiPath(`/exclusions/${id}`)),
-      onSuccess: done,
-    }),
-  };
-}
-
-/** An image of the brand's sites recognised as a logo; `kept`: a person put it back into the comparison. */
-export type RecognisedLogo = { id: string; url: string; thumb_url: string; width: number | null; height: number | null; score: number; pages: number; kept: boolean };
-
-/** Whether the brand sets its logos aside, and the images recognised as logos (administrators). */
-export function useLogos() {
-  const { admin, apiPath, brand } = useOrg();
-  return useQuery({
-    queryKey: ["logos", brand.id],
-    queryFn: () => api.get<{ enabled: boolean; items: RecognisedLogo[] }>(apiPath("/logos")),
-    enabled: admin,
-  });
-}
-
-export function useLogoMutations() {
-  const { apiPath } = useOrg();
-  const invalidate = useInvalidate();
-  const done = () => invalidate("logos", "site-images", "overview", "matches", "occurrences", "jobs");
-  return {
-    setEnabled: useMutation({
-      mutationFn: (enabled: boolean) => api.put<{ enabled: boolean; matches_removed: number }>(apiPath("/logos/setting"), { enabled }),
-      onSuccess: done,
-    }),
-    keep: useMutation({
-      mutationFn: (input: { id: string; kept: boolean }) => api.post(apiPath("/logos/keep"), { site_image_id: input.id, kept: input.kept }),
       onSuccess: done,
     }),
   };

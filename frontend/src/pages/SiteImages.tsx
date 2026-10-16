@@ -1,5 +1,5 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
-import { Link } from "react-router";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router";
 import { useToast } from "../components/feedback";
 import { ContentFilter, ContentTagger } from "../components/Labels";
 import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton, cx } from "../components/ui";
@@ -7,108 +7,143 @@ import { errorMessage } from "../lib/api";
 import { plural } from "../lib/format";
 import { LABELS_ENABLED, useAssignments, useLabels } from "../lib/labels";
 import { useOrg } from "../lib/org";
-import { useExclusionMutations, useSiteImages } from "../lib/queries";
-import type { ImageLabel, LabelInfo, SiteImage } from "../types";
+import { useExclusionMutations } from "../lib/queries";
+import { useLogoMutations, useSiteImages } from "../lib/siteImages";
+import type { ImageLabel, LabelInfo, SiteImage, SiteImagesPage, SiteImageView } from "../types";
 import { AddToLibrary } from "./site-images/AddToLibrary";
 import { ImageCard, Zoom } from "./site-images/ImageCard";
 import { LabelingMode, TypeButtons, TypeFilter, typeOf } from "./site-images/Typing";
 
+const TABS: [SiteImageView, string][] = [["qualify", "À qualifier"], ["found", "Retrouvées"], ["logos", "Logos"], ["ignored", "Ignorées"], ["all", "Toutes"]];
+const isView = (value: string | null): value is SiteImageView => TABS.some(([name]) => name === value);
+
 /**
- * Everything read on the brand's sites that matches nothing in its library.
- * Their rights are unknown: each one either joins the library (with its
- * expiry date) or is set aside as not rights-managed (logo, pictogram).
+ * Everything read on the brand's sites, one tab per kind: what still has to be qualified (it matches nothing in the
+ * library: each one either joins the library with its expiry date or is ignored), what was found in the library, the logos,
+ * what was ignored, and all of it.
  */
 export function SiteImages() {
   const { admin } = useOrg();
-  const images = useSiteImages();
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("view");
+  const view: SiteImageView = isView(asked) ? asked : "qualify";
+  const search = useSearch();
+  const images = useSiteImages({ view, site: search.site, text: search.applied });
+  const items = useMemo(() => images.data?.pages.flatMap((page) => page.items) ?? [], [images.data]);
+  const last = images.data?.pages.at(-1);
+  const page: SiteImagesPage | undefined = last && { ...last, items };
+  const pick = useSelection();
   const [adding, setAdding] = useState<SiteImage[] | null>(null);
   const [zoom, setZoom] = useState<SiteImage | null>(null);
   const [typing, setTyping] = useState(false);
   const ignore = useIgnore();
-  const items = images.data?.items ?? [];
-  const assignments = useAssignments("site").data?.assignments;
-  const labelsOf = useCallback((item: SiteImage) => assignments?.[item.id] ?? [], [assignments]);
-  const labels = useLabels().data?.labels ?? [];
-  const filter = useImageFilter(items, labelsOf);
-  const chosen = items.filter((item) => selected.has(item.id));
-
-  function toggle(id: string, on: boolean) {
-    const next = new Set(selected);
-    if (on) next.add(id);
-    else next.delete(id);
-    setSelected(next);
+  const { labels, labelsOf } = useSiteLabels();
+  const filter = useLabelFilter(items, labelsOf);
+  const chosen = items.filter((item) => pick.selected.has(item.id));
+  const qualifying = view === "qualify" && admin;
+  function changeView(next: SiteImageView) {
+    setParams(next === "qualify" ? {} : { view: next }, { replace: true });
+    search.reset();
+    pick.clear();
   }
-
   return (
-    <div className={cx(admin && chosen.length > 0 && "pb-20")}>
-      <PageHeader
-        title="Droits non vérifiés"
-        actions={admin && LABELS_ENABLED ? <Button onClick={() => setTyping(true)}>Étiqueter à la main</Button> : undefined}
-      />
+    <div className={cx(qualifying && chosen.length > 0 && "pb-20")}>
+      <PageHeader title="Images en ligne" actions={admin && LABELS_ENABLED ? <Button onClick={() => setTyping(true)}>Étiqueter à la main</Button> : undefined} />
+      <ViewTabs view={view} counts={page?.counts} onChange={changeView} />
+      <ViewNote view={view} logosSetAside={page?.logos_set_aside} />
       {images.isLoading ? (
         <ImageSkeletons />
-      ) : images.error ? (
+      ) : images.error || !page ? (
         <EmptyState title="Impossible de charger les images" body={errorMessage(images.error)} />
-      ) : !items.length ? (
-        <AllVerified />
       ) : (
         <>
-          <FilterBar filter={filter} items={items} labels={labels} selected={selected} onSelect={setSelected} />
+          <FilterBar page={page} search={search} labels={labels} filter={filter} selecting={qualifying ? { selected: pick.selected, onSelect: pick.setSelected, items } : undefined} />
           <ImageGrid
-            filter={filter}
+            page={page}
+            items={filter.visible}
             labelsOf={labelsOf}
-            selected={selected}
-            onToggle={toggle}
+            selected={pick.selected}
+            onToggle={admin && view === "qualify" ? pick.toggle : undefined}
             onZoom={setZoom}
-            onAdd={(item) => setAdding([item])}
-            onIgnore={(item) => ignore([item], () => toggle(item.id, false))}
+            onMore={() => void images.fetchNextPage()}
+            loadingMore={images.isFetchingNextPage}
+            onAdd={qualifying ? (item) => setAdding([item]) : undefined}
+            onIgnore={qualifying ? (item) => ignore([item], () => pick.toggle(item.id, false)) : undefined}
+            footerFor={admin && view === "logos" ? (item) => <KeepLogo item={item} setAside={page.logos_set_aside} /> : undefined}
+            filtered={search.applied !== "" || search.site !== "all"}
           />
         </>
       )}
-      {admin && chosen.length ? (
-        <SelectionBar count={chosen.length} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => setSelected(new Set(failedIds)))} onClear={() => setSelected(new Set())}>
-          {LABELS_ENABLED ? <TypeButtons types={labels.filter((label) => label.kind === "type")} items={chosen} onDone={() => setSelected(new Set())} /> : null}
-          {LABELS_ENABLED ? <ContentTagger labels={labels} images={{ siteImageIds: chosen.flatMap((item) => item.ids) }} dark /> : null}
-        </SelectionBar>
+      {qualifying && chosen.length ? (
+        <BulkBar chosen={chosen} labels={labels} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => pick.setSelected(new Set(failedIds)))} onClear={pick.clear} />
       ) : null}
-      <AddToLibrary
-        items={adding}
-        onClose={() => setAdding(null)}
-        onDone={(ids) => {
-          const next = new Set(selected);
-          ids.forEach((id) => next.delete(id));
-          setSelected(next);
-        }}
-      />
+      <AddToLibrary items={adding} onClose={() => setAdding(null)} onDone={(ids) => pick.setSelected(new Set([...pick.selected].filter((id) => !ids.includes(id))))} />
       <Zoom item={zoom} onClose={() => setZoom(null)} />
       {LABELS_ENABLED ? <LabelingMode open={typing} onClose={() => setTyping(false)} /> : null}
     </div>
   );
 }
 
-/** The site, the type, the content, the search text and how many cards are shown; any filter change goes back to the first 60. */
-function useImageFilter(items: SiteImage[], labelsOf: (item: SiteImage) => ImageLabel[]) {
+/** The labels of the site images (switched off until calibrated): all of them, and each image's own. */
+function useSiteLabels() {
+  const assignments = useAssignments("site").data?.assignments;
+  const labelsOf = useCallback((item: SiteImage) => assignments?.[item.id] ?? [], [assignments]);
+  return { labels: useLabels().data?.labels ?? [], labelsOf };
+}
+
+/** What can be done to the cards ticked: add them to the library, ignore them, or (labels on) type them. */
+function BulkBar(props: { chosen: SiteImage[]; labels: LabelInfo[]; onAdd: () => void; onIgnore: () => void; onClear: () => void }) {
+  const { chosen, labels } = props;
+  return (
+    <SelectionBar count={chosen.length} onAdd={props.onAdd} onIgnore={props.onIgnore} onClear={props.onClear}>
+      {LABELS_ENABLED ? <TypeButtons types={labels.filter((label) => label.kind === "type")} items={chosen} onDone={props.onClear} /> : null}
+      {LABELS_ENABLED ? <ContentTagger labels={labels} images={{ siteImageIds: chosen.flatMap((item) => item.ids) }} dark /> : null}
+    </SelectionBar>
+  );
+}
+
+/** The cards ticked (qualify tab only). */
+function useSelection() {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  return {
+    selected,
+    setSelected,
+    clear: () => setSelected(new Set()),
+    toggle: (id: string, on: boolean) => {
+      const next = new Set(selected);
+      if (on) next.add(id);
+      else next.delete(id);
+      setSelected(next);
+    },
+  };
+}
+
+/** The site version and the text asked for (the text is sent after a short pause). */
+function useSearch() {
   const [site, setSite] = useState("all");
+  const [text, setText] = useState("");
+  const [applied, setApplied] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setApplied(text.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [text]);
+  return {
+    site, text, applied,
+    changeSite: setSite,
+    changeText: setText,
+    reset: () => { setSite("all"); setText(""); setApplied(""); },
+  };
+}
+type Search = ReturnType<typeof useSearch>;
+
+/** The type and the content label asked for, among the cards loaded (labels are switched off until calibrated). */
+function useLabelFilter(items: SiteImage[], labelsOf: (item: SiteImage) => ImageLabel[]) {
   const [type, setType] = useState("all");
   const [content, setContent] = useState("all");
-  const [query, setQuery] = useState("");
-  const [shown, setShown] = useState(60);
-  const sites = useMemo(() => {
-    const out = new Map<string, string>();
-    for (const item of items) item.site_ids.forEach((id, index) => out.set(id, item.sites[index]));
-    return [...out];
-  }, [items]);
-  const visible = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    return items.filter(
-      (item) =>
-        (site === "all" || item.site_ids.includes(site)) &&
-        (type === "all" || (typeOf(labelsOf(item))?.name ?? "none") === type) &&
-        (content === "all" || labelsOf(item).some((label) => label.label_id === content)) &&
-        (!needle || item.filename.toLowerCase().includes(needle) || item.pages.some((page) => page.toLowerCase().includes(needle))),
-    );
-  }, [items, site, type, content, query, labelsOf]);
+  const visible = useMemo(
+    () => items.filter((item) => (type === "all" || (typeOf(labelsOf(item))?.name ?? "none") === type) && (content === "all" || labelsOf(item).some((label) => label.label_id === content))),
+    [items, type, content, labelsOf],
+  );
   // How many images carry each type ("none": no type yet) and each content label.
   const counts = useMemo(() => {
     const out: Record<string, number> = {};
@@ -120,23 +155,53 @@ function useImageFilter(items: SiteImage[], labelsOf: (item: SiteImage) => Image
     }
     return out;
   }, [items, labelsOf]);
-  return {
-    site, type, content, counts, query, shown, sites, visible, setShown,
-    changeType: (value: string) => { setType(value); setShown(60); },
-    changeContent: (value: string) => { setContent(value); setShown(60); },
-    changeSite: (value: string) => { setSite(value); setShown(60); },
-    changeQuery: (value: string) => { setQuery(value); setShown(60); },
-  };
+  return { type, content, counts, visible, changeType: setType, changeContent: setContent };
+}
+type LabelFilter = ReturnType<typeof useLabelFilter>;
+
+/** The tabs of the page, each with its total. */
+function ViewTabs(props: { view: SiteImageView; counts: SiteImagesPage["counts"] | undefined; onChange: (view: SiteImageView) => void }) {
+  return (
+    <div className="mb-4 flex w-full overflow-x-auto border-b border-line [scrollbar-width:none]" role="tablist" aria-label="Images en ligne">
+      {TABS.map(([name, label]) => (
+        <button
+          key={name}
+          type="button"
+          role="tab"
+          aria-selected={props.view === name}
+          onClick={() => props.onChange(name)}
+          className={cx(
+            "-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 text-[13.5px] transition-colors",
+            props.view === name ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink",
+          )}
+        >
+          {label} {props.counts ? <span className="tabular text-muted">{props.counts[name].toLocaleString("fr-FR")}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
 }
 
-/** One tab per site version (US, FR, INT...): each one is its own library of unverified images. */
-function SiteTabs(props: { filter: ReturnType<typeof useImageFilter>; items: SiteImage[] }) {
-  const { filter, items } = props;
-  if (filter.sites.length < 2) return null;
-  const tabs: [string, string, number][] = [
-    ["all", "Tous", items.length],
-    ...filter.sites.map(([id, label]): [string, string, number] => [id, label, items.filter((item) => item.site_ids.includes(id)).length]),
-  ];
+/** One line under the tabs saying what the tab is and where the rest happens. */
+function ViewNote({ view, logosSetAside }: { view: SiteImageView; logosSetAside: boolean | undefined }) {
+  const { link } = useOrg();
+  const linkClass = "font-medium text-ink underline underline-offset-2";
+  const settings = <Link className={linkClass} to={`${link("settings")}?section=logos`}>Réglages</Link>;
+  const notes: Partial<Record<SiteImageView, ReactNode>> = {
+    found: <>Ces images contiennent un visuel de la bibliothèque. Les décisions se prennent dans <Link className={linkClass} to={link("review")}>À traiter</Link>.</>,
+    logos: logosSetAside
+      ? <>Images reconnues comme logos : elles ne sont ni comparées ni proposées dans « À qualifier ». Le réglage se change dans les {settings}.</>
+      : <>Images reconnues comme logos. Le réglage « Ne pas comparer les logos » est désactivé : elles sont encore comparées et proposées dans « À qualifier ». Pour les mettre à part, voir les {settings}.</>,
+    ignored: <>Images mises de côté à la main : elles ne sont plus proposées. On les réintègre depuis les <Link className={linkClass} to={`${link("settings")}?section=general`}>Réglages</Link>.</>,
+  };
+  return notes[view] ? <p className="mb-4 rounded-xl bg-side px-4 py-3 text-sm text-ink-soft">{notes[view]}</p> : null;
+}
+
+/** One tab per site version (US, FR, INT...), when there are several. */
+function SiteTabs(props: { page: SiteImagesPage; search: Search }) {
+  const { page, search } = props;
+  if (page.sites.length < 2) return null;
+  const tabs: [string, string, number][] = [["all", "Tous", page.counts[page.view]], ...page.sites.map((site): [string, string, number] => [site.id, site.label, site.count])];
   return (
     <div className="mb-5 flex w-full overflow-x-auto border-b border-line [scrollbar-width:none]" role="tablist" aria-label="Versions du site">
       {tabs.map(([id, label, count]) => (
@@ -144,11 +209,11 @@ function SiteTabs(props: { filter: ReturnType<typeof useImageFilter>; items: Sit
           key={id}
           type="button"
           role="tab"
-          aria-selected={filter.site === id}
-          onClick={() => filter.changeSite(id)}
+          aria-selected={search.site === id}
+          onClick={() => search.changeSite(id)}
           className={cx(
             "-mb-px flex-1 whitespace-nowrap border-b-2 px-4 py-2.5 text-[13.5px] transition-colors",
-            filter.site === id ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink",
+            search.site === id ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink",
           )}
         >
           {label} <span className="tabular text-muted">{count}</span>
@@ -158,70 +223,101 @@ function SiteTabs(props: { filter: ReturnType<typeof useImageFilter>; items: Sit
   );
 }
 
-function FilterBar(props: { filter: ReturnType<typeof useImageFilter>; items: SiteImage[]; labels: LabelInfo[]; selected: Set<string>; onSelect: (ids: Set<string>) => void }) {
-  const { admin } = useOrg();
-  const { filter, selected } = props;
+type Selecting = { selected: Set<string>; onSelect: (ids: Set<string>) => void; items: SiteImage[] };
+
+function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelInfo[]; filter: LabelFilter; selecting: Selecting | undefined }) {
+  const { page, search, filter, selecting } = props;
   return (
     <>
-    <SiteTabs filter={filter} items={props.items} />
-    <div className="mb-4 flex flex-wrap items-end gap-3">
-      <div className="w-full sm:w-72">
-        <FieldLabel htmlFor="img-search">Rechercher</FieldLabel>
-        <Input id="img-search" type="search" placeholder="Nom de fichier ou page" value={filter.query} onChange={(event) => filter.changeQuery(event.target.value)} />
+      <SiteTabs page={page} search={search} />
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="w-full sm:w-72">
+          <FieldLabel htmlFor="img-search">Rechercher</FieldLabel>
+          <Input id="img-search" type="search" placeholder="Nom de fichier ou page" value={search.text} onChange={(event) => search.changeText(event.target.value)} />
+        </div>
+        <p className="pb-2 text-sm text-muted">{plural(page.total, page.view === "qualify" ? "image à vérifier" : "image", page.view === "qualify" ? "images à vérifier" : "images")}</p>
+        {selecting && page.items.length ? (
+          <button
+            type="button"
+            className="ml-auto pb-2 text-sm text-muted underline-offset-2 hover:text-ink hover:underline"
+            onClick={() => selecting.onSelect(selecting.selected.size ? new Set() : new Set(selecting.items.map((item) => item.id)))}
+          >
+            {selecting.selected.size ? "Tout désélectionner" : "Tout sélectionner"}
+          </button>
+        ) : null}
       </div>
-      <p className="pb-2 text-sm text-muted">{plural(filter.visible.length, "image à vérifier", "images à vérifier")}</p>
-      {admin && filter.visible.length ? (
-        <button
-          type="button"
-          className="ml-auto pb-2 text-sm text-muted underline-offset-2 hover:text-ink hover:underline"
-          onClick={() => props.onSelect(selected.size ? new Set() : new Set(filter.visible.slice(0, filter.shown).map((item) => item.id)))}
-        >
-          {selected.size ? "Tout désélectionner" : "Tout sélectionner"}
-        </button>
-      ) : null}
-    </div>
-    {LABELS_ENABLED ? <TypeFilter types={props.labels.filter((label) => label.kind === "type")} counts={filter.counts} value={filter.type} onChange={filter.changeType} /> : null}
-    {LABELS_ENABLED ? <ContentFilter labels={props.labels} counts={filter.counts} value={filter.content} onChange={filter.changeContent} /> : null}
+      {LABELS_ENABLED ? <TypeFilter types={props.labels.filter((label) => label.kind === "type")} counts={filter.counts} value={filter.type} onChange={filter.changeType} /> : null}
+      {LABELS_ENABLED ? <ContentFilter labels={props.labels} counts={filter.counts} value={filter.content} onChange={filter.changeContent} /> : null}
     </>
   );
 }
 
 type GridProps = {
-  filter: ReturnType<typeof useImageFilter>;
+  page: SiteImagesPage;
+  items: SiteImage[];
   labelsOf: (item: SiteImage) => ImageLabel[];
   selected: Set<string>;
-  onToggle: (id: string, on: boolean) => void;
+  filtered: boolean;
+  onToggle: ((id: string, on: boolean) => void) | undefined;
   onZoom: (item: SiteImage) => void;
-  onAdd: (item: SiteImage) => void;
-  onIgnore: (item: SiteImage) => void;
+  onMore: () => void;
+  loadingMore: boolean;
+  onAdd: ((item: SiteImage) => void) | undefined;
+  onIgnore: ((item: SiteImage) => void) | undefined;
+  footerFor: ((item: SiteImage) => ReactNode) | undefined;
 };
 
 function ImageGrid(props: GridProps) {
-  const { admin } = useOrg();
-  const { visible, shown } = props.filter;
+  const { page, items } = props;
+  if (!page.items.length) return <EmptyTab view={page.view} filtered={props.filtered} />;
   return (
     <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-        {visible.slice(0, shown).map((item) => (
+        {items.map((item) => (
           <ImageCard
             key={item.id}
             item={item}
             labels={props.labelsOf(item)}
             selected={props.selected.has(item.id)}
-            onSelect={admin ? (on) => props.onToggle(item.id, on) : undefined}
+            onSelect={props.onToggle ? (on) => props.onToggle?.(item.id, on) : undefined}
             onOpen={() => props.onZoom(item)}
-            onAdd={admin ? () => props.onAdd(item) : undefined}
-            onIgnore={admin ? () => props.onIgnore(item) : undefined}
+            onAdd={props.onAdd ? () => props.onAdd?.(item) : undefined}
+            onIgnore={props.onIgnore ? () => props.onIgnore?.(item) : undefined}
+            footer={props.footerFor ? <div className="mt-auto pt-1.5 text-[13px]">{props.footerFor(item)}</div> : undefined}
           />
         ))}
       </div>
-      {visible.length > shown ? (
+      {page.items.length < page.total ? (
         <div className="mt-4 text-center">
-          <Button size="sm" onClick={() => props.filter.setShown((value) => value + 60)}>Afficher plus · {shown}/{visible.length}</Button>
+          <Button size="sm" loading={props.loadingMore} onClick={props.onMore}>Afficher plus · {page.items.length}/{page.total}</Button>
         </div>
       ) : null}
-      {!visible.length ? <p className="py-6 text-center text-sm text-muted">Aucune image ne correspond à ces filtres.</p> : null}
+      {!items.length ? <p className="py-6 text-center text-sm text-muted">Aucune image ne correspond à ces filtres.</p> : null}
     </>
+  );
+}
+
+/** For the logos tab: put a logo back into the comparison, or set it aside again (administrators). Without the setting there is nothing to put back. */
+function KeepLogo({ item, setAside }: { item: SiteImage; setAside: boolean }) {
+  const { keep } = useLogoMutations();
+  const toast = useToast();
+  if (!item.logo) return null;
+  const kept = item.logo.kept;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-xs text-muted">reconnu à {Math.round(item.logo.score * 100)} %</span>
+      {setAside ? (
+        <button
+          type="button"
+          disabled={keep.isPending}
+          className="font-medium text-ink underline-offset-2 hover:underline disabled:opacity-60"
+          // Every file of the photo (a crop is another file) goes together.
+          onClick={() => keep.mutate({ ids: item.variants.map((variant) => variant.id), kept: !kept }, { onError: (error) => toast.show({ tone: "error", message: "L'image n'a pas été modifiée", description: errorMessage(error) }) })}
+        >
+          {kept ? "Mettre à part" : "Remettre dans la comparaison"}
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -233,15 +329,19 @@ function ImageSkeletons() {
   );
 }
 
-function AllVerified() {
+/** A tab with nothing in it: for "À qualifier" that is good news. */
+function EmptyTab({ view, filtered }: { view: SiteImageView; filtered: boolean }) {
   const { link } = useOrg();
-  return (
-    <EmptyState
-      title="Toutes les images en ligne ont des droits vérifiés"
-      body="Chaque image trouvée sur les sites correspond à un visuel de la bibliothèque, ou a été ignorée. Relisez les sites pour vérifier les nouveautés."
-      action={<Link className="text-sm underline" to={link("scans")}>Sites et lectures</Link>}
-    />
-  );
+  if (view === "qualify" && !filtered) {
+    return (
+      <EmptyState
+        title="Toutes les images en ligne ont des droits vérifiés"
+        body="Chaque image trouvée sur les sites correspond à un visuel de la bibliothèque, a été ignorée ou est un logo. Relisez les sites pour vérifier les nouveautés."
+        action={<Link className="text-sm underline" to={link("scans")}>Sites et lectures</Link>}
+      />
+    );
+  }
+  return <p className="py-10 text-center text-sm text-muted">{filtered ? "Aucune image ne correspond à cette recherche." : "Aucune image dans cet onglet."}</p>;
 }
 
 function SelectionBar(props: { count: number; onAdd: () => void; onIgnore: () => void; onClear: () => void; children: ReactNode }) {
