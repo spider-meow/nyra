@@ -122,6 +122,25 @@ content label off an image. The hand-labeling mode reports how well the examples
 classified by the others): an optimistic estimate, since examples are picked by hand. Zero-shot labels (a text
 prompt instead of examples) are not done.
 
+## Spotting logos (`nyra/logos.py`)
+
+Not wired into the matching yet. The question: is a whole site image a logo, so that it could be set aside instead of
+compared? Without any per-brand setup.
+
+- **Colour statistics do not work.** Two dominant colours, a small palette and flat pixels flagged 256 of 1,716
+  images of one brand's site; the best scores were white porcelain plates and cups on a white background (a real product
+  photo reads as one flat colour), and the brand's actual wordmarks were missed. Dropped.
+- **CLIP zero-shot works.** The stored image embedding is compared with the embeddings of short descriptions ("a logo",
+  "a photograph of a product"...); the logo probability is the share of the softmax on the logo descriptions. The
+  descriptions' embeddings are kept in `resources/logo_text.npz` (regenerate: `python -m nyra.logos`), so the web
+  process scores with numpy alone.
+- **Measured on 1,716 distinct images of one brand's site (October 2026):** 10 above 0.95, every one a logo (wordmarks,
+  the fleur-de-lis badge, red and white variants, file names containing "logo"); then 0.92 an institutional red graphic,
+  and 0.83 to 0.86 a photograph of a château with a small emblem. Hence `THRESHOLD = 0.95`: setting a real photograph
+  aside is the costly mistake.
+- **Not known:** the recall (logos below 0.95 were looked for by eye, not counted), and how it holds on another brand:
+  only one brand had images read. Check another brand's images before relying on it.
+
 ## Exclusions
 
 Recurring false positives — a logo, a generic visual reused on every

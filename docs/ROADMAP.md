@@ -160,6 +160,11 @@ dans la barre de sélection, filtre par type et « Sans type ». L'algorithme pr
 pointillés). Rien n'est masqué d'office. **Reste** : mesurer précision et rappel sur de vraies images étiquetées par
 Louis XIII (20 à 30 par type) avant de s'y fier.
 
+**Logos sans configuration (17 octobre 2026).** Un détecteur de logos générique, sans étiquetage par marque, est dans
+`nyra/logos.py` (CLIP, descriptions précalculées ; voir `MATCHING.md`, « Spotting logos ») : sur les 1 716 images de
+Louis XIII, 10 images au-dessus de 0,95, toutes des logos. **Pas encore branché** : il reste à décider la mise de côté
+(réglage par marque, liste réversible) et à vérifier sur une autre marque.
+
 **Ce qu'on veut.** Le même principe que l'idée 2, appliqué aux **images du
 site** : chaque image porte des étiquettes de type (« logo », « packshot
 produit »…), posées par l'algorithme, et la liste « Droits non vérifiés » se
