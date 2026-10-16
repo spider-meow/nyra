@@ -680,6 +680,16 @@ def test_crawl_is_queued_capped_deduplicated_and_cancellable(client, org_with_us
     assert cancelled["status"] == "cancelled"
 
 
+def test_indexing_what_is_pending_is_for_admins_and_joins_the_job_already_waiting(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    assert client.post(f"{base}/jobs/index", headers=_headers(client_id)).status_code == 403
+    assert client.post(f"{base}/jobs/index").status_code == 401
+    first = client.post(f"{base}/jobs/index", headers=_headers(admin_id))
+    assert first.status_code == 200 and first.json()["job"]["kind"] == "index" and first.json()["job"]["status"] == "queued"
+    again = client.post(f"{base}/jobs/index", headers=_headers(admin_id))
+    assert again.status_code == 200 and again.json()["job"]["id"] == first.json()["job"]["id"]
+
+
 def test_each_brand_has_its_own_queue(client, org_with_users, cloud_brand, cloud_database_url):
     org_id, base, admin_id, _, _ = org_with_users
     other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
