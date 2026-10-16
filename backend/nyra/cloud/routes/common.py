@@ -276,6 +276,7 @@ def online_images(conn, brand_id: uuid.UUID, config: Config) -> dict[str, list[d
     ponytail: reads and groups every image of the brand on each request (measured on a test database, without exclusions:
     0.3 s for 10,000 images, 1 s for 30,000, growing in step with them). Past that, count the tabs in SQL and group only
     the tab asked for, or cache by a fingerprint like `unreferenced_count` does."""
+    cloud_logos.score_pending(conn, brand_id)  # the images read since the last time, so the Logos tab is never behind
     rows = cloud_db.site_images_with_pages(conn, brand_id)
     excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
     aside = cloud_logos.set_aside_ids(conn, brand_id)

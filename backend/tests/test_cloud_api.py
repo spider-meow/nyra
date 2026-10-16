@@ -801,28 +801,30 @@ def test_a_file_read_again_under_a_new_address_is_not_shown_as_put_back(
 def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
     client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client
 ):
+    from nyra import logos as detector
+
     org_id, base, admin_id, client_id, _ = org_with_users
     data = _upload_bytes().getvalue()
     ids = {}
     with cloud_db.connect(cloud_database_url) as conn:
         fr, uk = _site(conn, org_id, cloud_brand, "https://t.test/fr/"), _site(conn, org_id, cloud_brand, "https://t.test/uk/")
-        # Far apart in the hashes, so that ignoring one never swallows another.
-        for name, site, url, phash in (
-            ("plain", fr, "https://t.test/media/plain.jpg", "0000000000000000"),
-            ("found", fr, "https://t.test/media/found.jpg", "ffffffffffffffff"),
-            ("logo", fr, "https://t.test/media/logo.png", "f0f0f0f0f0f0f0f0"),
-            ("ignored", uk, "https://t.test/media/ignored.jpg", "0f0f0f0f0f0f0f0f"),
+        # Far apart in the hashes, so that ignoring one never swallows another. Only the logo has an embedding (what a logo looks
+        # like to CLIP), and no score yet: the page works it out when it is opened.
+        for name, site, url, phash, look in (
+            ("plain", fr, "https://t.test/media/plain.jpg", "0000000000000000", None),
+            ("found", fr, "https://t.test/media/found.jpg", "ffffffffffffffff", None),
+            ("logo", fr, "https://t.test/media/logo.png", "f0f0f0f0f0f0f0f0", detector._text()[1]),
+            ("ignored", uk, "https://t.test/media/ignored.jpg", "0f0f0f0f0f0f0f0f", None),
         ):
             fake_storage_client.store[("site-images", f"{org_id}/{name}.jpg")] = data
             ids[name] = conn.execute(
-                """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
-                (org_id, site, url, f"{org_id}/{name}.jpg", f"{org_id}/thumbs/{name}.jpg", name, phash, phash),
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash, embedding)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, url, f"{org_id}/{name}.jpg", f"{org_id}/thumbs/{name}.jpg", name, phash, phash, look),
             ).fetchone()["id"]
         ref = cloud_db.upsert_reference_image(conn, org_id=org_id, brand_id=cloud_brand, filename="r.jpg", storage_path=f"{org_id}/r.jpg",
                                               expiry_date=None, credit=None, notes=None)
         cloud_db.write_matches(conn, org_id, [(ref, ids["found"], "phash", 1.0, "haut")])
-        conn.execute("UPDATE site_images SET logo_score = 0.99 WHERE id = %s", (ids["logo"],))
     assert client.post(f"{base}/exclusions", headers=_headers(admin_id), json={"site_image_id": str(ids["ignored"])}).status_code == 200
 
     def tab(view, **query):
@@ -844,7 +846,7 @@ def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
     statuses = {item["id"]: item["status"] for item in tab("all")["items"]}
     assert statuses == {str(ids["plain"]): "qualify", str(ids["found"]): "found", str(ids["logo"]): "logo", str(ids["ignored"]): "ignored"}
     logo = tab("logos")["items"][0]
-    assert logo["logo"] == {"score": 0.99, "kept": False} and next(i for i in tab("qualify")["items"] if i["id"] == str(ids["plain"]))["logo"] is None
+    assert logo["logo"]["score"] >= detector.THRESHOLD and logo["logo"]["kept"] is False and next(i for i in tab("qualify")["items"] if i["id"] == str(ids["plain"]))["logo"] is None
 
     # Pages, the text search and the site version narrow the entries; the totals of the tabs do not move.
     first, second = tab("all", limit=3), tab("all", limit=3, offset=3)

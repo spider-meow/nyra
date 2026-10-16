@@ -245,8 +245,8 @@ images (`archive/AUDIT_PRODUIT.md`, archivé, §3.2).
 
 - [ ] **Aperçu des occurrences dans la liste** : survol d'une carte groupée =
   miniatures des autres recadrages (dépend de l'idée 1).
-- [ ] **Trier par catégorie de page** : filtrer « À traiter » et « Droits non
-  vérifiés » selon la section du site où l'image se trouve (ex. Louis XIII :
+- [ ] **Trier par catégorie de page** : filtrer « À traiter » et « Images en
+  ligne » selon la section du site où l'image se trouve (ex. Louis XIII :
   `/news` ou `/products`). Piste : le premier segment du chemin de la page
   d'origine, que le crawl garde déjà ; même mécanique que le filtre par pays
   (l'étiquette d'un site).
@@ -268,4 +268,34 @@ images (`archive/AUDIT_PRODUIT.md`, archivé, §3.2).
 
 ## Faits
 
-_(rien pour l'instant)_
+Entre le 16 et le 17 octobre 2026 (détails dans les documents indiqués) :
+
+- **Bibliothèque** : volet de navigation en accordéon sur 3 niveaux, sans bouton de gestion ; collections gérées dans
+  Réglages > Collections (ajout, renommage, déplacement, suppression) ; accueil de la bibliothèque sur les 4 derniers
+  visuels ajoutés et « Afficher tous les visuels » (aucune vignette de plus à l'arrivée) ; plus de tuile « Déposez des
+  images ».
+- **Indexation à la demande** : Réglages > Indexation (administrateurs), `POST …/jobs/index`.
+- **Logos** (`MATCHING.md`, « Spotting logos ») : détecteur sans configuration par marque (CLIP, seuil 0,95), réglage par
+  marque « Ne pas comparer les logos » (désactivé par défaut, Réglages > Logos), liste réversible.
+- **« Images en ligne »** (ancienne page « Droits non vérifiés », adresse `/online-images`) : toutes les images lues sur les
+  sites, en cinq onglets (À qualifier, Retrouvées, Logos, Ignorées, Toutes), chargés par pages de 60 (`ARCHITECTURE.md`).
+- **Qualité** : les deux tests du back qui étaient rouges en CI depuis le 14 octobre sont corrigés ; plus aucune mention de
+  facturation dans les textes vus par les clients.
+
+## À reprendre
+
+Ouvert au 17 octobre 2026 :
+
+- **PR #8** (calcul des scores de logos à l'ouverture de « Images en ligne », sans quoi l'onglet Logos reste à 0 ; plus cette
+  documentation) : à relire et fusionner. La PR #7 (« Images en ligne ») est déjà fusionnée. La migration
+  `20261017000024_set_aside_logos.sql` doit être appliquée **avant** de démarrer le nouveau code, partout (elle l'est sur la
+  base de développement).
+- **Logos** : le seuil de 0,95 est mesuré sur **une seule marque** (Louis XIII : 10 fichiers, 18 adresses, tous de vrais logos) : à vérifier
+  sur une autre marque ; le rappel n'est pas compté ; une image relue sous une nouvelle adresse après une remise repart
+  comme logo (la liste le dit).
+- **Images en ligne** : l'onglet « Ignorées » est en lecture seule (on réintègre depuis Réglages > Général) ; la recherche par
+  page ne voit que les 20 premières pages de chaque image ; la liste relit toutes les images à chaque requête (mesuré :
+  0,3 s à 10 000 images, 1 s à 30 000 : au-delà, compter en SQL ou mettre en cache).
+- **Tests** : `test_big_responses_are_gzipped…` échoue sous Windows (fins de ligne) mais passe en CI ; le test de création
+  d'organisation (« Hennessy ») n'est pas rejouable sur une base réutilisée.
+- **Budget** : le bundle d'entrée est à 26,3 / 26,5 Ko gzip (voir `DEVELOPMENT.md`).
