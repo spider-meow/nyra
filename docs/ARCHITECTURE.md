@@ -35,7 +35,7 @@ reproducible given the same inputs and thresholds.
 
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
-queued after every upload, also backfills older rows), `report`, `locate` (checks one
+queued after every upload, also backfills older rows; an administrator can start it from Réglages > Indexation, `POST .../jobs/index`), `report`, `locate` (checks one
 reference against every stored site image to find its copies and crops; see `MATCHING.md`).
 
 ## Organizations and brands

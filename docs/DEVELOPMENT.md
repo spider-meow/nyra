@@ -65,9 +65,9 @@ share of its budget) and exits 1 naming the chunk that went over.
 
 | Budget (gzip KB, 1 KB = 1000 bytes) | Limit | Measured on 1 Oct 2026 |
 |---|---|---|
-| `firstLoadGzipKB`: every chunk of `index.html` | 210 | 191.4 |
-| `entryGzipKB`: the entry chunk alone | 26.5 | 24.2 (13 Oct) |
-| `lazyChunkGzipKB`: the largest page chunk | 15 | 13.5 (Library, with collections) |
+| `firstLoadGzipKB`: every chunk of `index.html` | 210 | 196.1 (17 Oct) |
+| `entryGzipKB`: the entry chunk alone | 26.5 | 26.3 (17 Oct) |
+| `lazyChunkGzipKB`: the largest page chunk | 15 | 14.3 (17 Oct) |
 | `sentryGzipKB`: the Sentry chunk (lazy, off the critical path) | 68 | 61.7 |
 | `passwordMeterGzipKB`: the password strength meter (zxcvbn-ts, lazy, loaded only on the choose-a-password page) | 260 | 235.3 (13 Oct) |
 
@@ -75,7 +75,9 @@ Each limit is the measure plus about 10%, except the page budget (about 20%:
 the largest page, the Library, is the one that grows with features, and 10%
 is a single new component). When it fails, first look for what
 grew: a new dependency, a page imported eagerly instead of with `lazy()`, a
-library pulled into the entry chunk. Raise a budget only on purpose, in the
+library pulled into the entry chunk. The entry chunk is nearly full (26.3 of 26.5): code that only one page uses goes in a module that only that page imports
+(`lib/siteImages.ts` holds the hooks of "Images en ligne" and of the logos setting), not in `lib/queries.ts`, which every
+page loads. Raise a budget only on purpose, in the
 same pull request as the change that needs it, with the new measure and the
 reason in the description (a library that earns its weight, an SDK upgrade);
 set it to the new measure plus about 10% and update the table above and the
@@ -107,7 +109,9 @@ sends the old addresses to `src/pages/Legacy.tsx`, fetched only then.
 
 `npm run check:paths` runs that conversion on every old address, checks the router has every new page,
 and fails if an old name is left in `src/`. Run it after touching the routes or a link. A new page needs no
-entry in the table: only a renamed one does.
+entry in the table: only a renamed one does. A page renamed since the addresses became English (`site-images` →
+`online-images`, 17 October 2026) goes in `RENAMED_PAGES` instead, with its own redirect route in `main.tsx`: its old name is
+still used by the API and the query keys, so `check:paths` must not treat it as an old name.
 
 ### Browser monitoring: scrubbing
 
