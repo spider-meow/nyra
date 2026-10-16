@@ -63,7 +63,10 @@ def org_with_users(cloud_database_url, cloud_org, cloud_brand):
         cloud_db.add_membership(conn, user_id=admin_id, org_id=cloud_org, role="admin")
         cloud_db.add_membership(conn, user_id=client_id, org_id=cloud_org, role="client")
         conn.execute("INSERT INTO platform_staff (user_id) VALUES (%s)", (admin_id,))
-    return cloud_org, f"/api/orgs/{cloud_org}/brands/{cloud_brand}", admin_id, client_id, outsider_id
+    yield cloud_org, f"/api/orgs/{cloud_org}/brands/{cloud_brand}", admin_id, client_id, outsider_id
+    # platform_staff is shared by every test: a row left behind shows up in the next test's list of platform admins.
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DELETE FROM platform_staff WHERE user_id = ANY(%s)", ([admin_id, client_id, outsider_id],))
 
 
 def _upload_bytes() -> io.BytesIO:
@@ -144,7 +147,7 @@ def test_brands_are_created_and_deleted_by_platform_admins_and_renamed_by_org_ad
     brand = client.post(url, headers=_headers(admin_id), json={"name": "Louis XIII"}).json()["brand"]
     assert client.post(url, headers=_headers(admin_id), json={"name": "Louis  XIII"}).status_code == 409
     renamed = client.put(f"{url}/{brand['id']}", headers=_headers(admin_id), json={"name": "Louis XIII Cognac"}).json()
-    assert renamed["brand"] == {"id": brand["id"], "name": "Louis XIII Cognac", "slug": "louis-xiii-cognac"}
+    assert renamed["brand"] == {"id": brand["id"], "name": "Louis XIII Cognac", "slug": "louis-xiii-cognac", "logo": None}
     names = [b["name"] for b in client.get("/api/orgs", headers=_headers(client_id)).json()["organizations"][0]["brands"]]
     assert names == ["Louis XIII Cognac", "Test Org"]
 
