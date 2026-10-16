@@ -23,7 +23,7 @@ import time
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Optional, Protocol, Sequence
+from typing import Any, Collection, Optional, Protocol, Sequence
 
 import imagehash
 import numpy as np
@@ -360,6 +360,8 @@ class MatchStore(Protocol):
     def load_exclusions(self) -> list[tuple[str, str]]:
         """(hash, "phash" | "dhash") of images never to match again."""
 
+    # Optional: `set_aside_ids()` -> ids of site images to leave out (logos, when the brand asks for it).
+
     def save_matches(
         self,
         *,
@@ -375,16 +377,19 @@ class MatchStore(Protocol):
 
 
 def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[str, str]] = (),
-              verified: bool = False) -> str:
+              verified: bool = False, set_aside: Collection = ()) -> str:
     """Anything that changes which pairs match. A different value forces a full recompute.
 
     `verified` says whether CLIP candidates are actually checked this pass (the
     option is on *and* the store can load images *and* OpenCV is installed): a
-    pass that couldn't check must not look like one that did.
+    pass that couldn't check must not look like one that did. `set_aside` are the site
+    images left out for another reason than an exclusion (logos): nothing is added to
+    the signature while there are none, so a brand that does not use it keeps its results.
     """
     import hashlib
 
     excluded = hashlib.sha1(chr(10).join(sorted(f"{kind}:{value}" for value, kind in exclusions)).encode()).hexdigest()[:12]
+    aside = [f"l{hashlib.sha1(chr(10).join(sorted(str(item) for item in set_aside)).encode()).hexdigest()[:12]}"] if set_aside else []
     return "|".join(
         [
             str(config.phash_threshold),
@@ -398,6 +403,7 @@ def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[st
             "flip",
             "hashguard" if use_clip else "hash-only",  # CLIP overrules a colliding hash: older matches are recomputed
             f"x{excluded}" if exclusions else "x0",
+            *aside,
         ]
     )
 
@@ -505,11 +511,12 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
         store = LocalStore(store)
 
     exclusions = list(store.load_exclusions()) if hasattr(store, "load_exclusions") else []
+    set_aside = set(store.set_aside_ids()) if hasattr(store, "set_aside_ids") else set()
     loader = getattr(store, "load_image", None)
     verifying = _can_verify(config.match, use_clip, loader)
-    sig = signature(config.match, use_clip, exclusions, verified=verifying)
+    sig = signature(config.match, use_clip, exclusions, verified=verifying, set_aside=set_aside)
     refs, all_sites = store.load_features(use_clip)
-    excluded = excluded_site_ids(all_sites, exclusions, config.match)
+    excluded = excluded_site_ids(all_sites, exclusions, config.match) | set_aside
     sites = [row for row in all_sites if row["id"] not in excluded]
     full = store.get_signature() != sig
     info = stats if stats is not None else {}

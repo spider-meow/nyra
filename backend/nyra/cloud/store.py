@@ -16,6 +16,7 @@ import numpy as np
 from nyra import fetch
 
 from . import db as cloud_db
+from . import logos as cloud_logos
 from . import storage as cloud_storage
 
 log = logging.getLogger("nyra.store")
@@ -217,6 +218,14 @@ class CloudMatchStore:
     def load_exclusions(self) -> list[tuple[str, str]]:
         with cloud_db.connect(self.database_url) as conn:
             return cloud_db.load_exclusions(conn, self.brand_id)
+
+    def set_aside_ids(self) -> set:
+        """The logos to leave out, when the brand asked for it (none otherwise); scored first, so images read since are covered."""
+        with cloud_db.connect(self.database_url) as conn:
+            if not cloud_logos.is_enabled(conn, self.brand_id):
+                return set()
+            cloud_logos.score_pending(conn, self.brand_id)
+            return cloud_logos.set_aside_ids(conn, self.brand_id)
 
     def save_matches(self, *, full, clear_ref_ids, clear_site_ids, hits, signature) -> int:
         with cloud_db.connect(self.database_url) as conn:

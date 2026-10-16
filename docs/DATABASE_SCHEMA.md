@@ -41,14 +41,14 @@ before September 26, 2026 still point at their original.
 |---|---|---|
 | `organizations` | Clients | `slug` (lowercase, hyphens, unique) |
 | `memberships` | User ↔ organization | `role` ∈ {admin, client} |
-| `brands` | Brands of an organization | `slug` (unique per org), `created_by` (the platform admin who created it: the billing record) |
+| `brands` | Brands of an organization | `slug` (unique per org), `created_by` (the platform admin who created it: the billing record), `set_aside_logos` (setting, off by default: the site images recognised as logos stay out of the comparison and out of "Droits non vérifiés") |
 | `brand_logos` | A brand's logo, shrunk by the API to a 128 px PNG and kept as a data URI (it travels with the list of brands) | `brand_id` (primary key, deleted with the brand), `data_uri` |
 | `org_settings` | Per-organization overrides of `config.yaml`, shared by its brands | `overrides` jsonb (whitelisted keys only) |
 | `sites` | A brand's addresses | `brand_id`, `url` (canonical, unique per org: an address belongs to one brand), `label` (US, FR...) |
 | `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `unlimited_rights` (never expires; excludes a date: a check forbids both), `collection_id` (its folder, null = unfiled), `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |
 | `collections` | Folders of a brand's library (a shoot, a season), 3 levels at most (the API checks) | `brand_id`, `parent_id` (null = top level), `name` (unique among siblings, case-insensitive). Deleting one deletes its sub-collections and un-files their references |
 | `pages` | Pages discovered | `url` (canonical, unique per site), `status` pending/done |
-| `site_images` | Images found | `url` (unique per site), `content_hash` (indexed; same bytes are reused), hashes, `embedding`, `storage_path`, `thumb_path`, `compared_at`, `variant_group` (shared by the crops and resizes of one photo, set by the worker after each comparison; NULL = no twin; never read by matching), `variants_checked_at` (incremental marker: only images where it is NULL are searched for twins) |
+| `site_images` | Images found | `url` (unique per site), `content_hash` (indexed; same bytes are reused), hashes, `embedding`, `storage_path`, `thumb_path`, `compared_at`, `variant_group` (shared by the crops and resizes of one photo, set by the worker after each comparison; NULL = no twin; never read by matching), `variants_checked_at` (incremental marker: only images where it is NULL are searched for twins), `logo_score` (probability that the whole image is a logo, from its embedding; NULL until scored), `logo_kept` (a person put it back into the comparison) |
 | `image_pages` | Image ↔ page | composite key |
 | `matches` | Reference ↔ site image hits | `level` (phash/dhash/clip), `score`, `confidence` (haut/moyen/a_verifier) |
 | `reference_locations` | Site images found to be a copy or crop of a reference by the `locate` job (replaced at each search) | `reference_id`, `site_image_id`, `tier` (same/review), `inliers`, `ref_coverage`, `site_coverage`; `reference_images.located_at` = last search |

@@ -690,6 +690,114 @@ def test_indexing_what_is_pending_is_for_admins_and_joins_the_job_already_waitin
     assert again.status_code == 200 and again.json()["job"]["id"] == first.json()["job"]["id"]
 
 
+def test_logos_are_set_aside_only_when_the_brand_asks_and_can_be_put_back(
+    client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client
+):
+    from nyra import logos as detector
+    from nyra.cloud.store import CloudMatchStore
+
+    org_id, base, admin_id, client_id, _ = org_with_users
+    text = detector._text()
+    logo_look, photo_look = text[1], text[len(detector.LOGO_PROMPTS)]  # what a logo and a photograph look like to CLIP
+    data = _upload_bytes().getvalue()
+    ids = {}
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand, "https://t.test/fr/")
+        for name, url, content_hash, phash, look in (
+            ("logo", "https://t.test/logo.png", "logo", "0f0f0f0f0f0f0f0f", logo_look),
+            ("twin", "https://t.test/logo-2x.png", "logo", "0f0f0f0f0f0f0f0f", logo_look),  # the same bytes under another address
+            ("photo", "https://t.test/photo.jpg", "photo", "ffff0000ffff0000", photo_look),
+        ):
+            fake_storage_client.store[("site-images", f"{org_id}/{content_hash}.jpg")] = data
+            ids[name] = conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash, embedding)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, url, f"{org_id}/{content_hash}.jpg", f"{org_id}/thumbs/{content_hash}.jpg", content_hash, phash, phash, look),
+            ).fetchone()["id"]
+    store = CloudMatchStore(org_id=org_id, brand_id=cloud_brand, database_url=cloud_database_url)
+    listed = lambda: client.get(f"{base}/site-images", headers=_headers(admin_id)).json()["items"]  # noqa: E731
+    unreferenced = lambda: client.get(f"{base}/overview", headers=_headers(admin_id)).json()["dashboard"]["unreferenced_online"]  # noqa: E731
+
+    # Off by default: the logos are recognised and listed, and still compared and shown.
+    assert client.get(f"{base}/logos", headers=_headers(client_id)).status_code == 403
+    state = client.get(f"{base}/logos", headers=_headers(admin_id)).json()
+    assert state["enabled"] is False and len(state["items"]) == 1  # the two addresses of one file count once
+    assert state["items"][0]["score"] >= detector.THRESHOLD and state["items"][0]["kept"] is False
+    assert len(listed()) == 2 and unreferenced() == 2 and store.set_aside_ids() == set()
+
+    # Turned on (by an admin): they leave the list, the counter and the comparison, and a comparison is queued.
+    assert client.put(f"{base}/logos/setting", headers=_headers(client_id), json={"enabled": True}).status_code == 403
+    turned_on = client.put(f"{base}/logos/setting", headers=_headers(admin_id), json={"enabled": True}).json()
+    assert turned_on["enabled"] is True and turned_on["job"]["kind"] == "match"
+    assert [item["url_count"] for item in listed()] == [1] and unreferenced() == 1
+    assert store.set_aside_ids() == {ids["logo"], ids["twin"]}
+
+    # Put back by a person: both addresses return; set aside again: both go.
+    keep = {"site_image_id": str(state["items"][0]["id"]), "kept": True}
+    assert client.post(f"{base}/logos/keep", headers=_headers(client_id), json=keep).status_code == 403
+    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={**keep, "site_image_id": str(uuid.uuid4())}).status_code == 404
+    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json=keep).status_code == 200
+    assert len(listed()) == 2 and unreferenced() == 2 and store.set_aside_ids() == set()
+    assert client.get(f"{base}/logos", headers=_headers(admin_id)).json()["items"][0]["kept"] is True
+    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={**keep, "kept": False}).status_code == 200
+    assert unreferenced() == 1 and store.set_aside_ids() == {ids["logo"], ids["twin"]}
+
+    # Turned off again: everything is back.
+    assert client.put(f"{base}/logos/setting", headers=_headers(admin_id), json={"enabled": False}).json()["enabled"] is False
+    assert len(listed()) == 2 and unreferenced() == 2 and store.set_aside_ids() == set()
+
+
+def test_a_change_the_running_job_did_not_see_queues_another_behind_it(org_with_users, cloud_brand, cloud_database_url):
+    from nyra.cloud import jobs as cloud_jobs
+
+    org_id = org_with_users[0]
+    with cloud_db.connect(cloud_database_url) as conn:
+        first = cloud_jobs.enqueue(conn, org_id=org_id, brand_id=cloud_brand, kind="match")
+        conn.execute("UPDATE jobs SET status = 'running' WHERE id = %s", (first["id"],))
+        try:
+            cloud_jobs.enqueue(conn, org_id=org_id, brand_id=cloud_brand, kind="match")  # an ordinary request still conflicts
+        except cloud_jobs.JobConflict:
+            pass
+        else:
+            raise AssertionError("a running job of the same kind must conflict")
+        behind = cloud_jobs.enqueue(conn, org_id=org_id, brand_id=cloud_brand, kind="match", behind_running=True)
+        assert behind["status"] == "queued" and behind["id"] != first["id"]
+        try:
+            cloud_jobs.enqueue(conn, org_id=org_id, brand_id=cloud_brand, kind="match", behind_running=True)
+        except cloud_jobs.JobConflict:
+            pass  # one waiting is enough: it will see the change
+        else:
+            raise AssertionError("a waiting job of the same kind must conflict")
+
+
+def test_a_file_read_again_under_a_new_address_is_not_shown_as_put_back(
+    client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client
+):
+    from nyra import logos as detector
+
+    org_id, base, admin_id, _, _ = org_with_users
+    look = detector._text()[1]  # a logo to CLIP
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand, "https://t.test/fr/")
+
+        def read(url):
+            return conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, content_hash, phash, dhash, embedding)
+                   VALUES (%s, %s, %s, %s, 'logo', '0f0f0f0f0f0f0f0f', '0f0f0f0f0f0f0f0f', %s) RETURNING id""",
+                (org_id, site, url, f"{org_id}/logo.jpg", look),
+            ).fetchone()["id"]
+
+        first = read("https://t.test/logo.png")
+    listed = lambda: client.get(f"{base}/logos", headers=_headers(admin_id)).json()["items"]  # noqa: E731
+    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={"site_image_id": str(first), "kept": True}).status_code == 200
+    assert [item["kept"] for item in listed()] == [True]
+    with cloud_db.connect(cloud_database_url) as conn:
+        read("https://t.test/logo-new-address.png")  # the same bytes, read after the person put the logo back
+    assert [item["kept"] for item in listed()] == [False]  # the new address is set aside: the file is not shown as put back
+    assert client.post(f"{base}/logos/keep", headers=_headers(admin_id), json={"site_image_id": str(first), "kept": True}).status_code == 200
+    assert [item["kept"] for item in listed()] == [True]  # putting it back again covers every address
+
+
 def test_each_brand_has_its_own_queue(client, org_with_users, cloud_brand, cloud_database_url):
     org_id, base, admin_id, _, _ = org_with_users
     other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]

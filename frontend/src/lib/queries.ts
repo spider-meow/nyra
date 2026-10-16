@@ -640,3 +640,32 @@ export function useExclusionMutations() {
     }),
   };
 }
+
+/** An image of the brand's sites recognised as a logo; `kept`: a person put it back into the comparison. */
+export type RecognisedLogo = { id: string; url: string; thumb_url: string; width: number | null; height: number | null; score: number; pages: number; kept: boolean };
+
+/** Whether the brand sets its logos aside, and the images recognised as logos (administrators). */
+export function useLogos() {
+  const { admin, apiPath, brand } = useOrg();
+  return useQuery({
+    queryKey: ["logos", brand.id],
+    queryFn: () => api.get<{ enabled: boolean; items: RecognisedLogo[] }>(apiPath("/logos")),
+    enabled: admin,
+  });
+}
+
+export function useLogoMutations() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  const done = () => invalidate("logos", "site-images", "overview", "matches", "occurrences", "jobs");
+  return {
+    setEnabled: useMutation({
+      mutationFn: (enabled: boolean) => api.put<{ enabled: boolean; matches_removed: number }>(apiPath("/logos/setting"), { enabled }),
+      onSuccess: done,
+    }),
+    keep: useMutation({
+      mutationFn: (input: { id: string; kept: boolean }) => api.post(apiPath("/logos/keep"), { site_image_id: input.id, kept: input.kept }),
+      onSuccess: done,
+    }),
+  };
+}

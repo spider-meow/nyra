@@ -18,6 +18,7 @@ from nyra.config import Config
 from nyra.match import MatchStopped
 
 from . import db as cloud_db
+from . import logos as cloud_logos
 from . import storage as cloud_storage
 
 log = logging.getLogger("nyra.locate")
@@ -72,10 +73,10 @@ def locate_reference(database_url: str, storage: Any, org_id: uuid.UUID, brand_i
         reference = conn.execute("SELECT id, storage_path, work_path, phash FROM reference_images WHERE id = %s AND brand_id = %s",
                                  (reference_id, brand_id)).fetchone()
         rows = conn.execute(_SELECT, (brand_id,)).fetchall()
-        excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
+        excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match) | cloud_logos.set_aside_ids(conn, brand_id)
     if reference is None:
         raise NotSearchable("Référence introuvable.")
-    rows = [row for row in rows if row["id"] not in excluded]  # images set aside as recurring false positives
+    rows = [row for row in rows if row["id"] not in excluded]  # images set aside: recurring false positives, logos
     if not verify.available():
         raise NotSearchable("OpenCV manque sur ce worker : la recherche est impossible.")
     files = distinct_files(rows)

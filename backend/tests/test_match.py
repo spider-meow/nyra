@@ -366,3 +366,37 @@ def test_clip_embedding_end_to_end(base_image, config):
     similarity = cosine_similarity(emb_a, emb_b)
     assert similarity is not None
     assert similarity > 0.99
+
+
+def test_site_images_set_aside_are_left_out_and_changing_the_set_forces_a_full_pass(tmp_path):
+    from nyra import db
+    from nyra.match import run_matching, signature
+
+    class WithLogosAside(db.LocalStore):
+        aside: set = set()
+
+        def set_aside_ids(self):
+            return self.aside
+
+    db_path = tmp_path / "aside.db"
+    db.init_db(db_path)
+    config = _config_with_match()
+    same_hash = "ffff0000ffff0000"
+    with db.connect(db_path) as conn:
+        db.upsert_reference_image(conn, filename="a.jpg", path="a.jpg", expiry_date=None, credit=None, notes=None,
+                                  phash=same_hash, dhash=same_hash)
+        db.upsert_site_image(conn, url="https://example.com/x.jpg", phash=same_hash, dhash=same_hash)
+        logo = db.upsert_site_image(conn, url="https://example.com/logo.png", phash=same_hash, dhash=same_hash)
+    store = WithLogosAside(db_path)
+
+    assert run_matching(store, config, use_clip=False) == 2
+    store.aside = {logo}
+    assert run_matching(store, config, use_clip=False) == 1  # the set changed: everything is recomputed without the logo
+    assert run_matching(store, config, use_clip=False) == 1  # and that is then stable
+    store.aside = set()
+    assert run_matching(store, config, use_clip=False) == 2  # the setting turned off: the logo is compared again
+
+    # A brand that sets nothing aside keeps its signature (and so its results); any other set changes it.
+    assert signature(config.match, False) == signature(config.match, False, set_aside=set())
+    assert signature(config.match, False, set_aside={1}) != signature(config.match, False)
+    assert signature(config.match, False, set_aside={1}) != signature(config.match, False, set_aside={2})

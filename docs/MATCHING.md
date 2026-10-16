@@ -124,8 +124,14 @@ prompt instead of examples) are not done.
 
 ## Spotting logos (`nyra/logos.py`)
 
-Not wired into the matching yet. The question: is a whole site image a logo, so that it could be set aside instead of
-compared? Without any per-brand setup.
+Is a whole site image a logo, so that it can be set aside instead of compared? Without any per-brand setup. Wired in
+behind a per-brand setting, **off by default** (Réglages > Logos, administrators): when on, the images above the threshold
+are left out of the comparison, of "Droits non vérifiés" and of the search for a reference's copies, and the match
+signature changes (a full pass follows). They are listed in the settings, where one can be put back (`logo_kept`, for
+every address serving the same bytes; an address of the same file read later is still set aside, and the list then shows the
+file as not put back). Scores are filled in on demand: when the setting is turned on, at each comparison while it is on, and
+when the list is opened; a brand that does not use it never pays for it. A change made while a comparison runs queues another
+behind it, since the running one has read the old set.
 
 - **Colour statistics do not work.** Two dominant colours, a small palette and flat pixels flagged 256 of 1,716
   images of one brand's site; the best scores were white porcelain plates and cups on a white background (a real product
