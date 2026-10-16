@@ -80,7 +80,7 @@ export function DangerZone() {
   const [open, setOpen] = useState(false);
   if (!platformAdmin) return null;
   return (
-    <SettingsBlock danger title="Zone dangereuse" description="Réservée à l'équipe Nyra : chaque marque est un élément facturé. Supprimer une marque ne touche pas aux autres.">
+    <SettingsBlock danger title="Zone dangereuse" description="Réservée à l'équipe Nyra. Supprimer une marque ne touche pas aux autres.">
       <SettingsRow label={`Supprimer ${brand.name}`} hint="Sa bibliothèque, ses adresses, les images lues, les décisions et les rapports sont effacés. Impossible à annuler.">
         <Button variant="danger" onClick={() => setOpen(true)}>Supprimer la marque…</Button>
       </SettingsRow>
