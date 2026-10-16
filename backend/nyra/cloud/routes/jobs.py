@@ -77,6 +77,13 @@ def start_match(scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends
     return enqueue(ctx, scope, "match", {})
 
 
+@router.post(f"{BRAND}/jobs/index")
+def start_index(scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Index everything still waiting (the library and the images read on the sites): what an upload asks for, on demand.
+    Asked while one is already queued, it joins that one."""
+    return enqueue(ctx, scope, "index", {})
+
+
 @router.post(f"{BRAND}/jobs/{{job_id}}/cancel")
 def cancel_job(job_id: uuid.UUID, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:

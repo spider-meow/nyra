@@ -11,6 +11,7 @@ import { Collections } from "./settings/Collections";
 import { DangerZone } from "./settings/DangerZone";
 import { Detection } from "./settings/Detection";
 import { Exclusions } from "./settings/Exclusions";
+import { Indexation } from "./settings/Indexation";
 import { Profile } from "./settings/Profile";
 import { Reading } from "./settings/Reading";
 import { Team } from "./settings/Team";
@@ -35,6 +36,7 @@ const SECTIONS: Section[] = [
     ),
   },
   { id: "collections", label: "Collections", icon: "library", group: "marque", adminOnly: true, render: () => <Collections /> },
+  { id: "indexation", label: "Indexation", icon: "scan", group: "marque", adminOnly: true, render: () => <Indexation /> },
   { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Team /> },
   { id: "detection", label: "Détection", icon: "scan", group: "organisation", adminOnly: true, render: (data) => <Detection data={data} /> },
   { id: "reading", label: "Lecture des sites", icon: "eye", group: "organisation", adminOnly: true, render: (data) => <Reading data={data} /> },

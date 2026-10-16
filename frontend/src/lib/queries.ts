@@ -309,7 +309,7 @@ export function useStartJob() {
   const { apiPath } = useOrg();
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: (input: { kind: "crawl" | "match" | "report"; body?: unknown }) => {
+    mutationFn: (input: { kind: "crawl" | "match" | "index" | "report"; body?: unknown }) => {
       const path = input.kind === "report" ? "/reports" : `/jobs/${input.kind}`;
       return api.post<{ job: Job }>(apiPath(path), input.body);
     },
