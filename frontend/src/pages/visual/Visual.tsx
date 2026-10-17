@@ -1,13 +1,12 @@
 import { useMemo, useState } from "react";
 import { InfoTip } from "../../components/SettingsBlock";
-import { useToast } from "../../components/feedback";
 import { Button, DecisionBadge, EmptyState, Skeleton, Thumb } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
-import { hostOf, plural } from "../../lib/format";
+import { plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { usePresence, type Narrowing } from "../../lib/presence";
-import { useMatches, useReview } from "../../lib/queries";
-import { RemovalBadge, useFullRead } from "../review/Removal";
+import { useMatches } from "../../lib/queries";
+import { useFullRead } from "../review/Removal";
 import { photoRows } from "../review/rows";
 import type { MatchGroup } from "../../types";
 import { Pages } from "./Pages";
@@ -48,7 +47,7 @@ export function Visual(props: { referenceId: string; onBack: () => void }) {
           </div>
           <Versions versions={presence.data.versions} narrowing={narrowing} onNarrow={narrow} />
           <h2 className="mt-8 mb-3 text-base font-semibold">Les pages</h2>
-          <Pages data={presence.data} narrowing={narrowing} onNarrow={narrow} onOffset={setOffset} />
+          <Pages referenceId={props.referenceId} data={presence.data} narrowing={narrowing} onNarrow={narrow} onOffset={setOffset} />
         </>
       ) : <Skeleton className="h-64" />}
       <h2 className="mt-8 mb-3 text-base font-semibold">Les photos</h2>
@@ -57,27 +56,19 @@ export function Visual(props: { referenceId: string; onBack: () => void }) {
   );
 }
 
-/** The photos found online for this visual (one row per photo, its files together), where each one stands, and the manual
- * step: « J'ai remplacé » once it is changed, undone with « Annuler » (the next read says whether it really is). */
+/** The photos found online for this visual: one row per photo, its files together, and where its decision stands. */
 function Photos(props: { group: MatchGroup }) {
-  const { group } = props;
-  const review = useReview();
-  const toast = useToast();
-  const rows = photoRows([group], () => true);
-  const mark = (siteImageIds: string[], decision: "retenu" | "traite") =>
-    review.mutate({ referenceId: group.reference_id, siteImageIds, decision }, { onError: (error) => toast.show({ tone: "error", message: "La décision n'a pas été enregistrée", description: errorMessage(error) }) });
+  const rows = photoRows([props.group], () => true);
   return (
     <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
       {rows.map((row) => (
         <li key={row.key} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
           <Thumb src={row.hit.site_thumb} size={46} />
           <span className="min-w-0 flex-1 basis-40">
-            <span className="block truncate font-mono text-xs">{hostOf(row.hit.site_url)}</span>
+            <span className="block truncate font-mono text-xs">{row.hit.versions.join(", ")}</span>
             <span className="block truncate text-xs text-muted">{plural(row.hit.file_count, "fichier")}</span>
           </span>
-          {row.hit.removal ? <RemovalBadge removal={row.hit.removal} /> : <DecisionBadge decision={row.hit.decision} />}
-          {row.hit.decision !== "traite" && row.hit.decision !== "ecarte" ? <Button size="sm" disabled={review.isPending} aria-label={`J'ai remplacé la photo de ${hostOf(row.hit.site_url)}`} onClick={() => mark(row.hit.site_image_ids, "traite")}>J'ai remplacé</Button> : null}
-          {row.hit.decision === "traite" ? <Button size="sm" variant="ghost" disabled={review.isPending} aria-label={`Annuler : la photo de ${hostOf(row.hit.site_url)} n'est pas remplacée`} onClick={() => mark(row.hit.site_image_ids, "retenu")}>Annuler</Button> : null}
+          <DecisionBadge decision={row.hit.decision} />
         </li>
       ))}
     </ul>

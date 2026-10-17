@@ -51,7 +51,7 @@ def test_a_page_is_still_gone_or_unknown_from_the_last_read(cloud_database_url, 
         sections = presence.pages(conn, cloud_brand, ref, section="/collections")
 
     result = presence.summary(rows)
-    assert result["totals"] == {"still": 2, "gone": 2, "unknown": 2, "pages": 6}  # the false positive's page is not counted
+    assert result["totals"] == {"still": 2, "gone": 2, "unknown": 2, "marked": 0, "pages": 6}  # the false positive's page is not counted
     assert [item["section"] for item in result["versions"][0]["sections"]] == ["/blogs", "/", "/collections"]  # most still online first
     assert sorted(row["url"] for row in listed) == ["https://a.test/blogs/other-file", "https://a.test/blogs/seen"]
     assert {row["state"] for row in sections} == {"unknown"} and len(sections) == 2
@@ -63,7 +63,7 @@ def test_a_site_never_read_has_only_unknown_pages(cloud_database_url, cloud_org,
         site, ref = _setup(conn, cloud_org, cloud_brand)
         conn.execute("DELETE FROM crawl_runs WHERE site_id = %s", (site,))
         _page(conn, cloud_org, site, _image(conn, cloud_org, site, ref, "a"), "/blogs/x", seen=READ)
-        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 0, "gone": 0, "unknown": 1, "pages": 1}
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 0, "gone": 0, "unknown": 1, "marked": 0, "pages": 1}
 
 
 def test_a_read_stamps_the_links_and_only_a_successful_page_is_tracked(cloud_database_url, cloud_org, cloud_brand):
@@ -136,7 +136,7 @@ def test_the_files_of_one_photo_on_a_page_count_the_page_once(cloud_database_url
         _page(conn, cloud_org, site, first, "/blogs/x", seen=READ + timedelta(minutes=2))
         page = conn.execute("SELECT id FROM pages WHERE site_id = %s AND url = 'https://a.test/blogs/x'", (site,)).fetchone()["id"]
         conn.execute("INSERT INTO image_pages (image_id, page_id, last_seen) VALUES (%s, %s, %s)", (second, page, READ + timedelta(minutes=2)))
-        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 1, "gone": 0, "unknown": 0, "pages": 1}
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 1, "gone": 0, "unknown": 0, "marked": 0, "pages": 1}
 
 
 def test_a_page_checked_on_its_own_says_what_it_shows_whatever_the_last_full_read_saw(cloud_database_url, cloud_org, cloud_brand):
@@ -164,4 +164,38 @@ def test_a_page_whose_read_began_and_did_not_end_is_unknown(cloud_database_url, 
         _page(conn, cloud_org, site, image, "/blogs/x", seen=READ - timedelta(days=1))
         assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"]["gone"] == 1
         conn.execute("UPDATE pages SET status = 'pending', read_started_at = %s WHERE site_id = %s", (READ + timedelta(hours=1), site))
-        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 0, "gone": 0, "unknown": 1, "pages": 1}
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 0, "gone": 0, "unknown": 1, "marked": 0, "pages": 1}
+
+
+def test_a_page_marked_replaced_says_where_the_person_is_and_only_for_its_visual(cloud_database_url, cloud_org, cloud_brand):
+    after = READ + timedelta(minutes=2)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+        other = _visual(conn, cloud_org, cloud_brand, site, "other", decision="retenu", pages=[])
+        for path in ("/blogs/a", "/blogs/b", "/blogs/c"):
+            _page(conn, cloud_org, site, image, path, seen=after)
+        found = presence.pages_showing(conn, cloud_brand, ref, ["https://a.test/blogs/a", "https://a.test/blogs/b", "https://a.test/nowhere"])
+        assert sorted(found) == ["https://a.test/blogs/a", "https://a.test/blogs/b"]  # a page that does not show the visual is not one of its pages
+        presence.set_replaced(conn, cloud_org, ref, [found["https://a.test/blogs/a"]], replaced=True, user_id=None)
+        presence.set_replaced(conn, cloud_org, ref, [found["https://a.test/blogs/a"]], replaced=True, user_id=None)  # twice: still once
+        rows = presence.counts(conn, cloud_brand, ref)
+        marked_only = presence.pages(conn, cloud_brand, ref, marked=True)
+        unmarked = presence.pages(conn, cloud_brand, ref, marked=False)
+        elsewhere = presence.counts(conn, cloud_brand, other)  # the mark belongs to one visual
+        assert presence.summary(rows)["totals"]["marked"] == 1
+        assert [row["url"] for row in marked_only] == ["https://a.test/blogs/a"] and len(unmarked) == 2
+        assert presence.total(rows, marked=False) == 2 and presence.total(rows, marked=True) == 1
+        assert presence.summary(elsewhere)["totals"]["marked"] == 0
+        presence.set_replaced(conn, cloud_org, ref, [found["https://a.test/blogs/a"]], replaced=False, user_id=None)
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"]["marked"] == 0
+
+
+def test_the_list_of_visuals_counts_the_pages_marked_replaced(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, _ = _setup(conn, cloud_org, cloud_brand)
+        ref = _visual(conn, cloud_org, cloud_brand, site, "marked", decision="retenu", pages=[("/a", True, True), ("/b", True, True)])
+        found = presence.pages_showing(conn, cloud_brand, ref, ["https://a.test/marked/a"])
+        presence.set_replaced(conn, cloud_org, ref, list(found.values()), replaced=True, user_id=None)
+        items = {item["row"]["reference_id"]: item for item in presence.visuals(presence.by_visual(conn, cloud_brand))}
+    assert (items[ref]["marked"], items[ref]["pages"], items[ref]["replaced"]) == (1, 2, False)  # marked is not verified: still listed

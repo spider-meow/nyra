@@ -23,7 +23,7 @@ export function Summary(props: { group: MatchGroup; presence: Presence | undefin
 }
 
 function Headline(props: { totals: Presence["totals"] }) {
-  const { still, gone, unknown, pages } = props.totals;
+  const { still, gone, unknown, marked, pages } = props.totals;
   const share = (count: number) => `${(count / Math.max(pages, 1)) * 100}%`;
   // Pages not read since are not "gone": with none read, there is no figure yet.
   const unmeasured = unknown === pages;
@@ -44,7 +44,7 @@ function Headline(props: { totals: Presence["totals"] }) {
         <span className="bg-expired" style={{ width: share(still) }} />
         <span className="bg-line-strong" style={{ width: share(unknown) }} />
       </div>
-      <p className="mt-1.5 text-xs text-muted">{gone.toLocaleString("fr-FR")} retirées · {unknown.toLocaleString("fr-FR")} pas relues</p>
+      <p className="mt-1.5 text-xs text-muted">{marked.toLocaleString("fr-FR")} marquées remplacées · {gone.toLocaleString("fr-FR")} retirées · {unknown.toLocaleString("fr-FR")} pas relues</p>
     </div>
   );
 }

@@ -62,9 +62,10 @@ export function Visuals() {
 /** What a visual's line says: the pages still showing it, and the ones not read again (never counted as gone). */
 function figures(item: VisualItem): [string, string] {
   const pages = (count: number) => `${count.toLocaleString("fr-FR")} page${count > 1 ? "s" : ""}`;
-  if (item.replaced) return ["Remplacé", `${pages(item.pages)} relues`];
-  if (item.still) return [pages(item.still), item.unknown ? `encore en ligne · ${item.unknown.toLocaleString("fr-FR")} à relire` : `encore en ligne sur ${item.pages.toLocaleString("fr-FR")}`];
-  return item.unknown === item.pages ? ["Pas encore mesuré", "à relire"] : ["0 page confirmée", `${item.unknown.toLocaleString("fr-FR")} à relire`];
+  const marked = item.marked ? ` · ${item.marked.toLocaleString("fr-FR")} marquées remplacées` : "";
+  if (item.replaced) return ["Remplacé", `${pages(item.pages)} relues${marked}`];
+  if (item.still) return [pages(item.still), (item.unknown ? `encore en ligne · ${item.unknown.toLocaleString("fr-FR")} à relire` : `encore en ligne sur ${item.pages.toLocaleString("fr-FR")}`) + marked];
+  return item.unknown === item.pages ? ["Pas encore mesuré", `à relire${marked}`] : ["0 page confirmée", `${item.unknown.toLocaleString("fr-FR")} à relire${marked}`];
 }
 
 function VisualRow(props: { item: VisualItem; to: string }) {

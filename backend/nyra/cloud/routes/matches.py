@@ -19,6 +19,11 @@ from .common import BRAND, BrandScope, Ctx, brand_member_dep, get_ctx
 router = APIRouter()
 
 
+class ReplacedBody(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=cloud_presence.MAX_PAGES_PER_REQUEST)
+    replaced: bool
+
+
 class ReviewBody(BaseModel):
     reference_id: uuid.UUID
     site_image_ids: list[uuid.UUID] = Field(default_factory=list, max_length=2000)
@@ -102,7 +107,7 @@ def review(body: ReviewBody, scope: BrandScope = Depends(brand_member_dep), ctx:
 
 @router.get(f"{BRAND}/visuals/{{reference_id}}/presence")
 def presence(reference_id: uuid.UUID, site: Optional[uuid.UUID] = None, section: Optional[str] = Query(None, max_length=200),
-             state: Optional[str] = Query(None, pattern="^(still|gone|unknown)$"),
+             state: Optional[str] = Query(None, pattern="^(still|gone|unknown)$"), marked: Optional[bool] = None,
              limit: int = Query(50, ge=1, le=cloud_presence.MAX_PAGES_PER_REQUEST), offset: int = Query(0, ge=0),
              scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """Where a visual is still online, page by page (see `cloud.presence`): the counts per site version and section, and
@@ -111,8 +116,8 @@ def presence(reference_id: uuid.UUID, site: Optional[uuid.UUID] = None, section:
         if not conn.execute("SELECT 1 FROM reference_images WHERE id = %s AND brand_id = %s", (reference_id, scope.brand_id)).fetchone():
             raise HTTPException(status_code=404, detail="Référence introuvable.")
         counts = cloud_presence.counts(conn, scope.brand_id, reference_id)
-        rows = cloud_presence.pages(conn, scope.brand_id, reference_id, site=site, section=section, state=state, limit=limit, offset=offset)
-    return {**cloud_presence.summary(counts), "total": cloud_presence.total(counts, site=site, section=section, state=state), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"]} for row in rows],
+        rows = cloud_presence.pages(conn, scope.brand_id, reference_id, site=site, section=section, state=state, marked=marked, limit=limit, offset=offset)
+    return {**cloud_presence.summary(counts), "total": cloud_presence.total(counts, site=site, section=section, state=state, marked=marked), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"], "marked": row["marked"]} for row in rows],
             "offset": offset}
 
 
@@ -132,5 +137,20 @@ def visuals(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
         out.append({"reference_id": str(row["reference_id"]), "filename": row["filename"], "expiry_date": expiry,
                     "days_left": left, "status": report_module.rights_status(row, left),
                     "thumb": urls.get(row["thumb_path"] or "") or urls.get(row["storage_path"] or "", ""),
-                    **{key: item[key] for key in (*cloud_presence.STATES, "pages", "replaced")}})
+                    **{key: item[key] for key in (*cloud_presence.STATES, "marked", "pages", "replaced")}})
     return {"visuals": out}
+
+
+@router.post(f"{BRAND}/visuals/{{reference_id}}/replaced")
+def mark_replaced(reference_id: uuid.UUID, body: ReplacedBody, scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Mark pages as replaced for a visual (or take the mark off): where the person changed it by hand. A page that does not
+    show the visual cannot be marked."""
+    urls = list(dict.fromkeys(body.urls))
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        if not conn.execute("SELECT 1 FROM reference_images WHERE id = %s AND brand_id = %s", (reference_id, scope.brand_id)).fetchone():
+            raise HTTPException(status_code=404, detail="Référence introuvable.")
+        pages = cloud_presence.pages_showing(conn, scope.brand_id, reference_id, urls)
+        if set(pages) != set(urls):
+            raise HTTPException(status_code=400, detail="Une des pages ne montre pas ce visuel.")
+        cloud_presence.set_replaced(conn, scope.org_id, reference_id, list(pages.values()), replaced=body.replaced, user_id=scope.member.user_id)
+    return {"ok": True, "pages": len(pages)}
