@@ -17,7 +17,12 @@ import { Visual } from "./visual/Visual";
 export function Review() {
   const [params, setParams] = useSearchParams();
   const visual = params.get("visual");
-  const back = () => setParams((current) => (current.delete("visual"), current));
+  // Back to the list with the filters it had; a link opened from elsewhere has none, and the default window may not hold this visual.
+  const back = () => setParams((current) => {
+    current.delete("visual");
+    if (!current.has("window")) current.set("window", "3650");
+    return current;
+  });
   return visual ? <Visual referenceId={visual} onBack={back} /> : <ReviewList />;
 }
 
