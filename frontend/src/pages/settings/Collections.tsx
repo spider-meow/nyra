@@ -24,12 +24,16 @@ export function Collections() {
             : editing && "move" in editing && editing.move === collection.id ? <MoveField folders={folders} collection={collection} onDone={(parentId) => move(collection.id, parentId)} />
             : (
               <>
-                <span className={cx("min-w-0 flex-1 basis-40 [overflow-wrap:anywhere]", depth === 1 && "font-medium")}>{collection.name}</span>
-                <span className="ml-auto flex flex-wrap gap-1">
-                  {depth < MAX_DEPTH ? <Button size="sm" variant="ghost" aria-label={`+ Sous-collection de ${collection.name}`} onClick={() => setEditing({ add: collection.id })}>+ Sous-collection</Button> : null}
-                  <Button size="sm" variant="ghost" aria-label={`Renommer ${collection.name}`} onClick={() => setEditing({ rename: collection.id })}>Renommer</Button>
-                  {moveTargets(folders, collection).length ? <Button size="sm" variant="ghost" aria-label={`Déplacer ${collection.name}`} onClick={() => setEditing({ move: collection.id })}>Déplacer</Button> : null}
-                  <Button size="sm" variant="ghost" aria-label={`Supprimer ${collection.name}`} onClick={() => void remove(collection)}>Supprimer</Button>
+                <span className={cx("min-w-0 flex-1 basis-40 [overflow-wrap:anywhere]", depth === 1 && "font-medium")}>
+                  {depth > 1 ? <span aria-hidden className="mr-2 text-faint">↳</span> : null}
+                  {collection.name}
+                </span>
+                {/* Four fixed slots: an action is always in the same column, whatever the level. */}
+                <span className="ml-auto flex items-center">
+                  {depth < MAX_DEPTH ? <Button size="sm" variant="ghost" className="w-[7.75rem] px-2" aria-label={`+ Sous-collection de ${collection.name}`} onClick={() => setEditing({ add: collection.id })}>+ Sous-collection</Button> : <span className="w-[7.75rem] px-2" />}
+                  <Button size="sm" variant="ghost" className="w-[4.75rem] px-2" aria-label={`Renommer ${collection.name}`} onClick={() => setEditing({ rename: collection.id })}>Renommer</Button>
+                  {moveTargets(folders, collection).length ? <Button size="sm" variant="ghost" className="w-[4.5rem] px-2" aria-label={`Déplacer ${collection.name}`} onClick={() => setEditing({ move: collection.id })}>Déplacer</Button> : <span className="w-[4.5rem]" />}
+                  <Button size="sm" variant="ghost" className="w-20 px-2 text-expired! hover:text-expired!" aria-label={`Supprimer ${collection.name}`} onClick={() => void remove(collection)}>Supprimer</Button>
                 </span>
               </>
             )}
