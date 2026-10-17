@@ -36,8 +36,9 @@ FROM mcr.microsoft.com/playwright/python:v1.63.0-noble AS worker
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     HF_HOME=/opt/hf PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app
-# CPU wheels: the default PyPI torch pulls several GB of CUDA libraries.
-RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2"
+# CPU wheels: the default PyPI torch pulls several GB of CUDA libraries. torchvision (needed by
+# open_clip) comes from the same index so the two always match.
+RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2" torchvision
 COPY pyproject.toml README.md ./
 COPY backend/ ./backend/
 RUN pip install ".[worker,observability]" playwright==1.63.0 && playwright install chromium
