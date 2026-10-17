@@ -71,7 +71,7 @@ the same work. The Droplet is the recommended path.
 4. **Authentication > Emails > Templates**: paste `supabase/templates/recovery.html`
    (*Reset password*) and `supabase/templates/invite.html` (*Invite user*) with
    the subjects « Nouveau mot de passe — Nyra » and « Votre accès à Nyra ». The
-   logo is read from `<site>/nyra-logo.png`, so *Site URL* must be public.
+   templates carry no image: mail clients block remote images from unknown senders.
 5. **Environment**: copy `.env.example` to `.env` and fill it in, including
    `NYRA_PUBLIC_URL`.
 6. **First organization**:
