@@ -259,7 +259,7 @@ export type SiteImagesPage = {
   total: number;
   counts: Record<SiteImageView, number>;
   sites: { id: string; label: string; count: number }[];
-  /** Whether the brand leaves the logos out of the comparison (Réglages > Logos). */
+  /** Whether the brand leaves the logos out of the comparison (Réglages > Général > Logos). */
   logos_set_aside: boolean;
 };
 
