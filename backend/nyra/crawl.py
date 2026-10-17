@@ -47,6 +47,21 @@ IMAGE_DOWNLOADS_PER_PAGE = 6
 
 # --- URLs -------------------------------------------------------------------
 
+# What a page that answered with another page is recorded as (not 2xx: its links are not tracked).
+REDIRECTED = 302
+
+
+def same_page(requested: str, final: str) -> bool:
+    """Whether the browser ended on the page asked for (the host with or without `www.`, the path with or without a
+    closing slash; the query and the fragment do not make another page)."""
+    a, b = urlparse(requested), urlparse(final)
+
+    def host(parsed) -> str:
+        return parsed.netloc.lower().removeprefix("www.")
+
+    return host(a) == host(b) and a.path.rstrip("/") == b.path.rstrip("/")
+
+
 def normalize_url(url: str) -> str:
     """Canonical form used as the page key.
 
@@ -425,6 +440,7 @@ class CrawlStats:
     # can exceed the crawl's duration).
     sitemap_urls: int = 0
     pages_failed: int = 0
+    pages_redirected: int = 0      # the address answered with another page: read, but not recorded as itself
     http_statuses: dict[str, int] = field(default_factory=dict)
     images_known: int = 0          # already stored under this URL: not downloaded again
     images_duplicate: int = 0      # same bytes already stored under another URL
@@ -497,7 +513,7 @@ Embedder = Callable[[list[Image.Image]], list[np.ndarray]]
 
 class _Crawl:
     def __init__(self, site_url: str, store: CrawlStore, config: Config, *, max_pages: int,
-                 embedder: Optional[Embedder], resume: bool, progress, should_stop):
+                 embedder: Optional[Embedder], resume: bool, progress, should_stop, follow_links: bool = True):
         self.site_url = normalize_url(site_url)
         self.netloc = urlparse(self.site_url).netloc
         self.store = store
@@ -505,6 +521,7 @@ class _Crawl:
         self.max_pages = max_pages
         self.embedder = embedder
         self.resume = resume
+        self.follow_links = follow_links
         self.progress = progress
         self.should_stop = should_stop or (lambda: False)
         self.stats = CrawlStats()
@@ -536,6 +553,17 @@ class _Crawl:
         self.stats.sitemap_urls = len(seeds)
         self.stats.pages_queued = len(self.queue)
         self.stats.discover_seconds = time.perf_counter() - started
+
+    def seed(self, urls: Sequence[str]) -> None:
+        """Read these pages and nothing else: no sitemap, no link followed. An address outside the site is left out."""
+        cfg = self.config.crawl
+        with netguard.client(headers={"User-Agent": cfg.user_agent}) as client:
+            robots = load_robots(self.site_url, client)
+        self.robots = robots if cfg.respect_robots_txt else None
+        for url in urls:
+            if same_site(url, self.netloc):
+                self.enqueue(url)  # as stored: it is the key of the page, so the read lands on the same row
+        self.stats.pages_queued = len(self.queue)
 
     def enqueue(self, url: str) -> None:
         if url not in self.visited and url not in self.queued:
@@ -645,10 +673,15 @@ class _Crawl:
         image_urls = extract_images_from_html(html, final_url)
         joined = {urljoin(final_url, u) for u in background_urls if u and not u.startswith("data:")}
         image_urls |= {u for u in joined if urlparse(u).scheme in {"http", "https"}}  # as for the HTML images above
-        for link in extract_internal_links(html, final_url, self.netloc):
-            self.enqueue(link)
+        if self.follow_links:
+            for link in extract_internal_links(html, final_url, self.netloc):
+                self.enqueue(link)
 
         await self._collect_images(http, sorted(image_urls), page_id)
+        # A page that sent the reader elsewhere says nothing about what the requested page shows: recorded as a redirection.
+        if not same_page(url, final_url):
+            self.stats.pages_redirected += 1
+            http_status = REDIRECTED
         await asyncio.to_thread(self._locked, self.store.mark_page, page_id, http_status)
         self.stats.pages_visited += 1
 
@@ -752,6 +785,28 @@ def crawl_site(
                    progress=progress, should_stop=should_stop)
     started = time.perf_counter()
     crawl.discover()
+    stats = asyncio.run(crawl.run())
+    stats.duration_seconds = time.perf_counter() - started
+    return stats
+
+
+def crawl_pages(
+    site_url: str,
+    urls: Sequence[str],
+    store: CrawlStore,
+    config: Config,
+    *,
+    embedder: Optional[Embedder] = None,
+    progress: Optional[Callable[[CrawlStats], None]] = None,
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> CrawlStats:
+    """Read only these pages of a site again (a person changed a visual on them): the same read as `crawl_site`, with no
+    sitemap and no link followed, and at most as many pages as addresses given."""
+    netguard.check_url(site_url)
+    crawl = _Crawl(site_url, store, config, max_pages=len(urls), embedder=embedder, resume=False, progress=progress,
+                   should_stop=should_stop, follow_links=False)
+    crawl.seed(urls)
+    started = time.perf_counter()
     stats = asyncio.run(crawl.run())
     stats.duration_seconds = time.perf_counter() - started
     return stats

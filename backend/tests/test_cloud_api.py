@@ -1567,3 +1567,37 @@ def test_visuals_to_replace_lists_what_a_person_confirmed(client, org_with_users
 
     other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
     assert client.get(f"/api/orgs/{org_id}/brands/{other['id']}/visuals", headers=_headers(admin_id)).json()["visuals"] == []
+
+
+def test_a_page_check_is_asked_for_known_pages_of_the_brand_only(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand)
+        for path in ("a", "b"):
+            conn.execute("INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, %s, 'done')", (org_id, site, f"https://target.test/{path}"))
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE brand_id = %s AND status IN ('queued', 'running')", (cloud_brand,))
+    check = f"{base}/jobs/check"
+    assert client.post(check, headers=_headers(client_id), json={"urls": ["https://target.test/a"]}).status_code == 403  # a reading is for administrators
+    assert client.post(check, headers=_headers(admin_id), json={"urls": []}).status_code == 422
+    assert client.post(check, headers=_headers(admin_id), json={"urls": [f"https://target.test/{n}" for n in range(51)]}).status_code == 422  # 50 at most
+    assert client.post(check, headers=_headers(admin_id), json={"urls": ["https://target.test/a", "https://elsewhere.test/x"]}).status_code == 400
+    done = client.post(check, headers=_headers(admin_id), json={"urls": ["https://target.test/a", "https://target.test/a"]})
+    assert done.status_code == 200
+    job = done.json()["job"]
+    assert job["kind"] == "check" and job["params"] == {"pages": {str(site): ["https://target.test/a"]}}  # a repeated address is read once
+    assert client.post(check, headers=_headers(admin_id), json={"urls": ["https://target.test/b"]}).status_code == 409  # one check at a time
+
+    other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
+    assert client.post(f"/api/orgs/{org_id}/brands/{other['id']}/jobs/check", headers=_headers(admin_id), json={"urls": ["https://target.test/b"]}).status_code == 400
+
+
+def test_a_page_check_accepts_an_address_that_is_a_page_of_two_sites_of_the_brand(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, _, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        first = _site(conn, org_id, cloud_brand)
+        second = cloud_db.create_site(conn, org_id=org_id, brand_id=cloud_brand, url="https://twin.test/")
+        for site in (first, second):
+            conn.execute("INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, 'https://shared.test/p', 'done')", (org_id, site))
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE brand_id = %s AND status IN ('queued', 'running')", (cloud_brand,))
+    done = client.post(f"{base}/jobs/check", headers=_headers(admin_id), json={"urls": ["https://shared.test/p"]})
+    assert done.status_code == 200 and sorted(done.json()["job"]["params"]["pages"]) == sorted([str(first), str(second)])

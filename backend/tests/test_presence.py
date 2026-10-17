@@ -26,8 +26,8 @@ def _image(conn, org, site, ref, name):
 
 
 def _page(conn, org, site, image, path, *, tracked=True, crawled=READ + timedelta(minutes=1), seen=None):
-    page = conn.execute("INSERT INTO pages (org_id, site_id, url, status, crawled_at, links_tracked) VALUES (%s, %s, %s, 'done', %s, %s) ON CONFLICT (site_id, url) DO UPDATE SET url = excluded.url RETURNING id",
-                        (org, site, f"https://a.test{path}", crawled, tracked)).fetchone()["id"]
+    page = conn.execute("INSERT INTO pages (org_id, site_id, url, status, crawled_at, links_tracked, read_started_at) VALUES (%s, %s, %s, 'done', %s, %s, %s) ON CONFLICT (site_id, url) DO UPDATE SET url = excluded.url RETURNING id",
+                        (org, site, f"https://a.test{path}", crawled, tracked, crawled - timedelta(minutes=1))).fetchone()["id"]
     conn.execute("INSERT INTO image_pages (image_id, page_id, last_seen) VALUES (%s, %s, %s)", (image, page, seen))
 
 
@@ -137,3 +137,31 @@ def test_the_files_of_one_photo_on_a_page_count_the_page_once(cloud_database_url
         page = conn.execute("SELECT id FROM pages WHERE site_id = %s AND url = 'https://a.test/blogs/x'", (site,)).fetchone()["id"]
         conn.execute("INSERT INTO image_pages (image_id, page_id, last_seen) VALUES (%s, %s, %s)", (second, page, READ + timedelta(minutes=2)))
         assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 1, "gone": 0, "unknown": 0, "pages": 1}
+
+
+def test_a_page_checked_on_its_own_says_what_it_shows_whatever_the_last_full_read_saw(cloud_database_url, cloud_org, cloud_brand):
+    """The last full read saw the image on the page; a person changed the visual and checked that page alone: it is gone."""
+    after_full_read = READ + timedelta(minutes=2)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+        _page(conn, cloud_org, site, image, "/blogs/changed", seen=after_full_read)  # seen in the full read
+        _page(conn, cloud_org, site, image, "/blogs/unchanged", seen=after_full_read)
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"]["still"] == 2
+        # The check of /blogs/changed alone, an hour later: the page read again, the image no longer on it (its link not stamped).
+        later = READ + timedelta(hours=1)
+        conn.execute("UPDATE pages SET read_started_at = %s, crawled_at = %s, links_tracked = true WHERE url LIKE %s",
+                     (later - timedelta(minutes=1), later, "%/blogs/changed"))
+        totals = presence.summary(presence.counts(conn, cloud_brand, ref))["totals"]
+    assert (totals["still"], totals["gone"]) == (1, 1)
+
+
+def test_a_page_whose_read_began_and_did_not_end_is_unknown(cloud_database_url, cloud_org, cloud_brand):
+    """A page read before (gone, last time) is opened again and the read is cut short: its links were not stamped, so it must not read as gone."""
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+        _page(conn, cloud_org, site, image, "/blogs/x", seen=READ - timedelta(days=1))
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"]["gone"] == 1
+        conn.execute("UPDATE pages SET status = 'pending', read_started_at = %s WHERE site_id = %s", (READ + timedelta(hours=1), site))
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 0, "gone": 0, "unknown": 1, "pages": 1}

@@ -36,7 +36,7 @@ reproducible given the same inputs and thresholds.
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
 queued after every upload, also backfills older rows; an administrator can start it from Réglages > Général > Maintenance, `POST .../jobs/index`), `report`, `locate` (checks one
-reference against every stored site image to find its copies and crops; see `MATCHING.md`).
+reference against every stored site image to find its copies and crops; see `MATCHING.md`), `check` (reads again only the pages a person gives, 50 at most, `POST .../jobs/check`: no sitemap, no link followed, no comparison, and no crawl run, since a run would stand for a read of the whole site). A page that answered with another page (a redirection), failed, was blocked by robots.txt or whose read did not end is never counted as gone, and the job says how many were left out. A check counts once a full read of the site has finished; deploy the worker before the web process, so a page created after the migration always records when its read started.
 
 ## Organizations and brands
 

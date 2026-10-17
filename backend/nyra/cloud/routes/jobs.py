@@ -16,6 +16,13 @@ from .common import BRAND, BrandScope, Ctx, brand_admin_dep, brand_member_dep, e
 
 router = APIRouter()
 
+# A page check reads each address in a browser: a few dozen is what a person changes by hand.
+MAX_CHECKED_PAGES = 50
+
+
+class CheckBody(BaseModel):
+    urls: list[str] = Field(min_length=1, max_length=MAX_CHECKED_PAGES)
+
 
 class CrawlBody(BaseModel):
     site_ids: list[uuid.UUID] = Field(default_factory=list, max_length=50)
@@ -70,6 +77,23 @@ def start_crawl(body: CrawlBody, scope: BrandScope = Depends(brand_admin_dep), c
     max_pages = min(body.max_pages or config.crawl.max_pages, config.crawl.max_pages_limit)
     return enqueue(ctx, scope, "crawl", {"site_ids": [str(site_id) for site_id in body.site_ids], "max_pages": max_pages,
                                          "fresh": body.fresh, "then_match": body.then_match})
+
+
+@router.post(f"{BRAND}/jobs/check")
+def start_check(body: CheckBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Read again only these pages (at most `MAX_CHECKED_PAGES`), each of them a page already read for this brand."""
+    urls = list(dict.fromkeys(body.urls))
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        rows = conn.execute(
+            "SELECT p.url, p.site_id FROM pages p JOIN sites s ON s.id = p.site_id WHERE s.brand_id = %s AND p.url = ANY(%s)",
+            (scope.brand_id, urls),
+        ).fetchall()
+    if {row["url"] for row in rows} != set(urls):  # a set: an address may be a page of two sites of the brand
+        raise HTTPException(status_code=400, detail="Une des pages n'est pas une page de cette marque.")
+    pages: dict[str, list[str]] = {}
+    for row in rows:
+        pages.setdefault(str(row["site_id"]), []).append(row["url"])
+    return enqueue(ctx, scope, "check", {"pages": pages})
 
 
 @router.post(f"{BRAND}/jobs/match")

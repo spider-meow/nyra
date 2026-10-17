@@ -1,7 +1,10 @@
 import { Select } from "../../components/Dropdown";
+import { useToast } from "../../components/feedback";
 import { Button, Segmented, cx } from "../../components/ui";
+import { errorMessage } from "../../lib/api";
 import { hostOf, pathOf } from "../../lib/format";
-import { PAGE_SIZE, type Counts, type Narrowing, type PageState, type Presence } from "../../lib/presence";
+import { useOrg } from "../../lib/org";
+import { MAX_CHECKED_PAGES, PAGE_SIZE, useCheckPages, type Counts, type Narrowing, type PageState, type Presence } from "../../lib/presence";
 
 const STATE_TEXT: Record<PageState, { label: string; tone: string }> = {
   still: { label: "Encore en ligne", tone: "bg-expired-soft text-expired" },
@@ -29,6 +32,15 @@ function emptyText(counts: Counts, state: PageState | undefined): string {
 export function Pages(props: { data: Presence; narrowing: Narrowing; onNarrow: (narrowing: Narrowing) => void; onOffset: (offset: number) => void }) {
   const { data, narrowing } = props;
   const counts = countsFor(data, narrowing);
+  const shown = data.pages.slice(0, MAX_CHECKED_PAGES);
+  const { admin } = useOrg();
+  const toast = useToast();
+  const { check, busy } = useCheckPages();
+  // Reads these pages again, and only these: after changing a visual on a page, this says whether it is gone.
+  const verify = (urls: string[]) => check.mutate(urls, {
+    onSuccess: () => toast.show({ tone: "success", message: urls.length > 1 ? `Vérification de ${urls.length} pages lancée` : "Vérification de la page lancée", description: "La progression s'affiche en bas de l'écran.", duration: 4000 }),
+    onError: (error) => toast.show({ tone: "error", message: "La vérification n'a pas démarré", description: errorMessage(error) }),
+  });
   const last = Math.floor((Math.max(data.total, 1) - 1) / PAGE_SIZE) * PAGE_SIZE;
   const states: { value: PageState | "all"; label: string }[] = [
     { value: "all", label: "Toutes" },
@@ -54,16 +66,18 @@ export function Pages(props: { data: Presence; narrowing: Narrowing; onNarrow: (
           {data.total.toLocaleString("fr-FR")} page{data.total > 1 ? "s" : ""}
           {narrowing.section ? ` dans ${narrowing.section}` : ""}
         </p>
+        {admin && data.pages.length ? <Button size="sm" loading={busy} onClick={() => verify(shown.map((page) => page.url))}>Vérifier ces {shown.length} pages</Button> : null}
       </div>
       {data.pages.length ? (
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
           {data.pages.map((page) => (
-            <li key={page.url} className="flex items-center gap-3 px-4 py-2.5">
-              <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="min-w-0 flex-1 hover:underline">
+            <li key={page.url} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
+              <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="min-w-0 basis-full hover:underline sm:flex-1 sm:basis-0">
                 <span className="block truncate text-xs text-muted">{hostOf(page.url)}</span>
                 <span className="block truncate font-mono text-[13px]">{pathOf(page.url)}</span>
               </a>
               <span className={cx("shrink-0 rounded-md px-2 py-px text-xs font-medium", STATE_TEXT[page.state].tone)}>{STATE_TEXT[page.state].label}</span>
+              {admin ? <Button size="sm" variant="ghost" disabled={busy} aria-label={`Vérifier la page ${pathOf(page.url)}`} onClick={() => verify([page.url])}>Vérifier</Button> : null}
             </li>
           ))}
         </ul>

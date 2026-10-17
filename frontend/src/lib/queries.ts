@@ -282,6 +282,7 @@ export const refreshAfter: Record<Job["kind"], string[]> = {
   index: ["occurrences", "overview", "matches", "library", "site-images", "insights"],
   report: ["reports", "insights"],
   locate: ["occurrences"],
+  check: ["occurrences", "overview"],
 };
 
 export function useInvalidate() {
