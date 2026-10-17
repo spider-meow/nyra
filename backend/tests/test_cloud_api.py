@@ -1482,10 +1482,19 @@ def test_a_photo_marked_removed_says_what_the_last_read_found(client, org_with_u
     with cloud_db.connect(cloud_database_url) as conn:
         ref = cloud_db.upsert_reference_image(conn, org_id=org_id, brand_id=cloud_brand, filename="v.jpg", storage_path=f"{org_id}/v.jpg",
                                               expiry_date="2026-10-01", credit=None, notes=None, phash=same_hash, dhash=same_hash)
+
+
+def test_presence_lists_the_pages_of_a_visual_and_stays_inside_its_brand(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    same_hash = "ffff0000ffff0000"
+    with cloud_db.connect(cloud_database_url) as conn:
+        ref = cloud_db.upsert_reference_image(conn, org_id=org_id, brand_id=cloud_brand, filename="v.jpg", storage_path=f"{org_id}/v.jpg",
+                                              expiry_date=None, credit=None, notes=None, phash=same_hash, dhash=same_hash)
         site = _site(conn, org_id, cloud_brand)
         image = conn.execute("INSERT INTO site_images (org_id, site_id, url, storage_path, phash, dhash) VALUES (%s, %s, 'https://target.test/v.jpg', %s, %s, %s) RETURNING id",
                              (org_id, site, f"{org_id}/v.jpg", same_hash, same_hash)).fetchone()["id"]
         cloud_db.write_matches(conn, org_id, [(ref, image, "phash", 1.0, "haut")])
+<<<<<<< HEAD
         page = conn.execute("INSERT INTO pages (org_id, site_id, url, status, http_status) VALUES (%s, %s, 'https://target.test/a', 'done', 200) RETURNING id", (org_id, site)).fetchone()["id"]
         cloud_db.link_image_page(conn, image, page)
 
@@ -1510,3 +1519,18 @@ def test_a_photo_marked_removed_says_what_the_last_read_found(client, org_with_u
     assert removal() == "unread"  # the page failed to load: nothing is known about the image
     read(seen=True)
     assert removal() == "online"
+=======
+        page = conn.execute("INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, 'https://target.test/blogs/a?x=1', 'done') RETURNING id", (org_id, site)).fetchone()["id"]
+        cloud_db.link_image_page(conn, image, page)
+
+    data = client.get(f"{base}/visuals/{ref}/presence", headers=_headers(client_id)).json()
+    assert data["totals"] == {"still": 0, "gone": 0, "unknown": 1, "pages": 1}  # no finished read of the site yet
+    assert data["pages"] == [{"url": "https://target.test/blogs/a?x=1", "site_id": str(site), "section": "/blogs", "state": "unknown"}]
+    assert data["total"] == 1 and data["versions"][0]["sections"][0]["section"] == "/blogs"
+    assert client.get(f"{base}/visuals/{ref}/presence?state=still", headers=_headers(client_id)).json()["pages"] == []
+    assert client.get(f"{base}/visuals/{ref}/presence?state=nope", headers=_headers(client_id)).status_code == 422
+    assert client.get(f"{base}/visuals/{uuid.uuid4()}/presence", headers=_headers(client_id)).status_code == 404
+
+    other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
+    assert client.get(f"/api/orgs/{org_id}/brands/{other['id']}/visuals/{ref}/presence", headers=_headers(admin_id)).status_code == 404
+>>>>>>> presence-par-page

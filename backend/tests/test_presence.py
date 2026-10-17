@@ -1,0 +1,84 @@
+"""Where a visual is still online, page by page: the last read of each site, the pages read again, the links stamped."""
+
+from datetime import datetime, timedelta, timezone
+
+from nyra.cloud import db as cloud_db
+from nyra.cloud import presence
+from nyra.cloud.store import CloudCrawlStore
+
+READ = datetime(2026, 10, 10, 12, 0, tzinfo=timezone.utc)
+HASH = "ffff0000ffff0000"
+
+
+def _setup(conn, org, brand):
+    site = cloud_db.create_site(conn, org_id=org, brand_id=brand, url="https://a.test/", label="US")
+    ref = cloud_db.upsert_reference_image(conn, org_id=org, brand_id=brand, filename="v.jpg", storage_path=f"{org}/v.jpg",
+                                          expiry_date=None, credit=None, notes=None, phash=HASH, dhash=HASH)
+    conn.execute("INSERT INTO crawl_runs (org_id, site_id, status, started_at) VALUES (%s, %s, 'done', %s)", (org, site, READ))
+    return site, ref
+
+
+def _image(conn, org, site, ref, name):
+    image = conn.execute("INSERT INTO site_images (org_id, site_id, url, storage_path, phash, dhash) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                         (org, site, f"https://a.test/{name}.jpg", f"{org}/{name}.jpg", HASH, HASH)).fetchone()["id"]
+    cloud_db.write_matches(conn, org, [(ref, image, "phash", 1.0, "haut")])
+    return image
+
+
+def _page(conn, org, site, image, path, *, tracked=True, crawled=READ + timedelta(minutes=1), seen=None):
+    page = conn.execute("INSERT INTO pages (org_id, site_id, url, status, crawled_at, links_tracked) VALUES (%s, %s, %s, 'done', %s, %s) ON CONFLICT (site_id, url) DO UPDATE SET url = excluded.url RETURNING id",
+                        (org, site, f"https://a.test{path}", crawled, tracked)).fetchone()["id"]
+    conn.execute("INSERT INTO image_pages (image_id, page_id, last_seen) VALUES (%s, %s, %s)", (image, page, seen))
+
+
+def test_a_page_is_still_gone_or_unknown_from_the_last_read(cloud_database_url, cloud_org, cloud_brand):
+    after, before = READ + timedelta(minutes=2), READ - timedelta(days=1)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image, other = _image(conn, cloud_org, site, ref, "a"), _image(conn, cloud_org, site, ref, "b")
+        _page(conn, cloud_org, site, image, "/blogs/seen", seen=after)  # read again, image there
+        _page(conn, cloud_org, site, image, "/blogs/removed", seen=before)  # read again, image no longer there
+        _page(conn, cloud_org, site, image, "/blogs/other-file", seen=before)
+        _page(conn, cloud_org, site, other, "/blogs/other-file", seen=after)  # another file of the photo is there: still
+        _page(conn, cloud_org, site, image, "/collections/untracked", tracked=False, seen=before)  # read before page tracking
+        _page(conn, cloud_org, site, image, "/collections/skipped", crawled=before, seen=before)  # not read again in this read
+        _page(conn, cloud_org, site, image, "/", seen=before)
+        false_positive = _image(conn, cloud_org, site, ref, "fp")
+        _page(conn, cloud_org, site, false_positive, "/products/fp", seen=after)
+        cloud_db.set_reviews(conn, brand_id=cloud_brand, reference_id=ref, site_image_ids=[false_positive], decision="ecarte", reviewed_by=None)
+        rows = presence.counts(conn, cloud_brand, ref)
+        listed = presence.pages(conn, cloud_brand, ref, state="still")
+        sections = presence.pages(conn, cloud_brand, ref, section="/collections")
+
+    result = presence.summary(rows)
+    assert result["totals"] == {"still": 2, "gone": 2, "unknown": 2, "pages": 6}  # the false positive's page is not counted
+    assert [item["section"] for item in result["versions"][0]["sections"]] == ["/blogs", "/", "/collections"]  # most still online first
+    assert sorted(row["url"] for row in listed) == ["https://a.test/blogs/other-file", "https://a.test/blogs/seen"]
+    assert {row["state"] for row in sections} == {"unknown"} and len(sections) == 2
+    assert presence.total(rows, section="/blogs", state="gone") == 1
+
+
+def test_a_site_never_read_has_only_unknown_pages(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        conn.execute("DELETE FROM crawl_runs WHERE site_id = %s", (site,))
+        _page(conn, cloud_org, site, _image(conn, cloud_org, site, ref, "a"), "/blogs/x", seen=READ)
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 0, "gone": 0, "unknown": 1, "pages": 1}
+
+
+def test_a_read_stamps_the_links_and_only_a_successful_page_is_tracked(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+    store = CloudCrawlStore(org_id=cloud_org, site_id=site, database_url=cloud_database_url, storage_client=None)
+    page = store.upsert_page("https://a.test/blogs/x")
+    store.link(image, page)
+    store.link(image, page)  # seen again: the same link, stamped again
+    store.mark_page(page, 200)
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM image_pages WHERE page_id = %s AND last_seen IS NOT NULL", (page,)).fetchone()["n"] == 1
+        assert conn.execute("SELECT links_tracked FROM pages WHERE id = %s", (page,)).fetchone()["links_tracked"] is True
+    for failure in (0, 404, 500):
+        store.mark_page(page, failure)  # a page that failed to load says nothing about what it shows
+        with cloud_db.connect(cloud_database_url) as conn:
+            assert conn.execute("SELECT links_tracked FROM pages WHERE id = %s", (page,)).fetchone()["links_tracked"] is False

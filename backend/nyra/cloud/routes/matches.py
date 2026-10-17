@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from nyra import report as report_module
 
 from .. import db as cloud_db
+from .. import presence as cloud_presence
 from .. import storage as cloud_storage
 from .common import BRAND, BrandScope, Ctx, brand_member_dep, get_ctx
 
@@ -96,3 +97,19 @@ def review(body: ReviewBody, scope: BrandScope = Depends(brand_member_dep), ctx:
     if body.decision and not touched:
         raise HTTPException(status_code=404, detail="Correspondance introuvable.")
     return {"ok": True, "updated": touched}
+
+
+@router.get(f"{BRAND}/visuals/{{reference_id}}/presence")
+def presence(reference_id: uuid.UUID, site: Optional[uuid.UUID] = None, section: Optional[str] = Query(None, max_length=200),
+             state: Optional[str] = Query(None, pattern="^(still|gone|unknown)$"),
+             limit: int = Query(50, ge=1, le=cloud_presence.MAX_PAGES_PER_REQUEST), offset: int = Query(0, ge=0),
+             scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Where a visual is still online, page by page (see `cloud.presence`): the counts per site version and section, and
+    `limit` pages from `offset`, narrowed to a site version, a section and a state."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        if not conn.execute("SELECT 1 FROM reference_images WHERE id = %s AND brand_id = %s", (reference_id, scope.brand_id)).fetchone():
+            raise HTTPException(status_code=404, detail="Référence introuvable.")
+        counts = cloud_presence.counts(conn, scope.brand_id, reference_id)
+        rows = cloud_presence.pages(conn, scope.brand_id, reference_id, site=site, section=section, state=state, limit=limit, offset=offset)
+    return {**cloud_presence.summary(counts), "total": cloud_presence.total(counts, site=site, section=section, state=state), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"]} for row in rows],
+            "offset": offset}
