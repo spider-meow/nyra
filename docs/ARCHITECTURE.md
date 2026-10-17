@@ -164,6 +164,8 @@ server.
 
 **The page of a visual** (`/review?visual=<reference id>`, `pages/visual/`) shows, from `GET .../visuals/{reference_id}/presence` (`cloud/presence.py`): how many pages still show the visual at the last read, per site version and section, the pages (`still`, `gone`, `unknown`) 50 at a time, and its photos. It is a mode of the « À traiter » page, not a route of its own, so the entry chunk (full, see `DEVELOPMENT.md`) does not grow. The figures follow the last finished read of each site: a read that resumed leaves pages `unknown`, never `gone`.
 
+**« Visuels à remplacer »** (`/visuals`, `pages/Visuals.tsx`, `GET .../visuals`): the visuals a person confirmed (a photo decided « à retirer » or « retiré »; unlimited rights never), soonest expiry first, each with its pages `still` / `gone` / `unknown` (`cloud/presence.py`, every photo not set aside counts). A visual is **replaced** when it has pages, all were read again, and none shows it; a page that answers 404 or 410 counts as gone, a page not read again never does. The photo-level « Retiré » is the manual step (« J'ai remplacé » on the page of the visual): it does not change the list, the next full read does.
+
 **Bounded jobs.** The index job reads its candidates in chunks (keyset on `id`,
 so an image that can never be read cannot loop the job) and writes each batch
 in one transaction; the back office totals are SQL aggregates and its brand

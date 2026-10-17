@@ -23,6 +23,7 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
     items: [
       { to: link("dashboard"), label: "Tableau de bord", icon: "dashboard", count: expired, tone: "alert" },
       { to: `${link("review")}?window=3650`, label: "À traiter", icon: "review", count: pending, tone: "neutral" },
+      { to: link("visuals"), label: "Visuels à remplacer", icon: "report" },
       { to: link("library"), label: "Bibliothèque", icon: "library", count: overview.data?.stats.reference_images, tone: "muted" },
       { to: link("online-images"), label: "Images en ligne", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
       { to: link("scans"), label: "Sites et lectures", icon: "scan" },

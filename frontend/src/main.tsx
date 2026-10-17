@@ -111,6 +111,7 @@ const router = createBrowserRouter([
                   { index: true, element: <Navigate to="dashboard" replace /> },
                   { path: "dashboard", element: page(<Dashboard />), handle: { title: "Tableau de bord" } },
                   { path: "review", lazy: lazyPage(() => import("./pages/Review").then((module) => module.Review)), handle: { title: "À traiter" } },
+                  { path: "visuals", lazy: lazyPage(() => import("./pages/Visuals").then((module) => module.Visuals)), handle: { title: "Visuels à remplacer" } },
                   { path: "library", lazy: lazyPage(() => import("./pages/Library").then((module) => module.Library)), handle: { title: "Bibliothèque" } },
                   { path: "online-images", lazy: lazyPage(() => import("./pages/SiteImages").then((module) => module.SiteImages)), handle: { title: "Images en ligne" } },
                   { path: "site-images", lazy: legacy },
