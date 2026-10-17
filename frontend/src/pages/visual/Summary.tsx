@@ -44,7 +44,7 @@ function Headline(props: { totals: Presence["totals"] }) {
         <span className="bg-expired" style={{ width: share(still) }} />
         <span className="bg-line-strong" style={{ width: share(unknown) }} />
       </div>
-      <p className="mt-1.5 text-xs text-muted">{marked.toLocaleString("fr-FR")} marquées remplacées · {gone.toLocaleString("fr-FR")} retirées · {unknown.toLocaleString("fr-FR")} pas relues</p>
+      <p className="mt-1.5 text-xs text-muted">{plural(marked, "marquée remplacée", "marquées remplacées")} · {plural(gone, "retirée")} · {plural(unknown, "pas relue")}</p>
     </div>
   );
 }

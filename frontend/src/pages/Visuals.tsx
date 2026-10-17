@@ -3,7 +3,7 @@ import { Link } from "react-router";
 import { Button, EmptyState, PageHeader, Segmented, Skeleton, StatusBadge, Thumb } from "../components/ui";
 import { InfoTip } from "../components/SettingsBlock";
 import { errorMessage } from "../lib/api";
-import { daysText } from "../lib/format";
+import { daysText, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useVisuals, type VisualItem } from "../lib/presence";
 import { useFullRead } from "./review/Removal";
@@ -62,7 +62,7 @@ export function Visuals() {
 /** What a visual's line says: the pages still showing it, and the ones not read again (never counted as gone). */
 function figures(item: VisualItem): [string, string] {
   const pages = (count: number) => `${count.toLocaleString("fr-FR")} page${count > 1 ? "s" : ""}`;
-  const marked = item.marked ? ` · ${item.marked.toLocaleString("fr-FR")} marquées remplacées` : "";
+  const marked = item.marked ? ` · ${plural(item.marked, "marquée remplacée", "marquées remplacées")}` : "";
   if (item.replaced) return ["Remplacé", `${pages(item.pages)} relues${marked}`];
   if (item.still) return [pages(item.still), (item.unknown ? `encore en ligne · ${item.unknown.toLocaleString("fr-FR")} à relire` : `encore en ligne sur ${item.pages.toLocaleString("fr-FR")}`) + marked];
   return item.unknown === item.pages ? ["Pas encore mesuré", `à relire${marked}`] : ["0 page confirmée", `${item.unknown.toLocaleString("fr-FR")} à relire${marked}`];
