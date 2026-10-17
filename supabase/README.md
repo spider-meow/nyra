@@ -5,28 +5,33 @@ des tables est dans `docs/DATABASE_SCHEMA.md`.
 
 ```
 supabase/migrations/
-  20260920000001_extensions.sql                  pgcrypto, vector (pgvector)
+  20260920000001_extensions.sql                     pgcrypto, vector (pgvector)
   20260920000002_organizations_and_memberships.sql
-  20260920000003_pipeline_core.sql               sites, références, pages, images, matches, reviews
+  20260920000003_pipeline_core.sql                  sites, références, pages, images, matches, reviews
   20260920000004_crawl_runs_and_reports.sql
   20260920000005_row_level_security.sql
-  20260920000006_storage_buckets.sql             buckets refs / site-images / reports + policies
+  20260920000006_storage_buckets.sql                buckets refs / site-images / reports + policies
   20260920000007_organization_slug.sql
-  20260923000008_thumbnails_and_flip_hashes.sql  vignettes, hash miroir, index content_hash
-  20260923000009_jobs.sql                        file de tâches (web → worker)
-  20260923000010_org_settings.sql                réglages par organisation
-  20260924000011_excluded_hashes.sql             images exclues (faux positifs récurrents)
-  20260925000012_brands.sql                      marques (étape 1, sans risque pour le code en place)
-  20260925000013_brands_constraints.sql          marques (étape 2, après déploiement du code)
-  20260926000014_reference_working_copies.sql   copie de travail des références (work_path)
-  20260929000015_insights.sql                    mesures des lectures, poids et format des images, équipe Nyra, vues `insights`
-  20261009000019_unlimited_rights.sql            droits illimités (colonne `unlimited_rights`, contrôle date/illimité, vue `insights.library`)
-  20261009000020_image_labels.sql                étiquettes (`labels`, `image_labels`) : types d'images du site et contenus
-  20260930000016_reference_tags.sql              tags libres des références (colonne `tags text[]`, index GIN ; jamais lus par le matching)
-  20261013000021_collections.sql                 collections (dossiers de la bibliothèque, 3 niveaux) et `reference_images.collection_id`
-  20261017000025_page_presence.sql               `image_pages.last_seen`, `pages.links_tracked`: is an image still on a page (additive; pages count as « unknown » until read again)
-  20261017000026_page_checks.sql                 job kind `check` (read again only some pages), `pages.read_started_at` (additive; pages read before count with an approximate start)
-  20261017000027_page_replacements.sql           pages marked as replaced by hand, per visual (additive)
+  20260923000008_thumbnails_and_flip_hashes.sql     vignettes, hash miroir, index content_hash
+  20260923000009_jobs.sql                           file de tâches (web → worker)
+  20260923000010_org_settings.sql                   réglages par organisation
+  20260924000011_excluded_hashes.sql                images exclues (faux positifs récurrents)
+  20260925000012_brands.sql                         marques (étape 1, sans risque pour le code en place)
+  20260925000013_brands_constraints.sql             marques (étape 2, après déploiement du code)
+  20260926000014_reference_working_copies.sql       copie de travail des références (work_path)
+  20260929000015_insights.sql                       mesures des lectures, poids et format des images, équipe Nyra, vues `insights`
+  20260930000016_reference_tags.sql                 tags libres des références (colonne `tags text[]`, index GIN ; jamais lus par le matching)
+  20261004000017_site_image_variants.sql            regroupement des recadrages d'une photo (`site_images.variant_group`)
+  20261005000018_reference_locations.sql            « Où est-elle utilisée ? » : `reference_locations`, tâche `locate`
+  20261009000019_unlimited_rights.sql               droits illimités (colonne `unlimited_rights`, contrôle date/illimité, vue `insights.library`)
+  20261009000020_image_labels.sql                   étiquettes (`labels`, `image_labels`) : types d'images du site et contenus
+  20261013000021_collections.sql                    collections (dossiers de la bibliothèque, 3 niveaux) et `reference_images.collection_id`
+  20261014000022_brand_created_by.sql               auteur de la création d'une marque
+  20261014000023_brand_logos.sql                    logo d'une marque
+  20261017000024_set_aside_logos.sql                logos mis de côté (réglage par marque, `logo_score`, `logo_kept`)
+  20261017000025_page_presence.sql                  `image_pages.last_seen`, `pages.links_tracked` : une image est-elle encore sur une page (additive ; une page compte « pas relue » tant qu'elle n'est pas relue)
+  20261017000026_page_checks.sql                    tâche `check` (relire seulement quelques pages), `pages.read_started_at` (additive ; les pages déjà lues ont un début approximatif)
+  20261017000027_page_replacements.sql              pages marquées « remplacée » à la main, par visuel (additive)
 ```
 
 ## Marques (012 puis 013)
