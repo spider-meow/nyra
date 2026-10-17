@@ -675,3 +675,41 @@ def test_supervise_restarts_a_worker_that_exits_and_stops_when_asked():
     thread.join(timeout=40)
     assert not thread.is_alive()
     assert len(flag.read_text()) >= 2, "started again after exiting"
+
+
+def test_a_check_job_reads_only_the_pages_given_and_records_no_crawl_run(worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        for path in ("/a", "/b"):
+            conn.execute("INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, %s, 'done')", (cloud_org, site, f"https://t.test{path}"))
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="check", params={"pages": {str(site): ["https://t.test/a"]}})
+        runs_before = conn.execute("SELECT count(*) AS n FROM crawl_runs WHERE site_id = %s", (site,)).fetchone()["n"]
+
+    asked = []
+
+    def fake_crawl_pages(site_url, urls, store, config, **_kwargs):
+        asked.append((site_url, list(urls)))
+        page = store.upsert_page(urls[0])  # a real read opens the page, stamps what it shows, then marks it read
+        store.mark_page(page, 200)
+        return worker_module.CrawlStats(pages_visited=1)
+
+    monkeypatch.setattr(worker_module, "crawl_pages", fake_crawl_pages)
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert finished["status"] == "done", finished
+    assert asked == [("https://t.test/", ["https://t.test/a"])]  # /b was not asked for
+    assert finished["result"] == {"pages_read": 1, "pages_asked": 1, "errors": []}
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM crawl_runs WHERE site_id = %s", (site,)).fetchone()["n"] == runs_before
+        page = conn.execute("SELECT links_tracked, read_started_at FROM pages WHERE site_id = %s AND url = 'https://t.test/a'", (site,)).fetchone()
+        untouched = conn.execute("SELECT read_started_at FROM pages WHERE site_id = %s AND url = 'https://t.test/b'", (site,)).fetchone()
+    assert page["links_tracked"] is True and page["read_started_at"] is not None  # the read began before its links were stamped
+    assert untouched["read_started_at"] is None
+
+
+def test_a_check_job_with_no_known_site_fails_with_a_message(worker, cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="check", params={"pages": {str(uuid.uuid4()): ["https://t.test/a"]}})
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert finished["status"] == "error" and "Aucune page" in finished["message"]

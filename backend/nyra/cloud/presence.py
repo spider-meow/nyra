@@ -1,7 +1,7 @@
 """Where a visual of the library is still online, page by page, from what the last finished read of each site saw.
 
 For each page that shows a file matched to the reference (false positives left out):
-`still`  the last read saw the image on this page;
+`still`  the last read of the page (a full read of the site, or a check of that page alone) saw the image on it;
 `gone`   the page was read again with success and the image was not on it, or the page itself is gone (404, 410);
 `unknown` the page was not read again (a read that resumed, the page cap, an error) or has not been since page tracking
          exists (`pages.links_tracked`, `image_pages.last_seen`): never taken for "gone".
@@ -29,7 +29,7 @@ def _pages(only_reference: bool) -> str:
     return f"""
     SELECT m.reference_id, p.url, s.id AS site_id,
            '/' || split_part(split_part(regexp_replace(p.url, '^https?://[^/]+', ''), '?', 1), '/', 2) AS section,
-           CASE WHEN COALESCE(bool_or(ip.last_seen >= rd.read_at), false) THEN 'still'
+           CASE WHEN p.links_tracked AND p.crawled_at >= rd.read_at AND COALESCE(bool_or(ip.last_seen >= p.read_started_at), false) THEN 'still'
                 WHEN (p.links_tracked OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at THEN 'gone'
                 ELSE 'unknown' END AS state
     FROM matches m
@@ -40,7 +40,7 @@ def _pages(only_reference: bool) -> str:
     LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
     LEFT JOIN LATERAL (SELECT max(c.started_at) AS read_at FROM crawl_runs c WHERE c.site_id = s.id AND c.status = 'done') rd ON true
     WHERE {"m.reference_id = %(ref)s" if only_reference else "TRUE"} AND s.brand_id = %(brand)s AND v.decision IS DISTINCT FROM 'ecarte'
-    GROUP BY m.reference_id, p.id, p.url, s.id, p.links_tracked, p.http_status, p.crawled_at, rd.read_at
+    GROUP BY m.reference_id, p.id, p.url, s.id, p.links_tracked, p.http_status, p.crawled_at, p.read_started_at, rd.read_at
 """
 
 

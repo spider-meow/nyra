@@ -406,3 +406,16 @@ def test_replacing_a_reference_forgets_what_was_found_for_the_old_picture(cloud_
         assert state()[0] == 1 and state()[1] is not None
         _ref(conn, cloud_org, cloud_brand, "a.jpg", phash="0" * 16)  # another picture under the same name
         assert state() == (0, None)
+
+
+def test_a_page_records_when_its_read_started(cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, cloud_org, cloud_brand)
+    store = CloudCrawlStore(org_id=cloud_org, site_id=site, database_url=cloud_database_url, storage_client=fake_storage_client)
+    first = store.upsert_page("https://t.test/p")
+    with cloud_db.connect(cloud_database_url) as conn:
+        began = conn.execute("SELECT read_started_at FROM pages WHERE id = %s", (first,)).fetchone()["read_started_at"]
+    assert began is not None
+    assert store.upsert_page("https://t.test/p") == first  # the same page, read again: a new start
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT read_started_at FROM pages WHERE id = %s", (first,)).fetchone()["read_started_at"] > began

@@ -226,7 +226,7 @@ def enqueue(ctx: Ctx, scope: BrandScope, kind: str, params: dict) -> dict:
             return {"job": cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind=kind,
                                               params=params, created_by=scope.member.user_id)}
     except cloud_jobs.JobConflict as exc:
-        labels = {"crawl": "Une lecture", "match": "Une comparaison", "report": "Un rapport", "locate": "Une recherche d'image"}
+        labels = {"crawl": "Une lecture", "match": "Une comparaison", "report": "Un rapport", "locate": "Une recherche d'image", "check": "Une vérification de pages"}
         label = labels.get(kind, "Une tâche")
         raise HTTPException(status_code=409, detail=f"{label} est déjà en cours ou en attente.") from exc
 

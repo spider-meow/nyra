@@ -1,7 +1,8 @@
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import type { Status } from "../types";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import type { Job, Status } from "../types";
 import { api } from "./api";
 import { useOrg } from "./org";
+import { useInvalidate, useJobs } from "./queries";
 
 /** Where a page stands for a visual (see `backend/nyra/cloud/presence.py`). */
 export type PageState = "still" | "gone" | "unknown";
@@ -54,4 +55,19 @@ export function useVisuals() {
     queryKey: ["occurrences", brand.id, "visuals"],
     queryFn: () => api.get<{ visuals: VisualItem[] }>(apiPath("/visuals")),
   });
+}
+
+/** The most pages one check reads (the server refuses more). */
+export const MAX_CHECKED_PAGES = 50;
+
+/** Reads again only these pages (a person changed a visual on them): a job, whose end refreshes the figures. */
+export function useCheckPages() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  const checking = (useJobs().data?.active ?? []).some((job) => job.kind === "check");
+  const check = useMutation({
+    mutationFn: (urls: string[]) => api.post<{ job: Job }>(apiPath("/jobs/check"), { urls }),
+    onSuccess: () => invalidate("jobs"),
+  });
+  return { check, busy: check.isPending || checking };
 }

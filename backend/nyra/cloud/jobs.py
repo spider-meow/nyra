@@ -24,7 +24,7 @@ from typing import Any, Optional
 
 import psycopg
 
-KINDS = {"crawl", "match", "index", "report", "locate"}
+KINDS = {"crawl", "match", "index", "report", "locate", "check"}
 ACTIVE = ("queued", "running")
 STALE_AFTER_SECONDS = 180
 # A job whose worker died goes back to the queue this many times before it is marked failed.

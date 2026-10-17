@@ -212,3 +212,16 @@ def test_a_malformed_image_address_is_skipped_not_fatal():
     assert asyncio.run(run()) is None
     with httpx.Client(cookies={"a": "b"}) as client:
         assert fetch.download("/", client, timeout=1.0, max_bytes=1000) is None
+
+
+def test_a_page_check_queues_only_the_pages_given_and_follows_no_link(monkeypatch):
+    from nyra import crawl as crawl_module
+    from nyra.config import load_config
+
+    monkeypatch.setattr(crawl_module, "load_robots", lambda *_args, **_kwargs: None)
+    config = load_config()
+    reading = crawl_module._Crawl("https://t.test/", store=None, config=config, max_pages=3, embedder=None, resume=False,
+                                  progress=None, should_stop=None, follow_links=False)
+    reading.seed(["https://t.test/a?utm_source=x", "https://t.test/b", "https://other.test/c"])
+    assert list(reading.queue) == ["https://t.test/a", "https://t.test/b"]  # normalized, and the other site left out
+    assert reading.follow_links is False

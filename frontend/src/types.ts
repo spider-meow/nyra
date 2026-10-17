@@ -12,7 +12,7 @@ export type Confidence = "haut" | "moyen" | "a_verifier";
 
 export type Decision = "retenu" | "ecarte" | "traite";
 
-export type JobKind = "crawl" | "match" | "index" | "report" | "locate";
+export type JobKind = "crawl" | "match" | "index" | "report" | "locate" | "check";
 
 export type JobStatus = "queued" | "running" | "done" | "error" | "cancelled";
 

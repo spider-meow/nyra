@@ -15,7 +15,8 @@ Job kinds:
            web process enqueues one after every upload; it also
            backfills rows created before those columns existed;
 - report — build report.html + the two CSVs and store them;
-- locate — find every crawled image that is a crop or copy of one reference.
+- locate — find every crawled image that is a crop or copy of one reference;
+- check  — read again only the pages a person gives (50 at most), to see whether a visual is still on them.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from typing import Any, Callable, Optional
 from nyra import fetch, netguard, observability
 from nyra import report as report_module
 from nyra.config import Config, load_config, with_overrides
-from nyra.crawl import CrawlStats, crawl_site, normalize_url
+from nyra.crawl import CrawlStats, crawl_pages, crawl_site, normalize_url
 from nyra.estimate import remaining_seconds
 from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching, warm_clip
 
@@ -388,6 +389,7 @@ class Worker:
             "index": self._index,
             "report": self._report,
             "locate": self._locate,
+            "check": self._check,
         }[job["kind"]]
         try:
             message, result = handler(ctx, uuid.UUID(job["org_id"]), uuid.UUID(job["brand_id"]), job.get("params") or {})
@@ -551,6 +553,37 @@ class Worker:
             "images_stored": stats.images_stored, "images_new": stats.images_new,
             "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8],
         }
+
+    def _check(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
+        """Read again only the pages given, `{site id: [addresses]}`: no sitemap, no link followed, no comparison. Each page
+        stamps what it shows, so the page of a visual says at once whether it is still there. No crawl run is recorded: it
+        would stand for a read of the whole site."""
+        config = self.config_for(org_id)
+        groups = {key: list(urls) for key, urls in (params.get("pages") or {}).items() if urls}
+        with cloud_db.connect(self.database_url) as conn:
+            sites = {str(row["id"]): row for row in cloud_db.get_sites(conn, brand_id, [uuid.UUID(key) for key in groups])}
+        total = sum(len(urls) for urls in groups.values())
+        if not total or not sites:
+            raise JobFailed("Aucune page à vérifier pour cette marque.")
+        warm_clip(config.match)
+        done, errors = 0, []
+        for key, urls in groups.items():
+            if ctx.cancelled or key not in sites:
+                continue
+            site = sites[key]
+            store = CloudCrawlStore(org_id=org_id, site_id=site["id"], database_url=self.database_url,
+                                    storage_client=self.storage_client_factory())
+            before = done
+
+            def progress(stats: CrawlStats, before: int = before) -> None:
+                ctx.report(f"Page {before + stats.pages_visited}/{total}", {"phase": "check", "done": before + stats.pages_visited, "total": total})
+
+            stats = crawl_pages(site["url"], urls, store, config, progress=progress, should_stop=ctx.should_stop,
+                                embedder=lambda images: compute_clip_embeddings(images, config.match))
+            done += stats.pages_visited
+            errors += stats.errors
+        message = f"{done} page(s) relue(s) sur {total}." if not ctx.cancelled else "Vérification arrêtée. Les pages déjà relues sont à jour."
+        return message, {"pages_read": done, "pages_asked": total, "errors": errors[:8]}
 
     def _match_job(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         metrics: dict = {}

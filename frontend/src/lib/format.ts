@@ -33,6 +33,7 @@ export const jobLabel: Record<JobKind, string> = {
   index: "Indexation des nouveaux visuels",
   report: "Rapport",
   locate: "Recherche d'un visuel",
+  check: "Vérification de pages",
 };
 
 const dateFormat = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" });
