@@ -112,6 +112,7 @@ const router = createBrowserRouter([
                   { path: "dashboard", element: page(<Dashboard />), handle: { title: "Tableau de bord" } },
                   { path: "review", lazy: lazyPage(() => import("./pages/Review").then((module) => module.Review)), handle: { title: "À traiter" } },
                   { path: "visuals", lazy: lazyPage(() => import("./pages/Visuals").then((module) => module.Visuals)), handle: { title: "Visuels à remplacer" } },
+                  { path: "visuals/:referenceId", lazy: lazyPage(() => import("./pages/VisualPage").then((module) => module.VisualPage)), handle: { title: "Visuel" } },
                   { path: "library", lazy: lazyPage(() => import("./pages/Library").then((module) => module.Library)), handle: { title: "Bibliothèque" } },
                   { path: "online-images", lazy: lazyPage(() => import("./pages/SiteImages").then((module) => module.SiteImages)), handle: { title: "Images en ligne" } },
                   { path: "site-images", lazy: legacy },
