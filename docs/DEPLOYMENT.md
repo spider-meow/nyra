@@ -72,6 +72,10 @@ the same work. The Droplet is the recommended path.
    (*Reset password*) and `supabase/templates/invite.html` (*Invite user*) with
    the subjects « Nouveau mot de passe — Nyra » and « Votre accès à Nyra ». The
    templates carry no image: mail clients block remote images from unknown senders.
+   Supabase's own sender is limited to a few e-mails an hour and to your team's addresses, so a client's
+   invitation would not arrive: set **Authentication > Emails > SMTP Settings** to Resend (host
+   `smtp.resend.com`, port `465`, user `resend`, password a Resend API key limited to sending, sender an
+   address of a domain verified in Resend), and raise the e-mail rate limit under *Rate Limits*.
 5. **Environment**: copy `.env.example` to `.env` and fill it in, including
    `NYRA_PUBLIC_URL`.
 6. **First organization**:

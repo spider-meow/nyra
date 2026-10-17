@@ -66,7 +66,7 @@ share of its budget) and exits 1 naming the chunk that went over.
 | Budget (gzip KB, 1 KB = 1000 bytes) | Limit | Measured on 1 Oct 2026 |
 |---|---|---|
 | `firstLoadGzipKB`: every chunk of `index.html` | 210 | 196.1 (17 Oct) |
-| `entryGzipKB`: the entry chunk alone | 27 | 26.5 (17 Oct) |
+| `entryGzipKB`: the entry chunk alone | 27 | 26.7 (17 Oct) |
 | `lazyChunkGzipKB`: the largest page chunk | 15 | 14.3 (17 Oct) |
 | `sentryGzipKB`: the Sentry chunk (lazy, off the critical path) | 68 | 61.7 |
 | `passwordMeterGzipKB`: the password strength meter (zxcvbn-ts, lazy, loaded only on the choose-a-password page) | 260 | 235.3 (13 Oct) |
@@ -75,7 +75,7 @@ Each limit is the measure plus about 10%, except the page budget (about 20%:
 the largest page, the Library, is the one that grows with features, and 10%
 is a single new component). When it fails, first look for what
 grew: a new dependency, a page imported eagerly instead of with `lazy()`, a
-library pulled into the entry chunk. The entry chunk is nearly full (26.5 of 27; the icons of the settings menu and a chunk shared by two pages took the last 0.7): code that only one page uses goes in a module that only that page imports
+library pulled into the entry chunk. The entry chunk is nearly full (26.7 of 27; the icons of the settings menu, a chunk shared by two pages and the routes of the visuals took the last 0.9): code that only one page uses goes in a module that only that page imports
 (`lib/siteImages.ts` holds the hooks of "Images en ligne" and of the logos setting), not in `lib/queries.ts`, which every
 page loads. Raise a budget only on purpose, in the
 same pull request as the change that needs it, with the new measure and the

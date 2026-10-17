@@ -283,15 +283,27 @@ Entre le 16 et le 17 octobre 2026 (détails dans les documents indiqués) :
   sites, en cinq onglets (À qualifier, Retrouvées, Logos, Ignorées, Toutes), chargés par pages de 60 (`ARCHITECTURE.md`).
 - **Qualité** : les deux tests du back qui étaient rouges en CI depuis le 14 octobre sont corrigés ; plus aucune mention de
   facturation dans les textes vus par les clients.
+- **Réglages** regroupés : « Mon compte » en tête, Logos et Maintenance (indexation) dans « Général ».
+- **E-mails** d'invitation et de mot de passe : modèles dans `supabase/templates/`, envoyés par Supabase avec Resend en SMTP
+  (`DEPLOYMENT.md`).
+- **« À traiter » réduit au tri** : une ligne par photo, « C'est bien lui » / « Faux positif » (touches C, F, U).
+- **« Visuels à remplacer »** (`/visuals`, `/visuals/<id>`) : les visuels confirmés par échéance, leurs pages encore en ligne,
+  retirées ou pas relues (`cloud/presence.py`), la page de chaque visuel (versions du site, rubriques, pages), une case
+  « Remplacée » par page, « Vérifier » une page ou 50 pages (tâche `check`) et « Relire les sites ». Un visuel est remplacé
+  quand toutes ses pages ont été relues et qu'aucune ne le montre plus (`ARCHITECTURE.md`).
 
 ## À reprendre
 
-Ouvert au 17 octobre 2026 :
+Ouvert au 17 octobre 2026 (PR #21 : la page d'un visuel a sa propre adresse) :
 
-- **PR #8** (calcul des scores de logos à l'ouverture de « Images en ligne », sans quoi l'onglet Logos reste à 0 ; plus cette
-  documentation) : à relire et fusionner. La PR #7 (« Images en ligne ») est déjà fusionnée. La migration
-  `20261017000024_set_aside_logos.sql` doit être appliquée **avant** de démarrer le nouveau code, partout (elle l'est sur la
-  base de développement).
+- **Visuels à remplacer** : essayé sur les vraies données avec une vérification d'une page et des marques, mais **aucune
+  lecture complète n'a eu lieu depuis les migrations 25 à 27** : les chiffres « encore en ligne » / « retirées » sont à
+  vérifier après un « Relire les sites ». Les six références d'une même photo donnent six lignes presque identiques.
+  Le tableau de bord (« expirés en ligne ») ne tient pas compte des pages marquées ni du statut « remplacé » : il se base
+  encore sur les décisions. Une vérification ne compte qu'après la fin d'une lecture complète du site ; un mur de
+  consentement ou une image chargée tard par un script se lit comme « retirée » (`presence.py`).
+- **Migrations à appliquer avant le code**, partout : `…024` à `…027` (appliquées sur la base de développement). Déployer le
+  worker avant le serveur web (`page_checks`).
 - **Logos** : le seuil de 0,95 est mesuré sur **une seule marque** (Louis XIII : 10 fichiers, 18 adresses, tous de vrais logos) : à vérifier
   sur une autre marque ; le rappel n'est pas compté ; une image relue sous une nouvelle adresse après une remise repart
   comme logo (la liste le dit).
@@ -300,4 +312,4 @@ Ouvert au 17 octobre 2026 :
   0,3 s à 10 000 images, 1 s à 30 000 : au-delà, compter en SQL ou mettre en cache).
 - **Tests** : `test_big_responses_are_gzipped…` échoue sous Windows (fins de ligne) mais passe en CI ; le test de création
   d'organisation (« Hennessy ») n'est pas rejouable sur une base réutilisée.
-- **Budget** : le bundle d'entrée est à 26,3 / 26,5 Ko gzip (voir `DEVELOPMENT.md`).
+- **Budget** : le bundle d'entrée est à 26,7 / 27 Ko gzip (voir `DEVELOPMENT.md`) : presque plein.
