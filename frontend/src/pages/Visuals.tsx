@@ -46,7 +46,7 @@ export function Visuals() {
       </div>
       {shown.length ? (
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
-          {shown.map((item) => <VisualRow key={item.reference_id} item={item} to={`${link("review")}?window=3650&visual=${item.reference_id}`} />)}
+          {shown.map((item) => <VisualRow key={item.reference_id} item={item} to={`${link("visuals")}/${item.reference_id}`} />)}
         </ul>
       ) : (
         <EmptyState

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useLocation, useNavigate, useSearchParams } from "react-router";
 import { CompareView } from "../components/CompareView";
 import { Modal } from "../components/feedback";
 import { Button, Card, EmptyState, Kbd, LinkButton, PageHeader, Skeleton } from "../components/ui";
@@ -10,21 +9,9 @@ import { ReviewFilters, ReviewTabs } from "./review/Filters";
 import { MissingList, OccurrenceList } from "./review/List";
 import { RelatedReferences } from "./review/Related";
 import { focusOn, useReviewView, type ReviewView } from "./review/view";
-import { Visual } from "./visual/Visual";
 
-/** The list of what to deal with, or, with `?visual=<id>`, the page of one visual. */
+/** The triage of matches: is this photo my visual? */
 export function Review() {
-  const [params] = useSearchParams();
-  const { link } = useOrg();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const visual = params.get("visual");
-  // Back to where the person came from (the list with its filters, or the visuals); a link opened from elsewhere has no such place.
-  const back = () => (location.key === "default" ? navigate(link("visuals"), { replace: true }) : navigate(-1));
-  return visual ? <Visual referenceId={visual} onBack={back} /> : <ReviewList />;
-}
-
-function ReviewList() {
   const view = useReviewView();
   const decide = useDecide(view);
   useShortcuts(view, decide);
