@@ -8,13 +8,15 @@ import { useDecide, useShortcuts } from "./review/decide";
 import { ReviewFilters, ReviewTabs } from "./review/Filters";
 import { MissingList, OccurrenceList } from "./review/List";
 import { RelatedReferences } from "./review/Related";
+import { VerifyRemovals } from "./review/Removal";
 import { focusOn, useReviewView, type ReviewView } from "./review/view";
 
 export function Review() {
   const view = useReviewView();
   const decide = useDecide(view);
   useShortcuts(view, decide);
-  const { selected, review, panelOpen, setPanelOpen } = view;
+  const { admin } = useOrg();
+  const { selected, review, panelOpen, setPanelOpen, unchecked } = view;
   // Which of the photo's references is being compared: kept for the selected photo only.
   const [focus, setFocus] = useState<{ key: string; reference: string } | null>(null);
   const active = selected ? focusOn(selected, focus?.key === selected.key ? focus.reference : null) : null;
@@ -33,6 +35,7 @@ export function Review() {
       />
       <ReviewFilters view={view} />
       <ReviewTabs view={view} />
+      {admin && unchecked ? <VerifyRemovals unchecked={unchecked} /> : null}
       <Results view={view} compare={compare} />
       <Modal open={panelOpen && selected !== null} onClose={() => setPanelOpen(false)} title="Comparer" wide>
         {compare}

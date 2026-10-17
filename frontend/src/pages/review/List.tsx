@@ -2,6 +2,7 @@ import { Fragment } from "react";
 import { Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, StatusBadge, Thumb, cx } from "../../components/ui";
 import { daysText, hostOf, pathOf, plural } from "../../lib/format";
 import type { NotFoundItem } from "../../types";
+import { RemovalBadge } from "./Removal";
 import type { Progress, ReviewView, Row } from "./view";
 
 /** The photos found online (first `shown`), under the visual they match, with "Afficher plus" and the total. */
@@ -30,7 +31,7 @@ export function OccurrenceList(props: { view: ReviewView }) {
 /** A visual of the library, its expiry and how many of its photos found online are removed. */
 function VisualHeader(props: { row: Row; progress?: Progress }) {
   const { group } = props.row;
-  const { done = 0, total = 0 } = props.progress ?? {};
+  const { done = 0, total = 0, unchecked = 0 } = props.progress ?? {};
   return (
     <div role="presentation" className="mt-2 flex items-center gap-3 px-3 pt-2 pb-1 first:mt-0">
       <Thumb src={group.ref_thumb} size={40} />
@@ -39,7 +40,7 @@ function VisualHeader(props: { row: Row; progress?: Progress }) {
         <StatusBadge status={group.status} label={daysText(group.days_left)} />
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted">
-        <span>{total ? `${done} retirée${done > 1 ? "s" : ""} sur ${total}` : "Rien à retirer"}</span>
+        <span>{total ? `${done} retirée${done > 1 ? "s" : ""} sur ${total}${unchecked ? ` · ${unchecked} à vérifier` : ""}` : "Rien à retirer"}</span>
         <span aria-hidden className="h-1.5 w-24 overflow-hidden rounded-full bg-sunk">
           <span className="block h-full bg-ink" style={{ width: `${total ? (done / total) * 100 : 0}%` }} />
         </span>
@@ -76,7 +77,7 @@ function PhotoRow(props: { row: Row; selected: boolean; onSelect: (key: string) 
       </span>
       <span className="hidden shrink-0 items-center gap-1.5 sm:flex">
         <ConfidenceBadge confidence={row.hit.confidence} />
-        <DecisionBadge decision={row.hit.decision} />
+        {row.hit.removal ? <RemovalBadge removal={row.hit.removal} /> : <DecisionBadge decision={row.hit.decision} />}
       </span>
     </button>
   );

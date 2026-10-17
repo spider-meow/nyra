@@ -167,6 +167,21 @@ def test_group_matches_merges_the_crops_of_one_photo_and_waits_for_every_file_to
     assert len(hits) == 2 and next(hit for hit in hits if hit["photo_key"] == "h3")["file_count"] == 1
 
 
+def test_a_photo_marked_removed_says_whether_the_last_read_confirms_it():
+    def removal(*files):
+        rows = [{**_row("ref", name, decision="traite", content_hash=name), "variant_group": "g", **state} for name, state in files]
+        return report.group_matches(rows, 365, date(2026, 1, 1))["confirmed"][0]["hits"][0]["removal"]
+
+    gone = {"read_after": True, "seen": False, "unread_pages": 0}
+    assert removal(("a", gone)) == "gone"
+    assert removal(("a", gone), ("b", {**gone, "unread_pages": 2})) == "unread"  # a page that showed it was not read again
+    assert removal(("a", gone), ("b", {**gone, "read_after": False})) == "pending"  # no read since it was marked
+    assert removal(("a", gone), ("b", {**gone, "seen": True})) == "online"  # seen again: the removal is not done
+    assert removal(("a", {**gone, "read_after": False, "seen": True})) == "pending"  # seen by a read from before the mark
+    undecided = report.group_matches([_row("ref", "a")], 365, date(2026, 1, 1))["confirmed"][0]["hits"][0]
+    assert undecided["removal"] is None
+
+
 def test_unlimited_rights_found_with_certainty_leave_the_urgencies():
     today = date(2026, 1, 1)
     free = {**_row("free", "a", expiry=None), "unlimited_rights": True}
