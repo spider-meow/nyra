@@ -56,8 +56,9 @@ class CloudCrawlStore:
     def mark_page(self, page_id: uuid.UUID, http_status: int) -> None:
         with cloud_db.connect(self.database_url) as conn:
             conn.execute(
-                "UPDATE pages SET status = 'done', http_status = %s, crawled_at = now() WHERE id = %s",
-                (http_status, page_id),
+                """UPDATE pages SET status = 'done', http_status = %s, crawled_at = now(),
+                          links_tracked = %s BETWEEN 200 AND 299 WHERE id = %s""",
+                (http_status, http_status, page_id),
             )
 
     def known_images(self, urls: Sequence[str]) -> dict[str, uuid.UUID]:

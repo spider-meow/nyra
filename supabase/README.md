@@ -24,6 +24,7 @@ supabase/migrations/
   20261009000020_image_labels.sql                étiquettes (`labels`, `image_labels`) : types d'images du site et contenus
   20260930000016_reference_tags.sql              tags libres des références (colonne `tags text[]`, index GIN ; jamais lus par le matching)
   20261013000021_collections.sql                 collections (dossiers de la bibliothèque, 3 niveaux) et `reference_images.collection_id`
+  20261017000025_page_presence.sql               `image_pages.last_seen`, `pages.links_tracked`: is an image still on a page (additive; pages count as « unknown » until read again)
 ```
 
 ## Marques (012 puis 013)
