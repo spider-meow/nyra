@@ -18,12 +18,23 @@ export function photoRows(groups: MatchGroup[], wanted: (hit: Hit) => boolean): 
   for (const group of groups) {
     for (const hit of group.hits) {
       if (!wanted(hit)) continue;
-      // The ids of one photo's copies are the same whichever reference found it: the smallest names the photo.
-      const photo = [...hit.site_image_ids].sort()[0];
+      // The key of a photo is the same whichever reference found it.
+      const photo = hit.photo_key;
       const row = byPhoto.get(photo);
       if (!row) byPhoto.set(photo, { key: photo, group, hit, others: [] });
       else if (row.group.reference_id !== group.reference_id && !row.others.some((pair) => pair.group.reference_id === group.reference_id)) row.others.push({ group, hit });
     }
   }
   return [...byPhoto.values()];
+}
+
+/** How far a visual is: its photos found online that are done (removed), out of those not set aside as false positives. */
+export type Progress = { done: number; total: number };
+
+/** The progress of each reference, whatever the decision filter hides. */
+export function progressByReference(groups: MatchGroup[]): Map<string, Progress> {
+  return new Map(groups.map((group) => {
+    const counted = group.hits.filter((hit) => hit.decision !== "ecarte");
+    return [group.reference_id, { done: counted.filter((hit) => hit.decision === "traite").length, total: counted.length }];
+  }));
 }

@@ -159,6 +159,8 @@ server.
 
 **One page for every image read ("Images en ligne").** Tabs: `qualify` (matches nothing in the library, not ignored, and not a logo when the brand sets them aside), `found` (a visual of the library is in it), `logos` (every recognised logo), `ignored` (exclusions) and `all`. `GET .../site-images?view=` returns one tab, `limit` entries from the start, narrowed by `site` and `q`, with the totals of every tab; only the thumbnails of the entries returned are signed. The entries are grouped one per photo (same bytes under several addresses, crops of one photo), in `routes/common.py` (`online_images`).
 
+**"À traiter" lists photos under the visual they match.** `report._collapse_hits` merges, for one reference, the files of one photo: same bytes under several addresses, and the crops and resizes already grouped (`variant_group`). A hit carries `photo_key` and `file_count`; its decision is the common one, or none while the files are not all decided alike. The interface (`pages/review/rows.ts`) puts one row per `photo_key` under the first reference that matches it, with the visual's progress (photos removed out of those not set aside as false positives).
+
 **Bounded jobs.** The index job reads its candidates in chunks (keyset on `id`,
 so an image that can never be read cannot loop the job) and writes each batch
 in one transaction; the back office totals are SQL aggregates and its brand

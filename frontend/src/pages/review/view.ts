@@ -3,9 +3,9 @@ import { useSearchParams } from "react-router";
 import { useMatches, useOverview, useReview } from "../../lib/queries";
 import { isShortText, usePersistedState } from "../../lib/storage";
 import type { Decision, Hit, Matches, Status } from "../../types";
-import { photoRows, type Row } from "./rows";
+import { photoRows, progressByReference, type Row } from "./rows";
 
-export { focusOn, type Pair, type Row } from "./rows";
+export { focusOn, type Pair, type Progress, type Row } from "./rows";
 
 type Tab = "found" | "verify" | "missing" | "later" | "free";
 type DecisionFilter = "open" | "undecided" | Decision | "all";
@@ -77,13 +77,15 @@ function useRows(data: Matches | undefined, filters: ReturnType<typeof useFilter
   const { tab, statusFilter, decisionFilter } = filters;
   const needle = filters.query.trim().toLowerCase();
 
-  const rows: Row[] = useMemo(() => {
-    const source = tab === "found" ? data?.confirmed : tab === "verify" ? data?.to_verify : tab === "later" ? data?.later : tab === "free" ? data?.unlimited : [];
-    return photoRows((source ?? []).filter((item) => passes(item, statusFilter, needle)), (hit) => keep(hit, decisionFilter));
-  }, [data, tab, statusFilter, decisionFilter, needle]);
+  const source = useMemo(() => {
+    const list = tab === "found" ? data?.confirmed : tab === "verify" ? data?.to_verify : tab === "later" ? data?.later : tab === "free" ? data?.unlimited : [];
+    return (list ?? []).filter((item) => passes(item, statusFilter, needle));
+  }, [data, tab, statusFilter, needle]);
+  const rows: Row[] = useMemo(() => photoRows(source, (hit) => keep(hit, decisionFilter)), [source, decisionFilter]);
+  const progress = useMemo(() => progressByReference(source), [source]);
 
   const missing = useMemo(() => (data?.not_found ?? []).filter((item) => passes(item, statusFilter, needle)), [data, statusFilter, needle]);
-  return { rows, missing };
+  return { rows, missing, progress };
 }
 
 /** The selected row, the comparison panel of narrow screens, and moving through the list. */
@@ -120,7 +122,7 @@ export function useReviewView() {
   const filters = useFilters();
   const matches = useMatches(filters.withinDays, filters.selectedCountries);
   const review = useReview();
-  const { rows, missing } = useRows(matches.data, filters);
+  const { rows, missing, progress } = useRows(matches.data, filters);
   const selection = useSelection(rows, filters.shown, filters.setShown);
   const data = matches.data;
   const counts = {
@@ -132,7 +134,7 @@ export function useReviewView() {
   };
   // The countries on offer come from the answer (always every label, whichever one is chosen).
   const countries = matches.data?.countries ?? [];
-  return { ...filters, ...selection, matches, review, rows, missing, counts, countries, showMore: () => filters.setShown((value) => value + 100) };
+  return { ...filters, ...selection, matches, review, rows, missing, progress, counts, countries, showMore: () => filters.setShown((value) => value + 100) };
 }
 
 export type ReviewView = ReturnType<typeof useReviewView>;
