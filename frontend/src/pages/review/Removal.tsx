@@ -18,8 +18,8 @@ export function RemovalBadge(props: { removal: Removal }) {
   return <span className={cx("inline-flex rounded-md px-2 py-px text-xs font-medium whitespace-nowrap", tone)}>{label}</span>;
 }
 
-/** Reads every address of the brand again, from the start: the way to learn whether the photos marked removed are gone. */
-export function VerifyRemovals(props: { unchecked: number }) {
+/** Reads every address of the brand again, from the start, after a confirmation: the way to learn what the sites show now. */
+export function useFullRead() {
   const start = useStartJob();
   const confirm = useConfirm();
   const toast = useToast();
@@ -27,20 +27,26 @@ export function VerifyRemovals(props: { unchecked: number }) {
   const maxPages = useOverview().data?.defaults.max_pages_limit;
   const reading = (useJobs().data?.active ?? []).some((job) => job.kind === "crawl");
 
-  async function verify() {
+  async function read() {
     const ok = await confirm({
       title: "Relire les sites ?",
       body: <p>Nyra relit tous les sites de la marque, depuis le début et jusqu'à autant de pages que possible, puis compare à nouveau. Cela peut prendre plusieurs minutes ; la progression s'affiche en bas de l'écran.</p>,
-      confirm: "Vérifier les retraits",
+      confirm: "Relire les sites",
     });
     if (!ok) return;
     start.mutate({ kind: "crawl", body: { fresh: true, max_pages: maxPages } }, { onError: (error) => toast.show({ tone: "error", message: "La lecture n'a pas démarré", description: errorMessage(error) }) });
   }
 
+  return { read: () => void read(), busy: start.isPending || reading };
+}
+
+/** The bar above the list: some photos marked removed wait for a read to be confirmed. */
+export function VerifyRemovals(props: { unchecked: number }) {
+  const { read, busy } = useFullRead();
   return (
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-sunk px-4 py-3">
       <p className="text-sm text-muted">{plural(props.unchecked, "retrait", "retraits")} à vérifier. Une lecture complète des sites dira s'ils sont bien retirés.</p>
-      <Button size="sm" variant="primary" loading={start.isPending || reading} onClick={() => void verify()}>Vérifier les retraits</Button>
+      <Button size="sm" variant="primary" loading={busy} onClick={read}>Vérifier les retraits</Button>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { Link } from "react-router";
 import { Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, StatusBadge, Thumb, cx } from "../../components/ui";
 import { daysText, hostOf, pathOf, plural } from "../../lib/format";
 import type { NotFoundItem } from "../../types";
@@ -36,7 +37,7 @@ function VisualHeader(props: { row: Row; progress?: Progress }) {
     <div role="presentation" className="mt-2 flex items-center gap-3 px-3 pt-2 pb-1 first:mt-0">
       <Thumb src={group.ref_thumb} size={40} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-semibold">{group.filename}</span>
+        <Link to={`?visual=${group.reference_id}`} title="Voir où il est en ligne" className="block truncate text-sm font-semibold hover:underline">{group.filename}</Link>
         <StatusBadge status={group.status} label={daysText(group.days_left)} />
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted">

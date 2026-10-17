@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useSearchParams } from "react-router";
 import { CompareView } from "../components/CompareView";
 import { Modal } from "../components/feedback";
 import { Button, Card, EmptyState, Kbd, LinkButton, PageHeader, Skeleton } from "../components/ui";
@@ -10,8 +11,17 @@ import { MissingList, OccurrenceList } from "./review/List";
 import { RelatedReferences } from "./review/Related";
 import { VerifyRemovals } from "./review/Removal";
 import { focusOn, useReviewView, type ReviewView } from "./review/view";
+import { Visual } from "./visual/Visual";
 
+/** The list of what to deal with, or, with `?visual=<id>`, the page of one visual. */
 export function Review() {
+  const [params, setParams] = useSearchParams();
+  const visual = params.get("visual");
+  const back = () => setParams((current) => (current.delete("visual"), current));
+  return visual ? <Visual referenceId={visual} onBack={back} /> : <ReviewList />;
+}
+
+function ReviewList() {
   const view = useReviewView();
   const decide = useDecide(view);
   useShortcuts(view, decide);
