@@ -26,7 +26,7 @@ export function ReviewFilters(props: { view: ReviewView }) {
         </Select>
       </div>
       <div>
-        <FieldLabel htmlFor="decision" hint={decisionFilter === "open" ? "sans décision ou à retirer" : undefined}>Décision</FieldLabel>
+        <FieldLabel htmlFor="decision">Décision</FieldLabel>
         <Select id="decision" value={decisionFilter} onChange={(event) => setParam("decision", event.target.value)}>
           {decisionFilters.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </Select>

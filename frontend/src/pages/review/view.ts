@@ -2,31 +2,31 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useMatches, useOverview, useReview } from "../../lib/queries";
 import { isShortText, usePersistedState } from "../../lib/storage";
-import type { Decision, Hit, Matches, Status } from "../../types";
-import { countUnchecked, photoRows, progressByReference, type Row } from "./rows";
+import type { Hit, Matches, Status } from "../../types";
+import { photoRows, type Row } from "./rows";
 
-export { focusOn, type Pair, type Progress, type Row } from "./rows";
+export { focusOn, type Pair, type Row } from "./rows";
 
 type Tab = "found" | "verify" | "missing" | "later" | "free";
-type DecisionFilter = "open" | "undecided" | Decision | "all";
+type DecisionFilter = "open" | "confirmed" | "ecarte" | "all";
 
 export const decisionFilters: { value: DecisionFilter; label: string }[] = [
-  { value: "open", label: "À traiter" },
-  { value: "undecided", label: "Sans décision" },
-  { value: "retenu", label: "À retirer" },
-  { value: "traite", label: "Retirés" },
+  { value: "open", label: "À confirmer" },
+  { value: "confirmed", label: "Confirmées" },
   { value: "ecarte", label: "Faux positifs" },
   { value: "all", label: "Toutes" },
 ];
+
+/** The names of the filter before « À traiter » was only about confirming, so an old address keeps its meaning. */
+const LEGACY_DECISIONS: Record<string, DecisionFilter> = { undecided: "open", retenu: "confirmed", traite: "confirmed" };
 
 export const WINDOWS = [30, 90, 180, 365, 3650];
 const isWindow = (value: unknown): value is number => typeof value === "number" && WINDOWS.includes(value);
 
 export function keep(hit: Hit, filter: DecisionFilter): boolean {
   if (filter === "all") return true;
-  // A photo marked removed that a read found online again is back to be dealt with.
-  if (filter === "open") return hit.decision === null || hit.decision === "retenu" || hit.removal === "online";
-  if (filter === "undecided") return hit.decision === null;
+  if (filter === "open") return hit.decision === null;
+  if (filter === "confirmed") return hit.decision === "retenu" || hit.decision === "traite";
   return hit.decision === filter;
 }
 
@@ -46,7 +46,7 @@ function useFilters() {
   const urlWindow = Number(params.get("window"));
   const withinDays = Number.isInteger(urlWindow) && urlWindow > 0 && urlWindow <= 3650 ? urlWindow : savedWindow || defaultWindow;
   const statusFilter = pick<Status | "all">("status", ["all", "expire", "<30j", "<90j", "inconnue"], "all");
-  const decisionFilter = pick("decision", decisionFilters.map((item) => item.value), "open");
+  const decisionFilter = pick("decision", decisionFilters.map((item) => item.value), LEGACY_DECISIONS[params.get("decision") ?? ""] ?? "open");
   const tab = pick<Tab>("tab", ["found", "verify", "missing", "later", "free"], "found");
   const selectedCountries = params.getAll("country").sort();
   const [query, setQuery] = usePersistedState("review.query", "", "session", isShortText);
@@ -83,10 +83,9 @@ function useRows(data: Matches | undefined, filters: ReturnType<typeof useFilter
     return (list ?? []).filter((item) => passes(item, statusFilter, needle));
   }, [data, tab, statusFilter, needle]);
   const rows: Row[] = useMemo(() => photoRows(source, (hit) => keep(hit, decisionFilter)), [source, decisionFilter]);
-  const progress = useMemo(() => progressByReference(source), [source]);
 
   const missing = useMemo(() => (data?.not_found ?? []).filter((item) => passes(item, statusFilter, needle)), [data, statusFilter, needle]);
-  return { rows, missing, progress };
+  return { rows, missing };
 }
 
 /** The selected row, the comparison panel of narrow screens, and moving through the list. */
@@ -123,10 +122,9 @@ export function useReviewView() {
   const filters = useFilters();
   const matches = useMatches(filters.withinDays, filters.selectedCountries);
   const review = useReview();
-  const { rows, missing, progress } = useRows(matches.data, filters);
+  const { rows, missing } = useRows(matches.data, filters);
   const selection = useSelection(rows, filters.shown, filters.setShown);
   const data = matches.data;
-  const unchecked = countUnchecked([...(data?.confirmed ?? []), ...(data?.to_verify ?? []), ...(data?.later ?? []), ...(data?.unlimited ?? [])]);
   const counts = {
     found: data?.confirmed.length ?? 0,
     verify: data?.to_verify.length ?? 0,
@@ -136,7 +134,7 @@ export function useReviewView() {
   };
   // The countries on offer come from the answer (always every label, whichever one is chosen).
   const countries = matches.data?.countries ?? [];
-  return { ...filters, ...selection, matches, review, rows, missing, progress, unchecked, counts, countries, showMore: () => filters.setShown((value) => value + 100) };
+  return { ...filters, ...selection, matches, review, rows, missing, counts, countries, showMore: () => filters.setShown((value) => value + 100) };
 }
 
 export type ReviewView = ReturnType<typeof useReviewView>;

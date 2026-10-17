@@ -165,6 +165,10 @@ def test_group_matches_merges_the_crops_of_one_photo_and_waits_for_every_file_to
     assert sorted(photo["site_image_ids"]) == ["a", "b", "d"] and photo["file_count"] == 2
     assert photo["decision"] is None  # d is still undecided: the photo is not done
     assert len(hits) == 2 and next(hit for hit in hits if hit["photo_key"] == "h3")["file_count"] == 1
+    assert photo["versions"] == ["ex.com"]  # no label on the site: its host
+    rows = [{**_row("ref", "a", content_hash="h1"), "variant_group": "g", "site_label": "UK"}, {**_row("ref", "b", content_hash="h2"), "variant_group": "g", "site_label": "US"},
+            {**_row("ref", "c", content_hash="h3"), "variant_group": "g", "site_label": "UK"}]
+    assert report.group_matches(rows, 365, date(2026, 1, 1))["confirmed"][0]["hits"][0]["versions"] == ["UK", "US"]
 
 
 def test_a_photo_marked_removed_says_whether_the_last_read_confirms_it():

@@ -7,7 +7,7 @@ import ts from "typescript";
 
 const source = readFileSync(new URL("../src/pages/review/rows.ts", import.meta.url), "utf8");
 const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
-const { photoRows, focusOn, progressByReference, countUnchecked } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { photoRows, focusOn } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 
 // A photo is named by its key, whatever the files or the order of their ids.
 const hit = (ids, decision = null) => ({ site_image_id: ids[0], site_image_ids: ids, photo_key: [...ids].sort()[0], decision });
@@ -37,15 +37,4 @@ assert.equal(f.group.reference_id, "C"); assert.equal(f.key, "p1");
 assert.deepEqual(f.others.map((o) => o.group.reference_id).sort(), ["A", "B"]);
 assert.equal(focusOn(p, "nope").group.reference_id, "A");
 assert.equal(focusOn(p, null).others.length, 2);
-// progress: removed photos (not seen again) out of those not set aside as false positives, whatever the filter shows;
-// the removed ones no read has confirmed yet are counted apart
-const removed = (id, removal) => ({ ...hit([id], "traite"), removal });
-const progressGroups = [
-  grp("A", [removed("a1", "gone"), hit(["a2"]), hit(["a3"], "ecarte"), hit(["a4"], "retenu"), removed("a5", "online"), removed("a6", "pending")]),
-  grp("B", []),
-];
-const progress = progressByReference(progressGroups);
-assert.deepEqual(progress.get("A"), { done: 2, total: 5, unchecked: 1 });
-assert.deepEqual(progress.get("B"), { done: 0, total: 0, unchecked: 0 });
-assert.equal(countUnchecked([...progressGroups, grp("C", [removed("c1", "unread"), removed("c2", "gone")])]), 2);
 console.log("rows: grouping by photo ok");

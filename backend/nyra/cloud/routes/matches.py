@@ -31,7 +31,7 @@ def _shaped(row: dict, ref_urls: dict[str, str], site_urls: dict[str, str]) -> d
         "expiry_date": row["expiry_date"], "unlimited_rights": row["unlimited_rights"],
         "credit": row["credit"] or "", "notes": row["notes"] or "",
         "site_image_id": str(row["site_image_id"]), "site_url": row["site_url"],
-        "content_hash": row["content_hash"], "variant_group": row["variant_group"], "read_after": row["read_after"], "seen": row["seen"],
+        "content_hash": row["content_hash"], "variant_group": row["variant_group"], "site_label": row["site_label"], "read_after": row["read_after"], "seen": row["seen"],
         "unread_pages": row["unread_pages"], "level": row["level"], "score": float(row["score"]),
         "confidence": row["confidence"], "decision": row["decision"], "pages": row["pages"],
         # The working copy when there is one: the original can weigh tens of MB.
@@ -76,7 +76,7 @@ def matches(within_days: Optional[int] = Query(None, ge=0, le=3650), country: li
             for hit in group["hits"]:
                 hit["site_image_ids"] = [str(item) for item in hit["site_image_ids"]]
                 hit.pop("content_hash", None)
-                for internal in ("variant_group", "read_after", "seen", "unread_pages"):
+                for internal in ("variant_group", "read_after", "seen", "unread_pages", "site_label"):
                     hit.pop(internal, None)
                 hit["pages"] = hit["pages"][:20]
     result["not_found"] = report_module.not_found_items([_unmatched_item(row, ref_urls) for row in unmatched], window)

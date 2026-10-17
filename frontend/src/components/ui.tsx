@@ -139,7 +139,7 @@ const decisionTone: Record<Decision, string> = {
 
 /** Decision: a square-cornered block. */
 export function DecisionBadge(props: { decision: Decision | null }) {
-  if (!props.decision) return <span className="inline-flex rounded-md border border-dashed border-line-strong px-2 py-px text-xs whitespace-nowrap text-muted">À décider</span>;
+  if (!props.decision) return <span className="inline-flex rounded-md border border-dashed border-line-strong px-2 py-px text-xs whitespace-nowrap text-muted">À confirmer</span>;
   return <span className={cx("inline-flex rounded-md px-2 py-px text-xs font-medium whitespace-nowrap", decisionTone[props.decision])}>{decisionLabel[props.decision]}</span>;
 }
 

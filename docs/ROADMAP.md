@@ -33,7 +33,7 @@ Chiffrages : ceux de l'audit, à confirmer avant de s'y engager.
 
 ### [~] 1. Regrouper les recadrages d'une même image (Droits non vérifiés, « Tous »)
 
-**17 octobre 2026.** Le regroupement sert aussi la page « À traiter » : une ligne par photo (« N fichiers »), sous le visuel de la bibliothèque, avec sa progression (« 1 retirée sur 3 »). « Vérifier les retraits » : une lecture complète dit, pour chaque photo marquée « Retiré », si elle est confirmée absente, toujours en ligne, ou sur une page non relue (`ARCHITECTURE.md`). **Reste** : à essayer sur une vraie série de remplacements ; une photo « toujours en ligne » revient dans « À traiter » mais rien ne la distingue d'une photo jamais décidée.
+**17 octobre 2026.** Le regroupement sert aussi la page « À traiter », réduite au tri : une ligne par photo (« N fichiers », versions du site, confiance), deux décisions (« C'est bien lui », « Faux positif »). Le travail de remplacement se lit dans « Visuels à remplacer » : un visuel confirmé, ses pages encore en ligne ou non (`ARCHITECTURE.md`), la page du visuel avec l'étape manuelle « J'ai remplacé ». **Reste** : à essayer sur une vraie série de remplacements (aucune décision n'est confirmée sur les données de développement) ; « Vérifier cette page » (relire seulement des adresses données) n'est pas fait.
 
 **Ce qu'on veut.** Dans la liste « Droits non vérifiés », une même photo
 présente sur le site sous plusieurs recadrages (ex. `magnum_6glasses_set.webp`

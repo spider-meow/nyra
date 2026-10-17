@@ -1,22 +1,16 @@
-import { Fragment } from "react";
-import { Link, useSearchParams } from "react-router";
 import { Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, StatusBadge, Thumb, cx } from "../../components/ui";
-import { daysText, hostOf, pathOf, plural } from "../../lib/format";
+import { daysText, plural } from "../../lib/format";
 import type { NotFoundItem } from "../../types";
-import { RemovalBadge } from "./Removal";
-import type { Progress, ReviewView, Row } from "./view";
+import type { ReviewView, Row } from "./view";
 
-/** The photos found online (first `shown`), under the visual they match, with "Afficher plus" and the total. */
+/** The photos to confirm (first `shown`), one line each, with "Afficher plus" and the total. */
 export function OccurrenceList(props: { view: ReviewView }) {
-  const { rows, shown, selectedKey, select, showMore, listRef, progress } = props.view;
+  const { rows, shown, selectedKey, select, showMore, listRef } = props.view;
   return (
     <div className="self-start rounded-xl border border-ink bg-paper">
-      <div ref={listRef} role="listbox" aria-label="Photos en ligne" className="flex flex-col gap-1 p-2">
-        {rows.slice(0, shown).map((row, index) => (
-          <Fragment key={row.key}>
-            {index === 0 || rows[index - 1].group.reference_id !== row.group.reference_id ? <VisualHeader row={row} progress={progress.get(row.group.reference_id)} /> : null}
-            <PhotoRow row={row} selected={row.key === selectedKey} onSelect={select} />
-          </Fragment>
+      <div ref={listRef} role="listbox" aria-label="Photos trouvées en ligne" className="flex flex-col gap-1 p-2">
+        {rows.slice(0, shown).map((row) => (
+          <PhotoRow key={row.key} row={row} selected={row.key === selectedKey} onSelect={select} />
         ))}
       </div>
       {rows.length > shown ? (
@@ -29,35 +23,11 @@ export function OccurrenceList(props: { view: ReviewView }) {
   );
 }
 
-/** A visual of the library, its expiry and how many of its photos found online are removed. */
-function VisualHeader(props: { row: Row; progress?: Progress }) {
-  const { group } = props.row;
-  // The filters stay in the address, so « ← À traiter » brings the same list back.
-  const [params] = useSearchParams();
-  const visual = `?${new URLSearchParams([...params, ["visual", group.reference_id]])}`;
-  const { done = 0, total = 0, unchecked = 0 } = props.progress ?? {};
-  return (
-    <div role="presentation" className="mt-2 flex items-center gap-3 px-3 pt-2 pb-1 first:mt-0">
-      <Thumb src={group.ref_thumb} size={40} />
-      <span className="min-w-0 flex-1">
-        <Link to={visual} title="Voir où il est en ligne" className="block truncate text-sm font-semibold hover:underline">{group.filename}</Link>
-        <span className="flex flex-wrap items-center gap-2">
-          <StatusBadge status={group.status} label={daysText(group.days_left)} />
-          <Link to={visual} className="text-xs font-medium underline underline-offset-2">Voir où il est en ligne</Link>
-        </span>
-      </span>
-      <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted">
-        <span>{total ? `${done} retirée${done > 1 ? "s" : ""} sur ${total}${unchecked ? ` · ${unchecked} à vérifier` : ""}` : "Rien à retirer"}</span>
-        <span aria-hidden className="h-1.5 w-24 overflow-hidden rounded-full bg-sunk">
-          <span className="block h-full bg-ink" style={{ width: `${total ? (done / total) * 100 : 0}%` }} />
-        </span>
-      </span>
-    </div>
-  );
-}
-
+/** Where the photo was found and how many references it matches, with how sure the match is (and the decision, once there is one). */
 function PhotoRow(props: { row: Row; selected: boolean; onSelect: (key: string) => void }) {
   const { row } = props;
+  const { versions } = row.hit;
+  const references = row.others.length + 1;
   return (
     <button
       data-key={row.key}
@@ -73,18 +43,12 @@ function PhotoRow(props: { row: Row; selected: boolean; onSelect: (key: string) 
     >
       <Thumb src={row.hit.site_thumb} size={46} />
       <span className="min-w-0 flex-1">
-        <span className="block truncate font-mono text-[12px]">
-          {hostOf(row.hit.site_url)} · {row.hit.pages[0] ? pathOf(row.hit.pages[0]) : pathOf(row.hit.site_url)}
-          {row.hit.page_count > 1 ? ` et ${row.hit.page_count - 1} autre(s) page(s)` : ""}
-        </span>
-        <span className="mt-0.5 block truncate text-xs text-muted">
-          {plural(row.hit.file_count, "fichier")}
-          {row.others.length ? ` · + ${plural(row.others.length, "autre référence", "autres références")}` : ""}
-        </span>
+        <span className="block text-sm font-medium sm:truncate">Trouvée sur {versions.length > 4 ? plural(versions.length, "version") : versions.join(", ")}</span>
+        <span className="mt-0.5 block text-xs text-muted sm:truncate">{plural(row.hit.file_count, "fichier")} · correspond à {plural(references, "référence")}</span>
       </span>
-      <span className="hidden shrink-0 items-center gap-1.5 sm:flex">
+      <span className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-1.5">
         <ConfidenceBadge confidence={row.hit.confidence} />
-        {row.hit.removal ? <RemovalBadge removal={row.hit.removal} /> : <DecisionBadge decision={row.hit.decision} />}
+        {row.hit.decision ? <DecisionBadge decision={row.hit.decision} /> : null}
       </span>
     </button>
   );
