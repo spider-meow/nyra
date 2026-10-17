@@ -666,7 +666,9 @@ def delete_references(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: 
 
 def link_image_page(conn: psycopg.Connection, image_id: uuid.UUID, page_id: uuid.UUID) -> None:
     conn.execute(
-        "INSERT INTO image_pages (image_id, page_id) VALUES (%s, %s) ON CONFLICT DO NOTHING", (image_id, page_id)
+        """INSERT INTO image_pages (image_id, page_id, last_seen) VALUES (%s, %s, now())
+           ON CONFLICT (image_id, page_id) DO UPDATE SET last_seen = now()""",
+        (image_id, page_id),
     )
 
 
