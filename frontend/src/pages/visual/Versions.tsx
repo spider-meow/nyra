@@ -8,7 +8,7 @@ const total = (counts: { still: number; gone: number; unknown: number }) => (cou
 export function Versions(props: { versions: Version[]; narrowing: Narrowing; onNarrow: (narrowing: Narrowing) => void }) {
   const { narrowing } = props;
   return (
-    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
       {props.versions.map((version) => {
         const chosen = narrowing.site === version.site_id;
         return (

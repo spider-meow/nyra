@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { InfoTip } from "../../components/SettingsBlock";
 import { Button, DecisionBadge, EmptyState, Skeleton, Thumb } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { hostOf, plural } from "../../lib/format";
@@ -35,16 +36,15 @@ export function Visual(props: { referenceId: string; onBack: () => void }) {
     <>
       <Summary group={group} presence={presence.data} onBack={props.onBack} />
       {presence.error ? <p className="mb-4 text-sm text-expired">{errorMessage(presence.error)}</p> : null}
-      {admin ? (
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-sunk px-4 py-3">
-          <p className="text-sm text-muted">Les chiffres viennent de la dernière lecture complète des sites. Une page pas relue depuis reste « pas relue », jamais « retirée ».</p>
-          <Button size="sm" variant="primary" loading={read.busy} onClick={read.read}>Relire les sites</Button>
-        </div>
-      ) : null}
       {presence.data ? (
         <>
-          <h2 className="text-base font-semibold">Où il est</h2>
-          <p className="mt-0.5 mb-3 text-[13px] text-muted">Pages qui le montrent encore, sur celles où il a été vu : par version du site, puis par rubrique. Un clic filtre la liste.</p>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-base font-semibold">
+              Où il est
+              <InfoTip>Pages qui le montrent encore, sur celles où il a été vu, par version du site puis par rubrique. Un clic filtre la liste. Les chiffres viennent de la dernière lecture complète des sites.</InfoTip>
+            </h2>
+            {admin ? <Button size="sm" variant="primary" loading={read.busy} onClick={read.read}>Relire les sites</Button> : null}
+          </div>
           <Versions versions={presence.data.versions} narrowing={narrowing} onNarrow={narrow} />
           <h2 className="mt-8 mb-3 text-base font-semibold">Les pages</h2>
           <Pages data={presence.data} narrowing={narrowing} onNarrow={narrow} onOffset={setOffset} />

@@ -1,5 +1,5 @@
 import { Fragment } from "react";
-import { Link } from "react-router";
+import { Link, useSearchParams } from "react-router";
 import { Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, StatusBadge, Thumb, cx } from "../../components/ui";
 import { daysText, hostOf, pathOf, plural } from "../../lib/format";
 import type { NotFoundItem } from "../../types";
@@ -32,15 +32,18 @@ export function OccurrenceList(props: { view: ReviewView }) {
 /** A visual of the library, its expiry and how many of its photos found online are removed. */
 function VisualHeader(props: { row: Row; progress?: Progress }) {
   const { group } = props.row;
+  // The filters stay in the address, so « ← À traiter » brings the same list back.
+  const [params] = useSearchParams();
+  const visual = `?${new URLSearchParams([...params, ["visual", group.reference_id]])}`;
   const { done = 0, total = 0, unchecked = 0 } = props.progress ?? {};
   return (
     <div role="presentation" className="mt-2 flex items-center gap-3 px-3 pt-2 pb-1 first:mt-0">
       <Thumb src={group.ref_thumb} size={40} />
       <span className="min-w-0 flex-1">
-        <Link to={`?visual=${group.reference_id}`} title="Voir où il est en ligne" className="block truncate text-sm font-semibold hover:underline">{group.filename}</Link>
+        <Link to={visual} title="Voir où il est en ligne" className="block truncate text-sm font-semibold hover:underline">{group.filename}</Link>
         <span className="flex flex-wrap items-center gap-2">
           <StatusBadge status={group.status} label={daysText(group.days_left)} />
-          <Link to={`?visual=${group.reference_id}`} className="text-xs font-medium underline underline-offset-2">Voir où il est en ligne</Link>
+          <Link to={visual} className="text-xs font-medium underline underline-offset-2">Voir où il est en ligne</Link>
         </span>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted">

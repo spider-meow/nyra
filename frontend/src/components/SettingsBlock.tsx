@@ -1,5 +1,8 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Card, cx } from "./ui";
+
+const BUBBLE_WIDTH = 256; // `w-64`
+const MARGIN = 16;
 
 /**
  * A small "i" in a circle that explains what is next to it. Opens on hover, on keyboard focus and on a tap;
@@ -7,9 +10,20 @@ import { Card, cx } from "./ui";
  */
 export function InfoTip(props: { children: ReactNode; label?: string }) {
   const [open, setOpen] = useState(false);
+  const [offset, setOffset] = useState(0);
+  const wrapper = useRef<HTMLSpanElement>(null);
   const id = useId();
+  // The bubble opens to the right of the "i", shifted left just enough to stay on screen (the "i" near an edge).
+  useLayoutEffect(() => {
+    if (!open || !wrapper.current) return;
+    // `clientWidth`, not `innerWidth`: on a phone the latter grows when the bubble overflows.
+    const screen = document.documentElement.clientWidth;
+    const left = wrapper.current.getBoundingClientRect().left;
+    const width = Math.min(BUBBLE_WIDTH, screen - 2 * MARGIN);
+    setOffset(Math.max(Math.min(0, screen - MARGIN - (left + width)), MARGIN - left));
+  }, [open]);
   return (
-    <span className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} onKeyDown={(event) => event.key === "Escape" && setOpen(false)}>
+    <span ref={wrapper} className="relative inline-flex" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)} onKeyDown={(event) => event.key === "Escape" && setOpen(false)}>
       <button
         type="button"
         aria-label={props.label ?? "Plus d'informations"}
@@ -22,7 +36,7 @@ export function InfoTip(props: { children: ReactNode; label?: string }) {
         i
       </button>
       {open ? (
-        <span id={id} role="tooltip" className="tip-in absolute top-full left-0 z-40 mt-2 w-64 rounded-lg bg-ink px-3 py-2 text-left text-[13px] leading-snug font-normal text-paper shadow-float">
+        <span id={id} role="tooltip" style={{ left: offset }} className="tip-in absolute top-full z-40 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg bg-ink px-3 py-2 text-left text-[13px] leading-snug font-normal text-paper shadow-float">
           {props.children}
         </span>
       ) : null}
