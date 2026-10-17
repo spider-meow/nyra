@@ -22,7 +22,9 @@ export function Pages(props: { data: Presence; narrowing: Narrowing; onNarrow: (
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <Segmented<PageState | "all"> label="État des pages" value={narrowing.state ?? "all"} options={FILTERS} onChange={(value) => props.onNarrow({ ...narrowing, state: value === "all" ? undefined : value })} />
+        <div className="max-w-full overflow-x-auto">
+          <Segmented<PageState | "all"> label="État des pages" value={narrowing.state ?? "all"} options={FILTERS} onChange={(value) => props.onNarrow({ ...narrowing, state: value === "all" ? undefined : value })} />
+        </div>
         <p className="text-[13px] text-muted tabular">
           {data.total.toLocaleString("fr-FR")} page{data.total > 1 ? "s" : ""}
           {narrowing.section ? ` dans ${narrowing.section}` : ""}

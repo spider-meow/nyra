@@ -13,7 +13,7 @@ export function Summary(props: { group: MatchGroup; presence: Presence | undefin
       <div className="mt-3 flex flex-wrap items-center gap-4">
         <Thumb src={group.ref_thumb} size={72} />
         <div className="min-w-0 flex-1">
-          <h1 className="font-display text-3xl leading-tight [overflow-wrap:anywhere]">{group.filename}</h1>
+          <h1 className="font-display text-xl leading-tight sm:text-3xl [overflow-wrap:anywhere]">{group.filename}</h1>
           <div className="mt-1.5"><StatusBadge status={group.status} label={daysText(group.days_left)} /></div>
         </div>
         {presence ? <Headline totals={presence.totals} /> : null}
