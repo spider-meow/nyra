@@ -28,7 +28,8 @@ def _pages(only_reference: bool) -> str:
     """One row per page and reference (the brand's every reference when `only_reference` is False, so the index on
     `matches.reference_id` is used for one); `section` is the first segment of the path ("/blogs"), "/" for the home page."""
     return f"""
-    SELECT m.reference_id, p.url, s.id AS site_id,
+    SELECT m.reference_id, p.id AS page_id, p.url, s.id AS site_id, bool_or(pr.page_id IS NOT NULL) AS marked,
+           COALESCE(bool_or(p.read_started_at > pr.marked_at), false) AS checked,
            '/' || split_part(split_part(regexp_replace(p.url, '^https?://[^/]+', ''), '?', 1), '/', 2) AS section,
            CASE WHEN p.status = 'done' AND p.links_tracked AND p.crawled_at >= rd.read_at AND COALESCE(bool_or(ip.last_seen >= p.read_started_at), false) THEN 'still'
                 WHEN p.status = 'done' AND (p.links_tracked OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at THEN 'gone'
@@ -39,6 +40,7 @@ def _pages(only_reference: bool) -> str:
     JOIN image_pages ip ON ip.image_id = si.id
     JOIN pages p ON p.id = ip.page_id
     LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
+    LEFT JOIN page_replacements pr ON pr.reference_id = m.reference_id AND pr.page_id = p.id
     LEFT JOIN LATERAL (SELECT max(c.started_at) AS read_at FROM crawl_runs c WHERE c.site_id = s.id AND c.status = 'done') rd ON true
     WHERE {"m.reference_id = %(ref)s" if only_reference else "TRUE"} AND s.brand_id = %(brand)s AND v.decision IS DISTINCT FROM 'ecarte'
     GROUP BY m.reference_id, p.id, p.url, s.id, p.status, p.links_tracked, p.http_status, p.crawled_at, p.read_started_at, rd.read_at
@@ -46,62 +48,68 @@ def _pages(only_reference: bool) -> str:
 
 
 def counts(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID) -> list[Row]:
-    """How many pages are in each state, per site version and section: (site_id, label, host, section, state, pages)."""
+    """How many pages are in each state, marked replaced or not, per site version and section:
+    (site_id, label, host, section, state, marked, pages)."""
     return conn.execute(
-        f"""SELECT g.site_id, COALESCE(NULLIF(st.label, ''), '') AS label, st.url AS site_url, g.section, g.state, count(*) AS pages
+        f"""SELECT g.site_id, COALESCE(NULLIF(st.label, ''), '') AS label, st.url AS site_url, g.section, g.state, g.marked, count(*) AS pages
             FROM ({_pages(True)}) g JOIN sites st ON st.id = g.site_id
-            GROUP BY g.site_id, st.label, st.url, g.section, g.state""",
+            GROUP BY g.site_id, st.label, st.url, g.section, g.state, g.marked""",
         {"ref": reference_id, "brand": brand_id},
     ).fetchall()
 
 
 def pages(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID, *, site: Optional[uuid.UUID] = None,
-          section: Optional[str] = None, state: Optional[str] = None, limit: int = 50, offset: int = 0) -> list[Row]:
-    """`limit` pages from `offset` (at most `MAX_PAGES_PER_REQUEST`), by address, narrowed to a site version, a section and a state."""
+          section: Optional[str] = None, state: Optional[str] = None, marked: Optional[bool] = None, limit: int = 50,
+          offset: int = 0) -> list[Row]:
+    """`limit` pages from `offset` (at most `MAX_PAGES_PER_REQUEST`), by address, narrowed to a site version, a section, a
+    state and whether they were marked replaced. `checked`: the page was read again after it was marked, so its state is
+    the answer to the mark (before that, the state is about the page as it was)."""
     return conn.execute(
-        f"""SELECT g.url, g.site_id, g.section, g.state FROM ({_pages(True)}) g
+        f"""SELECT g.url, g.site_id, g.section, g.state, g.marked, g.checked FROM ({_pages(True)}) g
             WHERE (%(site)s::uuid IS NULL OR g.site_id = %(site)s) AND (%(section)s::text IS NULL OR g.section = %(section)s)
-              AND (%(state)s::text IS NULL OR g.state = %(state)s)
+              AND (%(state)s::text IS NULL OR g.state = %(state)s) AND (%(marked)s::boolean IS NULL OR g.marked = %(marked)s)
             ORDER BY g.url LIMIT %(limit)s OFFSET %(offset)s""",
-        {"ref": reference_id, "brand": brand_id, "site": site, "section": section, "state": state,
+        {"ref": reference_id, "brand": brand_id, "site": site, "section": section, "state": state, "marked": marked,
          "limit": min(limit, MAX_PAGES_PER_REQUEST), "offset": offset},
     ).fetchall()
 
 
 def summary(rows: list[Row]) -> dict:
-    """The counts of `counts`, as totals and per site version (each with its sections, the most pages still online first)."""
-    totals = dict.fromkeys(STATES, 0)
+    """The counts of `counts`, as totals and per site version (each with its sections, the most pages still online first);
+    `marked` is how many of the pages a person marked replaced, whatever their state."""
+    totals = {**dict.fromkeys(STATES, 0), "marked": 0}
     versions: dict[uuid.UUID, dict] = {}
     for row in rows:
-        totals[row["state"]] += row["pages"]
         version = versions.setdefault(row["site_id"], {"site_id": str(row["site_id"]), "label": row["label"], "site_url": row["site_url"],
-                                                       **dict.fromkeys(STATES, 0), "sections": {}})
-        version[row["state"]] += row["pages"]
-        section = version["sections"].setdefault(row["section"], {"section": row["section"], **dict.fromkeys(STATES, 0)})
-        section[row["state"]] += row["pages"]
+                                                       **dict.fromkeys(STATES, 0), "marked": 0, "sections": {}})
+        section = version["sections"].setdefault(row["section"], {"section": row["section"], **dict.fromkeys(STATES, 0), "marked": 0})
+        for counter in (totals, version, section):
+            counter[row["state"]] += row["pages"]
+            counter["marked"] += row["pages"] if row["marked"] else 0
     for version in versions.values():
         version["sections"] = sorted(version["sections"].values(), key=lambda item: (-item["still"], item["section"]))
-    return {"totals": {**totals, "pages": sum(totals.values())},
+    return {"totals": {**totals, "pages": sum(totals[state] for state in STATES)},
             "versions": sorted(versions.values(), key=lambda item: (-item["still"], item["site_url"]))}
 
 
-def total(rows: list[Row], *, site: Optional[uuid.UUID] = None, section: Optional[str] = None, state: Optional[str] = None) -> int:
+def total(rows: list[Row], *, site: Optional[uuid.UUID] = None, section: Optional[str] = None, state: Optional[str] = None,
+          marked: Optional[bool] = None) -> int:
     """How many pages `pages` can list for these narrowings, to page through them."""
-    return sum(row["pages"] for row in rows if (site is None or row["site_id"] == site)
-               and (section is None or row["section"] == section) and (state is None or row["state"] == state))
+    return sum(row["pages"] for row in rows if (site is None or row["site_id"] == site) and (section is None or row["section"] == section)
+               and (state is None or row["state"] == state) and (marked is None or row["marked"] == marked))
 
 
 def by_visual(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     """The visuals a person confirmed (a photo decided « à retirer » or « retiré »; unlimited rights are never replaced), with
-    the pages in each state, one row per state, and one row with no state for a visual no page is known for:
-    (reference, filename, expiry_date, unlimited_rights, thumb_path, storage_path, state, pages)."""
+    the pages in each state, marked replaced or not, and one row with no state for a visual no page is known for:
+    (reference, filename, expiry_date, unlimited_rights, thumb_path, storage_path, state, marked, pages)."""
     return conn.execute(
-        f"""SELECT r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, count(g.url) AS pages
+        f"""SELECT r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, g.marked, count(g.url) AS pages
             FROM reference_images r LEFT JOIN ({_pages(False)}) g ON g.reference_id = r.id
             WHERE r.brand_id = %(brand)s AND NOT r.unlimited_rights AND EXISTS (
                 SELECT 1 FROM matches m JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
                 WHERE m.reference_id = r.id AND v.decision IN ('retenu', 'traite'))
-            GROUP BY r.id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state""",
+            GROUP BY r.id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, g.marked""",
         {"brand": brand_id},
     ).fetchall()
 
@@ -111,8 +119,27 @@ def visuals(rows: list[Row]) -> list[dict]:
     and none shows it (a page not read again is never taken for gone, so a visual not measured yet, or with no page known, is not replaced)."""
     found: dict[uuid.UUID, dict] = {}
     for row in rows:
-        item = found.setdefault(row["reference_id"], {"row": row, **dict.fromkeys(STATES, 0)})
+        item = found.setdefault(row["reference_id"], {"row": row, **dict.fromkeys(STATES, 0), "marked": 0})
         if row["state"]:
             item[row["state"]] += row["pages"]
-    return [{"row": item["row"], **{state: item[state] for state in STATES}, "pages": sum(item[state] for state in STATES),
+            item["marked"] += row["pages"] if row["marked"] else 0
+    return [{"row": item["row"], **{state: item[state] for state in STATES}, "marked": item["marked"], "pages": sum(item[state] for state in STATES),
              "replaced": sum(item[state] for state in STATES) > 0 and item["still"] == 0 and item["unknown"] == 0} for item in found.values()]
+
+
+def pages_showing(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID, urls: list[str]) -> dict[str, uuid.UUID]:
+    """Among `urls`, the pages that show this visual: address -> page."""
+    rows = conn.execute(f"SELECT g.url, g.page_id FROM ({_pages(True)}) g WHERE g.url = ANY(%(urls)s)",
+                        {"ref": reference_id, "brand": brand_id, "urls": urls}).fetchall()
+    return {row["url"]: row["page_id"] for row in rows}
+
+
+def set_replaced(conn: psycopg.Connection, org_id: uuid.UUID, reference_id: uuid.UUID, page_ids: list[uuid.UUID], *, replaced: bool,
+                 user_id: Optional[uuid.UUID]) -> None:
+    """Mark these pages as replaced for the visual, or take the mark off."""
+    if not replaced:
+        conn.execute("DELETE FROM page_replacements WHERE reference_id = %s AND page_id = ANY(%s)", (reference_id, page_ids))
+        return
+    with conn.cursor() as cur:
+        cur.executemany("INSERT INTO page_replacements (reference_id, page_id, org_id, marked_by) VALUES (%s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                        [(reference_id, page_id, org_id, user_id) for page_id in page_ids])

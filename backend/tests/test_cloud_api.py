@@ -1526,8 +1526,8 @@ def test_presence_lists_the_pages_of_a_visual_and_stays_inside_its_brand(client,
         cloud_db.link_image_page(conn, image, page)
 
     data = client.get(f"{base}/visuals/{ref}/presence", headers=_headers(client_id)).json()
-    assert data["totals"] == {"still": 0, "gone": 0, "unknown": 1, "pages": 1}  # no finished read of the site yet
-    assert data["pages"] == [{"url": "https://target.test/blogs/a?x=1", "site_id": str(site), "section": "/blogs", "state": "unknown"}]
+    assert data["totals"] == {"still": 0, "gone": 0, "unknown": 1, "marked": 0, "pages": 1}  # no finished read of the site yet
+    assert data["pages"] == [{"url": "https://target.test/blogs/a?x=1", "site_id": str(site), "section": "/blogs", "state": "unknown", "marked": False, "checked": False}]
     assert data["total"] == 1 and data["versions"][0]["sections"][0]["section"] == "/blogs"
     assert client.get(f"{base}/visuals/{ref}/presence?state=still", headers=_headers(client_id)).json()["pages"] == []
     assert client.get(f"{base}/visuals/{ref}/presence?state=nope", headers=_headers(client_id)).status_code == 422
@@ -1601,3 +1601,35 @@ def test_a_page_check_accepts_an_address_that_is_a_page_of_two_sites_of_the_bran
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE brand_id = %s AND status IN ('queued', 'running')", (cloud_brand,))
     done = client.post(f"{base}/jobs/check", headers=_headers(admin_id), json={"urls": ["https://shared.test/p"]})
     assert done.status_code == 200 and sorted(done.json()["job"]["params"]["pages"]) == sorted([str(first), str(second)])
+
+
+def test_pages_are_marked_replaced_for_the_visual_that_shows_them(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    same_hash = "ffff0000ffff0000"
+    with cloud_db.connect(cloud_database_url) as conn:
+        ref = cloud_db.upsert_reference_image(conn, org_id=org_id, brand_id=cloud_brand, filename="v.jpg", storage_path=f"{org_id}/v.jpg",
+                                              expiry_date=None, credit=None, notes=None, phash=same_hash, dhash=same_hash)
+        site = _site(conn, org_id, cloud_brand)
+        image = conn.execute("INSERT INTO site_images (org_id, site_id, url, storage_path, phash, dhash) VALUES (%s, %s, 'https://target.test/v.jpg', %s, %s, %s) RETURNING id",
+                             (org_id, site, f"{org_id}/v.jpg", same_hash, same_hash)).fetchone()["id"]
+        cloud_db.write_matches(conn, org_id, [(ref, image, "phash", 1.0, "haut")])
+        for path in ("a", "b"):
+            page = conn.execute("INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, %s, 'done') RETURNING id", (org_id, site, f"https://target.test/blogs/{path}")).fetchone()["id"]
+            cloud_db.link_image_page(conn, image, page)
+        conn.execute("INSERT INTO pages (org_id, site_id, url, status) VALUES (%s, %s, 'https://target.test/elsewhere', 'done')", (org_id, site))
+    mark = f"{base}/visuals/{ref}/replaced"
+    shown = ["https://target.test/blogs/a"]
+    assert client.post(mark, headers=_headers(client_id), json={"urls": shown, "replaced": True}).json() == {"ok": True, "pages": 1}  # any member
+    assert client.post(mark, headers=_headers(admin_id), json={"urls": ["https://target.test/elsewhere"], "replaced": True}).status_code == 400  # a page of the brand that does not show it
+    assert client.post(mark, headers=_headers(admin_id), json={"urls": [], "replaced": True}).status_code == 422
+    assert client.post(f"{base}/visuals/{uuid.uuid4()}/replaced", headers=_headers(admin_id), json={"urls": shown, "replaced": True}).status_code == 404
+
+    data = client.get(f"{base}/visuals/{ref}/presence", headers=_headers(client_id)).json()
+    assert data["totals"]["marked"] == 1 and {page["url"]: page["marked"] for page in data["pages"]} == {"https://target.test/blogs/a": True, "https://target.test/blogs/b": False}
+    only = client.get(f"{base}/visuals/{ref}/presence?marked=false", headers=_headers(client_id)).json()
+    assert [page["url"] for page in only["pages"]] == ["https://target.test/blogs/b"] and only["total"] == 1
+    assert client.post(mark, headers=_headers(client_id), json={"urls": shown, "replaced": False}).status_code == 200
+    assert client.get(f"{base}/visuals/{ref}/presence", headers=_headers(client_id)).json()["totals"]["marked"] == 0
+
+    other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
+    assert client.post(f"/api/orgs/{org_id}/brands/{other['id']}/visuals/{ref}/replaced", headers=_headers(admin_id), json={"urls": shown, "replaced": True}).status_code == 404

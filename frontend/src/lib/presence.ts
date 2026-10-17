@@ -6,16 +6,16 @@ import { useInvalidate, useJobs } from "./queries";
 
 /** Where a page stands for a visual (see `backend/nyra/cloud/presence.py`). */
 export type PageState = "still" | "gone" | "unknown";
-export type Counts = Record<PageState, number>;
+export type Counts = Record<PageState, number> & { marked: number };
 export type Section = Counts & { section: string };
 export type Version = Counts & { site_id: string; label: string; site_url: string; sections: Section[] };
-export type Narrowing = { site?: string; section?: string; state?: PageState };
+export type Narrowing = { site?: string; section?: string; state?: PageState; marked?: boolean };
 
 export type Presence = {
   totals: Counts & { pages: number };
   versions: Version[];
   /** The pages for the narrowing, `total` of them, from `offset`. */
-  pages: { url: string; site_id: string; section: string; state: PageState }[];
+  pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean; checked: boolean }[];
   total: number;
   offset: number;
 };
@@ -27,7 +27,7 @@ export const PAGE_SIZE = 50;
 export function usePresence(referenceId: string, narrowing: Narrowing, offset: number) {
   const { apiPath, brand } = useOrg();
   const params = new URLSearchParams({ limit: String(PAGE_SIZE), offset: String(offset) });
-  for (const [name, value] of Object.entries(narrowing)) if (value) params.set(name, value);
+  for (const [name, value] of Object.entries(narrowing)) if (value !== undefined) params.set(name, String(value));
   return useQuery({
     queryKey: ["occurrences", brand.id, "presence", referenceId, narrowing, offset],
     queryFn: () => api.get<Presence>(apiPath(`/visuals/${referenceId}/presence?${params}`)),
@@ -70,4 +70,14 @@ export function useCheckPages() {
     onSuccess: () => invalidate("jobs"),
   });
   return { check, busy: check.isPending || checking };
+}
+
+/** Marks pages as replaced for a visual (where the person changed it by hand), or takes the mark off. */
+export function useMarkReplaced(referenceId: string) {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (input: { urls: string[]; replaced: boolean }) => api.post(apiPath(`/visuals/${referenceId}/replaced`), input),
+    onSettled: () => invalidate("occurrences"),
+  });
 }

@@ -575,7 +575,6 @@ class Worker:
         total = sum(len(urls) for urls in groups.values())
         if not total or not sites:
             raise JobFailed("Aucune page à vérifier pour cette marque.")
-        warm_clip(config.match)
         stats = CrawlStats()
         for key, urls in groups.items():
             if ctx.cancelled or key not in sites:

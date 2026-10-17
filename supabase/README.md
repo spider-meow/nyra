@@ -26,6 +26,7 @@ supabase/migrations/
   20261013000021_collections.sql                 collections (dossiers de la bibliothèque, 3 niveaux) et `reference_images.collection_id`
   20261017000025_page_presence.sql               `image_pages.last_seen`, `pages.links_tracked`: is an image still on a page (additive; pages count as « unknown » until read again)
   20261017000026_page_checks.sql                 job kind `check` (read again only some pages), `pages.read_started_at` (additive; pages read before count with an approximate start)
+  20261017000027_page_replacements.sql           pages marked as replaced by hand, per visual (additive)
 ```
 
 ## Marques (012 puis 013)
