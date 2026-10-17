@@ -787,7 +787,7 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
             m.level, m.score, m.confidence,
             r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.credit, r.notes,
             r.storage_path AS ref_storage_path, r.thumb_path AS ref_thumb_path, r.work_path AS ref_work_path,
-            s.id AS site_image_id, s.url AS site_url, s.content_hash, COALESCE(st.label, '') AS site_label,
+            s.id AS site_image_id, s.url AS site_url, s.content_hash, s.variant_group, COALESCE(st.label, '') AS site_label,
             s.storage_path AS site_storage_path, s.thumb_path AS site_thumb_path,
             v.decision,
             COALESCE(pg.urls, ARRAY[]::text[]) AS pages
@@ -809,6 +809,7 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     for row in rows:
         row["expiry_date"] = row["expiry_date"].isoformat() if row["expiry_date"] else None
         row["pages"] = list(row["pages"])
+        row["variant_group"] = str(row["variant_group"]) if row["variant_group"] else None
     return rows
 
 

@@ -114,6 +114,9 @@ export type LibraryItem = {
 export type Hit = {
   site_image_id: string;
   site_image_ids: string[];
+  /** Names the photo: its files (CDN copies, crops, resizes) all carry the same key. */
+  photo_key: string;
+  file_count: number;
   site_url: string;
   site_image: string;
   site_thumb: string;
