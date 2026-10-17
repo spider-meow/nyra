@@ -28,13 +28,20 @@ export function photoRows(groups: MatchGroup[], wanted: (hit: Hit) => boolean): 
   return [...byPhoto.values()];
 }
 
-/** How far a visual is: its photos found online that are done (removed), out of those not set aside as false positives. */
-export type Progress = { done: number; total: number };
+/** How far a visual is: its photos found online that are removed (and not seen again), out of those not set aside as
+ * false positives; `unchecked` are removed ones no read has confirmed yet. */
+export type Progress = { done: number; total: number; unchecked: number };
+
+const unconfirmed = (hit: Hit) => hit.decision === "traite" && (hit.removal === "pending" || hit.removal === "unread");
 
 /** The progress of each reference, whatever the decision filter hides. */
 export function progressByReference(groups: MatchGroup[]): Map<string, Progress> {
   return new Map(groups.map((group) => {
     const counted = group.hits.filter((hit) => hit.decision !== "ecarte");
-    return [group.reference_id, { done: counted.filter((hit) => hit.decision === "traite").length, total: counted.length }];
+    const done = counted.filter((hit) => hit.decision === "traite" && hit.removal !== "online").length;
+    return [group.reference_id, { done, total: counted.length, unchecked: counted.filter(unconfirmed).length }];
   }));
 }
+
+/** How many removed photos no read has confirmed yet, over every visual. */
+export const countUnchecked = (groups: MatchGroup[]): number => groups.reduce((sum, group) => sum + group.hits.filter(unconfirmed).length, 0);

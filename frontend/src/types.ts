@@ -111,12 +111,16 @@ export type LibraryItem = {
   created_at: string;
 };
 
+export type Removal = "pending" | "online" | "unread" | "gone";
+
 export type Hit = {
   site_image_id: string;
   site_image_ids: string[];
   /** Names the photo: its files (CDN copies, crops, resizes) all carry the same key. */
   photo_key: string;
   file_count: number;
+  /** For a photo marked removed: what the last read of its sites says (see `report._removal`). */
+  removal: Removal | null;
   site_url: string;
   site_image: string;
   site_thumb: string;

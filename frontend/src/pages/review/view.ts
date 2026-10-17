@@ -3,7 +3,7 @@ import { useSearchParams } from "react-router";
 import { useMatches, useOverview, useReview } from "../../lib/queries";
 import { isShortText, usePersistedState } from "../../lib/storage";
 import type { Decision, Hit, Matches, Status } from "../../types";
-import { photoRows, progressByReference, type Row } from "./rows";
+import { countUnchecked, photoRows, progressByReference, type Row } from "./rows";
 
 export { focusOn, type Pair, type Progress, type Row } from "./rows";
 
@@ -24,7 +24,8 @@ const isWindow = (value: unknown): value is number => typeof value === "number" 
 
 export function keep(hit: Hit, filter: DecisionFilter): boolean {
   if (filter === "all") return true;
-  if (filter === "open") return hit.decision === null || hit.decision === "retenu";
+  // A photo marked removed that a read found online again is back to be dealt with.
+  if (filter === "open") return hit.decision === null || hit.decision === "retenu" || hit.removal === "online";
   if (filter === "undecided") return hit.decision === null;
   return hit.decision === filter;
 }
@@ -125,6 +126,7 @@ export function useReviewView() {
   const { rows, missing, progress } = useRows(matches.data, filters);
   const selection = useSelection(rows, filters.shown, filters.setShown);
   const data = matches.data;
+  const unchecked = countUnchecked([...(data?.confirmed ?? []), ...(data?.to_verify ?? []), ...(data?.later ?? []), ...(data?.unlimited ?? [])]);
   const counts = {
     found: data?.confirmed.length ?? 0,
     verify: data?.to_verify.length ?? 0,
@@ -134,7 +136,7 @@ export function useReviewView() {
   };
   // The countries on offer come from the answer (always every label, whichever one is chosen).
   const countries = matches.data?.countries ?? [];
-  return { ...filters, ...selection, matches, review, rows, missing, progress, counts, countries, showMore: () => filters.setShown((value) => value + 100) };
+  return { ...filters, ...selection, matches, review, rows, missing, progress, unchecked, counts, countries, showMore: () => filters.setShown((value) => value + 100) };
 }
 
 export type ReviewView = ReturnType<typeof useReviewView>;

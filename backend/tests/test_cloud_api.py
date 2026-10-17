@@ -1474,3 +1474,39 @@ def test_admins_set_and_remove_the_logo_of_their_brand_and_it_comes_with_the_bra
     assert client.delete(f"{base}/logo", headers=_headers(client_id)).status_code == 403
     assert client.delete(f"{base}/logo", headers=_headers(admin_id)).status_code == 200
     assert client.get("/api/orgs", headers=_headers(client_id)).json()["organizations"][0]["brands"][0]["logo"] is None
+
+
+def test_a_photo_marked_removed_says_what_the_last_read_found(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, _, _ = org_with_users
+    same_hash = "ffff0000ffff0000"
+    with cloud_db.connect(cloud_database_url) as conn:
+        ref = cloud_db.upsert_reference_image(conn, org_id=org_id, brand_id=cloud_brand, filename="v.jpg", storage_path=f"{org_id}/v.jpg",
+                                              expiry_date="2026-10-01", credit=None, notes=None, phash=same_hash, dhash=same_hash)
+        site = _site(conn, org_id, cloud_brand)
+        image = conn.execute("INSERT INTO site_images (org_id, site_id, url, storage_path, phash, dhash) VALUES (%s, %s, 'https://target.test/v.jpg', %s, %s, %s) RETURNING id",
+                             (org_id, site, f"{org_id}/v.jpg", same_hash, same_hash)).fetchone()["id"]
+        cloud_db.write_matches(conn, org_id, [(ref, image, "phash", 1.0, "haut")])
+        page = conn.execute("INSERT INTO pages (org_id, site_id, url, status, http_status) VALUES (%s, %s, 'https://target.test/a', 'done', 200) RETURNING id", (org_id, site)).fetchone()["id"]
+        cloud_db.link_image_page(conn, image, page)
+
+    def removal():
+        return client.get(f"{base}/matches?within_days=3650", headers=_headers(admin_id)).json()["confirmed"][0]["hits"][0]["removal"]
+
+    def read(*, seen: bool, status: int = 200):
+        """A read of the site that started after the decision: the page read again, the image seen on it or not."""
+        with cloud_db.connect(cloud_database_url) as conn:
+            conn.execute("DELETE FROM crawl_runs WHERE site_id = %s", (site,))
+            conn.execute("INSERT INTO crawl_runs (org_id, site_id, status, started_at) VALUES (%s, %s, 'done', now() + interval '1 hour')", (org_id, site))
+            conn.execute("UPDATE pages SET crawled_at = now() + interval '2 hours', http_status = %s WHERE id = %s", (status, page))
+            conn.execute("UPDATE site_images SET last_seen = now() + interval '2 hours' WHERE id = %s AND %s", (image, seen))
+
+    review = {"reference_id": str(ref), "site_image_ids": [str(image)], "decision": "traite"}
+    assert removal() is None  # not marked removed
+    assert client.post(f"{base}/reviews", headers=_headers(admin_id), json=review).status_code == 200
+    assert removal() == "pending"  # no read since the mark
+    read(seen=False)
+    assert removal() == "gone"
+    read(seen=False, status=500)
+    assert removal() == "unread"  # the page failed to load: nothing is known about the image
+    read(seen=True)
+    assert removal() == "online"
