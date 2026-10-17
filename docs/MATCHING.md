@@ -71,8 +71,8 @@ cocktails, cellars and vineyards, checked by eye.
 ## Grouping the crops of a site photo
 
 The same two steps also run between site images (`nyra/variants.py`,
-`cloud/variants.py`), after each comparison, so the "À qualifier" tab of "Images en ligne" shows
-a photo once however many crops or sizes the sites serve. For each image not
+`cloud/variants.py`), after each comparison, so the "À qualifier" tab of "Images en ligne" and the list of "À traiter" show
+a photo once however many crops or sizes the sites serve (in "À traiter" a photo is one row, "N fichiers", and a decision covers every file). For each image not
 yet checked (`variants_checked_at` NULL): its 5 closest images by CLIP
 (cosine ≥ `clip_similarity_floor`) are the candidates, the keypoint check
 keeps only the confirmed tier (≥ 20 % of both images), and the pairs are

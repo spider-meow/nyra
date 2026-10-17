@@ -153,6 +153,35 @@ def test_group_matches_merges_cdn_variants_and_sorts_by_urgency():
     assert early["status"] == report.STATUS_EXPIRED
 
 
+def test_group_matches_merges_the_crops_of_one_photo_and_waits_for_every_file_to_be_decided():
+    rows = [
+        {**_row("ref", "a", content_hash="h1", decision="traite"), "variant_group": "g1"},
+        {**_row("ref", "b", content_hash="h2", decision="traite"), "variant_group": "g1"},
+        {**_row("ref", "c", content_hash="h3"), "variant_group": None},  # not grouped yet, of its own
+        {**_row("ref", "d", content_hash="h2"), "variant_group": None},  # same bytes as b, not grouped: joins its photo
+    ]
+    hits = report.group_matches(rows, 365, date(2026, 1, 1))["confirmed"][0]["hits"]
+    photo = next(hit for hit in hits if hit["photo_key"] == "g1")
+    assert sorted(photo["site_image_ids"]) == ["a", "b", "d"] and photo["file_count"] == 2
+    assert photo["decision"] is None  # d is still undecided: the photo is not done
+    assert len(hits) == 2 and next(hit for hit in hits if hit["photo_key"] == "h3")["file_count"] == 1
+
+
+def test_a_photo_marked_removed_says_whether_the_last_read_confirms_it():
+    def removal(*files):
+        rows = [{**_row("ref", name, decision="traite", content_hash=name), "variant_group": "g", **state} for name, state in files]
+        return report.group_matches(rows, 365, date(2026, 1, 1))["confirmed"][0]["hits"][0]["removal"]
+
+    gone = {"read_after": True, "seen": False, "unread_pages": 0}
+    assert removal(("a", gone)) == "gone"
+    assert removal(("a", gone), ("b", {**gone, "unread_pages": 2})) == "unread"  # a page that showed it was not read again
+    assert removal(("a", gone), ("b", {**gone, "read_after": False})) == "pending"  # no read since it was marked
+    assert removal(("a", gone), ("b", {**gone, "seen": True})) == "online"  # seen again: the removal is not done
+    assert removal(("a", {**gone, "read_after": False, "seen": True})) == "pending"  # seen by a read from before the mark
+    undecided = report.group_matches([_row("ref", "a")], 365, date(2026, 1, 1))["confirmed"][0]["hits"][0]
+    assert undecided["removal"] is None
+
+
 def test_unlimited_rights_found_with_certainty_leave_the_urgencies():
     today = date(2026, 1, 1)
     free = {**_row("free", "a", expiry=None), "unlimited_rights": True}

@@ -789,9 +789,13 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
             m.level, m.score, m.confidence,
             r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.credit, r.notes,
             r.storage_path AS ref_storage_path, r.thumb_path AS ref_thumb_path, r.work_path AS ref_work_path,
-            s.id AS site_image_id, s.url AS site_url, s.content_hash, COALESCE(st.label, '') AS site_label,
+            s.id AS site_image_id, s.url AS site_url, s.content_hash, s.variant_group, COALESCE(st.label, '') AS site_label,
             s.storage_path AS site_storage_path, s.thumb_path AS site_thumb_path,
             v.decision,
+            -- What the last finished read of the image's site says about a removal (`report._removal`).
+            COALESCE(rd.read_at > v.updated_at, false) AS read_after,
+            COALESCE(s.last_seen >= rd.read_at, false) AS seen,
+            COALESCE(pg.unread, 0) AS unread_pages,
             COALESCE(pg.urls, ARRAY[]::text[]) AS pages
         FROM matches m
         JOIN reference_images r ON r.id = m.reference_id
@@ -799,7 +803,13 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
         JOIN sites st ON st.id = s.site_id
         LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
         LEFT JOIN LATERAL (
-            SELECT array_agg(p.url ORDER BY p.url) AS urls
+            SELECT max(c.started_at) AS read_at FROM crawl_runs c WHERE c.site_id = s.site_id AND c.status = 'done'
+        ) rd ON true
+        LEFT JOIN LATERAL (
+            SELECT array_agg(p.url ORDER BY p.url) AS urls,
+                   -- a page that failed to load (or was never read) says nothing about what it shows
+                   count(*) FILTER (WHERE p.crawled_at IS NULL OR p.crawled_at < rd.read_at
+                                      OR p.http_status IS NULL OR p.http_status NOT BETWEEN 200 AND 299) AS unread
             FROM image_pages ip JOIN pages p ON p.id = ip.page_id
             WHERE ip.image_id = s.id
         ) pg ON true
@@ -811,6 +821,7 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     for row in rows:
         row["expiry_date"] = row["expiry_date"].isoformat() if row["expiry_date"] else None
         row["pages"] = list(row["pages"])
+        row["variant_group"] = str(row["variant_group"]) if row["variant_group"] else None
     return rows
 
 

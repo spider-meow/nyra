@@ -18,8 +18,8 @@ export function photoRows(groups: MatchGroup[], wanted: (hit: Hit) => boolean): 
   for (const group of groups) {
     for (const hit of group.hits) {
       if (!wanted(hit)) continue;
-      // The ids of one photo's copies are the same whichever reference found it: the smallest names the photo.
-      const photo = [...hit.site_image_ids].sort()[0];
+      // The key of a photo is the same whichever reference found it.
+      const photo = hit.photo_key;
       const row = byPhoto.get(photo);
       if (!row) byPhoto.set(photo, { key: photo, group, hit, others: [] });
       else if (row.group.reference_id !== group.reference_id && !row.others.some((pair) => pair.group.reference_id === group.reference_id)) row.others.push({ group, hit });
@@ -27,3 +27,21 @@ export function photoRows(groups: MatchGroup[], wanted: (hit: Hit) => boolean): 
   }
   return [...byPhoto.values()];
 }
+
+/** How far a visual is: its photos found online that are removed (and not seen again), out of those not set aside as
+ * false positives; `unchecked` are removed ones no read has confirmed yet. */
+export type Progress = { done: number; total: number; unchecked: number };
+
+const unconfirmed = (hit: Hit) => hit.decision === "traite" && (hit.removal === "pending" || hit.removal === "unread");
+
+/** The progress of each reference, whatever the decision filter hides. */
+export function progressByReference(groups: MatchGroup[]): Map<string, Progress> {
+  return new Map(groups.map((group) => {
+    const counted = group.hits.filter((hit) => hit.decision !== "ecarte");
+    const done = counted.filter((hit) => hit.decision === "traite" && hit.removal !== "online").length;
+    return [group.reference_id, { done, total: counted.length, unchecked: counted.filter(unconfirmed).length }];
+  }));
+}
+
+/** How many removed photos no read has confirmed yet, over every visual. */
+export const countUnchecked = (groups: MatchGroup[]): number => groups.reduce((sum, group) => sum + group.hits.filter(unconfirmed).length, 0);
