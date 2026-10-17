@@ -38,7 +38,10 @@ function VisualHeader(props: { row: Row; progress?: Progress }) {
       <Thumb src={group.ref_thumb} size={40} />
       <span className="min-w-0 flex-1">
         <Link to={`?visual=${group.reference_id}`} title="Voir où il est en ligne" className="block truncate text-sm font-semibold hover:underline">{group.filename}</Link>
-        <StatusBadge status={group.status} label={daysText(group.days_left)} />
+        <span className="flex flex-wrap items-center gap-2">
+          <StatusBadge status={group.status} label={daysText(group.days_left)} />
+          <Link to={`?visual=${group.reference_id}`} className="text-xs font-medium underline underline-offset-2">Voir où il est en ligne</Link>
+        </span>
       </span>
       <span className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted">
         <span>{total ? `${done} retirée${done > 1 ? "s" : ""} sur ${total}${unchecked ? ` · ${unchecked} à vérifier` : ""}` : "Rien à retirer"}</span>
