@@ -76,8 +76,8 @@ function Photos(props: { group: MatchGroup }) {
             <span className="block truncate text-xs text-muted">{plural(row.hit.file_count, "fichier")}</span>
           </span>
           {row.hit.removal ? <RemovalBadge removal={row.hit.removal} /> : <DecisionBadge decision={row.hit.decision} />}
-          {row.hit.decision === "retenu" ? <Button size="sm" onClick={() => mark(row.hit.site_image_ids, "traite")}>J'ai remplacé</Button> : null}
-          {row.hit.decision === "traite" ? <Button size="sm" variant="ghost" onClick={() => mark(row.hit.site_image_ids, "retenu")}>Annuler</Button> : null}
+          {row.hit.decision !== "traite" && row.hit.decision !== "ecarte" ? <Button size="sm" disabled={review.isPending} aria-label={`J'ai remplacé la photo de ${hostOf(row.hit.site_url)}`} onClick={() => mark(row.hit.site_image_ids, "traite")}>J'ai remplacé</Button> : null}
+          {row.hit.decision === "traite" ? <Button size="sm" variant="ghost" disabled={review.isPending} aria-label={`Annuler : la photo de ${hostOf(row.hit.site_url)} n'est pas remplacée`} onClick={() => mark(row.hit.site_image_ids, "retenu")}>Annuler</Button> : null}
         </li>
       ))}
     </ul>

@@ -111,3 +111,29 @@ def test_visuals_to_replace_are_the_confirmed_ones_and_leave_once_no_page_shows_
     assert (items[still]["still"], items[still]["gone"], items[still]["replaced"]) == (1, 1, False)
     assert (items[gone]["still"], items[gone]["gone"], items[gone]["replaced"]) == (0, 2, True)  # no page shows it: replaced
     assert (items[unmeasured]["unknown"], items[unmeasured]["replaced"]) == (1, False)  # not read again: not replaced
+
+
+def test_a_page_that_is_gone_counts_as_gone_and_a_visual_with_no_known_page_is_kept_but_not_replaced(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, _ = _setup(conn, cloud_org, cloud_brand)
+        removed = _visual(conn, cloud_org, cloud_brand, site, "removed", decision="traite", pages=[("/a", False, False)])
+        # The page itself no longer exists: read again after the last start, answered 404 (a failed read is not "tracked").
+        conn.execute("UPDATE pages SET http_status = 404, crawled_at = %s WHERE site_id = %s AND url LIKE %s", (READ + timedelta(minutes=1), site, "%/removed/a"))
+        failed = _visual(conn, cloud_org, cloud_brand, site, "failed", decision="traite", pages=[("/a", False, False)])
+        conn.execute("UPDATE pages SET http_status = 500, crawled_at = %s WHERE site_id = %s AND url LIKE %s", (READ + timedelta(minutes=1), site, "%/failed/a"))
+        unlinked = _visual(conn, cloud_org, cloud_brand, site, "unlinked", decision="retenu", pages=[])
+        items = {item["row"]["reference_id"]: item for item in presence.visuals(presence.by_visual(conn, cloud_brand))}
+
+    assert (items[removed]["gone"], items[removed]["replaced"]) == (1, True)  # a page that answers 404 shows nothing any more
+    assert (items[failed]["unknown"], items[failed]["replaced"]) == (1, False)  # a server error says nothing
+    assert (items[unlinked]["pages"], items[unlinked]["replaced"]) == (0, False)  # confirmed, no page known: listed, not replaced
+
+
+def test_the_files_of_one_photo_on_a_page_count_the_page_once(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        first, second = _image(conn, cloud_org, site, ref, "first"), _image(conn, cloud_org, site, ref, "second")
+        _page(conn, cloud_org, site, first, "/blogs/x", seen=READ + timedelta(minutes=2))
+        page = conn.execute("SELECT id FROM pages WHERE site_id = %s AND url = 'https://a.test/blogs/x'", (site,)).fetchone()["id"]
+        conn.execute("INSERT INTO image_pages (image_id, page_id, last_seen) VALUES (%s, %s, %s)", (second, page, READ + timedelta(minutes=2)))
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 1, "gone": 0, "unknown": 0, "pages": 1}

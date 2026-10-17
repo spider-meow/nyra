@@ -21,7 +21,7 @@ export function Visuals() {
   const [tab, setTab] = useState<Tab>("todo");
 
   if (visuals.isLoading) return <Skeleton className="h-96" />;
-  if (visuals.error || !visuals.data) return <EmptyState title="Visuels indisponibles" body={errorMessage(visuals.error)} />;
+  if (visuals.error || !visuals.data) return <EmptyState title="Visuels indisponibles" body={errorMessage(visuals.error)} action={<Button onClick={() => void visuals.refetch()}>Réessayer</Button>} />;
   const all = [...visuals.data.visuals].sort(byUrgency);
   const todo = all.filter((item) => !item.replaced);
   const shown = tab === "todo" ? todo : tab === "done" ? all.filter((item) => item.replaced) : all;
@@ -42,7 +42,7 @@ export function Visuals() {
             { value: "all", label: `Tous · ${all.length}` },
           ]}
         />
-        <InfoTip>Les visuels dont une correspondance a été confirmée dans « À traiter ». Un visuel est remplacé quand toutes ses pages ont été relues et qu'aucune ne le montre plus.</InfoTip>
+        <InfoTip>Les visuels dont une correspondance a été confirmée dans « À traiter ». Les pages comptées sont celles de toutes ses photos non écartées. Un visuel est remplacé quand toutes ses pages ont été relues et qu'aucune ne le montre plus.</InfoTip>
       </div>
       {shown.length ? (
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
@@ -59,22 +59,32 @@ export function Visuals() {
   );
 }
 
+/** What a visual's line says: the pages still showing it, and the ones not read again (never counted as gone). */
+function figures(item: VisualItem): [string, string] {
+  const pages = (count: number) => `${count.toLocaleString("fr-FR")} page${count > 1 ? "s" : ""}`;
+  if (item.replaced) return ["Remplacé", `${pages(item.pages)} relues`];
+  if (item.still) return [pages(item.still), item.unknown ? `encore en ligne · ${item.unknown.toLocaleString("fr-FR")} à relire` : `encore en ligne sur ${item.pages.toLocaleString("fr-FR")}`];
+  return item.unknown === item.pages ? ["Pas encore mesuré", "à relire"] : ["0 page confirmée", `${item.unknown.toLocaleString("fr-FR")} à relire`];
+}
+
 function VisualRow(props: { item: VisualItem; to: string }) {
   const { item } = props;
-  const unmeasured = item.unknown === item.pages;
+  const [title, detail] = figures(item);
+  const share = (count: number) => `${item.pages ? (count / item.pages) * 100 : 0}%`;
   return (
     <li>
-      <Link to={props.to} className="flex items-center gap-3 px-4 py-3 hover:bg-sunk">
+      <Link to={props.to} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 hover:bg-sunk">
         <Thumb src={item.thumb} size={46} />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-sm font-medium">{item.filename}</span>
+        <span className="min-w-0 flex-1 basis-40">
+          <span className="block text-sm font-medium [overflow-wrap:anywhere] sm:truncate">{item.filename}</span>
           <span className="mt-1 block"><StatusBadge status={item.status} label={daysText(item.days_left)} /></span>
         </span>
-        <span className="flex shrink-0 flex-col items-end gap-1 text-right">
-          <span className="text-sm font-semibold tabular">{item.replaced ? "Remplacé" : unmeasured ? "Pas encore mesuré" : `${item.still.toLocaleString("fr-FR")} page${item.still > 1 ? "s" : ""}`}</span>
-          <span className="text-xs text-muted">{item.replaced ? `${item.pages.toLocaleString("fr-FR")} pages relues` : unmeasured ? "à relire" : `encore en ligne sur ${item.pages.toLocaleString("fr-FR")}`}</span>
-          <span aria-hidden className="h-1.5 w-28 overflow-hidden rounded-full bg-sunk">
-            <span className="block h-full bg-expired" style={{ width: `${item.pages ? (item.still / item.pages) * 100 : 0}%` }} />
+        <span className="flex w-full shrink-0 flex-col items-start gap-1 sm:w-auto sm:items-end sm:text-right">
+          <span className="text-sm font-semibold tabular">{title}</span>
+          <span className="text-xs text-muted">{detail}</span>
+          <span aria-hidden className="flex h-1.5 w-28 overflow-hidden rounded-full bg-sunk">
+            <span className="bg-expired" style={{ width: share(item.still) }} />
+            <span className="bg-line-strong" style={{ width: share(item.unknown) }} />
           </span>
         </span>
       </Link>
