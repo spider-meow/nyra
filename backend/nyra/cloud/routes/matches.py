@@ -117,7 +117,7 @@ def presence(reference_id: uuid.UUID, site: Optional[uuid.UUID] = None, section:
             raise HTTPException(status_code=404, detail="Référence introuvable.")
         counts = cloud_presence.counts(conn, scope.brand_id, reference_id)
         rows = cloud_presence.pages(conn, scope.brand_id, reference_id, site=site, section=section, state=state, marked=marked, limit=limit, offset=offset)
-    return {**cloud_presence.summary(counts), "total": cloud_presence.total(counts, site=site, section=section, state=state, marked=marked), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"], "marked": row["marked"]} for row in rows],
+    return {**cloud_presence.summary(counts), "total": cloud_presence.total(counts, site=site, section=section, state=state, marked=marked), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"], "marked": row["marked"], "checked": row["checked"]} for row in rows],
             "offset": offset}
 
 

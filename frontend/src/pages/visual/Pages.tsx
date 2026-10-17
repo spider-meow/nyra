@@ -16,11 +16,12 @@ const ALL = "";
 
 type Page = Presence["pages"][number];
 
-/** What a page says once the person's mark and the last read are put together. */
+/** What a page says once the person's mark and the last read are put together. The state of a marked page answers the
+ * mark only when the page was read again after it was marked: before that, it says the mark waits to be checked. */
 function statusOf(page: Page): { label: string; tone: string } {
   if (!page.marked) return STATE_TEXT[page.state];
-  if (page.state === "gone") return { label: "Remplacée · confirmée", tone: "bg-ok-soft text-ok" };
-  if (page.state === "still") return { label: "Marquée remplacée · encore en ligne", tone: "bg-expired-soft text-expired" };
+  if (page.checked && page.state === "gone") return { label: "Remplacée · confirmée", tone: "bg-ok-soft text-ok" };
+  if (page.checked && page.state === "still") return { label: "Marquée remplacée · encore en ligne", tone: "bg-expired-soft text-expired" };
   return { label: "Remplacée · à vérifier", tone: "bg-soon-soft text-soon" };
 }
 
@@ -95,16 +96,16 @@ export function Pages(props: { referenceId: string; data: Presence; narrowing: N
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
           {data.pages.map((page) => (
             <li key={page.url} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
-              <label className="flex shrink-0 items-center gap-2 text-xs text-muted">
-                <input type="checkbox" className="h-[18px] w-[18px] accent-ink" checked={page.marked} disabled={mark.isPending} aria-label={`Page remplacée : ${pathOf(page.url)}`} onChange={(event) => setMarked([page.url], event.target.checked)} />
-                Remplacée
-              </label>
-              <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="min-w-0 basis-full order-first hover:underline sm:order-none sm:flex-1 sm:basis-0">
+              <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="min-w-0 basis-full hover:underline lg:flex-1 lg:basis-0">
                 <span className="block truncate text-xs text-muted">{hostOf(page.url)}</span>
                 <span className="block truncate font-mono text-[13px]">{pathOf(page.url)}</span>
               </a>
               <span className={cx("shrink-0 rounded-md px-2 py-px text-xs font-medium", statusOf(page).tone)}>{statusOf(page).label}</span>
               {admin ? <Button size="sm" variant="ghost" disabled={busy} aria-label={`Vérifier la page ${pathOf(page.url)}`} onClick={() => verify([page.url])}>Vérifier</Button> : null}
+              <label className="flex shrink-0 items-center gap-2 text-xs text-muted">
+                <input type="checkbox" className="h-[18px] w-[18px] accent-ink" checked={page.marked} disabled={mark.isPending} aria-label={`Page remplacée : ${pathOf(page.url)}`} onChange={(event) => setMarked([page.url], event.target.checked)} />
+                Remplacée
+              </label>
             </li>
           ))}
         </ul>

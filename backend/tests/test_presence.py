@@ -187,6 +187,10 @@ def test_a_page_marked_replaced_says_where_the_person_is_and_only_for_its_visual
         assert [row["url"] for row in marked_only] == ["https://a.test/blogs/a"] and len(unmarked) == 2
         assert presence.total(rows, marked=False) == 2 and presence.total(rows, marked=True) == 1
         assert presence.summary(elsewhere)["totals"]["marked"] == 0
+        assert [row["checked"] for row in marked_only] == [False]  # marked now, last read long before: the state is not yet the answer
+        conn.execute("UPDATE pages SET read_started_at = now() + interval '1 minute' WHERE site_id = %s AND url LIKE %s", (site, "%/blogs/a"))
+        assert [row["checked"] for row in presence.pages(conn, cloud_brand, ref, marked=True)] == [True]  # read again after the mark
+        assert {row["checked"] for row in presence.pages(conn, cloud_brand, ref, marked=False)} == {False}  # never marked: nothing to answer
         presence.set_replaced(conn, cloud_org, ref, [found["https://a.test/blogs/a"]], replaced=False, user_id=None)
         assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"]["marked"] == 0
 

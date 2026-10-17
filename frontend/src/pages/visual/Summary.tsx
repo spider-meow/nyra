@@ -12,7 +12,7 @@ export function Summary(props: { group: MatchGroup; presence: Presence | undefin
       <Button size="sm" variant="ghost" onClick={props.onBack}>← Retour</Button>
       <div className="mt-3 flex flex-wrap items-center gap-4">
         <Thumb src={group.ref_thumb} size={72} />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 basis-64">
           <h1 className="font-display text-xl leading-tight sm:text-3xl [overflow-wrap:anywhere]">{group.filename}</h1>
           <div className="mt-1.5"><StatusBadge status={group.status} label={daysText(group.days_left)} /></div>
         </div>

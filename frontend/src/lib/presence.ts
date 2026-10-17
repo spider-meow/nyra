@@ -15,7 +15,7 @@ export type Presence = {
   totals: Counts & { pages: number };
   versions: Version[];
   /** The pages for the narrowing, `total` of them, from `offset`. */
-  pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean }[];
+  pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean; checked: boolean }[];
   total: number;
   offset: number;
 };
