@@ -82,3 +82,32 @@ def test_a_read_stamps_the_links_and_only_a_successful_page_is_tracked(cloud_dat
         store.mark_page(page, failure)  # a page that failed to load says nothing about what it shows
         with cloud_db.connect(cloud_database_url) as conn:
             assert conn.execute("SELECT links_tracked FROM pages WHERE id = %s", (page,)).fetchone()["links_tracked"] is False
+
+
+def _visual(conn, org, brand, site, name, *, decision, pages, unlimited=False):
+    """A reference matching one image shown on `pages` (path, seen, read_again), decided `decision` (or not)."""
+    ref = cloud_db.upsert_reference_image(conn, org_id=org, brand_id=brand, filename=name, storage_path=f"{org}/{name}",
+                                          expiry_date=None if unlimited else "2026-12-01", credit=None, notes=None, phash=HASH, dhash=HASH, unlimited_rights=unlimited)
+    image = _image(conn, org, site, ref, name)
+    for path, seen, read_again in pages:
+        _page(conn, org, site, image, f"/{name}{path}", tracked=read_again, seen=READ + timedelta(minutes=2) if seen else READ - timedelta(days=1))
+    if decision:
+        cloud_db.set_reviews(conn, brand_id=brand, reference_id=ref, site_image_ids=[image], decision=decision, reviewed_by=None)
+    return ref
+
+
+def test_visuals_to_replace_are_the_confirmed_ones_and_leave_once_no_page_shows_them(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, _ = _setup(conn, cloud_org, cloud_brand)
+        still = _visual(conn, cloud_org, cloud_brand, site, "still", decision="retenu", pages=[("/a", True, True), ("/b", False, True)])
+        gone = _visual(conn, cloud_org, cloud_brand, site, "gone", decision="traite", pages=[("/a", False, True), ("/b", False, True)])
+        unmeasured = _visual(conn, cloud_org, cloud_brand, site, "unmeasured", decision="retenu", pages=[("/a", False, False)])
+        _visual(conn, cloud_org, cloud_brand, site, "undecided", decision=None, pages=[("/a", True, True)])
+        _visual(conn, cloud_org, cloud_brand, site, "dismissed", decision="ecarte", pages=[("/a", True, True)])
+        _visual(conn, cloud_org, cloud_brand, site, "free", decision="retenu", pages=[("/a", True, True)], unlimited=True)
+        items = {item["row"]["reference_id"]: item for item in presence.visuals(presence.by_visual(conn, cloud_brand))}
+
+    assert set(items) == {still, gone, unmeasured}  # only what a person confirmed, and never unlimited rights
+    assert (items[still]["still"], items[still]["gone"], items[still]["replaced"]) == (1, 1, False)
+    assert (items[gone]["still"], items[gone]["gone"], items[gone]["replaced"]) == (0, 2, True)  # no page shows it: replaced
+    assert (items[unmeasured]["unknown"], items[unmeasured]["replaced"]) == (1, False)  # not read again: not replaced

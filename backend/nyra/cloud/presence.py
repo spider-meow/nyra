@@ -20,9 +20,9 @@ Row = dict
 STATES = ("still", "gone", "unknown")
 MAX_PAGES_PER_REQUEST = 100
 
-# One row per page; `section` is the first segment of its path ("/blogs"), "/" for the home page.
+# One row per page and reference (all the brand's when `ref` is null); `section` is the first segment of its path ("/blogs"), "/" for the home page.
 _PAGES = """
-    SELECT p.url, s.id AS site_id,
+    SELECT m.reference_id, p.url, s.id AS site_id,
            '/' || split_part(split_part(regexp_replace(p.url, '^https?://[^/]+', ''), '?', 1), '/', 2) AS section,
            CASE WHEN COALESCE(bool_or(ip.last_seen >= rd.read_at), false) THEN 'still'
                 WHEN p.links_tracked AND p.crawled_at >= rd.read_at THEN 'gone'
@@ -34,8 +34,8 @@ _PAGES = """
     JOIN pages p ON p.id = ip.page_id
     LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
     LEFT JOIN LATERAL (SELECT max(c.started_at) AS read_at FROM crawl_runs c WHERE c.site_id = s.id AND c.status = 'done') rd ON true
-    WHERE m.reference_id = %(ref)s AND s.brand_id = %(brand)s AND v.decision IS DISTINCT FROM 'ecarte'
-    GROUP BY p.id, p.url, s.id, p.links_tracked, p.crawled_at, rd.read_at
+    WHERE (%(ref)s::uuid IS NULL OR m.reference_id = %(ref)s) AND s.brand_id = %(brand)s AND v.decision IS DISTINCT FROM 'ecarte'
+    GROUP BY m.reference_id, p.id, p.url, s.id, p.links_tracked, p.crawled_at, rd.read_at
 """
 
 
@@ -83,3 +83,28 @@ def total(rows: list[Row], *, site: Optional[uuid.UUID] = None, section: Optiona
     """How many pages `pages` can list for these narrowings, to page through them."""
     return sum(row["pages"] for row in rows if (site is None or row["site_id"] == site)
                and (section is None or row["section"] == section) and (state is None or row["state"] == state))
+
+
+def by_visual(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
+    """The visuals a person confirmed (a photo decided « à retirer » or « retiré »; unlimited rights are never replaced), with
+    the pages in each state: (reference, filename, expiry_date, unlimited_rights, thumb_path, storage_path, state, pages)."""
+    return conn.execute(
+        f"""SELECT r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, count(*) AS pages
+            FROM ({_PAGES}) g JOIN reference_images r ON r.id = g.reference_id
+            WHERE r.brand_id = %(brand)s AND NOT r.unlimited_rights AND EXISTS (
+                SELECT 1 FROM matches m JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
+                WHERE m.reference_id = r.id AND v.decision IN ('retenu', 'traite'))
+            GROUP BY r.id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state""",
+        {"ref": None, "brand": brand_id},
+    ).fetchall()
+
+
+def visuals(rows: list[Row]) -> list[dict]:
+    """One entry per visual from `by_visual`: its pages per state, and whether it is replaced: every page was read again
+    and none shows it (a page not read again is never taken for gone, so a visual not measured yet is not replaced)."""
+    found: dict[uuid.UUID, dict] = {}
+    for row in rows:
+        item = found.setdefault(row["reference_id"], {"row": row, **dict.fromkeys(STATES, 0)})
+        item[row["state"]] += row["pages"]
+    return [{"row": item["row"], **{state: item[state] for state in STATES}, "pages": sum(item[state] for state in STATES),
+             "replaced": item["still"] == 0 and item["unknown"] == 0} for item in found.values()]

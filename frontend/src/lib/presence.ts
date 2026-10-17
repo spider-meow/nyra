@@ -1,4 +1,5 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import type { Status } from "../types";
 import { api } from "./api";
 import { useOrg } from "./org";
 
@@ -30,5 +31,27 @@ export function usePresence(referenceId: string, narrowing: Narrowing, offset: n
     queryKey: ["occurrences", brand.id, "presence", referenceId, narrowing, offset],
     queryFn: () => api.get<Presence>(apiPath(`/visuals/${referenceId}/presence?${params}`)),
     placeholderData: keepPreviousData,
+  });
+}
+
+/** A visual to replace: its pages per state; `replaced` once every page was read again and none shows it. */
+export type VisualItem = Counts & {
+  reference_id: string;
+  filename: string;
+  expiry_date: string | null;
+  days_left: number | null;
+  status: Status;
+  thumb: string;
+  pages: number;
+  replaced: boolean;
+};
+
+/** The visuals a person confirmed, with how many pages still show each one. The key starts with "occurrences": what a
+ * finished read or a decision refreshes. */
+export function useVisuals() {
+  const { apiPath, brand } = useOrg();
+  return useQuery({
+    queryKey: ["occurrences", brand.id, "visuals"],
+    queryFn: () => api.get<{ visuals: VisualItem[] }>(apiPath("/visuals")),
   });
 }

@@ -9,7 +9,7 @@ export function Summary(props: { group: MatchGroup; presence: Presence | undefin
   const { group, presence } = props;
   return (
     <div className="mb-6">
-      <Button size="sm" variant="ghost" onClick={props.onBack}>← À traiter</Button>
+      <Button size="sm" variant="ghost" onClick={props.onBack}>← Retour</Button>
       <div className="mt-3 flex flex-wrap items-center gap-4">
         <Thumb src={group.ref_thumb} size={72} />
         <div className="min-w-0 flex-1">
