@@ -1,6 +1,6 @@
 import { SettingsBlock, SettingsRow } from "../../components/SettingsBlock";
 import { useToast } from "../../components/feedback";
-import { Button } from "../../components/ui";
+import { Button, CursorTip } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useJobs, useLibrary, useStartJob } from "../../lib/queries";
 
@@ -8,7 +8,9 @@ import { useJobs, useLibrary, useStartJob } from "../../lib/queries";
 export function Indexation() {
   const toast = useToast();
   const start = useStartJob();
-  const pending = (useLibrary().data?.items ?? []).filter((item) => !item.indexed).length;
+  const library = useLibrary().data;
+  const pending = (library?.items ?? []).filter((item) => !item.indexed).length;
+  const allDone = Boolean(library) && pending === 0;
   const running = (useJobs().data?.active ?? []).some((job) => job.kind === "index");
   const launch = () => start.mutate({ kind: "index" }, { onError: (error) => toast.show({ tone: "error", message: "L'indexation n'a pas démarré", description: errorMessage(error) }) });
   return (
@@ -20,7 +22,9 @@ export function Indexation() {
         label={pending ? `${pending.toLocaleString("fr-FR")} visuels pas encore indexés` : "Tous les visuels sont indexés"}
         hint={running ? "Une indexation est en cours. Sa progression s'affiche en bas de l'écran." : "Elle peut prendre quelques minutes, selon le nombre de visuels."}
       >
-        <Button variant="primary" loading={start.isPending || running} onClick={launch}>Lancer l'indexation</Button>
+        <CursorTip tip={allDone && !running ? "Tous vos visuels sont déjà indexés : il n'y a rien à rattraper." : undefined}>
+          <Button variant="primary" loading={start.isPending || running} disabled={allDone} onClick={launch}>Lancer l'indexation</Button>
+        </CursorTip>
       </SettingsRow>
     </SettingsBlock>
   );
