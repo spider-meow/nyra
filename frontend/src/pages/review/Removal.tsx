@@ -1,8 +1,7 @@
 import { useConfirm, useToast } from "../../components/feedback";
-import { Button, cx } from "../../components/ui";
+import { cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useJobs, useOverview, useStartJob } from "../../lib/queries";
-import { plural } from "../../lib/format";
 import type { Removal } from "../../types";
 
 const TEXT: Record<Removal, { label: string; tone: string }> = {
@@ -38,15 +37,4 @@ export function useFullRead() {
   }
 
   return { read: () => void read(), busy: start.isPending || reading };
-}
-
-/** The bar above the list: some photos marked removed wait for a read to be confirmed. */
-export function VerifyRemovals(props: { unchecked: number }) {
-  const { read, busy } = useFullRead();
-  return (
-    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-sunk px-4 py-3">
-      <p className="text-sm text-muted">{plural(props.unchecked, "retrait", "retraits")} à vérifier. Une lecture complète des sites dira s'ils sont bien retirés.</p>
-      <Button size="sm" variant="primary" loading={busy} onClick={read}>Vérifier les retraits</Button>
-    </div>
-  );
 }

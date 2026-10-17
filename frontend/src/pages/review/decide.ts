@@ -54,7 +54,7 @@ function suffix(everywhere: boolean, references: number, occurrences: number): s
   return references > 1 ? ` · ${plural(references, "référence")}` : "";
 }
 
-/** J/K to move, R/F/T/U to decide on the selected row. */
+/** J/K to move, C/F/U to decide on the selected row (confirm, false positive, undo). */
 export function useShortcuts(view: ReviewView, decide: ReturnType<typeof useDecide>) {
   // The listener is added once; it reads the latest move, selection and decide through this ref.
   const latest = useRef({ view, decide });
@@ -70,9 +70,8 @@ export function useShortcuts(view: ReviewView, decide: ReturnType<typeof useDeci
       const key = event.key.toLowerCase();
       if (key === "j" || key === "arrowdown") move(1);
       else if (key === "k" || key === "arrowup") move(-1);
-      else if (selected && key === "r") decideRow(selected, selected.hit.decision === "retenu" ? "" : "retenu");
+      else if (selected && key === "c") decideRow(selected, selected.hit.decision === "retenu" ? "" : "retenu");
       else if (selected && key === "f") decideRow(selected, selected.hit.decision === "ecarte" ? "" : "ecarte");
-      else if (selected && key === "t") decideRow(selected, selected.hit.decision === "traite" ? "" : "traite");
       else if (selected && key === "u") decideRow(selected, "");
       else return;
       event.preventDefault();

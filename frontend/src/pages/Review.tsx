@@ -9,7 +9,6 @@ import { useDecide, useShortcuts } from "./review/decide";
 import { ReviewFilters, ReviewTabs } from "./review/Filters";
 import { MissingList, OccurrenceList } from "./review/List";
 import { RelatedReferences } from "./review/Related";
-import { VerifyRemovals } from "./review/Removal";
 import { focusOn, useReviewView, type ReviewView } from "./review/view";
 import { Visual } from "./visual/Visual";
 
@@ -29,8 +28,7 @@ function ReviewList() {
   const view = useReviewView();
   const decide = useDecide(view);
   useShortcuts(view, decide);
-  const { admin } = useOrg();
-  const { selected, review, panelOpen, setPanelOpen, unchecked } = view;
+  const { selected, review, panelOpen, setPanelOpen } = view;
   // Which of the photo's references is being compared: kept for the selected photo only.
   const [focus, setFocus] = useState<{ key: string; reference: string } | null>(null);
   const active = selected ? focusOn(selected, focus?.key === selected.key ? focus.reference : null) : null;
@@ -45,11 +43,10 @@ function ReviewList() {
     <>
       <PageHeader
         title="À traiter"
-        actions={<span className="hidden items-center gap-1.5 text-xs text-muted md:flex"><Kbd>J</Kbd><Kbd>K</Kbd> naviguer · <Kbd>R</Kbd> à retirer · <Kbd>F</Kbd> faux positif · <Kbd>T</Kbd> retiré</span>}
+        actions={<span className="hidden items-center gap-1.5 text-xs text-muted md:flex"><Kbd>J</Kbd><Kbd>K</Kbd> naviguer · <Kbd>C</Kbd> confirmer · <Kbd>F</Kbd> faux positif</span>}
       />
       <ReviewFilters view={view} />
       <ReviewTabs view={view} />
-      {admin && unchecked ? <VerifyRemovals unchecked={unchecked} /> : null}
       <Results view={view} compare={compare} />
       <Modal open={panelOpen && selected !== null} onClose={() => setPanelOpen(false)} title="Comparer" wide>
         {compare}

@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
+from urllib.parse import urlparse
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -114,17 +115,20 @@ def _removal(files: list[dict]) -> str:
 def _collapse_hits(hits: list[dict]) -> list[dict]:
     """One entry per photo: the same bytes under several addresses (CDN variants) and the crops and resizes of one
     photo (`variant_group`) are merged. The entry shows the best-scoring file; its decision is the common one, or none
-    while the photo's files are not all decided the same way."""
+    while the photo's files are not all decided the same way. `versions` are the site versions it is on (the label of the site,
+    or its host when it has none)."""
     group_of = {hit["content_hash"]: hit["variant_group"] for hit in hits if hit.get("variant_group") and hit.get("content_hash")}
     merged: dict[str, dict] = {}
     files: dict[str, set] = {}
     decisions: dict[str, set] = {}
     members: dict[str, list[dict]] = {}
+    versions: dict[str, set] = {}
     for hit in hits:
         key = str(hit.get("variant_group") or group_of.get(hit.get("content_hash")) or hit.get("content_hash") or f"id:{hit['site_image_id']}")
         files.setdefault(key, set()).add(hit.get("content_hash") or hit["site_image_id"])
         decisions.setdefault(key, set()).add(hit.get("decision"))
         members.setdefault(key, []).append(hit)
+        versions.setdefault(key, set()).add(hit.get("site_label") or urlparse(hit["site_url"]).netloc)
         current = merged.get(key)
         if current is None:
             hit = dict(hit)
@@ -142,6 +146,7 @@ def _collapse_hits(hits: list[dict]) -> list[dict]:
         row["decision"] = next(iter(decisions[key])) if len(decisions[key]) == 1 else None
         row["photo_key"], row["file_count"], row["page_count"] = key, len(files[key]), len(row["pages"])
         row["removal"] = _removal(members[key]) if row["decision"] == DECISION_REMOVED else None
+        row["versions"] = sorted(versions[key])
     return sorted(merged.values(), key=lambda item: item["score"], reverse=True)
 
 

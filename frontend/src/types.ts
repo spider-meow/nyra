@@ -119,6 +119,8 @@ export type Hit = {
   /** Names the photo: its files (CDN copies, crops, resizes) all carry the same key. */
   photo_key: string;
   file_count: number;
+  /** The site versions it is on (their label, or their host). */
+  versions: string[];
   /** For a photo marked removed: what the last read of its sites says (see `report._removal`). */
   removal: Removal | null;
   site_url: string;

@@ -1,36 +1,4 @@
-import { hostOf, pathOf } from "../../lib/format";
 import type { Hit } from "../../types";
-
-/** The pages the image is visible on, under the version of the site (address) each one belongs to. */
-export function PageList(props: { hit: Hit }) {
-  const { hit } = props;
-  const byVersion = new Map<string, string[]>();
-  for (const page of hit.pages) byVersion.set(hostOf(page), [...(byVersion.get(hostOf(page)) ?? []), page]);
-  return (
-    <div className="rounded-xl border border-ink">
-      <p className="border-b border-line px-3.5 py-2.5 text-[13px] font-semibold">
-        Visible sur {hit.page_count} page{hit.page_count > 1 ? "s" : ""}
-      </p>
-      <div className="max-h-48 overflow-y-auto px-3.5 py-2">
-        {[...byVersion].map(([host, pages]) => (
-          <section key={host} className="mt-2 first:mt-0">
-            <p className="text-xs font-semibold">{host}</p>
-            <ul className="font-mono text-xs">
-              {pages.map((page) => (
-                <li key={page} className="truncate py-0.5">
-                  <a href={page} target="_blank" rel="noreferrer noopener" className="text-bark-700 hover:text-bark-800 hover:underline">
-                    {pathOf(page)}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
-        {hit.page_count > hit.pages.length ? <p className="mt-2 text-xs text-muted">et {hit.page_count - hit.pages.length} autre(s), d'autres versions du site comprises</p> : null}
-      </div>
-    </div>
-  );
-}
 
 /** Address, method, score and variants, folded away. */
 export function TechnicalDetails(props: { hit: Hit }) {

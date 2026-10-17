@@ -22,9 +22,9 @@ export const confidenceHelp: Record<Confidence, string> = {
 };
 
 export const decisionLabel: Record<Decision, string> = {
-  retenu: "À retirer",
+  retenu: "Confirmé",
   ecarte: "Faux positif",
-  traite: "Retiré",
+  traite: "Remplacé",
 };
 
 export const jobLabel: Record<JobKind, string> = {
