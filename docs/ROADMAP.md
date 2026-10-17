@@ -274,9 +274,9 @@ Entre le 16 et le 17 octobre 2026 (détails dans les documents indiqués) :
   Réglages > Collections (ajout, renommage, déplacement, suppression) ; accueil de la bibliothèque sur les 4 derniers
   visuels ajoutés et « Afficher tous les visuels » (aucune vignette de plus à l'arrivée) ; plus de tuile « Déposez des
   images ».
-- **Indexation à la demande** : Réglages > Indexation (administrateurs), `POST …/jobs/index`.
+- **Indexation à la demande** : Réglages > Général > Maintenance (administrateurs), `POST …/jobs/index`.
 - **Logos** (`MATCHING.md`, « Spotting logos ») : détecteur sans configuration par marque (CLIP, seuil 0,95), réglage par
-  marque « Ne pas comparer les logos » (désactivé par défaut, Réglages > Logos), liste réversible.
+  marque « Ne pas comparer les logos » (désactivé par défaut, Réglages > Général > Logos), liste réversible.
 - **« Images en ligne »** (ancienne page « Droits non vérifiés », adresse `/online-images`) : toutes les images lues sur les
   sites, en cinq onglets (À qualifier, Retrouvées, Logos, Ignorées, Toutes), chargés par pages de 60 (`ARCHITECTURE.md`).
 - **Qualité** : les deux tests du back qui étaient rouges en CI depuis le 14 octobre sont corrigés ; plus aucune mention de

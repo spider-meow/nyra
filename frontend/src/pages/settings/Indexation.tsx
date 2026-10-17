@@ -13,7 +13,7 @@ export function Indexation() {
   const launch = () => start.mutate({ kind: "index" }, { onError: (error) => toast.show({ tone: "error", message: "L'indexation n'a pas démarré", description: errorMessage(error) }) });
   return (
     <SettingsBlock
-      title="Indexation des visuels"
+      title="Maintenance"
       description="L'indexation prépare chaque visuel pour la comparaison avec les sites : empreintes, vignette et analyse. Elle se lance seule après chaque ajout ; ce bouton rattrape les visuels qui ne l'ont pas été."
     >
       <SettingsRow

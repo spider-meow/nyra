@@ -4,7 +4,7 @@ import { api } from "./api";
 import { useOrg } from "./org";
 import { useInvalidate } from "./queries";
 
-// Only the pages "Images en ligne" and Réglages > Logos use these: kept out of `queries.ts`, which every page loads.
+// Only the pages "Images en ligne" and Réglages > Général > Logos use these: kept out of `queries.ts`, which every page loads.
 
 export const SITE_IMAGES_PAGE = 60;
 

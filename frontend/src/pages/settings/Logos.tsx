@@ -17,7 +17,7 @@ export function Logos() {
   const { enabled, items } = logos.data;
   return (
     <SettingsBlock
-      title="Mettre les logos à part"
+      title="Logos"
       description="Nyra reconnaît une image qui est un logo à son aspect d'ensemble : une photo où un logo apparaît n'est jamais écartée. Désactivé par défaut."
     >
       <div className="grid gap-4 p-5">

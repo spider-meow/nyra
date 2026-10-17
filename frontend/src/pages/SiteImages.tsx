@@ -186,7 +186,7 @@ function ViewTabs(props: { view: SiteImageView; counts: SiteImagesPage["counts"]
 function ViewNote({ view, logosSetAside }: { view: SiteImageView; logosSetAside: boolean | undefined }) {
   const { link } = useOrg();
   const linkClass = "font-medium text-ink underline underline-offset-2";
-  const settings = <Link className={linkClass} to={`${link("settings")}?section=logos`}>Réglages</Link>;
+  const settings = <Link className={linkClass} to={`${link("settings")}?section=general`}>Réglages</Link>;
   const notes: Partial<Record<SiteImageView, ReactNode>> = {
     found: <>Ces images contiennent un visuel de la bibliothèque. Les décisions se prennent dans <Link className={linkClass} to={link("review")}>À traiter</Link>.</>,
     logos: logosSetAside

@@ -125,7 +125,7 @@ prompt instead of examples) are not done.
 ## Spotting logos (`nyra/logos.py`)
 
 Is a whole site image a logo, so that it can be set aside instead of compared? Without any per-brand setup. Wired in
-behind a per-brand setting, **off by default** (Réglages > Logos, administrators): when on, the images above the threshold
+behind a per-brand setting, **off by default** (Réglages > Général > Logos, administrators): when on, the images above the threshold
 are left out of the comparison, of the "À qualifier" tab of "Images en ligne" and of the search for a reference's copies, and the match
 signature changes (a full pass follows). They are listed in the settings, where one can be put back (`logo_kept`, for
 every address serving the same bytes; an address of the same file read later is still set aside, and the list then shows the
