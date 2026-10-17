@@ -4,7 +4,7 @@ import { Button, Segmented, cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { hostOf, pathOf } from "../../lib/format";
 import { useOrg } from "../../lib/org";
-import { PAGE_SIZE, useCheckPages, type Counts, type Narrowing, type PageState, type Presence } from "../../lib/presence";
+import { MAX_CHECKED_PAGES, PAGE_SIZE, useCheckPages, type Counts, type Narrowing, type PageState, type Presence } from "../../lib/presence";
 
 const STATE_TEXT: Record<PageState, { label: string; tone: string }> = {
   still: { label: "Encore en ligne", tone: "bg-expired-soft text-expired" },
@@ -32,6 +32,7 @@ function emptyText(counts: Counts, state: PageState | undefined): string {
 export function Pages(props: { data: Presence; narrowing: Narrowing; onNarrow: (narrowing: Narrowing) => void; onOffset: (offset: number) => void }) {
   const { data, narrowing } = props;
   const counts = countsFor(data, narrowing);
+  const shown = data.pages.slice(0, MAX_CHECKED_PAGES);
   const { admin } = useOrg();
   const toast = useToast();
   const { check, busy } = useCheckPages();
@@ -65,7 +66,7 @@ export function Pages(props: { data: Presence; narrowing: Narrowing; onNarrow: (
           {data.total.toLocaleString("fr-FR")} page{data.total > 1 ? "s" : ""}
           {narrowing.section ? ` dans ${narrowing.section}` : ""}
         </p>
-        {admin && data.pages.length ? <Button size="sm" loading={busy} onClick={() => verify(data.pages.map((page) => page.url))}>Vérifier ces {data.pages.length} pages</Button> : null}
+        {admin && data.pages.length ? <Button size="sm" loading={busy} onClick={() => verify(shown.map((page) => page.url))}>Vérifier ces {shown.length} pages</Button> : null}
       </div>
       {data.pages.length ? (
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">

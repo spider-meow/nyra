@@ -3,10 +3,11 @@
 For each page that shows a file matched to the reference (false positives left out):
 `still`  the last read of the page (a full read of the site, or a check of that page alone) saw the image on it;
 `gone`   the page was read again with success and the image was not on it, or the page itself is gone (404, 410);
-`unknown` the page was not read again (a read that resumed, the page cap, an error) or has not been since page tracking
+`unknown` the page was not read again (its read began and did not end, a read that resumed, the page cap, an error) or has not been since page tracking
          exists (`pages.links_tracked`, `image_pages.last_seen`): never taken for "gone".
 Nothing is stored: the images and links are never deleted when they disappear from a site, so the state is worked out
-from the dates of the last read. Every photo not set aside as a false positive counts, confirmed or not. Limits: an image
+from the dates of the last read. A check of one page counts once a full read of its site has finished, and a later full read that does not read the page
+again sets it back to unknown. A page that answered with another page (a redirection) is unknown too. Every photo not set aside as a false positive counts, confirmed or not. Limits: an image
 a read does not see on a page that loaded (loaded late by a script) reads as gone; the list of visuals (`by_visual`)
 works out every page of the brand at once: measured 31 ms for 592 matches and 14,210 (reference, page) pairs, and it grows with
 them, so a few hundred thousand pairs is where it needs a cache.
@@ -29,8 +30,8 @@ def _pages(only_reference: bool) -> str:
     return f"""
     SELECT m.reference_id, p.url, s.id AS site_id,
            '/' || split_part(split_part(regexp_replace(p.url, '^https?://[^/]+', ''), '?', 1), '/', 2) AS section,
-           CASE WHEN p.links_tracked AND p.crawled_at >= rd.read_at AND COALESCE(bool_or(ip.last_seen >= p.read_started_at), false) THEN 'still'
-                WHEN (p.links_tracked OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at THEN 'gone'
+           CASE WHEN p.status = 'done' AND p.links_tracked AND p.crawled_at >= rd.read_at AND COALESCE(bool_or(ip.last_seen >= p.read_started_at), false) THEN 'still'
+                WHEN p.status = 'done' AND (p.links_tracked OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at THEN 'gone'
                 ELSE 'unknown' END AS state
     FROM matches m
     JOIN site_images si ON si.id = m.site_image_id
@@ -40,7 +41,7 @@ def _pages(only_reference: bool) -> str:
     LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
     LEFT JOIN LATERAL (SELECT max(c.started_at) AS read_at FROM crawl_runs c WHERE c.site_id = s.id AND c.status = 'done') rd ON true
     WHERE {"m.reference_id = %(ref)s" if only_reference else "TRUE"} AND s.brand_id = %(brand)s AND v.decision IS DISTINCT FROM 'ecarte'
-    GROUP BY m.reference_id, p.id, p.url, s.id, p.links_tracked, p.http_status, p.crawled_at, p.read_started_at, rd.read_at
+    GROUP BY m.reference_id, p.id, p.url, s.id, p.status, p.links_tracked, p.http_status, p.crawled_at, p.read_started_at, rd.read_at
 """
 
 

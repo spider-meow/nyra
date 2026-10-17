@@ -48,7 +48,7 @@ class CloudCrawlStore:
         with cloud_db.connect(self.database_url) as conn:
             row = conn.execute(
                 """INSERT INTO pages (org_id, site_id, url, status, read_started_at) VALUES (%s, %s, %s, 'pending', now())
-                   ON CONFLICT (site_id, url) DO UPDATE SET url = excluded.url, read_started_at = now() RETURNING id""",
+                   ON CONFLICT (site_id, url) DO UPDATE SET url = excluded.url, status = 'pending', read_started_at = now() RETURNING id""",
                 (self.org_id, self.site_id, url),
             ).fetchone()
         return row["id"]

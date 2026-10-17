@@ -47,6 +47,21 @@ IMAGE_DOWNLOADS_PER_PAGE = 6
 
 # --- URLs -------------------------------------------------------------------
 
+# What a page that answered with another page is recorded as (not 2xx: its links are not tracked).
+REDIRECTED = 302
+
+
+def same_page(requested: str, final: str) -> bool:
+    """Whether the browser ended on the page asked for (the host with or without `www.`, the path with or without a
+    closing slash; the query and the fragment do not make another page)."""
+    a, b = urlparse(requested), urlparse(final)
+
+    def host(parsed) -> str:
+        return parsed.netloc.lower().removeprefix("www.")
+
+    return host(a) == host(b) and a.path.rstrip("/") == b.path.rstrip("/")
+
+
 def normalize_url(url: str) -> str:
     """Canonical form used as the page key.
 
@@ -425,6 +440,7 @@ class CrawlStats:
     # can exceed the crawl's duration).
     sitemap_urls: int = 0
     pages_failed: int = 0
+    pages_redirected: int = 0      # the address answered with another page: read, but not recorded as itself
     http_statuses: dict[str, int] = field(default_factory=dict)
     images_known: int = 0          # already stored under this URL: not downloaded again
     images_duplicate: int = 0      # same bytes already stored under another URL
@@ -546,7 +562,7 @@ class _Crawl:
         self.robots = robots if cfg.respect_robots_txt else None
         for url in urls:
             if same_site(url, self.netloc):
-                self.enqueue(normalize_url(url))
+                self.enqueue(url)  # as stored: it is the key of the page, so the read lands on the same row
         self.stats.pages_queued = len(self.queue)
 
     def enqueue(self, url: str) -> None:
@@ -662,6 +678,10 @@ class _Crawl:
                 self.enqueue(link)
 
         await self._collect_images(http, sorted(image_urls), page_id)
+        # A page that sent the reader elsewhere says nothing about what the requested page shows: recorded as a redirection.
+        if not same_page(url, final_url):
+            self.stats.pages_redirected += 1
+            http_status = REDIRECTED
         await asyncio.to_thread(self._locked, self.store.mark_page, page_id, http_status)
         self.stats.pages_visited += 1
 

@@ -154,3 +154,14 @@ def test_a_page_checked_on_its_own_says_what_it_shows_whatever_the_last_full_rea
                      (later - timedelta(minutes=1), later, "%/blogs/changed"))
         totals = presence.summary(presence.counts(conn, cloud_brand, ref))["totals"]
     assert (totals["still"], totals["gone"]) == (1, 1)
+
+
+def test_a_page_whose_read_began_and_did_not_end_is_unknown(cloud_database_url, cloud_org, cloud_brand):
+    """A page read before (gone, last time) is opened again and the read is cut short: its links were not stamped, so it must not read as gone."""
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+        _page(conn, cloud_org, site, image, "/blogs/x", seen=READ - timedelta(days=1))
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"]["gone"] == 1
+        conn.execute("UPDATE pages SET status = 'pending', read_started_at = %s WHERE site_id = %s", (READ + timedelta(hours=1), site))
+        assert presence.summary(presence.counts(conn, cloud_brand, ref))["totals"] == {"still": 0, "gone": 0, "unknown": 1, "pages": 1}

@@ -416,6 +416,9 @@ def test_a_page_records_when_its_read_started(cloud_database_url, cloud_org, clo
     with cloud_db.connect(cloud_database_url) as conn:
         began = conn.execute("SELECT read_started_at FROM pages WHERE id = %s", (first,)).fetchone()["read_started_at"]
     assert began is not None
-    assert store.upsert_page("https://t.test/p") == first  # the same page, read again: a new start
+    store.mark_page(first, 200)
+    assert store.upsert_page("https://t.test/p") == first  # the same page, read again: a new start, and not done until it ends
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT status FROM pages WHERE id = %s", (first,)).fetchone()["status"] == "pending"
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT read_started_at FROM pages WHERE id = %s", (first,)).fetchone()["read_started_at"] > began

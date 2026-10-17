@@ -88,7 +88,7 @@ def start_check(body: CheckBody, scope: BrandScope = Depends(brand_admin_dep), c
             "SELECT p.url, p.site_id FROM pages p JOIN sites s ON s.id = p.site_id WHERE s.brand_id = %s AND p.url = ANY(%s)",
             (scope.brand_id, urls),
         ).fetchall()
-    if len(rows) != len(urls):
+    if {row["url"] for row in rows} != set(urls):  # a set: an address may be a page of two sites of the brand
         raise HTTPException(status_code=400, detail="Une des pages n'est pas une page de cette marque.")
     pages: dict[str, list[str]] = {}
     for row in rows:

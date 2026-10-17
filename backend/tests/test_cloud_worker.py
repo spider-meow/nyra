@@ -698,7 +698,8 @@ def test_a_check_job_reads_only_the_pages_given_and_records_no_crawl_run(worker,
     finished = _job(cloud_database_url, cloud_brand, job["id"])
     assert finished["status"] == "done", finished
     assert asked == [("https://t.test/", ["https://t.test/a"])]  # /b was not asked for
-    assert finished["result"] == {"pages_read": 1, "pages_asked": 1, "errors": []}
+    assert finished["result"] == {"pages_read": 1, "pages_asked": 1, "pages_failed": 0, "pages_redirected": 0, "blocked_by_robots": 0, "errors": []}
+    assert finished["message"] == "1 page(s) relue(s) sur 1."
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT count(*) AS n FROM crawl_runs WHERE site_id = %s", (site,)).fetchone()["n"] == runs_before
         page = conn.execute("SELECT links_tracked, read_started_at FROM pages WHERE site_id = %s AND url = 'https://t.test/a'", (site,)).fetchone()
@@ -713,3 +714,10 @@ def test_a_check_job_with_no_known_site_fails_with_a_message(worker, cloud_datab
     assert worker.run_once()
     finished = _job(cloud_database_url, cloud_brand, job["id"])
     assert finished["status"] == "error" and "Aucune page" in finished["message"]
+
+
+def test_a_check_says_what_kept_pages_from_being_read():
+    stats = worker_module.CrawlStats(pages_visited=4, pages_failed=1, pages_redirected=1, blocked_by_robots=2)
+    assert worker_module._check_message(False, 6, stats) == "2 page(s) relue(s) sur 6 ; 1 en échec, 1 redirigée(s) ailleurs, 2 bloquée(s) par robots.txt."
+    assert worker_module._check_message(False, 3, worker_module.CrawlStats(pages_visited=3)) == "3 page(s) relue(s) sur 3."
+    assert "arrêtée" in worker_module._check_message(True, 3, worker_module.CrawlStats())

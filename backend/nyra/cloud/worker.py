@@ -146,6 +146,16 @@ class _CrawlProgress:
         )
 
 
+def _check_message(cancelled: bool, asked: int, stats: CrawlStats) -> str:
+    """What a page check says: the pages that were read, then what kept the others from being read (told, never hidden)."""
+    if cancelled:
+        return "Vérification arrêtée. Les pages déjà relues sont à jour."
+    read = stats.pages_visited - stats.pages_failed - stats.pages_redirected
+    left_out = [f"{count} {text}" for count, text in ((stats.pages_failed, "en échec"), (stats.pages_redirected, "redirigée(s) ailleurs"),
+                                                       (stats.blocked_by_robots, "bloquée(s) par robots.txt")) if count]
+    return f"{read} page(s) relue(s) sur {asked}" + (f" ; {', '.join(left_out)}" if left_out else "") + "."
+
+
 # An index job reads its candidates `INDEX_CHUNK_BATCHES` embedding batches at a time (keyset on `id`), so only one
 # chunk of light rows is ever in memory, however many images the brand has. A row that can never be indexed
 # (unreadable image) stays pending: it is passed once, never fetched again, so the job always ends.
@@ -566,24 +576,36 @@ class Worker:
         if not total or not sites:
             raise JobFailed("Aucune page à vérifier pour cette marque.")
         warm_clip(config.match)
-        done, errors = 0, []
+        stats = CrawlStats()
         for key, urls in groups.items():
             if ctx.cancelled or key not in sites:
                 continue
             site = sites[key]
             store = CloudCrawlStore(org_id=org_id, site_id=site["id"], database_url=self.database_url,
                                     storage_client=self.storage_client_factory())
-            before = done
+            before = stats.pages_visited
 
-            def progress(stats: CrawlStats, before: int = before) -> None:
-                ctx.report(f"Page {before + stats.pages_visited}/{total}", {"phase": "check", "done": before + stats.pages_visited, "total": total})
+            def progress(current: CrawlStats, before: int = before) -> None:
+                done = before + current.pages_visited
+                ctx.report(f"Page {done}/{total}", {"phase": "check", "done": done, "total": total})
 
-            stats = crawl_pages(site["url"], urls, store, config, progress=progress, should_stop=ctx.should_stop,
-                                embedder=lambda images: compute_clip_embeddings(images, config.match))
-            done += stats.pages_visited
-            errors += stats.errors
-        message = f"{done} page(s) relue(s) sur {total}." if not ctx.cancelled else "Vérification arrêtée. Les pages déjà relues sont à jour."
-        return message, {"pages_read": done, "pages_asked": total, "errors": errors[:8]}
+            try:
+                read = crawl_pages(site["url"], urls, store, config, progress=progress, should_stop=ctx.should_stop,
+                                   embedder=lambda images: compute_clip_embeddings(images, config.match))
+            except netguard.BlockedURL as exc:
+                raise JobFailed(f"Adresse refusée : {exc}.") from exc
+            except Exception as exc:
+                problem = browser_problem(exc)
+                if problem:
+                    raise JobFailed(problem) from exc
+                raise
+            for name in ("pages_visited", "pages_failed", "pages_redirected", "blocked_by_robots"):
+                setattr(stats, name, getattr(stats, name) + getattr(read, name))
+            stats.errors += read.errors
+        return _check_message(ctx.cancelled, total, stats), {
+            "pages_read": stats.pages_visited - stats.pages_failed - stats.pages_redirected, "pages_asked": total,
+            "pages_failed": stats.pages_failed, "pages_redirected": stats.pages_redirected,
+            "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8]}
 
     def _match_job(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         metrics: dict = {}
