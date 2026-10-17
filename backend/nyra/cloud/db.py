@@ -805,7 +805,9 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
         ) rd ON true
         LEFT JOIN LATERAL (
             SELECT array_agg(p.url ORDER BY p.url) AS urls,
-                   count(*) FILTER (WHERE p.crawled_at IS NULL OR p.crawled_at < rd.read_at) AS unread
+                   -- a page that failed to load (or was never read) says nothing about what it shows
+                   count(*) FILTER (WHERE p.crawled_at IS NULL OR p.crawled_at < rd.read_at
+                                      OR p.http_status IS NULL OR p.http_status NOT BETWEEN 200 AND 299) AS unread
             FROM image_pages ip JOIN pages p ON p.id = ip.page_id
             WHERE ip.image_id = s.id
         ) pg ON true
