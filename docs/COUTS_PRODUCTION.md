@@ -60,6 +60,18 @@ coûterait plus cher à démarrer que le calcul lui-même.
 | Sauvegarde des fichiers Storage | — | Copie vers Scaleway Object Storage ≈ 1 € | Les sauvegardes Supabase couvrent la base, pas les fichiers. |
 | Nom de domaine | ≈ 1 € | ≈ 1 € | |
 
+## Ce qui tourne réellement (18 octobre 2026)
+
+Nyra est en ligne sur `nyra.axelproject.fr` : un seul Droplet DigitalOcean (4 Go, 2 vCPU, 24 $/mois) fait tourner
+le web, le worker et Caddy ; la base, l'authentification et les fichiers sont sur Supabase. Le coût d'infrastructure
+relevé est d'environ **34 $ par mois**, pour une organisation et deux marques (Rémy Martin, Louis XIII).
+
+Mesure du worker pendant un vrai passage (crawl et CLIP, `docker stats`, deux relevés, le pic final n'a pas été
+relevé) : **1,88 Go** pour le worker, environ **2 Go** pour l'ensemble des conteneurs, un cœur presque saturé
+(145 %). Les paliers à 2 Go (12 $ et 18 $) ne conviennent donc pas ; le palier à 4 Go laisse de la marge pour un
+job à la fois. Hetzner (CX33, 8 Go) reste la piste pour payer moins, au prix d'une migration. Un Droplet ne se
+redimensionne pas vers un disque plus petit : redescendre de palier oblige à en créer un nouveau.
+
 ## Tableau des coûts (€ HT/mois)
 
 Chaque cellule donne la fourchette basse – haute.

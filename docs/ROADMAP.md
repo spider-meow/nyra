@@ -240,8 +240,10 @@ image dont on a oublié de saisir la date, et fausse le suivi.
 ## Avant d'ouvrir à un client
 
 Limitation de débit sur l'API, tests cloud en CI sur une vraie base, vraie
-adresse de contact du robot dans `config.yaml`, politique de conservation des
-images (`archive/AUDIT_PRODUIT.md`, archivé, §3.2).
+adresse de contact du robot dans `config.yaml` (`crawl.user_agent` : les sites lus la voient dans leurs journaux,
+et `rights-team@example.com` ne reçoit rien), politique de conservation des
+images (`archive/AUDIT_PRODUIT.md`, archivé, §3.2). Aussi : relever le pic de mémoire d'un passage complet,
+et vérifier la liste des membres de l'organisation dans Supabase (un administrateur inconnu verrait toutes les données).
 
 ## Propositions à discuter
 
@@ -269,6 +271,11 @@ images (`archive/AUDIT_PRODUIT.md`, archivé, §3.2).
   des étiquettes, visibles dans la page Statistiques.
 
 ## Faits
+
+**18 octobre 2026 : Nyra est en ligne** sur `https://nyra.axelproject.fr` (Droplet DigitalOcean 4 Go, Caddy pour le
+HTTPS, Supabase pour la base ; `DEPLOYMENT.md`). Organisation `digital-factory-rc` avec les marques Rémy Martin et
+Louis XIII, connexion vérifiée, premier passage lancé ; mesure du worker dans `DEPLOYMENT.md` et
+`COUTS_PRODUCTION.md`.
 
 Entre le 16 et le 17 octobre 2026 (détails dans les documents indiqués) :
 
