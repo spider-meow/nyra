@@ -227,6 +227,25 @@ def test_a_page_check_queues_only_the_pages_given_and_follows_no_link(monkeypatc
     assert reading.follow_links is False
 
 
+def test_a_crawl_delay_in_robots_txt_is_read_for_our_name_and_capped():
+    import urllib.robotparser
+
+    from nyra.crawl import MAX_ROBOTS_DELAY_SECONDS, robots_delay
+
+    ua = "NyraBot/0.1 (+https://t.test/robot; contact: a@t.test)"
+
+    def parsed(*lines: str) -> urllib.robotparser.RobotFileParser:
+        parser = urllib.robotparser.RobotFileParser()
+        parser.parse(list(lines))
+        return parser
+
+    assert robots_delay(parsed("User-agent: NyraBot", "Crawl-delay: 4"), ua) == 4
+    assert robots_delay(parsed("User-agent: *", "Crawl-delay: 3"), ua) == 3  # the general rule applies to us
+    assert robots_delay(parsed("User-agent: OtherBot", "Crawl-delay: 9"), ua) == 0  # another robot's rule does not
+    assert robots_delay(parsed("User-agent: *", "Crawl-delay: 600"), ua) == MAX_ROBOTS_DELAY_SECONDS
+    assert robots_delay(parsed("User-agent: *", "Disallow: /private"), ua) == 0  # no Crawl-delay: our own pace
+
+
 def test_a_page_that_answered_with_another_page_is_not_the_same_page():
     from nyra.crawl import same_page
 
