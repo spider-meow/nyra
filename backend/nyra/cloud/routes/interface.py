@@ -55,6 +55,8 @@ def add_security(app: FastAPI, supabase_url: str, sentry_dsn: str = "") -> None:
         response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
         if not request.url.path.startswith("/api/"):
             response.headers.setdefault("Content-Security-Policy", csp)
+        if request.url.path == "/robot":
+            response.headers["X-Robots-Tag"] = "noindex"  # the robot's explanation page: reachable, but not listed by search engines
         if request.url.path.startswith("/assets/") and response.status_code == 200:
             # Vite puts a content hash in every file name under /assets: a given URL never changes.
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"

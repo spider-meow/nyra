@@ -1066,6 +1066,9 @@ def test_client_routes_get_the_app_shell_and_security_headers(client):
     assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
     assert r.headers["x-content-type-options"] == "nosniff"
     assert client.get("/api/does-not-exist").status_code == 404
+    # The robot's explanation page is public but kept out of search engines.
+    assert client.get("/robot").headers["x-robots-tag"] == "noindex"
+    assert "x-robots-tag" not in r.headers
 
 
 def test_exclusions_purge_matches_and_can_be_undone(client, org_with_users, cloud_brand, cloud_database_url):
