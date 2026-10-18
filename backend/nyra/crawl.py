@@ -197,6 +197,17 @@ def is_allowed(parser: urllib.robotparser.RobotFileParser, url: str, user_agent:
         return True
 
 
+MAX_ROBOTS_DELAY_SECONDS = 10  # a site asking for more is read at this pace: one robots.txt cannot stall a read
+
+
+def robots_delay(parser: urllib.robotparser.RobotFileParser, user_agent: str) -> float:
+    """Seconds the site's robots.txt asks for between two requests (`Crawl-delay`), capped; 0 when it asks for none."""
+    try:
+        return min(float(parser.crawl_delay(user_agent) or 0), MAX_ROBOTS_DELAY_SECONDS)
+    except Exception:  # noqa: BLE001 - a malformed value asks for nothing, like is_allowed
+        return 0.0
+
+
 def fetch_sitemap_urls(
     site_url: str,
     client: httpx.Client,
@@ -579,7 +590,9 @@ class _Crawl:
             context = await browser.new_context(user_agent=cfg.user_agent)
             await context.route("**/*", self._route)
             async with netguard.async_client(headers={"User-Agent": cfg.user_agent}) as http:
-                workers = [asyncio.create_task(self._worker(context, http)) for _ in range(max(1, cfg.concurrency))]
+                # A declared Crawl-delay means one page at a time: three readers each waiting it out would still send three requests per delay.
+                count = 1 if self._robots_delay() else max(1, cfg.concurrency)
+                workers = [asyncio.create_task(self._worker(context, http)) for _ in range(count)]
                 await asyncio.gather(*workers)
             await context.close()
             await browser.close()
@@ -636,9 +649,12 @@ class _Crawl:
                     self.progress(self.stats)
                 if self.should_stop():
                     return
-                await asyncio.sleep(random.uniform(cfg.delay_seconds_min, cfg.delay_seconds_max))
+                await asyncio.sleep(max(random.uniform(cfg.delay_seconds_min, cfg.delay_seconds_max), self._robots_delay()))
         finally:
             await page.close()
+
+    def _robots_delay(self) -> float:
+        return robots_delay(self.robots, self.config.crawl.user_agent) if self.robots is not None else 0.0
 
     async def _crawl_page(self, page, http: httpx.AsyncClient, url: str) -> None:
         cfg = self.config.crawl

@@ -277,6 +277,11 @@ HTTPS, Supabase pour la base ; `DEPLOYMENT.md`). Organisation `digital-factory-r
 Louis XIII, connexion vérifiée, premier passage lancé ; mesure du worker dans `DEPLOYMENT.md` et
 `COUTS_PRODUCTION.md`.
 
+**18 octobre 2026 : le robot a sa page** (`/robot`, publique, non listée, `noindex`) : fiche technique, adresse IP du
+Droplet, bloc `robots.txt` à copier. Le crawler lit désormais le `Crawl-delay` d'un `robots.txt` (jusqu'à 10 s, une page
+à la fois quand il y en a un) ; avant, il ne le lisait pas. La page et `config.yaml` portent la même signature : les
+tenir à jour ensemble, ainsi que l'adresse IP si le Droplet change.
+
 Entre le 16 et le 17 octobre 2026 (détails dans les documents indiqués) :
 
 - **Bibliothèque** : volet de navigation en accordéon sur 3 niveaux, sans bouton de gestion ; collections gérées dans
