@@ -35,6 +35,19 @@ Storage stay on Supabase.
 `autoheal` reads the Docker socket to restart containers marked `unhealthy`; drop it from
 `docker-compose.droplet.yml` if you would rather not give a container that access.
 
+Updating a running Droplet: `git pull`, then the same `docker compose … up -d --build`. If `git pull` refuses
+because a file was edited on the Droplet, look at `git diff <file>` first; `git stash` sets the edit aside.
+
+The Droplet keeps no state (no volume but Caddy's certificates; the database, Auth and files are on
+Supabase), so it is rebuilt from git and `.env`. Weekly backups of the Droplet are optional; keep a copy of
+`.env` elsewhere. A Droplet cannot be resized to a plan with a smaller disk (the 4 GB plan has 80 GB, the
+2 GB plans 50–60 GB): going down means creating a new Droplet, pointing the DNS at it, then deleting the old one.
+
+**Measured on 18 October 2026** (`docker stats` on the 4 GB Droplet, during a crawl with CLIP embedding; two
+readings, the final peak was not recorded): `worker` 835 MiB then **1.88 GiB**, 150 % of a CPU and 151
+processes; `web` 150 MiB; `caddy` and `autoheal` under 15 MiB. About 2 GiB for the containers, before the system.
+A 2 GB Droplet does not fit; 4 GB leaves room for one job at a time.
+
 Monthly cost, Basic Droplet prices of October 2026 (check
 [digitalocean.com/pricing](https://www.digitalocean.com/pricing/droplets)):
 
@@ -52,7 +65,8 @@ the same work. The Droplet is the recommended path.
 ## Resources
 
 - **web**: 256–512 MB, a fraction of a CPU.
-- **worker**: 2 GB RAM minimum (Chromium + CLIP), 2 vCPU. `shm_size: 1gb`
+- **worker**: 2 GB RAM was the estimate; measured at 1.9 GiB in use during a crawl with CLIP, so plan on 4 GB
+  for the machine (see the measure above), 2 vCPU. `shm_size: 1gb`
   for Chromium. Crawl speed scales with `crawl.concurrency` (3 pages at a
   time by default) until CPU saturates.
 
