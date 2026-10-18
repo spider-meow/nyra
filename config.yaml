@@ -11,7 +11,7 @@ crawl:
   concurrency: 3
   delay_seconds_min: 1.0
   delay_seconds_max: 2.0
-  user_agent: "NyraBot/0.1 (+https://github.com/spider-meow/nyra; contact: rights-team@example.com)"
+  user_agent: "NyraBot/0.1 (+https://github.com/spider-meow/nyra; contact: contact@axelproject.fr)"
   min_image_side_px: 200
   max_image_bytes: 25000000
   max_image_pixels: 60000000
