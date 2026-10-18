@@ -239,10 +239,10 @@ image dont on a oublié de saisir la date, et fausse le suivi.
 
 ## Avant d'ouvrir à un client
 
-Limitation de débit sur l'API, tests cloud en CI sur une vraie base, vraie
-adresse de contact du robot dans `config.yaml` (`crawl.user_agent` : les sites lus la voient dans leurs journaux,
-et `rights-team@example.com` ne reçoit rien), politique de conservation des
-images (`archive/AUDIT_PRODUIT.md`, archivé, §3.2). Aussi : relever le pic de mémoire d'un passage complet,
+Limitation de débit sur l'API, tests cloud en CI sur une vraie base, politique de conservation des
+images (`archive/AUDIT_PRODUIT.md`, archivé, §3.2). Fait le 18 octobre 2026 : la signature du robot
+(`crawl.user_agent` dans `config.yaml`, que les sites lus voient dans leurs journaux) porte une vraie adresse de
+contact, `contact@axelproject.fr`. Aussi : relever le pic de mémoire d'un passage complet,
 et vérifier la liste des membres de l'organisation dans Supabase (un administrateur inconnu verrait toutes les données).
 
 ## Propositions à discuter
