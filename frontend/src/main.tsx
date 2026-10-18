@@ -78,6 +78,8 @@ const router = createBrowserRouter([
     children: [
       { path: "/login", element: page(<Login />), handle: { title: "Connexion" } },
       { path: "/set-password", element: page(<SetPassword />), handle: { title: "Mot de passe" } },
+      // Public and linked from nowhere but the robot's signature (config.yaml `crawl.user_agent`); the server marks it noindex.
+      { path: "/robot", lazy: lazyPage(() => import("./pages/Robot").then((module) => module.Robot)), handle: { title: "Le robot Nyra" } },
       // The French addresses of before: bookmarks and e-mails already sent keep working (see paths.ts).
       { path: "/connexion", lazy: legacy },
       { path: "/mot-de-passe", lazy: legacy },

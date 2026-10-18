@@ -36,7 +36,8 @@ export function RunCard(props: { list: Site[]; selected: Site[] }) {
   const start = useStartJob();
   const toast = useToast();
   const [maxPages, setMaxPages] = useState<number | "">("");
-  const [fresh, setFresh] = useState(false);
+  const [newOnly, setNewOnly] = useState(false);
+  const fresh = !newOnly; // the job's own word: `fresh` reads every page again, otherwise only the new ones
   const [thenMatch, setThenMatch] = useState(true);
 
   const defaults = overview.data?.defaults;
@@ -80,10 +81,10 @@ export function RunCard(props: { list: Site[]; selected: Site[] }) {
           <div className="grid content-start gap-2">
             <Checkbox checked={thenMatch} onChange={setThenMatch} label="Comparer à la bibliothèque dès la fin de la lecture" />
             <Checkbox
-              checked={fresh}
-              onChange={setFresh}
-              label="Relire aussi les pages déjà lues"
-              hint="Sinon, seules les pages nouvelles sont lues : plus rapide, mais une image changée sur une page connue passe inaperçue."
+              checked={newOnly}
+              onChange={setNewOnly}
+              label="Lire seulement les pages nouvelles"
+              hint="Plus rapide, mais une image changée sur une page connue passe inaperçue. Sinon, toutes les pages sont relues."
             />
           </div>
           <MaxPages value={maxPages} onChange={setMaxPages} defaults={defaults} />
