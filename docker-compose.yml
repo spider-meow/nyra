@@ -1,7 +1,7 @@
 # Postgres, Auth and Storage live on Supabase; this runs the two processes.
 #
 #   docker compose up -d --build
-#   docker compose up -d --scale worker=3     more jobs in parallel (one per organization at a time)
+#   docker compose up -d --scale worker=3     more jobs in parallel (one per brand at a time)
 #
 # Both read the same .env (see .env.example).
 
