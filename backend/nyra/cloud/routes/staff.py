@@ -6,6 +6,7 @@ managed with the ordinary `/api/orgs/{org_id}/members` routes, which accept a pl
 
 from __future__ import annotations
 
+import socket
 import uuid
 from collections import defaultdict
 
@@ -13,11 +14,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db as cloud_db
+from .. import hostmetrics
 from .. import insights as cloud_insights
 from .common import Ctx, get_ctx, iso, staff_dep
 from .members import find_or_invite_user
 
 router = APIRouter()
+
+# The web process's own reading (CPU needs the previous one): a single Sampler holding one reading.
+_WEB = hostmetrics.Sampler()
 
 
 class OrganizationBody(BaseModel):
@@ -123,3 +128,12 @@ def remove_admin(user_id: uuid.UUID, claims=Depends(staff_dep), ctx: Ctx = Depen
             raise HTTPException(status_code=404, detail="Cette personne n'est pas platform admin.")
         cloud_insights.set_staff(conn, user_id, False)
     return {"removed": True}
+
+
+@router.get("/api/staff/server")
+def server_usage(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """What each container uses, as `docker stats` would show: the web process live, the workers as last published."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        workers = hostmetrics.published(conn)
+    web = {"instance": socket.gethostname(), "role": "web", "reading": _WEB.read(), "age_seconds": 0.0}
+    return {"services": [web, *workers]}

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
+import socket
 import subprocess
 import tempfile
 import threading
@@ -41,6 +42,7 @@ from nyra.estimate import remaining_seconds
 from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching, warm_clip
 
 from . import db as cloud_db
+from . import hostmetrics
 from . import jobs as cloud_jobs
 from . import storage as cloud_storage
 from .locate import NotSearchable, locate_reference
@@ -356,8 +358,19 @@ class Worker:
     def stop(self) -> None:
         self._stop.set()
 
+    def _publish_metrics(self) -> None:
+        """Every few seconds, for the back office: what this container uses (a thread, since a job holds the loop)."""
+        sampler, instance = hostmetrics.Sampler(), socket.gethostname()
+        while not self._stop.wait(hostmetrics.PUBLISH_SECONDS):
+            try:
+                with cloud_db.connect(self.database_url) as conn:
+                    hostmetrics.publish(conn, instance, "worker", sampler.read())
+            except Exception:  # noqa: BLE001 - the figures are a convenience; a missed one must not stop the worker
+                log.exception("publishing server metrics failed")
+
     def run_forever(self) -> None:
         log.info("worker started")
+        threading.Thread(target=self._publish_metrics, name="metrics", daemon=True).start()
         last_reap = 0.0
         while not self._stop.is_set():
             touch_alive()

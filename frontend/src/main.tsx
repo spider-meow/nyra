@@ -96,6 +96,7 @@ const router = createBrowserRouter([
             children: [
               { index: true, lazy: lazyPage(() => import("./pages/BackOffice").then((module) => module.Overview)), handle: { title: "Back office" } },
               { path: "organizations", lazy: lazyPage(() => import("./pages/backoffice/Organizations").then((module) => module.Organizations)), handle: { title: "Organisations et marques" } },
+              { path: "server", lazy: lazyPage(() => import("./pages/backoffice/Server").then((module) => module.Server)), handle: { title: "Serveur" } },
               { path: "billing", lazy: lazyPage(() => import("./pages/backoffice/Billing").then((module) => module.Billing)), handle: { title: "Facturation" } },
               { path: "accounts", lazy: lazyPage(() => import("./pages/backoffice/Accounts").then((module) => module.Accounts)), handle: { title: "Comptes" } },
               { path: "platform-admins", lazy: lazyPage(() => import("./pages/backoffice/Admins").then((module) => module.Admins)), handle: { title: "Platform admins" } },
