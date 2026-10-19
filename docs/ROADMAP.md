@@ -118,9 +118,9 @@ Questions ouvertes : qui définit les étiquettes (admin de la marque, nous) ?
 Les étiquettes sont-elles propres à une marque ou partagées ? Que veut dire
 « pique » pour Louis XIII (l'objet tenu par le sommelier sur la photo) ?
 
-### [ ] 3. La boucle automatique (passage hebdomadaire, résumé, alertes)
+### [ ] 3. La boucle automatique (passage mensuel, résumé, alertes)
 
-**Ce qu'on veut.** Un passage de lecture chaque semaine par marque, un e-mail de
+**Ce qu'on veut.** Un passage de lecture chaque mois par marque, un e-mail de
 résumé (« 3 nouveaux visuels expirés détectés ») et une alerte d'expiration de
 la bibliothèque (« 5 visuels expirent dans 30 jours »), indépendante du crawl.
 
@@ -129,7 +129,8 @@ l'essentiel de sa valeur. Aujourd'hui il n'y a ni passage planifié ni alerte.
 
 **Piste.** Réglage par organisation et déclencheur pg_cron qui insère un job
 `crawl` avec `fresh: true` (sinon le mode reprise saute les pages déjà vues) ;
-e-mails par Resend, destinataires par organisation. Environ 4 à 6 jours.
+e-mails par Resend, destinataires par organisation. Environ 4 à 6 jours. Un passage
+qui tombe pendant un run manuel de la même organisation attend la fin de celui-ci.
 
 ### [ ] 4. Preuve datée
 
