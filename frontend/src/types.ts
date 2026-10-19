@@ -517,3 +517,18 @@ export type StaffUser = {
   memberships: { org_id: string; org_name: string; role: Member["role"] }[];
 };
 export type StaffAdmin = { user_id: string; email: string; you: boolean };
+
+/** One container's reading (`GET /staff/server`): CPU as % of one core, as in `docker stats`. */
+export type ServiceReading = {
+  instance: string;
+  role: "web" | "worker";
+  age_seconds: number;
+  reading: {
+    cpu_percent: number | null;
+    /** Cores the container may use, or null without a limit. */
+    cpu_limit: number | null;
+    memory: number;
+    memory_limit: number | null;
+    host: { cpus: number; load: number[]; memory_total: number | null; memory_available: number | null; disk_total: number; disk_used: number };
+  };
+};

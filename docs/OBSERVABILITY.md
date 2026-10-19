@@ -6,6 +6,7 @@ Three layers, each answering a different question:
 |---|---|---|
 | How does a brand's site and pipeline behave? (image count, average weight, images per second, crawl duration, false positives…) | **Statistiques** page of each brand, `/o/<org>/b/<brand>/statistics`, organization admins | nothing: built in |
 | How is the whole platform doing? (every brand of every organization side by side, job queue, failures, throughput) | **Back office**, `/back-office`, Nyra team only | `nyra cloud-staff --email …` |
+| What do the containers use (CPU, memory, disk), like `docker stats`? | **Back office > Serveur**, `/back-office/server`, Nyra team only | nothing: built in (migration `service_metrics`) |
 | Is it up? What broke, and when? Are pages slow for real users? Trends over months, alerts | **Grafana** (metrics, logs, SQL) + **Sentry** (exceptions on the server and in the browser, page speed) | below |
 
 ## What is measured
@@ -51,6 +52,15 @@ list lives in `platform_staff`, readable only by the backend. Staff are not
 members of every organization: "Détail" on a brand opens its Statistiques
 page only if the account is also admin there (`nyra cloud-invite --role
 admin`).
+
+## Server usage (back office > Serveur)
+
+Read from inside each container, with no Docker socket: the cgroup counters (`/sys/fs/cgroup/cpu.stat`,
+`memory.current`, minus the droppable cache, as `docker stats` does) plus the host's load, memory and disk
+(`backend/nyra/cloud/hostmetrics.py`). CPU is a share of one core (100 % = one core). The web process is read
+live; each worker publishes every 15 s into `service_metrics` (a busy worker cannot be asked), and the page
+marks one silent after a minute. Rows older than a day are deleted. Without cgroup v2 (a laptop) the figures
+fall back to the process's own.
 
 ## Sentry (exceptions and slow requests)
 
