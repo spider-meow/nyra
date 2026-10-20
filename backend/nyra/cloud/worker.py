@@ -381,7 +381,7 @@ class Worker:
             if time.monotonic() - last_purge > AUDIT_PURGE_SECONDS:
                 last_purge = time.monotonic()
                 try:
-                    purged = cloud_audit.purge(self.database_url)
+                    purged = cloud_audit.purge(self.database_url, between=touch_alive)
                     if purged:
                         log.info("audit log: %d row(s) older than %d months deleted", purged, cloud_audit.RETENTION_MONTHS)
                 except Exception:  # noqa: BLE001 - retention is housekeeping; tomorrow's run takes what this one missed

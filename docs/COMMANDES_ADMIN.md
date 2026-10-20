@@ -75,6 +75,7 @@ complètes, garde-fous et sauvegardes : `DEPLOYMENT.md`, section « Client data 
 - La suppression efface les lignes, les fichiers `{org_id}/` des trois buckets et les comptes qui n'appartiennent
   qu'à cette organisation (jamais un membre d'une autre organisation ni un platform admin). Elle refuse s'il y a une
   tâche en cours. Elle est **irréversible** et ne touche pas aux sauvegardes (elles expirent seules : 35 jours au plus).
+- Le slug doit être celui stocké, tel quel (pas de normalisation), et `--operator` un identifiant court (pas d'e-mail). Après un échec, relancer la même commande : elle reprend là où elle s'est arrêtée.
 - La trace reste dans les logs (`ORGANIZATION DELETED …`) et dans la table `deleted_organizations`.
 
 ## Marques et sites

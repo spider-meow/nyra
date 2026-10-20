@@ -178,13 +178,16 @@ no address, no reason typed by a person. `audit.record` refuses anything but num
 
 - Written by the route itself, in the same database transaction as the change. If the row cannot be written, the
   change is rolled back and the person gets an error (HTTP 500, « Erreur interne du serveur »): an action that
-  leaves no trace does not happen. Decision recorded in `backend/nyra/cloud/audit.py`.
+  leaves no trace does not happen. One exception by construction: an upload or an adoption writes one row per
+  file, with that file's reference; if the row fails that file is reported as refused to the person (the file
+  already sent to Storage stays as a harmless orphan). Decision recorded in `backend/nyra/cloud/audit.py`.
 - Covered: library (upload, edit, delete, expiry, tags, CSV import, adoption of site images, collections),
   decisions (`review.set`, `visual.replaced`), exclusions, settings, logos, labels, team (invite, role,
   removal), jobs started or cancelled by a person, brands, addresses, organization creation. Not covered, on
   purpose: reads; jobs the system queues by itself after a change (the change carries the cause); the platform
-  admin list (no organization: logged as `platform admin … added/removed by …`). `test_audit.py` lists every
-  route that changes something and fails for one without an audit call, so a new route cannot forget it.
+  admin list is traced too, with no organization (`org_id` null, `staff.add` / `staff.remove`; readable in SQL
+  only). `test_audit.py` lists every route that changes something and fails for one without an audit call on the
+  connection of its action (read from the syntax tree), so a new route cannot forget it.
 - **Retention: 12 months.** `audit.purge` deletes older rows in batches of 1,000 (one transaction each). The
   worker runs it once a day; by hand: `nyra cloud-purge-audit [--months 12]`.
 - The platform admin who acts as an administrator of a client organization appears under their own e-mail.
@@ -206,8 +209,9 @@ Writes, one row or one file at a time (memory does not grow with the organizatio
 - `files/refs/…` (the original of each reference) and `files/reports/…` (the three files of each report);
 - `manifeste.json`: format and Nyra versions, date, operator, rows per CSV, files copied, failures, `complete`.
 
-Not included: the images read on the sites (they can be read again from the sites) and the thumbnails and
-working copies. A file larger than `--max-file-mb` (200) is a failure; the copy stops with an error at
+Not included, and listed in the manifest (`not_exported`): the images read on the sites, thumbnails and working copies,
+labels, the collection tree, the organization's settings, job logs, brand logos. Two files whose names differ only by case
+are reported as a failure (they would overwrite each other on a Mac or Windows disk). A file larger than `--max-file-mb` (200) is a failure (its size is read from Storage's listing before any download); the copy stops with an error at
 `--max-total-gb` (50). A file that cannot be downloaded is listed in the manifest and in the exit code
 (`complete: false`, exit 1): run the **same command again on the same folder**, files already there are kept.
 Check `complete: true` before telling the client. The folder holds personal data (e-mails) and licensed images:
@@ -223,24 +227,32 @@ docker compose run --rm web nyra cloud-delete-org client-slug               # as
 
 1. Export first if the client wants its data, and keep the written request.
 2. `--dry-run` prints the report: rows per table, files per bucket, the accounts that would go. Read it.
-3. The real run refuses without the organization's **exact name** (typed at the prompt, or `--confirm-name`),
-   and while a task is queued or running (cancel it, wait).
-4. It deletes, in this order: the Storage files under `{org_id}/` in `refs`, `site-images` and `reports`
-   (listed and removed by batches of 100, checked empty at the end); the organization row, every other table
-   following through `on delete cascade` in the same transaction as the trace, then checked to hold no row of
-   the organization (otherwise the whole thing is rolled back); then the Auth accounts that were members of
-   this organization only. A member of another organization or of the Nyra team is never deleted.
-5. It prints the report (same shape as the dry run). If an account could not be deleted it says so and exits 1:
-   delete it in Supabase > Authentication.
-6. **Trace**: a log line `ORGANIZATION DELETED {json}` (identifier, name, slug, operator, counts; no e-mail)
-   and one row in `deleted_organizations` (identifier, name, slug, date, operator, counts). The organization's
-   own activity log goes with it. Keep the logs long enough to answer an audit (set the retention of your log
-   host accordingly) and give the client the date and the report.
+3. The real run takes the organization's **exact slug** (not its normalized form: `ACME!!` does not find `acme`) and
+   its **exact name** (typed at the prompt, or `--confirm-name`). `--operator` is a short identifier
+   (`[A-Za-z0-9._-]`, 40 characters), never an e-mail address: it is kept in the trace.
+4. It works in four steps, each able to resume after a failure:
+   1. one short transaction **closes** the organization: row locked, refused if a task is queued or running, the
+      trace written once (`deleted_organizations`, with the ids of the accounts to delete), and **every
+      membership removed**, so nobody can upload or start anything any more (an upload is answered 403);
+   2. the Storage files under `{org_id}/` in `refs`, `site-images` and `reports` (batches of 100, checked empty);
+   3. the organization row, every other table following through `on delete cascade`, then a check that no row of the
+      organization is left (otherwise this step is rolled back); a last sweep of the files for a request that was
+      already under way at step 1;
+   4. the Auth accounts noted at step 1, **checked again just before**: one that has joined another organization
+      or the Nyra team in the meantime is kept.
+5. After a failure at any step the message says so and prints what was done: **run the same command again**. A
+   closed organization (alive, no member) or one already gone (only its trace left) is recognised and accepted, the
+   trace is not duplicated. The report is printed at the end; an account that could not be deleted exits 1 (the
+   next run retries it, or delete it in Supabase > Authentication).
+6. **Trace**: a log line `ORGANIZATION DELETED {json}` (identifier, name, slug, operator, counts; no e-mail) and
+   one row in `deleted_organizations` (identifier, name, slug, date, operator, counts, ids of the accounts). Its
+   **retention is to be decided by the team** (nothing purges it today). The organization's own activity log goes
+   with it. Keep the logs long enough to answer an audit and give the client the date and the report.
 
-Run it while the client is not using the product: a file uploaded between the Storage step and the database step
-would stay behind (run the command again with the same slug only if the organization row still exists; otherwise
-delete the leftover prefix by hand). That the cascade covers every table is checked on the catalog by
-`test_offboarding.py`: a table added without it fails the test.
+A request that was already under way when the organization was closed could still send a file after the last
+sweep: if you must be certain, check `rclone ls`/the Storage browser for the prefix `{org_id}/` once the command
+ends. That the cascade covers every table is checked on the catalog by `test_offboarding.py`: a table added
+without it fails the test.
 
 **Not erased by the command**: Supabase's daily database backups, the file copies below, the e-mails the
 provider (Resend) already sent, and the logs. Tell the client the real delay: the data disappears from the

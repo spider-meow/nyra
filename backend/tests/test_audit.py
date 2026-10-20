@@ -5,10 +5,11 @@ what it refuses to keep, who may read it, and the retention."""
 # ruff: noqa: F811 (the fixtures of test_cloud_api are imported, then used by name)
 from __future__ import annotations
 
+import ast
 import importlib
 import inspect
 import pkgutil
-import re
+import textwrap
 import uuid
 
 import pytest
@@ -23,6 +24,9 @@ from test_cloud_api import _headers, _upload_bytes, client, org_with_users  # no
 import nyra.cloud.routes as routes_package  # noqa: E402
 from nyra.cloud import audit as cloud_audit  # noqa: E402
 from nyra.cloud import db as cloud_db  # noqa: E402
+from nyra.cloud.routes import common as common_routes  # noqa: E402
+from nyra.cloud.routes import library as library_routes  # noqa: E402
+from nyra.cloud.routes import site_images as site_images_routes  # noqa: E402
 
 
 def _seed_matched_images(conn, org_id, brand_id):
@@ -140,14 +144,34 @@ def test_purge_removes_old_rows_in_bounded_batches(cloud_database_url, cloud_org
     assert cloud_audit.purge(cloud_database_url) == 0
 
 
-# Routes that change nothing of an organization's data, or that are traced somewhere else.
+# Routes that change nothing of an organization's data.
 EXEMPT = {
     ("POST", "/api/orgs/{org_id}/brands/{brand_id}/library/thumbs"): "reads: signs the thumbnails of a list of files",
-    ("POST", "/api/staff/admins"): "the Nyra team itself, no organization: logged (`platform admin … added by …`)",
-    ("DELETE", "/api/staff/admins/{user_id}"): "the Nyra team itself, no organization: logged",
 }
-# the route's own call, or one of the two helpers that audit for it: `enqueue` (jobs) and `_delete_filenames` (library)
-AUDITING = re.compile(r"\.audit\(|cloud_audit\.record\(|\benqueue\(|\b_delete_filenames\(")
+# Helpers that audit for the route that calls them; each is checked like a route below.
+HELPERS = {
+    "enqueue": common_routes.enqueue,
+    "_delete_filenames": library_routes._delete_filenames,
+    "_store_upload": library_routes._store_upload,
+    "_adopt_one": site_images_routes._adopt_one,
+}
+
+
+def _audits_on_its_connection(function) -> bool:
+    """True if the function calls `.audit(conn, …)` / `cloud_audit.record(conn, …)` inside a `with … as conn` block, or
+    calls one of HELPERS (a name: `cloud_jobs.enqueue(…)`, the low-level one that does not audit, does not count).
+    Read from the syntax tree, so a comment or a string cannot pass for a call."""
+    tree = ast.parse(textwrap.dedent(function if isinstance(function, str) else inspect.getsource(function)))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in HELPERS:
+            return True
+        if isinstance(node, ast.With):
+            bound = {item.optional_vars.id for item in node.items if isinstance(item.optional_vars, ast.Name)}
+            for call in (n for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)):
+                audit = call.func.attr == "audit" or (call.func.attr == "record" and getattr(call.func.value, "id", "") == "cloud_audit")
+                if audit and call.args and isinstance(call.args[0], ast.Name) and call.args[0].id in bound:
+                    return True
+    return False
 
 
 def _changing_routes():
@@ -162,10 +186,19 @@ def _changing_routes():
 def test_every_route_that_changes_something_writes_an_audit_row():
     seen = dict(_changing_routes())
     assert len(seen) > 40  # the enumeration works (47 at the time of writing)
-    unaudited = {key for key, route in seen.items() if key not in EXEMPT and not AUDITING.search(inspect.getsource(route.endpoint))}
-    assert not unaudited, f"routes that change data without `scope.audit(...)` / `cloud_audit.record(...)`: {sorted(unaudited)}"
+    unaudited = {key for key, route in seen.items() if key not in EXEMPT and not _audits_on_its_connection(route.endpoint)}
+    assert not unaudited, f"routes that change data without `scope.audit(conn, …)` / `cloud_audit.record(conn, …)`: {sorted(unaudited)}"
     assert not set(EXEMPT) - set(seen), "an exempted route no longer exists: remove it from EXEMPT"
-    assert not {key for key in EXEMPT if AUDITING.search(inspect.getsource(seen[key].endpoint))}, "exempted but audited: remove it"
+    assert not {key for key in EXEMPT if _audits_on_its_connection(seen[key].endpoint)}, "exempted but audited: remove it"
+    assert all(_audits_on_its_connection(helper) for helper in HELPERS.values()), "a helper in HELPERS must audit on its own connection"
+
+
+def test_the_checker_is_not_fooled():
+    commented = "def f(conn):  # scope.audit(conn, 'x', 'y')\n    cloud_jobs.enqueue(conn)\n"
+    other_connection = "def f(scope):\n    with open_conn() as conn:\n        scope.audit(unrelated, 'x.y', 'z')\n"
+    proper = "def f(scope):\n    with open_conn() as conn:\n        scope.audit(conn, 'x.y', 'z')\n"
+    assert not _audits_on_its_connection(commented) and not _audits_on_its_connection(other_connection)
+    assert _audits_on_its_connection(proper)
 
 
 def test_a_day_of_changes_leaves_one_row_each(client, org_with_users, second_admin, cloud_brand, cloud_database_url, monkeypatch):
@@ -202,3 +235,60 @@ def test_a_day_of_changes_leaves_one_row_each(client, org_with_users, second_adm
     review = next(event for event in listed if event["action"] == "review.set")
     assert review["email"] == f"{client_id}@x.com" and review["detail"]["decision"] == "ecarte"  # a plain member's decision is traced too
     assert "secret credit" not in str(listed) and "a.jpg" not in str(listed)  # no content, no file names
+
+
+def test_a_failing_trace_on_an_upload_refuses_that_file_and_keeps_no_reference(client, org_with_users, cloud_database_url, monkeypatch):
+    org_id, base, admin_id, _, _ = org_with_users
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("audit table unavailable")
+
+    monkeypatch.setattr(cloud_audit, "record", broken)
+    answer = client.post(f"{base}/library/upload", headers=_headers(admin_id), files=[("files", ("a.jpg", _upload_bytes(), "image/jpeg"))])
+    body = answer.json()
+    assert answer.status_code == 200 and body["saved"] == [] and body["failed"][0]["filename"] == "a.jpg"  # told, not silent
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM reference_images WHERE org_id = %s", (org_id,)).fetchone()["n"] == 0
+
+
+def test_a_full_page_still_says_there_is_a_next_one(client, org_with_users, cloud_database_url):
+    org_id, _, admin_id, _, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("INSERT INTO audit_log (org_id, action, object_type) SELECT %s, 'x.y', 'thing' FROM generate_series(1, 201)", (org_id,))
+    page = client.get(f"/api/orgs/{org_id}/audit", headers=_headers(admin_id), params={"limit": 200}).json()
+    assert len(page["events"]) == 200 and page["has_more"] is True
+    assert client.get(f"/api/orgs/{org_id}/audit", headers=_headers(admin_id), params={"limit": 200, "offset": 200}).json()["has_more"] is False
+
+
+def test_the_team_s_own_privileges_are_traced_without_an_organization(client, org_with_users, cloud_database_url, monkeypatch):
+    org_id, _, admin_id, _, outsider_id = org_with_users
+    monkeypatch.setattr("nyra.cloud.routes.staff.find_or_invite_user", lambda *args: (str(outsider_id), False))
+    assert client.post("/api/staff/admins", headers=_headers(admin_id), json={"email": "o@x.com"}).status_code == 200
+    assert client.delete(f"/api/staff/admins/{outsider_id}", headers=_headers(admin_id)).status_code == 200
+    with cloud_db.connect(cloud_database_url) as conn:
+        rows = conn.execute("SELECT action, user_id, object_id FROM audit_log WHERE org_id IS NULL AND object_id = %s ORDER BY id", (str(outsider_id),)).fetchall()
+        conn.execute("DELETE FROM audit_log WHERE org_id IS NULL")
+    assert [(row["action"], row["user_id"]) for row in rows] == [("staff.add", admin_id), ("staff.remove", admin_id)]
+
+
+def test_only_one_purge_runs_at_a_time_and_each_batch_reports_alive(cloud_database_url, cloud_org):
+    import psycopg
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        for _ in range(3):
+            cloud_audit.record(conn, cloud_org, None, "x.y", "thing")
+        conn.execute("UPDATE audit_log SET created_at = now() - interval '13 months' WHERE org_id = %s", (cloud_org,))
+    with psycopg.connect(cloud_database_url, autocommit=True) as other:
+        other.execute("SELECT pg_advisory_lock(%s)", (cloud_audit.PURGE_LOCK,))
+        assert cloud_audit.purge(cloud_database_url) == 0  # another purge holds the lock
+        other.execute("SELECT pg_advisory_unlock(%s)", (cloud_audit.PURGE_LOCK,))
+    beats = []
+    assert cloud_audit.purge(cloud_database_url, between=lambda: beats.append(1)) == 3 and beats
+
+
+def test_codes_and_identifiers_are_checked(cloud_database_url, cloud_org):
+    with cloud_db.connect(cloud_database_url) as conn:
+        for bad in ({"action": "Library delete"}, {"action": "a@b.c"}, {"object_type": "x" * 41 + " "}, {"object_id": "i" * 81}):
+            args = {"action": "x.y", "object_type": "thing", "object_id": None} | bad
+            with pytest.raises(ValueError):
+                cloud_audit.record(conn, cloud_org, None, args["action"], args["object_type"], args["object_id"])

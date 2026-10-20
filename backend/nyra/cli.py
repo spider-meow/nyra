@@ -11,6 +11,7 @@ Two families of commands:
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -391,6 +392,8 @@ def cloud_delete_org(
     try:
         report = delete_organization(env["DATABASE_URL"], client, slug, confirm_name=confirm_name, operator=operator, dry_run=dry_run)
     except OffboardingError as exc:
+        if exc.report:
+            typer.echo(json.dumps(exc.report, ensure_ascii=False, indent=2))  # what had been done before the failure
         _fail(str(exc))
     typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
     if report["users_failed"]:
@@ -417,6 +420,9 @@ def cloud_export_org(
                                        max_file_bytes=max_file_mb * 1_000_000, max_total_bytes=max_total_gb * 1_000_000_000)
     except OffboardingError as exc:
         _fail(str(exc))
+    except Exception as exc:  # noqa: BLE001 - the operator reads a sentence, not a trace; the log has the trace
+        logging.getLogger("nyra.offboarding").exception("export of %s failed", slug)
+        _fail(f"Export failed ({type(exc).__name__}: {str(exc)[:200]}). Run the same command again: files already copied are kept.")
     files = manifest["files"]
     typer.echo(f"{sum(manifest['tables'].values())} CSV rows, {files['copied']} file(s) copied, {files['already_there']} already there -> {out}")
     if not manifest["complete"]:

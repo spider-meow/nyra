@@ -241,6 +241,7 @@ def _adopt_one(ctx: Ctx, scope: BrandScope, client, config: Config, body: AdoptB
         )
         same = cloud_db.same_image_ids(conn, scope.brand_id, row["content_hash"], row["id"])
         cloud_db.write_matches(conn, scope.org_id, [(ref_id, image_id, "phash", 1.0, "haut") for image_id in same])
+        scope.audit(conn, "library.adopt", "reference", ref_id)  # one row per image, with its write
     taken.add(filename)
     return {"site_image_id": str(row["id"]), "filename": filename}, ""
 
@@ -278,7 +279,6 @@ def adopt_site_images(body: AdoptBody, scope: BrandScope = Depends(brand_admin_d
     job = None
     if added:
         with cloud_db.connect(ctx.settings.database_url) as conn:
-            scope.audit(conn, "library.adopt", "reference", added=len(added), refused=len(failed))
             job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind="index",
                                      created_by=scope.member.user_id)
     return {"added": added, "failed": failed, "job": job}

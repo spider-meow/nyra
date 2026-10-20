@@ -19,6 +19,7 @@ import getpass
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from importlib import metadata
@@ -32,7 +33,7 @@ from psycopg.types.json import Jsonb
 from . import audit as cloud_audit
 from . import db as cloud_db
 from . import storage as cloud_storage
-from .routes.library import _csv_cell
+from .csvcell import csv_cell
 
 log = logging.getLogger("nyra.offboarding")
 
@@ -54,7 +55,22 @@ MAX_TOTAL_BYTES = 50_000_000_000
 
 
 class OffboardingError(Exception):
-    """A refusal or a failure the operator must read; the message says what to do."""
+    """A refusal or a failure the operator must read; the message says what to do. `report` is what had been done."""
+
+    def __init__(self, message: str, report: Optional[dict] = None):
+        super().__init__(message)
+        self.report = report
+
+
+_OPERATOR = re.compile(r"[A-Za-z0-9._-]{1,40}")
+
+
+def _operator(value: str) -> str:
+    """Who runs the command, for the trace: a short identifier, never an e-mail address or a sentence."""
+    value = value or getpass.getuser()
+    if not _OPERATOR.fullmatch(value):
+        raise OffboardingError("--operator : un identifiant court (lettres, chiffres, . _ -), sans e-mail ni espace.")
+    return value
 
 
 def _org_tables(conn) -> list[str]:
@@ -84,47 +100,110 @@ def _exclusive_users(conn, org_id: uuid.UUID) -> list[dict]:
            ORDER BY lower(u.email)""", (org_id,)).fetchall()
 
 
-def delete_organization(database_url: str, client, slug: str, *, confirm_name: Optional[str], operator: str = "",
-                        dry_run: bool = False) -> dict:
-    """Erase the organization with this slug and return the report. `confirm_name` must be its exact name (the
-    command asks the operator to type it); `dry_run` lists what would go and changes nothing."""
-    operator = operator or getpass.getuser()
-    with cloud_db.connect(database_url) as conn:
-        org = cloud_db.get_organization_by_slug(conn, slug)
-        if org is None:
-            raise OffboardingError(f"Aucune organisation avec l'identifiant {slug!r}.")
-        if not dry_run and confirm_name != org["name"]:
-            raise OffboardingError("Confirmation refusée : le nom saisi n'est pas exactement celui de l'organisation.")
-        busy = conn.execute("SELECT count(*) AS n FROM jobs WHERE org_id = %s AND status IN ('queued', 'running')",
-                            (org["id"],)).fetchone()["n"]
-        if busy and not dry_run:
-            raise OffboardingError(f"{busy} tâche(s) en cours ou en attente : arrêtez-les (ou attendez) avant de supprimer.")
-        rows, users = count_rows(conn, org["id"]), _exclusive_users(conn, org["id"])
-    org_id = org["id"]
-    files = {bucket: cloud_storage.delete_prefix(client, bucket, str(org_id), dry_run=dry_run) for bucket in BUCKETS}
-    report: dict[str, Any] = {"organization": {"id": str(org_id), "name": org["name"], "slug": org["slug"]},
-                              "dry_run": dry_run, "operator": operator, "rows": rows, "files": files,
-                              "users": [user["email"] or str(user["id"]) for user in users], "users_failed": []}
-    if dry_run:
-        return report
-    with cloud_db.connect(database_url) as conn:  # one transaction: the trace and the erasure stand or fall together
+def _close(conn, slug: str, confirm_name: Optional[str], operator: str) -> dict:
+    """Step 1, one short transaction: lock the organization, refuse if a task runs, write the trace once, note the
+    accounts to delete (ids only) and remove every membership, so nobody can act on it any more. Run again on an
+    organization already closed (or already gone, with only its trace left), it finds all that done and goes on."""
+    org = conn.execute("SELECT id, name, slug FROM organizations WHERE slug = %s FOR UPDATE", (slug,)).fetchone()
+    trace = conn.execute("SELECT * FROM deleted_organizations WHERE slug = %s ORDER BY deleted_at DESC LIMIT 1", (slug,)).fetchone() if org is None \
+        else conn.execute("SELECT * FROM deleted_organizations WHERE org_id = %s", (org["id"],)).fetchone()
+    if org is None and trace is None:
+        raise OffboardingError(f"Aucune organisation avec l'identifiant exact {slug!r} (pas de normalisation).")
+    found = org or {"id": trace["org_id"], "name": trace["name"], "slug": trace["slug"]}
+    if confirm_name != found["name"]:
+        raise OffboardingError("Confirmation refusée : le nom saisi n'est pas exactement celui de l'organisation.")
+    if org is None:
+        return {**found, "exists": False, "rows": trace["report"]["rows"], "user_ids": trace["report"]["user_ids"]}
+    busy = conn.execute("SELECT count(*) AS n FROM jobs WHERE org_id = %s AND status IN ('queued', 'running')", (org["id"],)).fetchone()["n"]
+    if busy:
+        raise OffboardingError(f"{busy} tâche(s) en cours ou en attente : arrêtez-les (ou attendez) avant de supprimer.")
+    if trace is None:
+        rows, user_ids = count_rows(conn, org["id"]), [str(user["id"]) for user in _exclusive_users(conn, org["id"])]
         conn.execute("INSERT INTO deleted_organizations (org_id, name, slug, operator, report) VALUES (%s, %s, %s, %s, %s)",
-                     (org_id, org["name"], org["slug"], operator, Jsonb({"rows": rows, "files": files, "users": len(users)})))
-        conn.execute("DELETE FROM organizations WHERE id = %s", (org_id,))
-        left = {table: n for table, n in count_rows(conn, org_id).items() if n}
-        if left:
-            raise OffboardingError(f"Des lignes restent après la suppression (annulée) : {left}")
+                     (org["id"], org["name"], org["slug"], operator, Jsonb({"rows": rows, "user_ids": user_ids, "state": "closing"})))
+    else:
+        rows, user_ids = trace["report"]["rows"], trace["report"]["user_ids"]
+    conn.execute("DELETE FROM memberships WHERE org_id = %s", (org["id"],))
+    return {**found, "exists": True, "rows": rows, "user_ids": user_ids}
+
+
+def _drop_rows(conn, org_id: uuid.UUID) -> None:
+    """Step 3: the organization row and, by cascade, every table; then no row of the organization may be left."""
+    conn.execute("DELETE FROM organizations WHERE id = %s", (org_id,))
+    left = {table: n for table, n in count_rows(conn, org_id).items() if n}
+    if left:
+        raise OffboardingError(f"Des lignes restent après la suppression (annulée) : {left}")
+
+
+def _delete_accounts(database_url: str, client, user_ids: list[str]) -> tuple[list[str], list[dict]]:
+    """Step 4: the accounts noted at step 1, checked again now: one that has since joined another organization, or the
+    Nyra team, is kept; one already gone is skipped. Returns (deleted, failed)."""
+    with cloud_db.connect(database_url) as conn:
+        users = conn.execute(
+            """SELECT u.id, u.email FROM auth.users u WHERE u.id = ANY(%s::uuid[])
+                 AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id)
+                 AND NOT EXISTS (SELECT 1 FROM platform_staff s WHERE s.user_id = u.id)""", (user_ids,)).fetchall()
+    deleted, failed = [], []
     for user in users:
         try:
             client.auth.admin.delete_user(str(user["id"]))
+            deleted.append(user["email"] or str(user["id"]))
         except Exception as exc:  # noqa: BLE001 - the others are still deleted; the report lists this one
-            log.exception("deleting Auth account %s of the deleted organization %s failed", user["id"], org_id)
-            report["users_failed"].append({"id": str(user["id"]), "error": str(exc)[:200]})
-    log.warning("ORGANIZATION DELETED %s", json.dumps({
-        "org_id": str(org_id), "name": org["name"], "slug": org["slug"], "operator": operator, "files": files,
-        "rows": sum(rows.values()), "users_deleted": len(users) - len(report["users_failed"]),
-        "users_failed": [item["id"] for item in report["users_failed"]]}))
+            log.exception("deleting Auth account %s of a deleted organization failed", user["id"])
+            failed.append({"id": str(user["id"]), "error": str(exc)[:200]})
+    return deleted, failed
+
+
+def _plan(database_url: str, client, slug: str) -> dict:
+    with cloud_db.connect(database_url) as conn:
+        org = conn.execute("SELECT id, name, slug FROM organizations WHERE slug = %s", (slug,)).fetchone()
+        if org is None:
+            raise OffboardingError(f"Aucune organisation avec l'identifiant exact {slug!r} (pas de normalisation).")
+        rows, users = count_rows(conn, org["id"]), _exclusive_users(conn, org["id"])
+    files = {bucket: cloud_storage.delete_prefix(client, bucket, str(org["id"]), dry_run=True) for bucket in BUCKETS}
+    return {"organization": {"id": str(org["id"]), "name": org["name"], "slug": org["slug"]}, "dry_run": True,
+            "rows": rows, "files": files, "users": [user["email"] or str(user["id"]) for user in users], "users_failed": []}
+
+
+def _delete(database_url: str, client, slug: str, confirm_name: Optional[str], operator: str, report: dict) -> dict:
+    with cloud_db.connect(database_url) as conn:
+        closed = _close(conn, slug, confirm_name, operator)
+    org_id = closed["id"]
+    report.update(organization={"id": str(org_id), "name": closed["name"], "slug": closed["slug"]}, rows=closed["rows"])
+    report["files"] = {bucket: cloud_storage.delete_prefix(client, bucket, str(org_id)) for bucket in BUCKETS}
+    if closed["exists"]:
+        with cloud_db.connect(database_url) as conn:
+            _drop_rows(conn, org_id)
+        # a request already under way when the memberships went could still have sent a file: sweep once more
+        for bucket in BUCKETS:
+            report["files"][bucket] += cloud_storage.delete_prefix(client, bucket, str(org_id))
+    report["users"], report["users_failed"] = _delete_accounts(database_url, client, closed["user_ids"])
+    summary = {"rows": sum(closed["rows"].values()), "files": report["files"], "users_deleted": len(report["users"]),
+               "users_failed": [item["id"] for item in report["users_failed"]]}
+    with cloud_db.connect(database_url) as conn:
+        conn.execute("UPDATE deleted_organizations SET report = report || %s::jsonb, deleted_at = now() WHERE org_id = %s",
+                     (Jsonb({"state": "done" if not report["users_failed"] else "accounts_left", "files": report["files"]}), org_id))
+    log.warning("ORGANIZATION DELETED %s", json.dumps({"org_id": str(org_id), "name": closed["name"], "slug": closed["slug"],
+                                                        "operator": operator, **summary}))
     return report
+
+
+def delete_organization(database_url: str, client, slug: str, *, confirm_name: Optional[str], operator: str = "",
+                        dry_run: bool = False) -> dict:
+    """Erase the organization with this exact slug and return the report. `confirm_name` must be its exact name (the
+    command asks the operator to type it); `dry_run` lists what would go and changes nothing.
+
+    Safe to run again after any failure (the error says so and carries the report so far): the organization is first
+    closed (no member left), then its files, rows and accounts go, each step able to resume."""
+    operator = _operator(operator)
+    report: dict = {"dry_run": dry_run, "operator": operator}
+    try:
+        return _plan(database_url, client, slug) if dry_run else _delete(database_url, client, slug, confirm_name, operator, report)
+    except OffboardingError as exc:
+        exc.report = report
+        raise
+    except Exception as exc:
+        raise OffboardingError(f"Échec ({type(exc).__name__} : {str(exc)[:200]}). Rien n'est perdu : relancez la même commande.", report) from exc
 
 
 # --- export ----------------------------------------------------------------------------------------------------
@@ -164,17 +243,31 @@ EXPORTS: tuple[tuple[str, tuple[str, ...], str], ...] = (
         WHERE a.org_id = %(org)s ORDER BY a.created_at, a.id"""),
 )
 
+# Paths to copy, a batch at a time after the last one seen (a short transaction each: nothing stays open while files download).
 FILE_QUERIES = (
-    (cloud_storage.BUCKET_REFS, "SELECT storage_path AS path FROM reference_images WHERE org_id = %(org)s ORDER BY storage_path"),
-    (cloud_storage.BUCKET_REPORTS, """SELECT unnest(ARRAY[storage_path_html, storage_path_csv, storage_path_not_found_csv]) AS path
-                                      FROM reports WHERE org_id = %(org)s ORDER BY generated_at"""),
+    (cloud_storage.BUCKET_REFS, "SELECT DISTINCT storage_path AS path FROM reference_images WHERE org_id = %(org)s AND storage_path > %(after)s ORDER BY 1 LIMIT %(n)s"),
+    (cloud_storage.BUCKET_REPORTS, """SELECT path FROM (SELECT DISTINCT unnest(ARRAY[storage_path_html, storage_path_csv, storage_path_not_found_csv]) AS path
+                                      FROM reports WHERE org_id = %(org)s) p WHERE path > %(after)s ORDER BY 1 LIMIT %(n)s"""),
 )
+
+NOT_EXPORTED = [
+    "images lues sur les sites des marques, vignettes et copies de travail (se relisent sur les sites)",
+    "étiquettes et décisions d'étiquettes", "arbre des collections (le nom de la collection de chaque visuel est dans references.csv)",
+    "réglages de l'organisation", "journaux des tâches et des lectures", "logos des marques", "correspondances calculées",
+]
+
+
+def _version() -> str:
+    try:
+        return metadata.version("nyra")
+    except metadata.PackageNotFoundError:
+        return "unknown"  # run from a source tree that was not installed
 
 
 def _cell(value: Any) -> Any:
     if value is None:
         return ""
-    return _csv_cell(value) if isinstance(value, str) else (value.isoformat() if hasattr(value, "isoformat") else value)
+    return csv_cell(value) if isinstance(value, str) else (value.isoformat() if hasattr(value, "isoformat") else value)
 
 
 def _dump(conn, org_id: uuid.UUID, path: Path, header: tuple[str, ...], query: str) -> int:
@@ -198,6 +291,9 @@ def _copy_file(client, bucket: str, path: str, root: Path, max_file: int) -> int
         raise OffboardingError(f"Chemin refusé (il sort du dossier d'export) : {bucket}/{path}")
     if target.is_file() and target.stat().st_size > 0:
         return 0
+    size = cloud_storage.object_size(client, bucket, path)  # before downloading: a file over the limit never enters memory
+    if size is not None and size > max_file:
+        raise OffboardingError(f"fichier de {size} octets, au-delà de la limite de {max_file}")
     data = cloud_storage.download(client, bucket, path)
     if len(data) > max_file:
         raise OffboardingError(f"fichier de {len(data)} octets, au-delà de la limite de {max_file}")
@@ -208,23 +304,37 @@ def _copy_file(client, bucket: str, path: str, root: Path, max_file: int) -> int
     return len(data)
 
 
-def _copy_files(conn, client, org_id: uuid.UUID, root: Path, max_file: int, max_total: int) -> dict:
-    stats: dict[str, Any] = {"copied": 0, "already_there": 0, "bytes": 0, "failures": []}
+def _path_batches(database_url: str, org_id: uuid.UUID):
+    """(bucket, paths) in batches of FETCH_BATCH, each read in its own short transaction."""
     for bucket, query in FILE_QUERIES:
-        with conn.cursor(name=f"files_{bucket.replace('-', '_')}") as cursor:
-            cursor.execute(query, {"org": org_id})
-            while batch := cursor.fetchmany(FETCH_BATCH):
-                for row in batch:
-                    if stats["bytes"] > max_total:
-                        raise OffboardingError(f"Plafond de {max_total} octets atteint : relancez avec un plafond plus haut (les fichiers déjà copiés sont gardés).")
-                    try:
-                        size = _copy_file(client, bucket, row["path"], root, max_file)
-                    except Exception as exc:  # noqa: BLE001 - recorded in the manifest and in the exit code; the other files go on
-                        log.exception("export of %s/%s failed", bucket, row["path"])
-                        stats["failures"].append({"bucket": bucket, "path": row["path"], "error": str(exc)[:200]})
-                        continue
-                    stats["bytes"] += size
-                    stats["copied" if size else "already_there"] += 1
+        after = ""
+        while True:
+            with cloud_db.connect(database_url) as conn:
+                paths = [row["path"] for row in conn.execute(query, {"org": org_id, "after": after, "n": FETCH_BATCH}).fetchall()]
+            if not paths:
+                break
+            yield bucket, paths
+            after = paths[-1]
+
+
+def _copy_files(database_url: str, client, org_id: uuid.UUID, root: Path, max_file: int, max_total: int) -> dict:
+    stats: dict[str, Any] = {"copied": 0, "already_there": 0, "bytes": 0, "failures": []}
+    seen: set[tuple[str, str]] = set()  # lower-cased paths: two names differing by case would overwrite each other on a Mac or Windows disk
+    for bucket, paths in _path_batches(database_url, org_id):
+        for path in paths:
+            if stats["bytes"] > max_total:
+                raise OffboardingError(f"Plafond de {max_total} octets atteint : relancez avec un plafond plus haut (les fichiers déjà copiés sont gardés).")
+            try:
+                if (bucket, path.lower()) in seen:
+                    raise OffboardingError("deux fichiers ne diffèrent que par la casse du nom : l'un écraserait l'autre sur ce disque")
+                seen.add((bucket, path.lower()))
+                size = _copy_file(client, bucket, path, root, max_file)
+            except Exception as exc:  # noqa: BLE001 - recorded in the manifest and in the exit code; the other files go on
+                log.exception("export of %s/%s failed", bucket, path)
+                stats["failures"].append({"bucket": bucket, "path": path, "error": str(exc)[:200]})
+                continue
+            stats["bytes"] += size
+            stats["copied" if size else "already_there"] += 1
     return stats
 
 
@@ -233,7 +343,7 @@ def export_organization(database_url: str, client, slug: str, out: Path, *, oper
     """Write the organization's data to `out` and return the manifest (also written there as `manifeste.json`).
     A second run on the same folder finishes the job: files already there are kept. `complete` is false, and the
     command exits with an error, as soon as one file could not be copied."""
-    operator = operator or getpass.getuser()
+    operator = _operator(operator)
     out.mkdir(parents=True, exist_ok=True)
     with cloud_db.connect(database_url) as conn:
         org = cloud_db.get_organization_by_slug(conn, slug)
@@ -244,12 +354,12 @@ def export_organization(database_url: str, client, slug: str, out: Path, *, oper
         cloud_audit.record(conn, org_id, None, "organization.export", "organization", org_id, operator=operator[:60])
     with cloud_db.connect(database_url) as conn:
         tables = {name: _dump(conn, org_id, out / name, header, query) for name, header, query in EXPORTS}
-        files = _copy_files(conn, client, org_id, out / "files", max_file_bytes, max_total_bytes)
+    files = _copy_files(database_url, client, org_id, out / "files", max_file_bytes, max_total_bytes)
     manifest = {
-        "format": 1, "nyra_version": metadata.version("nyra"), "exported_at": datetime.now(timezone.utc).isoformat(),
+        "format": 1, "nyra_version": _version(), "exported_at": datetime.now(timezone.utc).isoformat(),
         "operator": operator, "organization": {"id": str(org_id), "name": org["name"], "slug": org["slug"]},
         "tables": tables, "files": files, "complete": not files["failures"],
-        "note": "Les images lues sur les sites des marques ne sont pas incluses : elles se relisent sur les sites.",
+        "not_exported": NOT_EXPORTED,
     }
     (out / "manifeste.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     log.info("organization %s exported to %s: %s", org_id, os.fspath(out), json.dumps({"tables": tables, "files": files["copied"], "complete": manifest["complete"]}))

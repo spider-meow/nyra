@@ -1,6 +1,7 @@
 """Erasing an organization and exporting its data (nyra/cloud/offboarding.py): against a real Postgres, the in-memory
 Storage and a fake Auth admin. Nothing of another organization may be touched or exported."""
 
+# ruff: noqa: F811 (the `client` fixture of test_cloud_api is imported, then used by name)
 from __future__ import annotations
 
 import csv
@@ -14,6 +15,7 @@ import pytest
 pytest.importorskip("psycopg")
 
 from test_audit import _seed_matched_images  # noqa: E402
+from test_cloud_api import _headers, _upload_bytes, client  # noqa: E402, F401  (fixture)
 
 from nyra.cloud import audit as cloud_audit  # noqa: E402
 from nyra.cloud import db as cloud_db  # noqa: E402
@@ -153,12 +155,26 @@ def test_erasing_an_organization_leaves_nothing_of_it_and_everything_of_the_othe
     assert len([key for key in fake_storage_client.store if key[1].startswith(str(other_id))]) == 10
     assert fake_storage_client.deleted_users == [str(sole)]  # not the member of the other organization, not the Nyra team member
     assert shared not in {uuid.UUID(u) for u in fake_storage_client.deleted_users}
-    with pytest.raises(offboarding.OffboardingError, match="Aucune organisation"):
-        offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name=row["name"])
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DELETE FROM auth.users WHERE id = %s", (sole,))  # what Auth really does with the account
+    # run again on an erased organization: nothing to do, nothing duplicated, still the exact name asked for
+    again = offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name=row["name"])
+    assert again["files"] == {"refs": 0, "site-images": 0, "reports": 0} and again["users"] == []
+    with pytest.raises(offboarding.OffboardingError, match="Confirmation"):
+        offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name="x")
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM deleted_organizations WHERE org_id = %s", (org_id,)).fetchone()["n"] == 1
 
 
-def test_an_account_that_cannot_be_deleted_is_reported_not_hidden(cloud_database_url, fake_storage_client, two_organizations):
-    (org_id, *_), _ = two_organizations
+def _traces(url, org_id):
+    with cloud_db.connect(url) as conn:
+        return (conn.execute("SELECT count(*) AS n FROM deleted_organizations WHERE org_id = %s", (org_id,)).fetchone()["n"],
+                conn.execute("SELECT count(*) AS n FROM memberships WHERE org_id = %s", (org_id,)).fetchone()["n"],
+                conn.execute("SELECT count(*) AS n FROM organizations WHERE id = %s", (org_id,)).fetchone()["n"])
+
+
+def test_an_account_that_cannot_be_deleted_is_reported_then_deleted_by_the_next_run(cloud_database_url, fake_storage_client, two_organizations):
+    (org_id, _, sole, _), _ = two_organizations
     row = _slug(cloud_database_url, org_id)
 
     def refuse(user_id):
@@ -166,7 +182,74 @@ def test_an_account_that_cannot_be_deleted_is_reported_not_hidden(cloud_database
 
     fake_storage_client.delete_user = refuse
     report = offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name=row["name"])
-    assert [item["error"] for item in report["users_failed"]] == ["auth down"]
+    assert [item["error"] for item in report["users_failed"]] == ["auth down"] and _traces(cloud_database_url, org_id) == (1, 0, 0)
+    del fake_storage_client.delete_user  # Auth is back
+    again = offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name=row["name"])
+    assert fake_storage_client.deleted_users == [str(sole)] and again["users_failed"] == []
+
+
+def test_a_failure_at_any_step_leaves_a_closed_organization_that_the_next_run_finishes(
+        cloud_database_url, fake_storage_client, two_organizations, monkeypatch):
+    (org_id, *_), (other_id, *_) = two_organizations
+    row = _slug(cloud_database_url, org_id)
+    real_delete_prefix, real_count = cloud_storage.delete_prefix, offboarding.count_rows
+
+    def storage_down(client, bucket, prefix, **kwargs):  # step 2 fails on the second bucket
+        if bucket == "site-images":
+            raise RuntimeError("storage down")
+        return real_delete_prefix(client, bucket, prefix, **kwargs)
+
+    monkeypatch.setattr(cloud_storage, "delete_prefix", storage_down)
+    with pytest.raises(offboarding.OffboardingError, match="relancez") as failed:
+        offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name=row["name"])
+    assert failed.value.report["rows"] and _traces(cloud_database_url, org_id) == (1, 0, 1)  # closed: alive, no member, one trace
+    monkeypatch.setattr(cloud_storage, "delete_prefix", real_delete_prefix)
+
+    def leftover(conn, org):  # step 3: the cascade "leaves" a row, so the whole transaction is cancelled
+        return {"x": 1}
+
+    monkeypatch.setattr(offboarding, "count_rows", leftover)
+    with pytest.raises(offboarding.OffboardingError, match="Des lignes restent"):
+        offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name=row["name"])
+    assert _traces(cloud_database_url, org_id) == (1, 0, 1)  # the organization is still whole, minus its members
+    monkeypatch.setattr(offboarding, "count_rows", real_count)
+
+    report = offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name=row["name"])
+    assert _traces(cloud_database_url, org_id) == (1, 0, 0) and report["users_failed"] == []
+    assert not [key for key in fake_storage_client.store if key[1].startswith(str(org_id))]
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM reference_images WHERE org_id = %s", (other_id,)).fetchone()["n"] == 1
+
+
+def test_during_the_erasure_nobody_can_upload_and_an_account_that_joined_elsewhere_is_kept(
+        cloud_database_url, fake_storage_client, two_organizations, monkeypatch, client):
+    (org_id, brand_id, sole, _), (other_id, *_) = two_organizations
+    row = _slug(cloud_database_url, org_id)
+    real, seen = cloud_storage.delete_prefix, {}
+
+    def hooked(storage, bucket, prefix, **kwargs):
+        if not seen and not kwargs.get("dry_run"):  # between the closing and the files: someone tries, someone joins
+            seen["upload"] = client.post(f"/api/orgs/{org_id}/brands/{brand_id}/library/upload", headers=_headers(sole),
+                                         files=[("files", ("late.jpg", _upload_bytes(), "image/jpeg"))]).status_code
+            with cloud_db.connect(cloud_database_url) as conn:
+                cloud_db.add_membership(conn, user_id=sole, org_id=other_id, role="client")
+        return real(storage, bucket, prefix, **kwargs)
+
+    monkeypatch.setattr(cloud_storage, "delete_prefix", hooked)
+    report = offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name=row["name"])
+    assert seen["upload"] == 403 and fake_storage_client.deleted_users == [] and report["users"] == []
+    assert not [key for key in fake_storage_client.store if key[1].startswith(str(org_id))]
+
+
+def test_only_the_exact_slug_and_a_plain_operator_name_are_accepted(cloud_database_url, fake_storage_client, two_organizations):
+    (org_id, *_), _ = two_organizations
+    row = _slug(cloud_database_url, org_id)
+    for slug in (row["slug"].upper(), row["slug"] + "-", row["slug"] + "!!"):
+        with pytest.raises(offboarding.OffboardingError, match="exact"):
+            offboarding.delete_organization(cloud_database_url, fake_storage_client, slug, confirm_name=row["name"], dry_run=True)
+    for operator in ("arthur@axel.fr", "arthur reichard", "x" * 41):
+        with pytest.raises(offboarding.OffboardingError, match="identifiant court"):
+            offboarding.delete_organization(cloud_database_url, fake_storage_client, row["slug"], confirm_name=row["name"], operator=operator)
 
 
 def test_a_prefix_that_will_not_empty_is_an_error(fake_storage_client, monkeypatch):
@@ -216,5 +299,24 @@ def test_an_interrupted_export_resumes_and_a_missing_file_is_reported(cloud_data
     other = tmp_path / "small"
     limited = offboarding.export_organization(cloud_database_url, fake_storage_client, row["slug"], other, max_file_bytes=3)
     assert not limited["complete"] and limited["files"]["copied"] == 0 and len(limited["files"]["failures"]) == 4
+    assert "au-delà" in limited["files"]["failures"][0]["error"]
     with pytest.raises(offboarding.OffboardingError, match="Plafond"):
         offboarding.export_organization(cloud_database_url, fake_storage_client, row["slug"], tmp_path / "capped", max_total_bytes=10)
+
+
+def test_a_file_over_the_limit_is_never_downloaded_and_names_differing_by_case_are_reported(
+        cloud_database_url, fake_storage_client, two_organizations, tmp_path, monkeypatch):
+    (org_id, *_), _ = two_organizations
+    row = _slug(cloud_database_url, org_id)
+    downloaded = []
+    real = cloud_storage.download
+    monkeypatch.setattr(cloud_storage, "download", lambda c, b, p: downloaded.append(p) or real(c, b, p))
+    offboarding.export_organization(cloud_database_url, fake_storage_client, row["slug"], tmp_path / "small", max_file_bytes=3)
+    assert downloaded == []  # the size comes from Storage's listing, before any download
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE reports SET storage_path_csv = %s, storage_path_not_found_csv = %s WHERE org_id = %s",
+                     (f"{org_id}/r/MATCHES.csv", f"{org_id}/r/matches.csv", org_id))
+    fake_storage_client.store[("reports", f"{org_id}/r/MATCHES.csv")] = b"upper"
+    manifest = offboarding.export_organization(cloud_database_url, fake_storage_client, row["slug"], tmp_path / "case")
+    assert not manifest["complete"] and any("casse" in f["error"] for f in manifest["files"]["failures"])
+    assert "logos des marques" in " ".join(manifest["not_exported"])

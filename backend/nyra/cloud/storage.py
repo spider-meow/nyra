@@ -200,8 +200,19 @@ def delete(client: Client, bucket: str, paths: Iterable[Optional[str]]) -> None:
 
 
 LIST_BATCH = 100
-LIST_MAX_CALLS = 200_000  # per pass: 20 million objects at LIST_BATCH each, far past any organization, but the loop ends
-DELETE_MAX_PASSES = 10_000
+LIST_MAX_CALLS = 20_000  # per pass: 2 million objects at LIST_BATCH each, far past any organization, but the loop ends
+DELETE_MAX_PASSES = 100
+
+
+def object_size(client: Client, bucket: str, path: str) -> Optional[int]:
+    """The size in bytes Storage reports for an object (one listing call), None when it does not say.
+    ponytail: one extra call per exported file; list each folder once if that ever weighs."""
+    folder, _, name = path.rpartition("/")
+    for entry in client.storage.from_(bucket).list(folder, {"search": name, "limit": LIST_BATCH}) or []:
+        if entry.get("name") == name:
+            size = (entry.get("metadata") or {}).get("size")
+            return size if isinstance(size, int) else None
+    return None
 
 
 def _list_pass(api, prefix: str, *, remove: bool) -> tuple[int, int]:

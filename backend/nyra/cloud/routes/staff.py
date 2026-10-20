@@ -17,7 +17,7 @@ from .. import audit as cloud_audit
 from .. import db as cloud_db
 from .. import hostmetrics
 from .. import insights as cloud_insights
-from .common import Ctx, get_ctx, iso, log, staff_dep
+from .common import Ctx, get_ctx, iso, staff_dep
 from .members import find_or_invite_user
 
 router = APIRouter()
@@ -118,7 +118,7 @@ def add_admin(body: EmailBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get
     user_id, invited = _find_or_invite(ctx, _checked_email(body.email))
     with cloud_db.connect(ctx.settings.database_url) as conn:
         cloud_insights.set_staff(conn, user_id, True)
-    log.info("platform admin %s added by %s", user_id, claims.user_id)  # no organization: traced here, not in an audit_log
+        cloud_audit.record(conn, None, claims.user_id, "staff.add", "user", user_id)  # no organization: org_id is null
     return {"invited": invited}
 
 
@@ -130,7 +130,7 @@ def remove_admin(user_id: uuid.UUID, claims=Depends(staff_dep), ctx: Ctx = Depen
         if not cloud_insights.is_staff(conn, user_id):
             raise HTTPException(status_code=404, detail="Cette personne n'est pas platform admin.")
         cloud_insights.set_staff(conn, user_id, False)
-    log.info("platform admin %s removed by %s", user_id, claims.user_id)
+        cloud_audit.record(conn, None, claims.user_id, "staff.remove", "user", user_id)
     return {"removed": True}
 
 

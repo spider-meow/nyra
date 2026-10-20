@@ -147,11 +147,13 @@ class _FakeBucketProxy:
         """The children of a folder like Storage lists them: files have an id, folders do not."""
         options = options or {}
         prefix, children = f"{path}/", {}
-        for bucket, name in self.store:
+        for (bucket, name), data in self.store.items():
             if bucket == self.bucket and name.startswith(prefix):
                 head, _, rest = name[len(prefix):].partition("/")
-                children[head] = children.get(head, False) or bool(rest)
-        entries = [{"name": name, "id": None if is_folder else "object"} for name, is_folder in sorted(children.items())]
+                folder, size = children.get(head, (False, 0))
+                children[head] = (folder or bool(rest), len(data))
+        entries = [{"name": name, "id": None if is_folder else "object", "metadata": None if is_folder else {"size": size}}
+                   for name, (is_folder, size) in sorted(children.items()) if options.get("search", "") in name]
         start = options.get("offset", 0)
         return entries[start:start + options.get("limit", 100)]
 

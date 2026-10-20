@@ -20,6 +20,7 @@ from nyra.refs import RefValidationError, change_tags, normalize_tags, parse_rig
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
 from .. import storage as cloud_storage
+from ..csvcell import csv_cell, csv_text
 from .collections import collection_json, require_collection
 from .common import (
     BRAND,
@@ -174,7 +175,7 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
     stored = put_reference_files(client, scope.org_id, scope.brand_id, filename, data, img, content_type)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         existing = cloud_db.get_reference_by_filename(conn, scope.brand_id, filename)
-        cloud_db.upsert_reference_image(
+        ref_id = cloud_db.upsert_reference_image(
             conn, org_id=scope.org_id, brand_id=scope.brand_id, filename=filename,
             expiry_date=rights[0] if rights else iso(existing["expiry_date"]) if existing else None,
             unlimited_rights=rights[1] if rights else existing["unlimited_rights"] if existing else False,
@@ -182,6 +183,7 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
             notes=existing["notes"] if existing else None,
             **stored,
         )
+        scope.audit(conn, "library.upload", "reference", ref_id, replaced=bool(existing))  # one row per file, with its write
     if existing and existing["storage_path"] != stored["storage_path"]:
         # Uploaded before brands existed: the new file replaces the old one.
         ctx.remove_files(cloud_storage.BUCKET_REFS, [existing["storage_path"], existing["thumb_path"]])
@@ -231,7 +233,6 @@ def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unl
         with cloud_db.connect(ctx.settings.database_url) as conn:
             if collection_id:  # a replaced visual moves too: the person dropped it in that collection
                 cloud_db.set_reference_collection(conn, scope.brand_id, saved, collection_id)
-            scope.audit(conn, "library.upload", "reference", saved=len(saved), replaced=len(replaced), refused=len(failed))
             job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind="index",
                                      created_by=scope.member.user_id)
     return {"saved": saved, "replaced": replaced, "failed": failed, "job": job}
@@ -315,26 +316,10 @@ def bulk_tags(body: BulkTagsBody, scope: BrandScope = Depends(brand_admin_dep), 
     return {"updated": updated}
 
 
-def _csv_cell(value: str) -> str:
-    """Spreadsheets run a cell that starts like a formula: such a cell gets a leading apostrophe, which makes it text.
-
-    `=` and `@` always; `+` and `-` unless a number or a space follows ("-20 %" and "+33 6" stay as they are).
-    """
-    first = value[:1]
-    if first in ("=", "@", "\t", "\r") or (first in ("+", "-") and len(value) > 1 and value[1] not in "0123456789 ."):
-        return "'" + value
-    return value
-
-
-def _csv_text(value: str) -> str:
-    """The reverse of `_csv_cell`, so an exported file imports back to the same text."""
-    return value[1:] if value.startswith("'") and _csv_cell(value[1:]) != value[1:] else value
-
-
 def _csv_entry(line: int, row: dict, has_tags: bool) -> Optional[dict]:
     """One CSV row as an import entry with its status; None for a row without a file name."""
     # A row with more cells than the header comes with a None key and a list: ignore the extra cells.
-    row = {key.strip().lower(): _csv_text((value or "").strip()) for key, value in row.items() if key is not None}
+    row = {key.strip().lower(): csv_text((value or "").strip()) for key, value in row.items() if key is not None}
     name = Path(row.get("filename", "")).name
     if not name:
         return None
@@ -405,8 +390,8 @@ def export_csv(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends
     writer = csv.writer(buf)
     writer.writerow(["filename", "expiry_date", "credit", "notes", "tags"])
     for row in rows:
-        writer.writerow([_csv_cell(row["filename"]), "illimité" if row["unlimited_rights"] else iso(row["expiry_date"]) or "", _csv_cell(row["credit"] or ""),
-                         _csv_cell(row["notes"] or ""), _csv_cell(", ".join(row["tags"]))])
+        writer.writerow([csv_cell(row["filename"]), "illimité" if row["unlimited_rights"] else iso(row["expiry_date"]) or "", csv_cell(row["credit"] or ""),
+                         csv_cell(row["notes"] or ""), csv_cell(", ".join(row["tags"]))])
     return Response(
         content=("﻿" + buf.getvalue()).encode("utf-8"),
         media_type="text/csv; charset=utf-8",

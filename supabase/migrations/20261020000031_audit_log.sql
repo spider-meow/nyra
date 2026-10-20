@@ -7,6 +7,7 @@
 --                        `brand_id` n'a pas de clé étrangère : la ligne survit à la suppression de la marque.
 --                        `user_id` passe à NULL si le compte Auth est supprimé (la personne n'est plus identifiable).
 --                        Conservation 12 mois : `nyra cloud-purge-audit`, lancé aussi chaque jour par le worker.
+--                        Sans organisation (org_id NULL) : les droits de l'équipe Nyra (`staff.add`, `staff.remove`) ; lisible en SQL seulement.
 --   deleted_organizations  trace minimale d'une suppression complète (`nyra cloud-delete-org`) : sans clé étrangère,
 --                        elle survit à l'organisation. Ni contenu, ni e-mail : l'identifiant, le nom, la date, l'opérateur.
 --
@@ -14,7 +15,7 @@
 
 create table if not exists public.audit_log (
     id bigint generated always as identity primary key,
-    org_id uuid not null references public.organizations(id) on delete cascade,
+    org_id uuid references public.organizations(id) on delete cascade,  -- null: the Nyra team's own list (platform admins)
     brand_id uuid,
     user_id uuid references auth.users(id) on delete set null,
     action text not null check (length(action) between 1 and 64),
@@ -44,5 +45,5 @@ create table if not exists public.deleted_organizations (
     report jsonb not null default '{}'::jsonb
 );
 
--- Aucune politique : ni les clients ni l'API publique n'y touchent, seul le backend (rôle de service).
+-- Rétention : à décider par l'équipe (aucune purge automatique aujourd'hui). Aucune politique : ni les clients ni l'API publique n'y touchent, seul le backend (rôle de service).
 alter table public.deleted_organizations enable row level security;

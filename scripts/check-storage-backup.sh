@@ -19,7 +19,15 @@ for bucket in refs site-images reports; do
   dst=$(rclone size --json "$COPY:$bucket/current")
   echo "$bucket  source: $src  copy: $dst"
   # --one-way: only what the source has and the copy does not (or with another size); extra objects in the copy are normal.
-  missing=$(rclone check "$SOURCE:$bucket" "$COPY:$bucket/current" --size-only --one-way --combined - 2>/dev/null | grep -c '^[-*!] ' || true)
+  # rclone check exits 1 both when it finds differences and when it fails: told apart by the differences it lists.
+  rc=0
+  report=$(rclone check "$SOURCE:$bucket" "$COPY:$bucket/current" --size-only --one-way --combined -) || rc=$?
+  missing=$(printf '%s\n' "$report" | grep -c '^[-*!] ' || true)
+  if [ "$rc" -ge 2 ] || { [ "$rc" -eq 1 ] && [ "$missing" -eq 0 ]; }; then
+    echo "FAIL: rclone check failed on $bucket (exit $rc), the copy is not verified" >&2
+    status=1
+    continue
+  fi
   echo "$bucket  differing objects: $missing (limit $MAX_MISSING)"
   if [ "$missing" -gt "$MAX_MISSING" ]; then
     echo "FAIL: $bucket is not backed up (rclone check --size-only --one-way $SOURCE:$bucket $COPY:$bucket/current)" >&2
