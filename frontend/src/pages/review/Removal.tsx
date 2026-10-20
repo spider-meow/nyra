@@ -21,8 +21,8 @@ export function RemovalBadge(props: { removal: Removal }) {
 /** Said where a site's last read looks incomplete (see `crawl_runs.suspect`): nothing was marked removed from it. `site` names it (several can be shown). */
 export function SuspectReadNotice(props: { site?: string; reason?: string }) {
   return (
-    <p role="status" title={props.reason} className="mb-4 rounded-xl border border-line bg-soon-soft px-4 py-3 text-sm text-soon">
-      La dernière lecture de ce site{props.site ? ` (${props.site})` : ""} semble incomplète : rien n'a été marqué retiré.
+    <p role="note" className="mb-4 rounded-xl border border-line bg-soon-soft px-4 py-3 text-sm text-soon">
+      La dernière lecture de ce site{props.site ? ` (${props.site})` : ""} semble incomplète : rien n'a été marqué retiré.{props.reason ? ` (${props.reason})` : ""}
     </p>
   );
 }
