@@ -4,6 +4,11 @@
 #   docker compose up -d --scale worker=3     more jobs in parallel (one per brand at a time)
 #
 # Both read the same .env (see .env.example).
+#
+# Memory and CPU limits are STARTING VALUES for a 4 GB / 2 vCPU Droplet (see "Limits" in docs/DEPLOYMENT.md): they keep a
+# runaway worker from taking the whole machine (the kernel would kill web or Caddy), so the worker is killed alone, restarted
+# by `restart: unless-stopped`, and its job put back in the queue. Override them in .env (WORKER_MEM_LIMIT=...); they are
+# per container, so `--scale worker=2` needs a bigger machine. To be confirmed by a measured peak and a test on the Droplet.
 
 services:
   web:
@@ -14,6 +19,10 @@ services:
       - "8000:8000"
     env_file: .env
     restart: unless-stopped
+    # Measured ~150 MiB; room for a burst of requests, and the worker can never starve it of memory.
+    mem_limit: ${WEB_MEM_LIMIT:-512m}
+    memswap_limit: ${WEB_MEM_LIMIT:-512m}   # = mem_limit: no swap, the limit is a real ceiling
+    cpus: ${WEB_CPUS:-1}
 
   worker:
     build:
@@ -21,6 +30,11 @@ services:
       target: worker
     env_file: .env
     restart: unless-stopped
-    # Chromium needs room for shared memory; CLIP needs ~1 GB of RAM.
+    # Chromium needs room for shared memory; CLIP needs ~1 GB of RAM. Measured peak so far 1.88 GiB (final peak not
+    # recorded). 2560m = that plus margin; shm_size counts inside it. 4 GB - 2.5 GB worker - 0.5 GB web - 0.13 GB Caddy
+    # leaves ~0.7 GB for the system. 1.5 CPU leaves half a vCPU for web and Caddy while a crawl saturates the worker.
     shm_size: "1gb"
+    mem_limit: ${WORKER_MEM_LIMIT:-2560m}
+    memswap_limit: ${WORKER_MEM_LIMIT:-2560m}
+    cpus: ${WORKER_CPUS:-1.5}
     stop_grace_period: 30s
