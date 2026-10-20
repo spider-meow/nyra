@@ -138,6 +138,6 @@
   </table>
   {% else %}<p class="empty-note">Toutes les références de cette fenêtre ont au moins une occurrence.</p>{% endif %}
 
-  <footer>Rapport produit par Nyra. Détection automatique par empreinte perceptuelle et similarité visuelle ; les correspondances « à vérifier » demandent une confirmation humaine.</footer>
+  <footer>Réglages de détection : {{ settings }}. Sites lus : {{ site_read_on or "date inconnue" }}.<br>Rapport produit par Nyra. Détection automatique par empreinte perceptuelle et similarité visuelle ; les correspondances « à vérifier » demandent une confirmation humaine.</footer>
 </body>
 </html>

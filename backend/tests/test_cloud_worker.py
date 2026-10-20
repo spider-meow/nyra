@@ -26,10 +26,13 @@ import psycopg
 
 from nyra.cloud import db as cloud_db
 from nyra.cloud import jobs as cloud_jobs
+from nyra.cloud import labels as cloud_labels
+from nyra.cloud import logos as cloud_logos
+from nyra.cloud import presence as cloud_presence
 from nyra.cloud import usage as cloud_usage
 from nyra.cloud import worker as worker_module
-from nyra.config import Config
-from nyra.match import compute_hashes
+from nyra.config import Config, MatchConfig
+from nyra.match import compute_hashes, signature
 
 
 def _image_bytes(seed: int) -> bytes:
@@ -493,6 +496,12 @@ def test_report_job_stores_files_without_false_positives(worker, cloud_database_
         cloud_db.write_matches(conn, cloud_org, [(kept, img_a, "phash", 1.0, "haut"), (dismissed, img_b, "phash", 1.0, "haut")])
         cloud_db.set_reviews(conn, brand_id=cloud_brand, reference_id=dismissed, site_image_ids=[img_b],
                              decision="ecarte", reviewed_by=None)
+        cloud_db.set_match_signature(conn, cloud_org, cloud_brand, signature(MatchConfig(), True, verified=True))
+        other = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://u.test/")
+        for site_id, status, started in ((site, "done", "2026-01-01"), (site, "cancelled", "2026-02-05"),
+                                         (other, "done", "2026-01-20"), (other, "error", "2026-02-06")):
+            conn.execute("INSERT INTO crawl_runs (org_id, site_id, status, started_at) VALUES (%s, %s, %s, %s)",
+                         (cloud_org, site_id, status, started))
         job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="report", params={"within_days": 90})
 
     assert worker.run_once()
@@ -501,6 +510,11 @@ def test_report_job_stores_files_without_false_positives(worker, cloud_database_
     with cloud_db.connect(cloud_database_url) as conn:
         report = cloud_db.get_report(conn, cloud_brand, uuid.UUID(finished["result"]["report_id"]))
     html = fake_storage_client.store[("reports", report["storage_path_html"])].decode("utf-8")
+    csv_text = fake_storage_client.store[("reports", report["storage_path_csv"])].decode("utf-8")
+    for text in (html, csv_text):  # the settings the matches were produced with travel with the report
+        assert "ViT-B-32/laion2b_s34b_b79k" in text and "0.92 / 0.85 / 0.75" in text
+        # Finished reads only (a cancelled or failed one is no read), each site at its own last day: a range, not the newest.
+        assert "du 01/01/2026 au 20/01/2026" in text and "05/02/2026" not in text and "06/02/2026" not in text
     assert "kept.jpg" in html and "dismissed.jpg" not in html
     assert "data:image/jpeg;base64," in html  # thumbnails inlined, the file stands alone
     assert report["stats"]["expired_online"] == 1
@@ -729,6 +743,65 @@ def test_a_check_says_what_kept_pages_from_being_read():
     assert "arrêtée" in worker_module._check_message(True, 3, worker_module.CrawlStats())
 
 
+def _human_decisions(url, org_id) -> list:
+    """Everything a person decides in this brand, as stored: the decisions on matches, the exclusions, the logo settings."""
+    with cloud_db.connect(url) as conn:
+        return [
+            [dict(row) for row in conn.execute(query, (org_id,)).fetchall()]
+            for query in ("SELECT * FROM reviews WHERE org_id = %s ORDER BY reference_id, site_image_id",
+                          "SELECT * FROM excluded_hashes WHERE org_id = %s ORDER BY id",
+                          "SELECT * FROM image_labels WHERE org_id = %s ORDER BY label_id, site_image_id",
+                          "SELECT * FROM page_replacements WHERE org_id = %s ORDER BY reference_id, page_id",
+                          "SELECT id, set_aside_logos FROM brands WHERE org_id = %s ORDER BY id",
+                          "SELECT id FROM site_images WHERE org_id = %s AND logo_kept ORDER BY id")
+        ]
+
+
+def test_no_automatic_job_takes_a_decision_for_a_person(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                       fake_storage_client, monkeypatch):
+    """The algorithm proposes, a person decides: a full run of the jobs (index + comparison + grouping of crops,
+    full recomputation, locate, check) leaves every decision a person took exactly as it was (decisions on matches,
+    exclusions, content labels, pages marked replaced, the logo setting and the logos put back; the logo *scores* are the
+    job's own work and are not compared), and puts none on the matches it finds. The crawl needs Chromium and is covered by the static check in test_units."""
+    pytest.importorskip("cv2")
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        refs = {n: _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, f"r{n}.jpg", _image_bytes(n)) for n in (0, 40)}
+        images = {n: _add_site_image(conn, fake_storage_client, cloud_org, site, f"https://t.test/{n}.jpg", _image_bytes(n))
+                  for n in (0, 40, 120)}
+    assert _run_index(worker, cloud_database_url, cloud_org, cloud_brand)["status"] == "done"
+
+    with cloud_db.connect(cloud_database_url) as conn:  # what people do from the interface
+        cloud_db.set_reviews(conn, brand_id=cloud_brand, reference_id=refs[0], site_image_ids=[images[0]], decision="ecarte", reviewed_by=None)
+        cloud_db.set_reviews(conn, brand_id=cloud_brand, reference_id=refs[40], site_image_ids=[images[40]], decision="retenu", reviewed_by=None)
+        cloud_db.add_exclusion(conn, cloud_org, cloud_brand, images[120], reason="logo", created_by=None)
+        cloud_logos.set_enabled(conn, cloud_org, cloud_brand, True)
+        cloud_logos.keep(conn, cloud_brand, [images[40]], True)
+        label = cloud_labels.add_content_label(conn, cloud_org, cloud_brand, "carafe")
+        cloud_labels.set_decision(conn, label, cloud_brand, "yes", site_image_ids=[images[0]], reference_ids=[], user_id=None)
+        page = conn.execute("SELECT page_id FROM image_pages WHERE image_id = %s", (images[0],)).fetchone()["page_id"]
+        cloud_presence.set_replaced(conn, cloud_org, refs[0], [page], replaced=True, user_id=None)
+    before = _human_decisions(cloud_database_url, cloud_org)
+    assert [len(table) for table in before] == [2, 2, 1, 1, 1, 1]  # the decisions are really there to be kept
+
+    with cloud_db.connect(cloud_database_url) as conn:  # new material, and a signature that forces a full recomputation
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "r80.jpg", _image_bytes(80))
+        _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/80.jpg", _image_bytes(80))
+        cloud_db.set_match_signature(conn, cloud_org, cloud_brand, "stale")
+    monkeypatch.setattr(worker_module, "crawl_pages", lambda *args, **kwargs: worker_module.CrawlStats())
+    with cloud_db.connect(cloud_database_url) as conn:
+        for kind, params in (("index", {}), ("match", {}), ("locate", {"reference_id": str(refs[0])}),
+                             ("check", {"pages": {str(site): ["https://t.test/80.jpg/page"]}})):
+            cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind=kind, params=params)
+    for _ in range(4):
+        assert worker.run_once()
+    with cloud_db.connect(cloud_database_url) as conn:
+        statuses = [row["status"] for row in conn.execute("SELECT status FROM jobs WHERE brand_id = %s", (cloud_brand,)).fetchall()]
+        new = conn.execute("""SELECT count(*) AS n FROM matches m LEFT JOIN reviews v USING (reference_id, site_image_id)
+                              WHERE m.org_id = %s AND v.decision IS NULL""", (cloud_org,)).fetchone()["n"]
+    assert statuses.count("done") == 5, statuses
+    assert new >= 1  # the new pair was proposed, undecided
+    assert _human_decisions(cloud_database_url, cloud_org) == before
 def _read_pages_of_a_fake_site(monkeypatch, available: int = 40):
     """A site with `available` pages: a read opens as many as it is allowed, as the browser would."""
     def fake_crawl_site(url, store, config, *, max_pages, progress=None, **_kwargs):
