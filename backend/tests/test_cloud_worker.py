@@ -8,7 +8,11 @@ here (the crawler's parsing is covered in test_crawl.py).
 
 from __future__ import annotations
 
+import errno
 import io
+import os
+import threading
+import time
 import uuid
 from dataclasses import replace
 
@@ -25,8 +29,9 @@ from nyra.cloud import jobs as cloud_jobs
 from nyra.cloud import labels as cloud_labels
 from nyra.cloud import logos as cloud_logos
 from nyra.cloud import presence as cloud_presence
+from nyra.cloud import usage as cloud_usage
 from nyra.cloud import worker as worker_module
-from nyra.config import MatchConfig
+from nyra.config import Config, MatchConfig
 from nyra.match import compute_hashes, signature
 
 
@@ -797,3 +802,379 @@ def test_no_automatic_job_takes_a_decision_for_a_person(worker, cloud_database_u
     assert statuses.count("done") == 5, statuses
     assert new >= 1  # the new pair was proposed, undecided
     assert _human_decisions(cloud_database_url, cloud_org) == before
+def _read_pages_of_a_fake_site(monkeypatch, available: int = 40):
+    """A site with `available` pages: a read opens as many as it is allowed, as the browser would."""
+    def fake_crawl_site(url, store, config, *, max_pages, progress=None, **_kwargs):
+        pages = min(max_pages, available)
+        stats = worker_module.CrawlStats(pages_visited=pages, pages_queued=available - pages, images_new=pages // 2, bytes_downloaded=pages * 1000)
+        if progress:
+            progress(stats)
+        return stats
+
+    monkeypatch.setattr(worker_module, "crawl_site", fake_crawl_site)
+
+
+def _crawl_all(worker, url, org_id, brand_id):
+    with cloud_db.connect(url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=org_id, brand_id=brand_id, kind="crawl", params={"then_match": False, "fresh": True})
+    assert worker.run_once()
+    return _job(url, brand_id, job["id"])
+
+
+def _pages_counted(url, org_id):
+    with cloud_db.connect(url) as conn:
+        return cloud_usage.pages_used(conn, Config().quota, org_id)[0]
+
+
+def test_a_read_stops_at_the_months_page_limit_and_the_counter_is_the_pages_really_read(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    _read_pages_of_a_fake_site(monkeypatch)
+    with cloud_db.connect(cloud_database_url) as conn:
+        other = cloud_db.create_organization(conn, name="Other", slug=f"other-{uuid.uuid4().hex[:10]}")
+        other_brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (other,)).fetchone()["id"]
+        for org, brand in ((cloud_org, cloud_brand), (other, other_brand)):
+            for n in (1, 2):
+                cloud_db.create_site(conn, org_id=org, brand_id=brand, url=f"https://t{n}.test/")
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 100})
+
+    first = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # 40 + 40 pages
+    assert first["status"] == "done" and first["result"]["pages_visited"] == 80 and not first["result"]["quota_reached"]
+    assert "Usage du mois : 80 pages lues sur 100" in first["message"]  # the warning from 80 %
+    with cloud_db.connect(cloud_database_url) as conn:
+        runs = conn.execute("SELECT pages_visited FROM crawl_runs WHERE org_id = %s", (cloud_org,)).fetchall()
+        counters = {r["kind"]: r["amount"] for r in conn.execute("SELECT kind, amount FROM usage_counters WHERE org_id = %s", (cloud_org,)).fetchall()}
+    assert _pages_counted(cloud_database_url, cloud_org) == sum(r["pages_visited"] for r in runs) == 80
+    assert counters == {"pages_read": 80, "images_new": 40, "bytes_downloaded": 80_000}
+
+    second = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # 20 pages are left: read them, then stop
+    assert second["result"]["pages_visited"] == 20 and second["result"]["quota_reached"] is True
+    assert "Limite d'usage atteinte" in second["message"]
+    assert _pages_counted(cloud_database_url, cloud_org) == 100
+
+    third = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # nothing is left: nothing is read
+    assert third["result"]["pages_visited"] == 0 and third["result"]["quota_reached"] is True
+    assert _pages_counted(cloud_database_url, cloud_org) == 100
+
+    other_read = _crawl_all(worker, cloud_database_url, other, other_brand)  # another organization is not affected
+    assert other_read["result"]["pages_visited"] == 80 and not other_read["result"]["quota_reached"]
+    assert _pages_counted(cloud_database_url, other) == 80 and _pages_counted(cloud_database_url, cloud_org) == 100
+
+
+def test_a_page_check_reads_only_the_pages_that_fit_in_the_limit_and_counts_them(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 3})
+        cloud_usage.record(conn, cloud_org, pages=1)
+        urls = [f"https://t.test/{n}" for n in range(5)]
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="check", params={"pages": {str(site): urls}})
+    asked = []
+
+    def fake_crawl_pages(site_url, wanted, store, config, **_kwargs):
+        asked.append(list(wanted))
+        return worker_module.CrawlStats(pages_visited=len(wanted))
+
+    monkeypatch.setattr(worker_module, "crawl_pages", fake_crawl_pages)
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert asked == [urls[:2]] and "Limite d'usage atteinte" in finished["message"]
+    assert _pages_counted(cloud_database_url, cloud_org) == 3
+
+
+def test_a_site_that_ends_exactly_at_the_limit_is_not_reported_as_cut_and_a_full_storage_stops_the_read(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    _read_pages_of_a_fake_site(monkeypatch)
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t1.test/")
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 40})
+    exact = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # 40 pages exist, 40 are allowed
+    assert exact["result"]["pages_visited"] == 40 and exact["result"]["quota_reached"] is False
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 1000, "storage_gb": 0})
+    full = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # storage full: no page is read
+    assert full["result"]["pages_visited"] == 0 and full["result"]["quota_reached"] is True
+# --- a read that looks incomplete never says an image is gone ---------------------------------------------
+
+def _simulated_site(pages):
+    """A `crawl_site` standing for a site: `{path: (HTTP status, [image paths shown])}`; it opens, stamps and marks pages as the real one."""
+    def crawl(_site_url, store, _config, **_kwargs):
+        stats = worker_module.CrawlStats()
+        for path, (status, images) in pages.items():
+            page = store.upsert_page(f"https://t.test{path}")
+            if status == 200:
+                for image in store.known_images([f"https://t.test{name}" for name in images]).values():
+                    store.link(image, page)
+                stats.pages_ok += 1
+            store.mark_page(page, status)
+            stats.pages_visited += 1
+            stats.http_statuses[str(status)] = stats.http_statuses.get(str(status), 0) + 1
+        return stats
+    return crawl
+
+
+def _visual_site(conn, org, brand):
+    """A site with 10 images on two pages (/a: 0-4, /b: 5-9); one visual, shown by image 0 and image 5 and confirmed."""
+    site = cloud_db.create_site(conn, org_id=org, brand_id=brand, url="https://t.test/")
+    ref = cloud_db.upsert_reference_image(conn, org_id=org, brand_id=brand, filename="v.jpg", storage_path=f"{org}/v.jpg",
+                                          expiry_date="2026-12-01", credit=None, notes=None, phash="ffff0000ffff0000", dhash="ffff0000ffff0000")
+    ids = [conn.execute("INSERT INTO site_images (org_id, site_id, url, storage_path, phash, dhash) VALUES (%s, %s, %s, 'x', 'ffff0000ffff0000', 'ffff0000ffff0000') RETURNING id",
+                        (org, site, f"https://t.test/i{n}")).fetchone()["id"] for n in range(10)]
+    cloud_db.write_matches(conn, org, [(ref, ids[0], "phash", 1.0, "haut"), (ref, ids[5], "phash", 1.0, "haut")])
+    cloud_db.set_reviews(conn, brand_id=brand, reference_id=ref, site_image_ids=[ids[0], ids[5]], decision="retenu", reviewed_by=None)
+    return site
+
+
+def _read(worker, monkeypatch, org, brand, site, pages):
+
+    monkeypatch.setattr(worker_module, "crawl_site", _simulated_site(pages))
+    with cloud_db.connect(worker.database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", params={"site_ids": [str(site)], "then_match": False})
+    assert worker.run_once()
+    return _outcome(worker.database_url, brand, _job(worker.database_url, brand, job["id"]))
+
+
+def _outcome(url, brand, job=None):
+    from nyra.cloud import presence
+
+    with cloud_db.connect(url) as conn:
+        run = cloud_db.list_crawl_runs(conn, brand)[0]
+        visual = presence.visuals(presence.by_visual(conn, brand))[0]
+        states = {row["url"][-2:]: row["state"] for row in presence.pages(conn, brand, visual["row"]["reference_id"])}
+    return run, visual, states, job
+
+
+NORMAL = {"/a": (200, ["/i0", "/i1", "/i2", "/i3", "/i4"]), "/b": (200, ["/i5", "/i6", "/i7", "/i8", "/i9"])}
+# What the same read would have said without the guard: the visual is on neither page, so both are `gone`.
+WITHOUT_I0_I5 = {"/a": (200, ["/i1", "/i2", "/i3", "/i4"]), "/b": (200, ["/i6", "/i7", "/i8", "/i9"])}
+
+
+@pytest.mark.parametrize("scenario, pages, suspect", [
+    ("empty pages answering 200", {"/a": (200, []), "/b": (200, [])}, True),
+    ("blocked with 403", {"/a": (403, []), "/b": (200, [])}, True),
+    ("a partial read", {"/a": (200, ["/i1", "/i2", "/i3", "/i4"])}, True),
+    ("a normal read of a site that lost the visual", WITHOUT_I0_I5, False),
+])
+def test_a_suspect_read_marks_nothing_removed_and_a_normal_one_raises_no_alert(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch, scenario, pages, suspect):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _visual_site(conn, cloud_org, cloud_brand)
+    first, _, states, _ = _read(worker, monkeypatch, cloud_org, cloud_brand, site, NORMAL)
+    assert (first["suspect"], states) == (False, {"/a": "still", "/b": "still"})  # the first read has nothing to be compared with
+    second, _, _, _ = _read(worker, monkeypatch, cloud_org, cloud_brand, site, NORMAL)
+    assert (second["suspect"], second["images_known_seen"]) == (False, 10)  # a normal read raises no alert
+    run, visual, states, job = _read(worker, monkeypatch, cloud_org, cloud_brand, site, pages)
+
+    assert run["suspect"] is suspect, scenario
+    assert ("semble incomplète" in job["message"]) is suspect
+    if suspect:
+        assert run["suspect_reason"] and "gone" not in states.values() and not visual["replaced"]  # pages stay unknown, no visual is replaced
+        with cloud_db.connect(cloud_database_url) as conn:  # the barrier is what holds: without it a page would be gone
+            conn.execute("UPDATE crawl_runs SET suspect = false WHERE id = %s", (run["id"],))
+        assert "gone" in _outcome(cloud_database_url, cloud_brand)[2].values(), scenario
+    else:
+        assert states == {"/a": "gone", "/b": "gone"} and visual["replaced"]  # a trusted read still says the visual left
+
+
+def test_a_read_that_did_not_end_properly_cannot_make_a_page_gone_but_a_check_after_a_clean_read_can(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _visual_site(conn, cloud_org, cloud_brand)
+    _read(worker, monkeypatch, cloud_org, cloud_brand, site, NORMAL)
+    _read(worker, monkeypatch, cloud_org, cloud_brand, site, NORMAL)
+    # A check of /a alone after the clean read: the visual's image 0 is no longer there, no crawl run is involved.
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE pages SET crawled_at = now(), read_started_at = now(), links_tracked = true WHERE site_id = %s AND url LIKE '%%/a'", (site,))
+    assert _outcome(cloud_database_url, cloud_brand)[2]["/a"] == "gone"  # as before this guard
+    for status in ("cancelled", "error", "running"):
+        with cloud_db.connect(cloud_database_url) as conn:
+            conn.execute("DELETE FROM crawl_runs WHERE site_id = %s AND status <> 'done'", (site,))
+            clean = "(SELECT max(started_at) FROM crawl_runs WHERE site_id = %s AND status = 'done')"
+            ends = "NULL" if status == "running" else clean + " + interval '3 seconds'"
+            conn.execute(f"INSERT INTO crawl_runs (org_id, site_id, status, started_at, finished_at) VALUES (%s, %s, %s, {clean} + interval '1 second', {ends})",
+                         (cloud_org, site, status, site, *([] if status == "running" else [site])))
+            conn.execute(f"UPDATE pages SET crawled_at = {clean} + interval '2 seconds' WHERE site_id = %s AND url LIKE '%%/a'", (site, site))  # read by that run
+        states = _outcome(cloud_database_url, cloud_brand)[2]
+        assert states["/a"] == "unknown", status  # a run that was never judged read it
+        assert not _outcome(cloud_database_url, cloud_brand)[1]["replaced"]
+
+
+def test_a_site_that_renews_many_images_is_not_suspect_but_a_real_fall_is(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        for n in range(100):  # 40 images known for a while, 60 renewed by the last read
+            conn.execute("INSERT INTO site_images (org_id, site_id, url, storage_path, first_seen, last_seen) VALUES (%s, %s, %s, 'x', now() - make_interval(days => %s), now())",
+                         (cloud_org, site, f"https://t.test/i{n}", 5 if n < 40 else 0))
+        for _ in range(2):  # earlier reads: 100 seen, 40 of them known
+            conn.execute("INSERT INTO crawl_runs (org_id, site_id, status, started_at, pages_ok, images_seen, images_known_seen) VALUES (%s, %s, 'done', now() - interval '2 days', 5, 100, 40)", (cloud_org, site))
+        conn.execute("INSERT INTO crawl_runs (org_id, site_id, status, started_at, pages_ok, images_seen, images_known_seen) VALUES (%s, %s, 'done', now() - interval '1 day', 0, 0, 0)", (cloud_org, site))  # an empty resume: ignored
+        stats = worker_module.CrawlStats(pages_visited=5, pages_ok=5, http_statuses={"200": 5})
+        run = cloud_db.start_crawl_run(conn, org_id=cloud_org, site_id=site, triggered_by=None)
+        conn.execute("UPDATE crawl_runs SET started_at = now() - interval '1 hour' WHERE id = %s", (run,))
+        assert cloud_db.record_read_health(conn, run, stats) is None  # 40 known images seen again, as in the earlier reads
+        conn.execute("UPDATE site_images SET last_seen = now() - interval '2 hours' WHERE url ~ 'i([0-9]|[12][0-9])$'")  # 30 known images no longer seen
+        assert "10 images déjà connues" in cloud_db.record_read_health(conn, run, stats)
+
+
+# --- guard rails: duration per kind, watchdog, leftovers, resources ---------------------------------------------
+
+def test_every_job_kind_has_its_own_duration_limit_that_an_override_can_change(monkeypatch):
+    assert set(worker_module.JOB_LIMITS) == cloud_jobs.KINDS
+    limits = {kind: worker_module.job_limit_seconds(kind) for kind in cloud_jobs.KINDS}
+    assert limits["crawl"] == max(limits.values()) and limits["index"] > limits["match"] > limits["check"]
+    message = worker_module.overrun_message("check")
+    assert "dépassé sa durée maximale de 30 min" in message and "conservé" in message and "relancez-la" in message
+    monkeypatch.setenv("NYRA_JOB_LIMIT_CHECK_MIN", "45")
+    assert worker_module.job_limit_seconds("check") == 45 * 60 and "45 min" in worker_module.overrun_message("check")
+    for bad in ("0", "-3", "abc", "100000", "1.5"):  # out of range or not a whole number: the default stays
+        monkeypatch.setenv("NYRA_JOB_LIMIT_CHECK_MIN", bad)
+        assert worker_module.job_limit_seconds("check") == limits["check"]
+
+
+class _Exit(SystemExit):
+    """Raised by the simulated `os._exit`, to leave the thread's loop."""
+
+
+def _claimed_check(cloud_database_url, org_id, brand_id):
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_jobs.enqueue(conn, org_id=org_id, brand_id=brand_id, kind="check", params={})
+        return cloud_jobs.claim(conn)
+
+
+def _exit_recorder(monkeypatch):
+    codes: list[int] = []
+
+    def fake_exit(code):
+        codes.append(code)
+        raise _Exit
+
+    monkeypatch.setattr(worker_module.os, "_exit", fake_exit)
+    return codes
+
+
+def test_a_job_over_its_limit_is_marked_failed_with_a_clear_message_its_runs_are_closed_and_the_worker_exits(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    codes = _exit_recorder(monkeypatch)
+    job = _claimed_check(cloud_database_url, cloud_org, cloud_brand)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://over.example")
+        run = cloud_db.start_crawl_run(conn, org_id=cloud_org, site_id=site, triggered_by=None, job_id=uuid.UUID(job["id"]))
+    ctx = worker_module.JobContext(cloud_database_url, job)
+    ctx.close()  # no thread: the test calls what the thread would
+    with pytest.raises(_Exit):
+        ctx._time_out()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert codes == [70] and finished["status"] == "error" and finished["message"] == worker_module.overrun_message("check")
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT status FROM crawl_runs WHERE id = %s", (run,)).fetchone()["status"] == "error"
+
+
+def test_the_heartbeat_thread_times_a_job_out_only_past_its_limit(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                                  monkeypatch):
+    codes: list[int] = []
+    monkeypatch.setattr(worker_module.os, "_exit", lambda code: (codes.append(code), ctx.close()))  # a real exit ends the thread
+    monkeypatch.setattr(worker_module, "HEARTBEAT_SECONDS", 0.05)
+    job = _claimed_check(cloud_database_url, cloud_org, cloud_brand)
+    ctx = worker_module.JobContext(cloud_database_url, job)
+    time.sleep(0.3)
+    assert codes == [] and _job(cloud_database_url, cloud_brand, job["id"])["status"] == "running"
+    ctx._started -= ctx.max_seconds + 1  # the clock says the job has run past its limit
+    ctx._beat.join(5)
+    assert codes == [70] and _job(cloud_database_url, cloud_brand, job["id"])["status"] == "error"
+
+
+def test_a_job_that_just_ended_or_was_claimed_again_is_not_failed_and_the_worker_stays(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    codes = _exit_recorder(monkeypatch)
+    job = _claimed_check(cloud_database_url, cloud_org, cloud_brand)
+    ctx = worker_module.JobContext(cloud_database_url, job)
+    ctx.close()
+    with cloud_db.connect(cloud_database_url) as conn:  # the main thread has just finished it
+        cloud_jobs.finish(conn, job["id"], status="done", message="ok", result={})
+    ctx._time_out()
+    assert codes == [] and _job(cloud_database_url, cloud_brand, job["id"])["status"] == "done"
+    with cloud_db.connect(cloud_database_url) as conn:  # requeued and taken again by another worker: another run
+        conn.execute("UPDATE jobs SET status = 'running', started_at = now() + interval '1 minute' WHERE id = %s", (job["id"],))
+    ctx._time_out()
+    assert codes == [] and _job(cloud_database_url, cloud_brand, job["id"])["status"] == "running"
+
+
+def test_a_time_out_exits_even_when_the_database_does_not_answer(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                                 monkeypatch):
+    exited, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(worker_module.os, "_exit", lambda code: exited.set())
+    monkeypatch.setattr(worker_module, "TIME_OUT_GRACE_SECONDS", 0.1)
+    monkeypatch.setattr(cloud_jobs, "fail_running", lambda *_a, **_k: release.wait(5))
+    job = _claimed_check(cloud_database_url, cloud_org, cloud_brand)
+    ctx = worker_module.JobContext(cloud_database_url, job)
+    ctx.close()
+    threading.Thread(target=ctx._time_out, daemon=True).start()
+    assert exited.wait(3)  # the timer left the process while the write was still blocked
+    release.set()
+
+
+def test_the_main_thread_stops_the_heartbeat_before_it_writes_the_outcome(worker, cloud_database_url, cloud_org,
+                                                                          cloud_brand, monkeypatch):
+    order: list[str] = []
+    real_close = worker_module.JobContext.close
+    monkeypatch.setattr(worker_module.JobContext, "close", lambda self: (order.append("close"), real_close(self)))
+    real_finish = cloud_jobs.finish
+    monkeypatch.setattr(cloud_jobs, "finish", lambda *a, **k: (order.append("finish"), real_finish(*a, **k)))
+    monkeypatch.setattr(worker_module, "run_matching", lambda *a, **k: None)
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
+    worker.run_once()
+    assert order.index("close") < order.index("finish")
+
+
+def test_the_watchdog_exits_when_the_alive_file_is_stale_and_ignores_a_missing_one(tmp_path, monkeypatch):
+    alive = tmp_path / "alive"
+    monkeypatch.setattr(worker_module, "ALIVE_FILE", alive)
+    monkeypatch.setattr(worker_module, "HEARTBEAT_SECONDS", 0.01)
+    codes = _exit_recorder(monkeypatch)
+    watcher = worker_module.Worker(database_url="", storage_client_factory=lambda: None)
+    # missing file: the loop keeps going (stop it after a few turns), nothing exits
+    threading.Timer(0.1, watcher.stop).start()
+    watcher._watchdog()
+    assert codes == []
+    alive.touch()
+    os.utime(alive, (time.time() - 2 * worker_module.WATCHDOG_SECONDS,) * 2)
+    watcher._stop.clear()
+    with pytest.raises(_Exit):
+        watcher._watchdog()
+    assert codes == [70]
+    alive.touch()  # fresh: the loop does not exit
+    threading.Timer(0.1, watcher.stop).start()
+    watcher._stop.clear()
+    watcher._watchdog()
+    assert codes == [70]
+
+
+def test_chromium_leftovers_are_removed_once_quiet_and_a_recent_deep_write_spares_the_folder(tmp_path):
+    old, busy, fresh, other = (tmp_path / "playwright_chromiumdev_profile-old", tmp_path / "playwright_chromiumdev_profile-busy",
+                               tmp_path / "playwright-artifacts-new", tmp_path / "keep-me")
+    for folder in (old, busy, fresh, other):
+        (folder / "Default" / "Cache").mkdir(parents=True)
+        (folder / "Default" / "Cache" / "data").write_bytes(b"x")
+    long_ago = time.time() - 2 * worker_module.TEMP_LEFTOVER_AGE_SECONDS
+    for folder in (old, busy, other):  # every directory and file is old, except busy's deepest file
+        for path in (folder, *folder.rglob("*")):
+            os.utime(path, (long_ago, long_ago))
+    (busy / "Default" / "Cache" / "data").write_bytes(b"y")  # a browser is writing deep inside an old-looking folder
+    assert worker_module.clean_temp(time.time(), tmp_path) == 1
+    assert not old.exists() and busy.exists() and fresh.exists() and other.exists()
+
+
+def test_running_out_of_memory_or_disk_says_so_and_what_to_do(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                              monkeypatch):
+    assert "mémoire" in worker_module.resource_problem(MemoryError())
+    assert "disque" in worker_module.resource_problem(OSError(errno.ENOSPC, "No space left on device"))
+    assert worker_module.resource_problem(RuntimeError("x")) is None
+
+    def full(*_args, **_kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(worker_module, "run_matching", full)
+    with cloud_db.connect(cloud_database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
+    assert worker.run_once()
+    assert "disque" in _job(cloud_database_url, cloud_brand, job["id"])["message"]

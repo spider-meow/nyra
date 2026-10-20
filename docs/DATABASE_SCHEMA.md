@@ -39,10 +39,11 @@ before September 26, 2026 still point at their original.
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `organizations` | Clients | `slug` (lowercase, hyphens, unique) |
+| `organizations` | Clients | `slug` (lowercase, hyphens, unique), `quota_overrides` (jsonb: the limits the Nyra team changed for this organization, keys of `QuotaConfig`; empty = the defaults of `config.yaml`; written by the back office only) |
 | `memberships` | User ↔ organization | `role` ∈ {admin, client} |
 | `brands` | Brands of an organization | `slug` (unique per org), `created_by` (the platform admin who created it: the billing record), `set_aside_logos` (setting, off by default: the site images recognised as logos stay out of the comparison and out of "Droits non vérifiés") |
 | `brand_logos` | A brand's logo, shrunk by the API to a 128 px PNG and kept as a data URI (it travels with the list of brands) | `brand_id` (primary key, deleted with the brand), `data_uri` |
+| `usage_counters` | What an organization used: `kind` ∈ {pages_read, images_new, bytes_downloaded} per month (`period` = first day of the month) and `emails` (invitations) per day; added to by the worker (crawls and page checks, at most a few seconds late) and the API, read by the cap, the client's Usage page and the back office | `org_id` + `period` + `kind` (key), `amount` |
 | `org_settings` | Per-organization overrides of `config.yaml`, shared by its brands | `overrides` jsonb (whitelisted keys only) |
 | `sites` | A brand's addresses | `brand_id`, `url` (canonical, unique per org: an address belongs to one brand), `label` (US, FR...) |
 | `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `unlimited_rights` (never expires; excludes a date: a check forbids both), `collection_id` (its folder, null = unfiled), `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |
@@ -64,6 +65,13 @@ before September 26, 2026 still point at their original.
 | `platform_staff` | Nyra team members who see the back office | `user_id` (service role only, no RLS policy) |
 
 `crawl_runs.metrics` (jsonb) holds each crawl's timings and byte counts.
+`crawl_runs` also keeps the health of a full read (`pages_ok`, `error_share`,
+`images_seen`, `images_known_seen`) and `suspect` /
+`suspect_reason`: set when it ends if the read kept under 70 % of the images
+known before, or met too many errors (see `MATCHING.md`). Reads made before
+the migration have no figures and are not suspect. A page whose
+`pages.http_status` is -1 met a consent wall that did not go away: it is never
+"gone". (The monthly summary, AXE-523, will have to say when a read is suspect.)
 `site_images` keeps `byte_size` (weight on the site), `format` (the
 original's: only a JPEG working copy is stored) and `stored_bytes`
 (working copy + thumbnail); `reference_images.byte_size` is the uploaded

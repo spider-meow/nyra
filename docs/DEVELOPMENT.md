@@ -49,6 +49,18 @@ pytest
   tests an in-memory fake Storage. Never point `TEST_DATABASE_URL` at a
   real project.
 
+- `test_isolation.py` (cloud, same Postgres) calls every route as a member of
+  one organization with the identifiers of another, and with its own, and fails on an
+  answer that carries data of the other organization, a 5xx, a change to the other
+  organization's rows, or a refusal missing where one is expected (the full list of what
+  it checks, and what it cannot, is in ARCHITECTURE.md, "Security model"). **When you add a
+  route** it is picked up automatically: if it takes a body or an identifier in its query,
+  add a case to `BODIES` in that file (a valid request for a given tenant); if it needs no
+  organization check (public, or the caller's own account), list it in `PUBLIC` or
+  `USER_LEVEL` with the reason. The test fails on a route that is neither tested nor
+  justified. Every new query on client data filters on `org_id` or `brand_id` (the service
+  role bypasses RLS). The shared fixtures (`client`, `labels_on`) are in `conftest.py`.
+
 CI (`.github/workflows/ci.yml`) runs `ruff check backend`, the full test
 suite against a pgvector service container, and the frontend build, bundle
 budget and scrub check.

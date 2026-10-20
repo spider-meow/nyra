@@ -203,3 +203,22 @@ def test_the_list_of_visuals_counts_the_pages_marked_replaced(cloud_database_url
         presence.set_replaced(conn, cloud_org, ref, list(found.values()), replaced=True, user_id=None)
         items = {item["row"]["reference_id"]: item for item in presence.visuals(presence.by_visual(conn, cloud_brand))}
     assert (items[ref]["marked"], items[ref]["pages"], items[ref]["replaced"]) == (1, 2, False)  # marked is not verified: still listed
+
+
+def test_a_visual_with_a_match_no_page_is_known_for_is_not_replaced_and_the_home_screen_agrees(cloud_database_url, cloud_org, cloud_brand):
+    from nyra import report
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, _ = _setup(conn, cloud_org, cloud_brand)
+        shown = _visual(conn, cloud_org, cloud_brand, site, "shown", decision="retenu", pages=[("/a", False, True)])  # read again, not there: gone
+        lone = _visual(conn, cloud_org, cloud_brand, site, "lone", decision="retenu", pages=[("/a", False, True)])
+        other = _image(conn, cloud_org, site, lone, "lone-other")  # a second match of "lone", on no known page
+        gone = _visual(conn, cloud_org, cloud_brand, site, "wall", decision="retenu", pages=[("/a", False, True)])
+        conn.execute("UPDATE pages SET http_status = -1, links_tracked = false WHERE url LIKE '%/wall/a'")  # a consent wall hid it
+        items = {item["row"]["reference_id"]: item for item in presence.visuals(presence.by_visual(conn, cloud_brand))}
+        replaced = presence.replaced_references(conn, cloud_brand)
+    assert other and items[shown]["replaced"] and not items[lone]["replaced"] and not items[gone]["replaced"]
+    assert items[gone]["gone"] == 0 and items[gone]["unknown"] == 1  # a page hidden by a consent wall is never gone
+    assert replaced == {shown}
+    rows = [{"reference_id": ref, "filename": str(ref), "expiry_date": "2020-01-01", "confidence": "haut"} for ref in (shown, lone, gone)]
+    assert report.dashboard(rows, [], replaced=replaced)["expired_online"] == 2  # the replaced one is no longer online

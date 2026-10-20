@@ -111,7 +111,7 @@ export type LibraryItem = {
   created_at: string;
 };
 
-export type Removal = "pending" | "online" | "unread" | "gone";
+export type Removal = "pending" | "online" | "unread" | "suspect" | "gone";
 
 export type Hit = {
   site_image_id: string;
@@ -514,7 +514,18 @@ export type StaffUser = {
   email: string;
   last_sign_in_at: string | null;
   staff: boolean;
-  memberships: { org_id: string; org_name: string; role: Member["role"] }[];
+  memberships: { org_id: string; org_name: string; role: Member["role"]; since: string }[];
+};
+/** One line of usage against a limit (`GET /orgs/{id}/usage`): `level` turns to warning from 80 %. Storage is in bytes. */
+export type UsageItem = { key: string; label: string; used: number; limit: number; level: "ok" | "warning" | "reached" };
+export type OrgUsage = { month: string; items: UsageItem[]; counters: { images_new: number; bytes_downloaded: number } };
+/** `GET /staff/usage`: every organization's usage, its own limits and the defaults of config.yaml. */
+export type StaffUsage = {
+  month: string;
+  defaults: Record<string, number>;
+  /** More organizations exist than the list holds. */
+  truncated: boolean;
+  organizations: { id: string; name: string; slug: string; overrides: Record<string, number>; items: UsageItem[]; counters: OrgUsage["counters"] }[];
 };
 export type StaffAdmin = { user_id: string; email: string; you: boolean };
 

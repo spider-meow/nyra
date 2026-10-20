@@ -19,6 +19,7 @@ from nyra.crawl import normalize_url
 from .. import db as cloud_db
 from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
+from .. import presence as cloud_presence
 from .. import storage as cloud_storage
 from .common import (
     BRAND,
@@ -29,6 +30,7 @@ from .common import (
     brand_admin_dep,
     brand_json,
     brand_member_dep,
+    enforce,
     get_ctx,
     iso,
     site_json,
@@ -83,10 +85,12 @@ def _checked_site_url(raw: str) -> str:
 def create_brand(org_id: uuid.UUID, body: BrandBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """Platform admins only: each brand is billed, so an organization cannot add its own."""
     name, slug = _brand_name_and_slug(body)
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        if cloud_db.get_organization(conn, org_id) is None:
+            raise HTTPException(status_code=404, detail="Organisation introuvable.")
+    enforce(ctx, org_id, "brands")
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
-            if cloud_db.get_organization(conn, org_id) is None:
-                raise HTTPException(status_code=404, detail="Organisation introuvable.")
             brand_id = cloud_db.create_brand(conn, org_id=org_id, name=name, slug=slug, created_by=claims.user_id)
             brand = cloud_db.get_brand(conn, org_id, brand_id)
     except psycopg.errors.UniqueViolation as exc:
@@ -166,6 +170,7 @@ def list_sites(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends
 @router.post(f"{BRAND}/sites")
 def add_site(body: SiteBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     url = _checked_site_url(body.url)
+    enforce(ctx, scope.org_id, "sites", brand_id=scope.brand_id)
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
             site_id = cloud_db.create_site(conn, org_id=scope.org_id, brand_id=scope.brand_id, url=url,
@@ -219,13 +224,14 @@ def overview(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(g
             "SELECT COUNT(*) AS c FROM reference_images WHERE brand_id = %s AND embedding IS NULL", (scope.brand_id,)
         ).fetchone()["c"]
         unreferenced_online = unreferenced_count(conn, scope.brand_id, config)
+        replaced = cloud_presence.replaced_references(conn, scope.brand_id)
     last_run = runs[0] if runs else None
     return {
         "organization": {"id": str(scope.org_id), "name": org["name"], "slug": org["slug"]},
         "brand": {"id": str(scope.brand_id), "name": scope.name},
         "role": scope.member.role,
         "stats": {**stats.__dict__, "references_pending_index": pending_index},
-        "dashboard": {**report_module.dashboard(matches, unmatched), "unreferenced_online": unreferenced_online},
+        "dashboard": {**report_module.dashboard(matches, unmatched, replaced=replaced), "unreferenced_online": unreferenced_online},
         "jobs": jobs,
         "last_crawl": None if last_run is None else {
             "site_url": last_run["site_url"], "site_label": last_run["site_label"] or "",

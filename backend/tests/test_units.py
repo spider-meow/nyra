@@ -15,7 +15,7 @@ import pytest
 from PIL import Image, ImageDraw, ImageOps
 
 from nyra import fetch, report
-from nyra.config import Config, validate_overrides, with_overrides
+from nyra.config import Config, load_config, validate_overrides, validate_quota, with_overrides
 from nyra.match import compare, compute_flip_hashes, compute_hashes, pack
 from nyra.refs import (
     MAX_TAG_LENGTH,
@@ -184,6 +184,8 @@ def test_a_photo_marked_removed_says_whether_the_last_read_confirms_it():
     assert removal(("a", gone), ("b", {**gone, "read_after": False})) == "pending"  # no read since it was marked
     assert removal(("a", gone), ("b", {**gone, "seen": True})) == "online"  # seen again: the removal is not done
     assert removal(("a", {**gone, "read_after": False, "seen": True})) == "pending"  # seen by a read from before the mark
+    assert removal(("a", {**gone, "suspect_read": True})) == "suspect"  # a read that looks incomplete proves nothing
+    assert removal(("a", {**gone, "suspect_read": True, "seen": True})) == "online"  # but what it saw is seen
     undecided = report.group_matches([_row("ref", "a")], 365, date(2026, 1, 1))["confirmed"][0]["hits"][0]
     assert undecided["removal"] is None
 
@@ -248,6 +250,7 @@ def test_dashboard_counts_only_live_occurrences():
     assert summary["urgent_online"] == 1
     assert summary["pending_review"] == 1
     assert summary["upcoming"][0]["reference_id"] == "soon"
+    assert report.dashboard(rows, [], today, replaced=frozenset({"expired-live"}))["expired_online"] == 0  # replaced: read again, gone
 
 
 # --- decoding -----------------------------------------------------------------------
@@ -411,3 +414,21 @@ def test_only_a_persons_request_writes_a_decision():
     callers = {relative(path) for path in files if _DECISION_CALLS.search(path.read_text(encoding="utf-8"))}
     stray = {name for name in callers if not name.startswith("cloud/routes/") and name not in _DECISION_WRITERS}
     assert not stray, f"calls a decision writer outside the API routes: {stray}"
+def test_quotas_are_typed_bounded_kept_by_overrides_and_never_set_by_an_organization(tmp_path):
+    base = Config()
+    assert validate_quota({"pages_per_month": "250", "storage_gb": 1.5, "brands": ""}) == {"pages_per_month": 250, "storage_gb": 1.5}
+    for bad in ({"brands": -1}, {"brands": 100_000}, {"brands": "many"}, {"brands": True}, {"unknown": 1}):
+        with pytest.raises(ValueError):
+            validate_quota(bad)
+    assert with_overrides(base, {"quota": {"brands": 99}, "crawl": {"max_pages": 10}}).quota == base.quota  # not in ORG_OVERRIDABLE
+    yaml_file = tmp_path / "config.yaml"
+    yaml_file.write_text("quota:\n  members: 7\n")
+    assert load_config(yaml_file).quota.members == 7
+    assert load_config().quota == base.quota  # config.yaml and the dataclass agree on the starting values
+
+
+def test_quotas_refuse_fractions_of_whole_numbers_and_numbers_too_large_to_read():
+    assert validate_quota({"storage_gb": 0.5}) == {"storage_gb": 0.5}
+    for bad in ({"brands": 3.9}, {"brands": float("inf")}, {"brands": 10**400}, {"storage_gb": float("nan")}, {"storage_gb": float("inf")}):
+        with pytest.raises(ValueError):
+            validate_quota(bad)

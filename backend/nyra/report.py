@@ -104,11 +104,14 @@ def in_window(days_left: Optional[int], window: int) -> bool:
 def _removal(files: list[dict]) -> str:
     """Where the removal of a photo (marked removed) stands, from what the last read of its sites showed:
     `online` a read since the mark saw a file of it again, `pending` a site was not read since the mark,
-    `unread` a page that showed it was not read again, `gone` every page was read again and it is not there."""
+    `unread` a page that showed it was not read again, `suspect` the last read of a site looks incomplete (so it proves nothing),
+    `gone` every page was read again and it is not there."""
     if any(row.get("read_after") and row.get("seen") for row in files):
         return "online"
     if not all(row.get("read_after") for row in files):
         return "pending"
+    if any(row.get("suspect_read") for row in files):
+        return "suspect"
     return "unread" if any(row.get("unread_pages") for row in files) else "gone"
 
 
@@ -221,11 +224,13 @@ def not_found_items(rows: list[dict], window: int, today: Optional[date] = None)
     return items
 
 
-def dashboard(match_rows: list[dict], unmatched_rows: list[dict], today: Optional[date] = None) -> dict[str, Any]:
+def dashboard(match_rows: list[dict], unmatched_rows: list[dict], today: Optional[date] = None,
+              replaced: frozenset = frozenset()) -> dict[str, Any]:
     """The numbers the home screen leads with.
 
     "Online" means at least one occurrence that nobody marked as a false
-    positive or as removed.
+    positive or as removed, of a reference not `replaced` (every page that showed it was read again, with a read that
+    can be trusted, and none shows it any more: `cloud.presence.replaced_references`).
     """
     today = today or datetime.now(timezone.utc).date()
     live: dict[Any, dict] = {}
@@ -233,7 +238,7 @@ def dashboard(match_rows: list[dict], unmatched_rows: list[dict], today: Optiona
     free = {row["reference_id"] for row in match_rows if row.get("unlimited_rights") and row["confidence"] == CONFIDENCE_HIGH
             and row.get("decision") != DECISION_FALSE_POSITIVE}  # listed as "Libre d'usage", not to review
     for row in match_rows:
-        if row.get("decision") in {DECISION_FALSE_POSITIVE, DECISION_REMOVED}:
+        if row.get("decision") in {DECISION_FALSE_POSITIVE, DECISION_REMOVED} or row["reference_id"] in replaced:
             continue
         live.setdefault(row["reference_id"], row)
         if not row.get("decision") and row["reference_id"] not in free:
@@ -403,6 +408,7 @@ def build_report(
     organization: str = "",
     today: Optional[date] = None,
     provenance: Optional[dict[str, Any]] = None,
+    replaced: frozenset = frozenset(),
 ) -> ReportFiles:
     """`provenance` is what the matches were produced with: `signature` (the one `run_matching` stored) and `read_at`
     ((oldest, newest) of the last finished read of each site). Both are printed in the HTML footer and in two columns of each CSV."""
@@ -419,7 +425,7 @@ def build_report(
     keys |= {hit.get("site_thumb") for group in groups for hit in group["hits"]}
     thumbs = _load_thumbs(keys, thumb_loader)
 
-    summary = dashboard(kept, unmatched_rows, today)
+    summary = dashboard(kept, unmatched_rows, today, replaced)
     summary.update({
         "confirmed": len(grouped["confirmed"]),
         "to_verify": len(grouped["to_verify"]),
