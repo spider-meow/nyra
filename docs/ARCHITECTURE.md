@@ -124,6 +124,24 @@ numbers and the report itself are pure functions over plain dicts in
 - **The backend uses the service role**, which bypasses RLS; every query
   filters on `org_id` itself. RLS policies are the safety net for any
   other access path.
+- **A test checks it** (`backend/tests/test_isolation.py`): two organizations, each with
+  data of every kind, and a member of A (admin, then client) calling every route
+  with the identifiers of B (its organization, its brand under A, its references,
+  jobs, files, labels... under A's own brand). Each answer must be a refusal
+  (403/404, never a 5xx), carry nothing of B, and leave the rows of B unchanged
+  (and write no row of A that points to B). **Adding a route**: the test finds it
+  by itself (it lists the routes of the application); give it a case in `BODIES`
+  if it takes a body or an identifier in its query, or, if it needs no
+  organization check (public, or the caller's own account), list it in `PUBLIC`
+  or `USER_LEVEL` with the reason. A route left out fails the test.
+- **Storage paths** start with the organization (`{org_id}/...`, references
+  `{org_id}/{brand_id}/...`); a file name is folded to one segment (`safe_key`) and
+  only looked up among the brand's own references, so a name or a path of another
+  organization gives nothing.
+- **Members are reviewed by hand** (the test cannot see a stale or wrong
+  account): Back office > Comptes lists the administrators of every
+  organization, since when and their last sign-in (see DEPLOYMENT.md, "Reviewing
+  the members").
 - **Crawling is SSRF-guarded** (`netguard`), page counts are capped
   (`crawl.max_pages_limit`), downloads and uploads are size- and
   pixel-capped.

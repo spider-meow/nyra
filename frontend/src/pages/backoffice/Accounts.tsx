@@ -4,7 +4,7 @@ import { useConfirm, useToast } from "../../components/feedback";
 import { Section } from "../../components/insights";
 import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
-import { formatDateTime } from "../../lib/format";
+import { formatDate, formatDateTime } from "../../lib/format";
 import { useStaffMutations, useStaffOrgs, useStaffUsers } from "../../lib/staff";
 import type { Member, StaffUser } from "../../types";
 
@@ -107,6 +107,39 @@ function UserRow(props: { user: StaffUser }) {
   );
 }
 
+/** The administrators of every organization, for the periodic check: who, since when, last sign-in. */
+function OrgAdmins(props: { users: StaffUser[] }) {
+  const rows = props.users
+    .flatMap((user) => user.memberships.filter((m) => m.role === "admin").map((m) => ({ ...m, user })))
+    .sort((a, b) => a.org_name.localeCompare(b.org_name) || a.user.email.localeCompare(b.user.email));
+  return (
+    <Section title={`${rows.length} administrateurs d'organisation`} description="Contrôle périodique : chaque personne doit être connue de l'organisation et toujours y travailler. « Retirer » est dans la liste des comptes ci-dessous.">
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[560px] text-sm">
+          <thead>
+            <tr className="border-b border-line text-left text-xs text-muted">
+              <th className="py-2 pr-2 font-medium">Organisation</th>
+              <th className="px-2 py-2 font-medium">E-mail</th>
+              <th className="px-2 py-2 font-medium">Membre depuis</th>
+              <th className="py-2 pl-2 font-medium">Dernière connexion</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {rows.map((row) => (
+              <tr key={`${row.org_id}-${row.user.user_id}`}>
+                <td className="py-2 pr-2 font-medium">{row.org_name}</td>
+                <td className="px-2 py-2">{row.user.email || "(sans e-mail)"}</td>
+                <td className="px-2 py-2 text-muted">{formatDate(row.since)}</td>
+                <td className="py-2 pl-2 text-muted">{row.user.last_sign_in_at ? formatDateTime(row.user.last_sign_in_at) : "jamais"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Section>
+  );
+}
+
 /** /back-office/accounts — every account and the organizations it belongs to. */
 export function Accounts() {
   const users = useStaffUsers();
@@ -117,6 +150,7 @@ export function Accounts() {
       <PageHeader title="Comptes" />
       <div className="grid gap-4">
         <AddPerson />
+        {users.data ? <OrgAdmins users={users.data.users} /> : null}
         <Section title={`${users.data?.users.length ?? 0} comptes`} aside={<Input aria-label="Chercher un e-mail" placeholder="Chercher un e-mail" value={search} onChange={(event) => setSearch(event.target.value)} className="w-56" />}>
           {users.isLoading ? <Skeleton className="h-40" /> : null}
           {users.error ? <EmptyState title="Impossible de charger les comptes" body={errorMessage(users.error)} /> : null}

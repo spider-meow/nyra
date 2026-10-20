@@ -143,10 +143,26 @@ traceback is in the worker's log.
   images (`.dockerignore` excludes it) and screenshots; rotate it if in
   doubt.
 - Public sign-up disabled in Supabase (step 2 above).
+- Members reviewed every quarter (next section).
 - Never set `NYRA_ALLOW_PRIVATE_HOSTS` on a server: it turns off the
   guard that keeps crawls away from private addresses and cloud metadata.
 - `crawl.max_pages_limit` in `config.yaml` bounds the cost of any single
   crawl, whatever an organization asks for.
+
+## Reviewing the members
+
+Steps to play by hand (the code gives the list, a person decides): the first time, then every quarter and
+whenever a client says someone left.
+
+1. In Supabase (Authentication > Providers > Email), check that *Allow new users to sign up* is **off**.
+   Without it anyone holding the public anon key can create an account (without access to any organization,
+   but it should not exist).
+2. In Nyra, Back office > Comptes: the table "administrateurs d'organisation" gives, per organization, each
+   administrator's e-mail, the date they joined and their last sign-in. Ask the client to confirm the list;
+   remove (« Retirer ») whoever should not be there, or switch them to « Lecture et validation ».
+3. Back office > Platform admins: the list of the Nyra team; remove anyone who left.
+4. In Supabase (Authentication > Users), look for accounts nobody invited (unknown e-mail, recent creation
+   date) and delete them.
 
 ## Vercel (web only)
 

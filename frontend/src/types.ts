@@ -514,7 +514,7 @@ export type StaffUser = {
   email: string;
   last_sign_in_at: string | null;
   staff: boolean;
-  memberships: { org_id: string; org_name: string; role: Member["role"] }[];
+  memberships: { org_id: string; org_name: string; role: Member["role"]; since: string }[];
 };
 export type StaffAdmin = { user_id: string; email: string; you: boolean };
 
