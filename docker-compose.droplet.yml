@@ -21,10 +21,11 @@ services:
     depends_on:
       - web
     restart: unless-stopped
-    mem_limit: ${CADDY_MEM_LIMIT:-128m}   # measured under 15 MiB
+    mem_limit: ${CADDY_MEM_LIMIT:-128m}   # measured under 15 MiB on 18 October (docs/DEPLOYMENT.md)
     memswap_limit: ${CADDY_MEM_LIMIT:-128m}
 
-  # Plain compose only reports "unhealthy"; this restarts a hung worker (see docs/DEPLOYMENT.md).
+  # Plain compose only reports "unhealthy"; this restarts any container that turns unhealthy, web included (the worker also
+  # exits by itself when stuck). It reads the Docker socket: see "Staying up" in docs/DEPLOYMENT.md.
   autoheal:
     image: willfarrell/autoheal:1.2.0
     environment:

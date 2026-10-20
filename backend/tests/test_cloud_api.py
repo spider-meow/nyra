@@ -110,6 +110,21 @@ def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, monkeypat
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.8)
     answer = client.get("/api/workerz")
     assert answer.status_code == 503 and answer.json()["status"] == "disk almost full" and answer.json()["disk_percent"] == 80
+    assert answer.json()["problems"] == ["disk almost full"]
+
+
+def test_workerz_reports_both_problems_and_survives_an_unreadable_disk(client, cloud_org, cloud_brand, cloud_database_url,
+                                                                       monkeypatch):
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
+        conn.execute("UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.9)
+    answer = client.get("/api/workerz")
+    assert answer.status_code == 503 and answer.json()["problems"] == ["no worker", "disk almost full"]
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: (_ for _ in ()).throw(OSError("no disk")))
+    answer = client.get("/api/workerz")
+    assert answer.status_code == 503 and answer.json()["problems"] == ["no worker"] and answer.json()["disk_percent"] is None
 
 
 def test_there_is_no_public_signup(client):

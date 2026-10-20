@@ -19,7 +19,7 @@ services:
       - "8000:8000"
     env_file: .env
     restart: unless-stopped
-    # Measured ~150 MiB; room for a burst of requests, and the worker can never starve it of memory.
+    # Measured ~150 MiB (docker stats, 18 October); room for a burst of requests, and the worker can never starve it of memory.
     mem_limit: ${WEB_MEM_LIMIT:-512m}
     memswap_limit: ${WEB_MEM_LIMIT:-512m}   # = mem_limit: no swap, the limit is a real ceiling
     cpus: ${WEB_CPUS:-1}
@@ -31,8 +31,8 @@ services:
     env_file: .env
     restart: unless-stopped
     # Chromium needs room for shared memory; CLIP needs ~1 GB of RAM. Measured peak so far 1.88 GiB (final peak not
-    # recorded). 2560m = that plus margin; shm_size counts inside it. 4 GB - 2.5 GB worker - 0.5 GB web - 0.13 GB Caddy
-    # leaves ~0.7 GB for the system. 1.5 CPU leaves half a vCPU for web and Caddy while a crawl saturates the worker.
+    # recorded). 2560m = that plus margin; shm_size counts inside it. limits add up to ~3.2 GiB (worker 2560 +
+    # web 512 + Caddy 128 + autoheal 64 MiB) of the ~3.8 GiB a 4 GB Droplet offers, ~0.6 GiB for the system. 1.5 CPU leaves half a vCPU for web and Caddy while a crawl saturates the worker.
     shm_size: "1gb"
     mem_limit: ${WORKER_MEM_LIMIT:-2560m}
     memswap_limit: ${WORKER_MEM_LIMIT:-2560m}

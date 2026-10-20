@@ -152,6 +152,7 @@ def test_trim_cache_brings_the_cache_under_its_size_at_once_oldest_first(tmp_pat
         (tmp_path / name).write_bytes(b"x" * 600_000)
         os.utime(tmp_path / name, (1_000_000 - age, 1_000_000 - age))
     storage.trim_cache()
-    assert not (tmp_path / "oldest").exists() and (tmp_path / "newest").exists()
+    # 1.8 MB for a 1 MB limit: the oldest goes, and the trim stops at 80 % of the limit (800 kB), so one file is left
+    assert not (tmp_path / "oldest").exists() and not (tmp_path / "middle").exists() and (tmp_path / "newest").exists()
     monkeypatch.setenv("NYRA_IMAGE_CACHE", "off")
     storage.trim_cache()  # no cache: nothing to do

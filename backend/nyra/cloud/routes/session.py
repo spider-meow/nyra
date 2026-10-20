@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
@@ -13,6 +16,7 @@ from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
 from .common import Ctx, brand_json, get_ctx, staff_dep, user_dep
 
+log = logging.getLogger(__name__)
 router = APIRouter()
 
 # A queued job waiting this long with no job running anywhere: nobody is working (a worker polls every 2 s).
@@ -31,10 +35,17 @@ def workerz(ctx: Ctx = Depends(get_ctx)) -> JSONResponse:
     which means no worker is alive, or when the machine's disk is `DISK_ALERT` full."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         waited = cloud_jobs.stalled_seconds(conn)
-    disk = hostmetrics.disk_ratio()
-    status = "no worker" if waited > WORKER_STALL_SECONDS else "disk almost full" if disk >= hostmetrics.DISK_ALERT else "ok"
-    return JSONResponse({"status": status, "queued_wait_seconds": round(waited), "disk_percent": round(disk * 100)},
-                        status_code=200 if status == "ok" else 503)
+    try:
+        disk: Optional[float] = hostmetrics.disk_ratio()
+    except OSError:
+        log.exception("reading the disk failed")  # the probe must still answer about the worker
+        disk = None
+    problems = ["no worker"] if waited > WORKER_STALL_SECONDS else []
+    if disk is not None and disk >= hostmetrics.DISK_ALERT:
+        problems.append("disk almost full")
+    return JSONResponse({"status": problems[0] if problems else "ok", "problems": problems,
+                         "queued_wait_seconds": round(waited), "disk_percent": None if disk is None else round(disk * 100)},
+                        status_code=503 if problems else 200)
 
 
 @router.get("/api/auth/config")
