@@ -1,0 +1,9 @@
+# Règles par défaut de gitleaks + une exception nommée. Ne jamais allonger cette liste sans dire pourquoi.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Secret JWT factice (commence par « jwt- ») des tests de l'API, commit 4624ec42: aucune valeur réelle."
+condition = "AND"
+paths = ['''backend/tests/test_cloud_api\.py''']
+regexes = ['''^jwt[-_]''']

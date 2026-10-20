@@ -1,0 +1,20 @@
+# Weekly update PRs. Security updates are grouped into one PR per ecosystem; at most 5 PRs open at a time.
+# Whether a vulnerability blocks the CI is decided there (npm audit: high; pip-audit: any), not here.
+version: 2
+updates:
+  - package-ecosystem: pip
+    directory: /
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      security: {applies-to: security-updates, patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      security: {applies-to: security-updates, patterns: ["*"]}
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
