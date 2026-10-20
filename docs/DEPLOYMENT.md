@@ -45,7 +45,7 @@ Supabase), so it is rebuilt from git and `.env`. Weekly backups of the Droplet a
 
 **Measured on 18 October 2026** (`docker stats` on the 4 GB Droplet, during a crawl with CLIP embedding; two
 readings, the final peak was not recorded): `worker` 835 MiB then **1.88 GiB**, 150 % of a CPU and 151
-processes; `web` 150 MiB; `caddy` and `autoheal` under 15 MiB. About 2 GiB for the containers, before the system.
+processes; `web` 150 MiB; `caddy` and `autoheal` under 15 MiB. About 2 GiB in use by the containers, before the system (the limits below add up to more, 3.2 GiB: they are ceilings).
 A 2 GB Droplet does not fit; 4 GB leaves room for one job at a time.
 
 Monthly cost, Basic Droplet prices of October 2026 (check
@@ -64,11 +64,23 @@ the same work. The Droplet is the recommended path.
 
 ## Resources
 
-- **web**: 256–512 MB, a fraction of a CPU.
-- **worker**: 2 GB RAM was the estimate; measured at 1.9 GiB in use during a crawl with CLIP, so plan on 4 GB
-  for the machine (see the measure above), 2 vCPU. `shm_size: 1gb`
-  for Chromium. Crawl speed scales with `crawl.concurrency` (3 pages at a
-  time by default) until CPU saturates.
+Limits per container, set in `docker-compose.yml` (and `docker-compose.droplet.yml` for Caddy and autoheal).
+**They are starting values, not measured ones**: the worker's final peak was never recorded (AXE-530), so
+confirm them with the measure and the test below. Each can be overridden in `.env`.
+
+| Container | `mem_limit` (= `memswap_limit`, no swap) | `cpus` | Why |
+|---|---|---|---|
+| `worker` | `2560m` (`WORKER_MEM_LIMIT`) | `1.5` (`WORKER_CPUS`) | Measured 1.88 GiB during a crawl with CLIP (~1 GB torch + Chromium); `shm_size: 1gb` counts inside it. Leaves half a vCPU to web and Caddy. |
+| `web` | `512m` (`WEB_MEM_LIMIT`) | `1` (`WEB_CPUS`) | 150 MiB measured (the 18 October reading above). |
+| `caddy` | `128m` (`CADDY_MEM_LIMIT`) | none | Under 15 MiB, same reading. |
+| `autoheal` | `64m` | none | Under 15 MiB, same reading. |
+
+On the 4 GB Droplet (about 3.8 GiB usable): 2560 + 512 + 128 + 64 MiB = 3.2 GiB leaves about 0.6 GiB for the system. Without limits, the kernel's
+out-of-memory killer picks the biggest process of the whole machine, which can be `web` or Caddy. With them, only the
+worker is killed (exit 137), `restart: unless-stopped` starts it again, and its job is put back in the queue
+(see "Staying up"). The limits are per container: `--scale worker=2` needs the 8 GB Droplet and
+`WORKER_MEM_LIMIT` adjusted. If only Chromium (a child process) is killed, the job fails with the browser's message
+instead of the worker restarting.
 
 ## Supabase setup, once
 
@@ -127,15 +139,54 @@ traceback is in the worker's log.
   heartbeat and **put back in the queue**, a crawl resuming where it was, up to 2 times; after that it
   is marked failed, so a job that kills its worker every time cannot loop. A job whose stop was
   requested is not restarted.
-- **A hung worker**: the worker touches a file every few seconds and the `worker` image's
-  `HEALTHCHECK` reads its age. A platform that restarts unhealthy containers (Fly, Railway, Render,
-  Kubernetes) restarts it. Plain `docker compose` only reports `unhealthy`: restart it from
-  systemd or a small watcher. Whatever runs the worker, a job running over 6 hours (`JOB_MAX_SECONDS`
-  in `cloud/worker.py`) makes it exit, so the restart policy above takes over and the job is retried.
+- **A worker killed for memory** (container limit, exit 137, no chance to write a message): restarted by
+  `restart: unless-stopped`; its job has no heartbeat for 3 minutes, goes back to the queue, and after the
+  2 retries fails with « le worker s'est arrêté 3 fois de suite…, le plus souvent faute de mémoire ou à cause d'un redémarrage du serveur. Relancez-la
+  en réduisant le nombre de pages ou d'images… ».
+- **A hung worker** restarts itself, with no component reading the Docker socket: a watchdog thread of the
+  worker exits (code 70) when its alive file has not been touched for 5 minutes (`WATCHDOG_SECONDS`), and
+  `restart: unless-stopped` restarts it. This works with plain `docker compose` and on any platform. It covers a
+  main loop stuck between jobs (a database call that never returns). It cannot run if the whole interpreter
+  is frozen (a native call holding the GIL), and during a job the heartbeat thread keeps the file fresh: a job
+  stuck inside Chromium or torch is stopped by its maximum duration (below). The image's `HEALTHCHECK` still
+  reports `unhealthy` for platforms that act on it (Fly, Railway, Render, Kubernetes), and the Droplet's
+  `autoheal` service restarts any container turned `unhealthy`, `web` included. **Security**: autoheal mounts
+  `/var/run/docker.sock` read-write, which is root on the Droplet if that container is compromised; the image
+  is pinned by tag (`1.2.0`, not by digest: a re-published tag would be pulled) and it exposes no port. Drop it from `docker-compose.droplet.yml` if you accept that
+  `web` is not restarted when hung (the worker no longer needs it).
+- **Maximum duration per kind of job** (`JOB_LIMITS` in `cloud/worker.py`; **starting values** to adjust from the
+  durations in the Statistiques page): `crawl` 12 h (all the brand's sites, then the comparison), `index` 6 h, `match`
+  1 h, `locate` 1 h, `report` 30 min, `check` 30 min. Each can be set in `.env` with `NYRA_JOB_LIMIT_<KIND>_MIN`
+  (whole minutes, 1 to 1440; anything else is ignored with a warning in the log). Past it, the job is marked failed
+  (its crawl runs closed) with « … a dépassé sa durée maximale de N min. Le travail déjà enregistré est conservé :
+  relancez-la, ou réduisez … » and the worker exits to restart (a hung job cannot be stopped from a thread). It is
+  not retried, and only if that very run is still running (a job that ended at that moment is left alone). A
+  crawl started again resumes where it stopped. The database calls of the heartbeat and of this failure give up after
+  15 s, and the exit happens after 20 s whatever the database does.
+- **Disk**: the worker removes Chromium's leftovers (`playwright_chromiumdev_profile-*` and similar, in which nothing was
+  written for 10 minutes) from the temp directory at start and after every job, even a failed one, and trims its image cache
+  to `NYRA_IMAGE_CACHE_MB` (2048) at start (and every 200 writes). `GET /api/workerz` also answers 503 with
+  `"status": "disk almost full"` when the machine's disk is 80 % full (`disk_percent` and the list `problems` are in the answer, which is public like the rest of this probe: it shows only a disk percentage), so the
+  uptime monitor below alerts; the Serveur page of the back office shows the same figure. Docker's own images
+  and logs are not cleaned: run `docker system prune` from time to time. A job that hits a full disk or
+  memory error fails with a message that says so.
 - **No worker at all**: point an uptime monitor (UptimeRobot, Better Stack...) at `GET /api/workerz`.
-  It answers 503 when a queued job has waited over 5 minutes while no job runs anywhere. Keep
+  It answers 503 when a queued job has waited over 5 minutes while no job runs anywhere, or the disk is
+  80 % full. Keep
   `GET /api/healthz` for the web process. The interface already tells an administrator that a task
   waits for a worker after a minute.
+
+## Manual check still to do on the Droplet
+
+The limits above are untested values. Before relying on them:
+
+1. During a crawl with CLIP, note the worker's peak (`docker stats`, or the Serveur page of the back office,
+   every 15 s) and set `WORKER_MEM_LIMIT` to about 30 % above it, as long as the sum stays under 3.3 GB.
+2. Force an overrun (for example `WORKER_MEM_LIMIT=700m` in `.env`, `docker compose up -d`, start a crawl): the
+   worker must be killed (`docker inspect -f '{{.State.OOMKilled}}' <worker>`), restart on its own, and the job
+   go back to the queue after 3 minutes. **While this happens, `/robot` and the sign-in must stay online** and
+   `docker stats` must show `web` and Caddy untouched. After 3 attempts the job must fail with the memory message.
+3. Put `WORKER_MEM_LIMIT` back, and check `docker compose ps` shows `web`, `worker` and `caddy` healthy.
 
 ## Security checklist
 

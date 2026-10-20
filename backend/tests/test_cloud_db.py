@@ -275,7 +275,9 @@ def test_reap_stale_puts_a_job_back_in_the_queue_then_fails_it_after_its_retries
             cloud_jobs.claim(conn)
             conn.execute("UPDATE jobs SET heartbeat_at = now() - interval '10 minutes' WHERE id = %s", (job_id,))
         assert cloud_jobs.reap_stale(conn) == (0, 1)
-        assert cloud_jobs.get(conn, brand, job_id)["status"] == "error"
+        failed = cloud_jobs.get(conn, brand, job_id)
+        # A worker killed every time (out of memory leaves no trace) ends with a message that names the resources.
+        assert failed["status"] == "error" and "3 fois" in failed["message"] and "mémoire" in failed["message"]
 
 
 def test_reap_stale_does_not_restart_a_job_the_user_asked_to_stop(cloud_database_url):
@@ -283,7 +285,8 @@ def test_reap_stale_does_not_restart_a_job_the_user_asked_to_stop(cloud_database
         brand, job_id = _lose_the_worker(conn)
         cloud_jobs.request_cancel(conn, brand, job_id)
         assert cloud_jobs.reap_stale(conn) == (0, 1)
-        assert cloud_jobs.get(conn, brand, job_id)["status"] == "error"
+        stopped = cloud_jobs.get(conn, brand, job_id)
+        assert stopped["status"] == "error" and "mémoire" not in stopped["message"]
 
 
 def test_stalled_seconds_is_only_set_when_a_job_waits_and_nothing_runs(cloud_database_url):

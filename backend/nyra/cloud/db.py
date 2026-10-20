@@ -94,7 +94,9 @@ def pool(database_url: str) -> ConnectionPool:
                 # there (NYRA_DB_POOL_MAX=2) so they don't exhaust the pooler.
                 min_size=0,
                 max_size=int(os.environ.get("NYRA_DB_POOL_MAX", "10")),
-                kwargs={"row_factory": dict_row},
+                # A database that does not answer fails in seconds instead of hanging a thread (the worker's heartbeat) forever.
+                kwargs={"row_factory": dict_row, "connect_timeout": 10, "keepalives_idle": 30, "keepalives_interval": 10,
+                        "keepalives_count": 3},
                 configure=_configure,
                 open=True,
                 name="nyra",

@@ -104,9 +104,14 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
     return _row(row)
 
 
+# A heartbeat or a failure write that waits longer than this (a blocked database) is abandoned, not waited for.
+WRITE_TIMEOUT_MS = 15_000
+
+
 def heartbeat(conn: psycopg.Connection, job_id: str, *, message: Optional[str] = None,
               progress: Optional[dict] = None) -> bool:
     """Record liveness (and progress). Returns True when cancellation was requested."""
+    conn.execute(f"SET LOCAL statement_timeout = {WRITE_TIMEOUT_MS}")
     row = conn.execute(
         """UPDATE jobs SET heartbeat_at = now(),
                message = COALESCE(%s, message),
@@ -125,6 +130,22 @@ def finish(conn: psycopg.Connection, job_id: str, *, status: str, message: str,
            WHERE id = %s""",
         (status, message, json.dumps(result, default=str) if result is not None else None, error, job_id),
     )
+
+
+def fail_running(conn: psycopg.Connection, job: dict, *, message: str, error: str) -> bool:
+    """Mark `job` (as `claim` returned it) failed and close its crawl runs, only if that very run is still running:
+    one that has just ended, or was requeued and claimed again (another `started_at`), is left alone.
+    Returns whether it was marked."""
+    conn.execute(f"SET LOCAL statement_timeout = {WRITE_TIMEOUT_MS}")
+    row = conn.execute(
+        """UPDATE jobs SET status = 'error', message = %s, error = %s, finished_at = now(), heartbeat_at = now()
+           WHERE id = %s AND status = 'running' AND started_at = %s::timestamptz RETURNING id""",
+        (message, error, job["id"], job["started_at"]),
+    ).fetchone()
+    if row:
+        conn.execute("UPDATE crawl_runs SET status = 'error', finished_at = now() WHERE job_id = %s AND status = 'running'",
+                     (job["id"],))
+    return row is not None
 
 
 def request_cancel(conn: psycopg.Connection, brand_id: uuid.UUID, job_id: uuid.UUID) -> Optional[dict]:
@@ -160,7 +181,8 @@ def reap_stale(conn: psycopg.Connection, older_than_seconds: int = STALE_AFTER_S
     ).fetchall()
     failed = conn.execute(
         f"""UPDATE jobs SET status = 'error', finished_at = now(),
-               message = 'Interrompu : le worker s''est arrêté pendant la tâche.',
+               message = CASE WHEN cancel_requested THEN 'Interrompu : le worker s''est arrêté pendant la tâche.'
+                   ELSE 'Interrompu : le worker s''est arrêté {MAX_RETRIES + 1} fois de suite pendant la tâche, le plus souvent faute de mémoire ou à cause d''un redémarrage du serveur. Relancez-la en réduisant le nombre de pages ou d''images, ou prévenez l''équipe Nyra.' END,
                error = 'heartbeat lost'
            WHERE {stale}
            RETURNING id""",

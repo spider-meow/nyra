@@ -1,4 +1,5 @@
-# Droplet (DigitalOcean or any VPS): HTTPS in front of web, and a restart for a container that turns unhealthy.
+# Droplet (DigitalOcean or any VPS): HTTPS in front of web, and a restart for a container that turns unhealthy
+# (the worker also exits by itself when stuck: docs/DEPLOYMENT.md, "Staying up"; autoheal covers web and the rest).
 #
 #   docker compose -f docker-compose.yml -f docker-compose.droplet.yml up -d --build
 #
@@ -20,8 +21,11 @@ services:
     depends_on:
       - web
     restart: unless-stopped
+    mem_limit: ${CADDY_MEM_LIMIT:-128m}   # measured under 15 MiB on 18 October (docs/DEPLOYMENT.md)
+    memswap_limit: ${CADDY_MEM_LIMIT:-128m}
 
-  # Plain compose only reports "unhealthy"; this restarts a hung worker (see docs/DEPLOYMENT.md).
+  # Plain compose only reports "unhealthy"; this restarts any container that turns unhealthy, web included (the worker also
+  # exits by itself when stuck). It reads the Docker socket: see "Staying up" in docs/DEPLOYMENT.md.
   autoheal:
     image: willfarrell/autoheal:1.2.0
     environment:
@@ -29,6 +33,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+    mem_limit: 64m
+    memswap_limit: 64m
 
 volumes:
   caddy_data:
