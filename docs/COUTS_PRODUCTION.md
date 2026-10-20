@@ -134,11 +134,11 @@ par l'équipe** (`quota` dans `config.yaml`, bornes dans `QUOTA_BOUNDS` de `back
 
 | Limite | Départ | Ce qui se passe au plafond |
 |---|---|---|
-| Pages lues par mois (lectures et vérifications de pages, de toutes les marques) | 5 000 | Une lecture qui atteindrait le plafond lit ce qui reste, puis s'arrête avec un message ; un nouveau lancement est refusé (403) |
+| Pages lues par mois (lectures et vérifications de pages, de toutes les marques) | 5 000 | Une lecture qui atteindrait le plafond lit ce qui reste, puis s'arrête avec un message ; un nouveau lancement est refusé (403). Le stockage plein arrête aussi une lecture, avant chaque site |
 | Marques | 10 | Création refusée (réservée à l'équipe Nyra) |
 | Adresses par marque | 10 | Ajout refusé |
-| Visuels dans la bibliothèque (toutes marques) | 5 000 | Envoi refusé ; remplacer un visuel du même nom reste permis |
-| Stockage, Go (originaux de la bibliothèque + copies de travail et vignettes des images lues) | 20 | Envoi et lancement d'une lecture refusés |
+| Visuels dans la bibliothèque (toutes marques) | 5 000 | Envoi ou ajout depuis les images en ligne refusé ; remplacer un visuel du même nom reste permis |
+| Stockage, Go (originaux de la bibliothèque + copies de travail et vignettes des images lues) | 20 | Envoi, ajout depuis les images en ligne et lancement d'une lecture refusés |
 | Membres | 50 | Invitation refusée |
 | Invitations par jour | 20 | Refusée jusqu'au lendemain (429) |
 
@@ -159,9 +159,22 @@ jour et par organisation laissent cinq organisations sous les 100 e-mails par jo
   mesurées, seulement leur original.
 - **Avertissement à 80 %** : sur la page Réglages > Usage du client, dans le back office, et dans le message de fin
   d'une lecture.
-- **Ce qui n'est pas borné** : deux tâches de deux marques de la même organisation lancées en même temps peuvent
-  dépasser le plafond du mois d'une lecture ; une lecture déjà lancée ne s'arrête pas si le stockage atteint sa limite
-  en route (un passage tient en 1,3 Go au plus) ; il n'y a pas de limite de requêtes à l'API.
+- **Limites connues** :
+  - Pas de verrou. Les tâches de plusieurs marques d'une même organisation tournent en parallèle et chacune prend
+    `min(limite d'une lecture, pages restantes)` au début de chaque site : le mois peut être dépassé d'au plus
+    (tâches simultanées − 1) × `crawl.max_pages_limit` pages. De même, deux créations simultanées (marque, adresse,
+    visuel, invitation) peuvent passer ensemble la vérification avant l'écriture et dépasser la limite de peu.
+  - Le stockage est relu avant chaque site, pas pendant : un site lu peut le dépasser (1,3 Go au plus pour 2 000 pages).
+    Il est estimé : `byte_size` manque sur certaines anciennes lignes, et les copies de travail et vignettes des
+    références ne sont pas comptées.
+  - Le compteur est écrit par le rappel de progression, au plus toutes les 5 s : un plantage du worker perd ces
+    secondes, et un site lu en entier qui échoue juste après reste compté.
+  - Les membres `client` peuvent lire les compteurs de leur organisation directement par PostgREST (politique RLS en
+    lecture pour les membres) ; ils ne contiennent ni prix ni donnée d'un autre client. L'écriture est réservée au
+    backend.
+  - La liste du back office s'arrête à 200 organisations (un avertissement s'affiche au-delà).
+  - Il n'y a pas de limite de requêtes à l'API.
+  - Qui a changé une limite et quand : journal du web (`nyra.usage`, identifiant de la personne, valeurs avant et après).
 - **E-mails.** Le code Nyra n'envoie qu'une sorte d'e-mail : l'invitation, par Supabase Auth (Resend en SMTP). Elle est
   plafonnée par jour et par organisation (`usage.claim_email`). Les résumés et alertes d'AXE-523 n'existent pas
   encore : ils devront appeler `claim_email` avant chaque envoi et garder le message en attente quand elle répond

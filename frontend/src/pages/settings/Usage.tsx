@@ -6,11 +6,11 @@ import { api, errorMessage } from "../../lib/api";
 import { useOrg } from "../../lib/org";
 import type { OrgUsage, UsageItem } from "../../types";
 
+const RESET: Record<string, string> = { pages: "Le compteur repart à zéro au début de chaque mois.", emails: "Le compteur repart à zéro chaque jour." };
+const LEVEL: Record<UsageItem["level"], string> = { ok: "", warning: "80 % de la limite ou plus est utilisé.", reached: "Limite atteinte : contactez l'équipe Nyra pour la relever." };
+
 function hint(item: UsageItem): string | undefined {
-  if (item.level === "reached") return "Limite atteinte : contactez l'équipe Nyra pour la relever.";
-  if (item.level === "warning") return "Plus de 80 % de la limite est utilisé.";
-  if (item.key === "pages") return "Le compteur repart à zéro au début de chaque mois.";
-  return item.key === "emails" ? "Le compteur repart à zéro chaque jour." : undefined;
+  return [LEVEL[item.level], RESET[item.key]].filter(Boolean).join(" ") || undefined;
 }
 
 /** Réglages > Usage — what the organization has used this month against its limits (set by the Nyra team). */

@@ -65,15 +65,22 @@ def invite_member(org_id: uuid.UUID, body: InviteBody, member=Depends(admin_or_s
     s = ctx.settings
     enforce(ctx, org_id, "members")
 
+    claimed = False
+
     def claim() -> bool:
+        nonlocal claimed
         with cloud_db.connect(s.database_url) as conn:
-            return cloud_usage.claim_email(conn, org_id, cloud_usage.quota_for(conn, s.base_config().quota, org_id).emails_per_day)
+            claimed = cloud_usage.claim_email(conn, org_id, cloud_usage.quota_for(conn, s.base_config().quota, org_id).emails_per_day)
+        return claimed
 
     try:
         user_id, invited = find_or_invite_user(s.database_url, s.supabase_url, s.service_role_key, s.public_url, email, claim)
     except EmailLimit as exc:
         raise HTTPException(status_code=429, detail="Limite d'invitations atteinte pour aujourd'hui. Réessayez demain.") from exc
     except Exception as exc:  # noqa: BLE001 - the provider's refusal (bad address, rate limit) is shown to the admin
+        if claimed:  # nothing was sent: give the place back
+            with cloud_db.connect(s.database_url) as conn:
+                cloud_usage.release_email(conn, org_id)
         raise HTTPException(status_code=502, detail=f"L'invitation n'a pas pu être envoyée : {str(exc)[:200]}") from exc
     with cloud_db.connect(s.database_url) as conn:
         existing = cloud_db.get_membership(conn, user_id=uuid.UUID(user_id), org_id=org_id)

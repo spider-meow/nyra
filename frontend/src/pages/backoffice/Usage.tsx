@@ -60,6 +60,10 @@ function LimitsForm(props: { org: Org; defaults: StaffUsage["defaults"]; onDone:
   );
 }
 
+function alignOf(columns: number): ("left" | "right")[] {
+  return ["left", ...Array<"left">(columns).fill("left"), "right"];
+}
+
 function usageRow(org: Org, edit: (id: string) => void) {
   return [
     <span>{org.name}{Object.keys(org.overrides).length ? <span className="block text-xs font-normal text-muted">limites propres</span> : null}</span>,
@@ -86,10 +90,11 @@ export function Usage() {
       {!data && usage.error ? <EmptyState title="Impossible de lire l'usage" body={errorMessage(usage.error)} /> : null}
       {data ? (
         <div className="grid gap-4">
+          {data.truncated ? <p className="text-sm text-expired">Seules les {data.organizations.length} premières organisations (par nom) sont affichées.</p> : null}
           <Section title="Ce mois-ci" description="Pages lues et invitations du jour ; les autres lignes sont l'état actuel. Orange à partir de 80 % de la limite, rouge quand elle est atteinte.">
             <Table
               head={["Organisation", ...(data.organizations[0]?.items.map((item) => item.label) ?? []), ""]}
-              align={["left", ...(data.organizations[0]?.items.map(() => "left" as const) ?? []), "right"]}
+              align={alignOf(data.organizations[0]?.items.length ?? 0)}
               rows={data.organizations.map((candidate) => usageRow(candidate, setEditing))}
               empty="Aucune organisation."
             />

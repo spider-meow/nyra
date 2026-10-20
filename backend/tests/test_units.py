@@ -370,3 +370,10 @@ def test_quotas_are_typed_bounded_kept_by_overrides_and_never_set_by_an_organiza
     yaml_file.write_text("quota:\n  members: 7\n")
     assert load_config(yaml_file).quota.members == 7
     assert load_config().quota == base.quota  # config.yaml and the dataclass agree on the starting values
+
+
+def test_quotas_refuse_fractions_of_whole_numbers_and_numbers_too_large_to_read():
+    assert validate_quota({"storage_gb": 0.5}) == {"storage_gb": 0.5}
+    for bad in ({"brands": 3.9}, {"brands": float("inf")}, {"brands": 10**400}, {"storage_gb": float("nan")}, {"storage_gb": float("inf")}):
+        with pytest.raises(ValueError):
+            validate_quota(bad)

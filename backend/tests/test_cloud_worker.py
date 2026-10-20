@@ -729,7 +729,7 @@ def _read_pages_of_a_fake_site(monkeypatch, available: int = 40):
     """A site with `available` pages: a read opens as many as it is allowed, as the browser would."""
     def fake_crawl_site(url, store, config, *, max_pages, progress=None, **_kwargs):
         pages = min(max_pages, available)
-        stats = worker_module.CrawlStats(pages_visited=pages, images_new=pages // 2, bytes_downloaded=pages * 1000)
+        stats = worker_module.CrawlStats(pages_visited=pages, pages_queued=available - pages, images_new=pages // 2, bytes_downloaded=pages * 1000)
         if progress:
             progress(stats)
         return stats
@@ -771,7 +771,7 @@ def test_a_read_stops_at_the_months_page_limit_and_the_counter_is_the_pages_real
 
     second = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # 20 pages are left: read them, then stop
     assert second["result"]["pages_visited"] == 20 and second["result"]["quota_reached"] is True
-    assert "Limite d'usage du mois atteinte" in second["message"]
+    assert "Limite d'usage atteinte" in second["message"]
     assert _pages_counted(cloud_database_url, cloud_org) == 100
 
     third = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # nothing is left: nothing is read
@@ -800,5 +800,19 @@ def test_a_page_check_reads_only_the_pages_that_fit_in_the_limit_and_counts_them
     monkeypatch.setattr(worker_module, "crawl_pages", fake_crawl_pages)
     assert worker.run_once()
     finished = _job(cloud_database_url, cloud_brand, job["id"])
-    assert asked == [urls[:2]] and "Limite d'usage du mois atteinte" in finished["message"]
+    assert asked == [urls[:2]] and "Limite d'usage atteinte" in finished["message"]
     assert _pages_counted(cloud_database_url, cloud_org) == 3
+
+
+def test_a_site_that_ends_exactly_at_the_limit_is_not_reported_as_cut_and_a_full_storage_stops_the_read(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    _read_pages_of_a_fake_site(monkeypatch)
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t1.test/")
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 40})
+    exact = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # 40 pages exist, 40 are allowed
+    assert exact["result"]["pages_visited"] == 40 and exact["result"]["quota_reached"] is False
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 1000, "storage_gb": 0})
+    full = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # storage full: no page is read
+    assert full["result"]["pages_visited"] == 0 and full["result"]["quota_reached"] is True

@@ -523,6 +523,8 @@ export type OrgUsage = { month: string; items: UsageItem[]; counters: { images_n
 export type StaffUsage = {
   month: string;
   defaults: Record<string, number>;
+  /** More organizations exist than the list holds. */
+  truncated: boolean;
   organizations: { id: string; name: string; slug: string; overrides: Record<string, number>; items: UsageItem[]; counters: OrgUsage["counters"] }[];
 };
 export type StaffAdmin = { user_id: string; email: string; you: boolean };

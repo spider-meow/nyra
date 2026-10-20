@@ -506,12 +506,15 @@ class Worker:
             if ctx.cancelled:
                 break
             left = self._pages_left(org_id, config)
-            if left <= 0:  # ponytail: two jobs of two brands of one organization may each pass this and overshoot by one read
+            # ponytail: jobs of several brands of one organization run side by side and each takes `min(limit, left)`
+            # without a lock, so the month can be passed by (concurrent jobs - 1) x crawl.max_pages_limit pages.
+            if left <= 0:
                 capped = True
                 break
             prefix = f"{site['label'] or site['url']} ({index + 1}/{len(sites)}) · " if len(sites) > 1 else ""
             runs.append(self._crawl_site(ctx, org_id, site, config, min(limit, left), params, prefix))
-            capped = capped or (left < limit and runs[-1]["pages_visited"] >= left)
+            # stopped by the quota, not by the end of the site: it used what was left and pages were still waiting
+            capped = capped or (left < limit and runs[-1]["pages_visited"] >= left and runs[-1]["pages_queued"] > 0)
 
         result = {
             "runs": [run["run_id"] for run in runs], "quota_reached": capped,
@@ -531,8 +534,10 @@ class Worker:
         return message, result
 
     def _pages_left(self, org_id: uuid.UUID, config: Config) -> int:
-        """Pages this organization may still read this month."""
+        """Pages this organization may still read this month; 0 when its storage is full (asked again before each site)."""
         with cloud_db.connect(self.database_url) as conn:
+            if cloud_usage.check(conn, config.quota, org_id, "storage"):
+                return 0
             used, limit = cloud_usage.pages_used(conn, config.quota, org_id)
         return limit - used
 
@@ -594,7 +599,7 @@ class Worker:
             cloud_db.update_crawl_run_progress(conn, run_id, stats)
             cloud_db.finish_crawl_run(conn, run_id, status="cancelled" if ctx.cancelled else "done", errors=stats.errors)
         return {
-            "run_id": str(run_id), "pages_visited": stats.pages_visited, "images_found": stats.images_found,
+            "run_id": str(run_id), "pages_visited": stats.pages_visited, "pages_queued": stats.pages_queued, "images_found": stats.images_found,
             "images_stored": stats.images_stored, "images_new": stats.images_new,
             "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8],
         }
@@ -618,6 +623,7 @@ class Worker:
         for key, urls in groups.items():
             if ctx.cancelled or key not in sites:
                 continue
+            left = self._pages_left(org_id, config)  # again: the pages and the storage used by the groups before
             capped = capped or len(urls) > left
             urls = urls[:left]  # the month's page limit: what does not fit is not read
             if not urls:
@@ -644,7 +650,6 @@ class Worker:
             for name in ("pages_visited", "pages_failed", "pages_redirected", "blocked_by_robots"):
                 setattr(stats, name, getattr(stats, name) + getattr(read, name))
             stats.errors += read.errors
-            left -= read.pages_visited
             cloud_usage.Meter(self.database_url, org_id).flush(read)
         message = _check_message(ctx.cancelled, total, stats)
         return (f"{message} {cloud_usage.CAPPED}" if capped and not ctx.cancelled else message), {

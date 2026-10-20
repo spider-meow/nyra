@@ -13,6 +13,7 @@ Nothing here speaks of prices: it is "usage" and "limit".
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import asdict, replace
 from datetime import date, datetime, timezone
@@ -26,13 +27,15 @@ from . import db as cloud_db
 
 Row = dict[str, Any]
 
+log = logging.getLogger("nyra.usage")
+
 GB = 1_000_000_000
 WARNING_RATIO = 0.8
 # Organizations listed in the back office.
 ORGS_LIMIT = 200
 
-CAPPED = ("Limite d'usage du mois atteinte : la lecture s'est arrêtée avant la fin. Elle pourra reprendre le mois "
-          "prochain, ou dès que l'équipe Nyra relève la limite.")
+CAPPED = ("Limite d'usage atteinte (pages du mois ou stockage) : la lecture s'est arrêtée avant la fin. Elle pourra "
+          "reprendre le mois prochain, ou dès que l'équipe Nyra relève la limite.")
 
 # key, label shown, column of `_OVERVIEW`, field of QuotaConfig
 ITEMS = (
@@ -135,13 +138,32 @@ class Meter:
         self._sent = now
 
 
-def set_overrides(conn: psycopg.Connection, org_id: uuid.UUID, raw: dict[str, Any]) -> Optional[dict[str, Any]]:
+def release_email(conn: psycopg.Connection, org_id: uuid.UUID) -> None:
+    """Give back an e-mail of the day taken by `claim_email` when the provider then failed to send it."""
+    conn.execute("UPDATE usage_counters SET amount = amount - 1 WHERE org_id = %s AND period = %s AND kind = 'emails' AND amount > 0",
+                 (org_id, today()))
+
+
+def set_overrides(conn: psycopg.Connection, org_id: uuid.UUID, raw: dict[str, Any], by: Optional[uuid.UUID] = None) -> Optional[dict[str, Any]]:
     """Replace the limits the Nyra team set for one organization (empty = the defaults). Returns what was kept,
-    None when the organization doesn't exist. Raises ValueError (French message) on a bad value."""
+    None when the organization doesn't exist. Raises ValueError (French message) on a bad value.
+    Who changed what is logged (`by` = the platform admin)."""
     clean = validate_quota(raw)
-    row = conn.execute("UPDATE organizations SET quota_overrides = %s WHERE id = %s RETURNING id",
-                       (json.dumps(clean), org_id)).fetchone()
+    row = conn.execute("""UPDATE organizations o SET quota_overrides = %s FROM (SELECT id, quota_overrides AS old FROM organizations
+                          WHERE id = %s) p WHERE o.id = p.id RETURNING p.old""", (json.dumps(clean), org_id)).fetchone()
+    if row:
+        log.info("limits of organization %s changed by %s: %s -> %s", org_id, by, row["old"], clean)
     return clean if row else None
+
+
+def _overrides(raw: Any, org_id: Any) -> dict[str, Any]:
+    """The limits stored for an organization; the defaults (and an error in the log) if what is stored is not valid,
+    so one bad row cannot stop the back office or the organization's jobs."""
+    try:
+        return validate_quota(raw)
+    except ValueError:
+        log.error("limits stored for organization %s are not valid, defaults used: %r", org_id, raw, exc_info=True)
+        return {}
 
 
 # --- reading -------------------------------------------------------------------------
@@ -156,16 +178,22 @@ def _items(row: Row, quota: QuotaConfig) -> list[Row]:
     return out
 
 
-def overview(conn: psycopg.Connection, base: QuotaConfig, org_id: Optional[uuid.UUID] = None) -> list[Row]:
-    """Usage against limits, for one organization or (back office) for all, at most ORGS_LIMIT, by name."""
+def overview(conn: psycopg.Connection, base: QuotaConfig, org_id: Optional[uuid.UUID] = None,
+             limit: int = ORGS_LIMIT) -> list[Row]:
+    """Usage against limits, for one organization or (back office) for all, at most `limit`, by name."""
     only = "AND org_id = %(org)s" if org_id else ""
     sql = _OVERVIEW.format(only=only, only_org="AND o.id = %(org)s" if org_id else "")
-    rows = conn.execute(sql, {"month": month_start(), "today": today(), "org": org_id, "limit": ORGS_LIMIT}).fetchall()
-    return [{
-        "id": str(row["id"]), "name": row["name"], "slug": row["slug"], "overrides": row["quota_overrides"],
-        "items": _items(row, replace(base, **validate_quota(row["quota_overrides"]))),
+    rows = conn.execute(sql, {"month": month_start(), "today": today(), "org": org_id, "limit": limit}).fetchall()
+    return [_entry(row, base) for row in rows]
+
+
+def _entry(row: Row, base: QuotaConfig) -> Row:
+    kept = _overrides(row["quota_overrides"], row["id"])
+    return {
+        "id": str(row["id"]), "name": row["name"], "slug": row["slug"], "overrides": kept,
+        "items": _items(row, replace(base, **kept)),
         "counters": {"images_new": int(row["images_new"]), "bytes_downloaded": int(row["bytes_downloaded"])},
-    } for row in rows]
+    }
 
 
 def defaults(base: QuotaConfig) -> dict[str, Any]:
@@ -174,7 +202,7 @@ def defaults(base: QuotaConfig) -> dict[str, Any]:
 
 def quota_for(conn: psycopg.Connection, base: QuotaConfig, org_id: uuid.UUID) -> QuotaConfig:
     row = conn.execute("SELECT quota_overrides FROM organizations WHERE id = %s", (org_id,)).fetchone()
-    return replace(base, **validate_quota(row["quota_overrides"])) if row else base
+    return replace(base, **_overrides(row["quota_overrides"], org_id)) if row else base
 
 
 def pages_used(conn: psycopg.Connection, base: QuotaConfig, org_id: uuid.UUID) -> tuple[int, int]:
@@ -195,6 +223,8 @@ def check(conn: psycopg.Connection, base: QuotaConfig, org_id: uuid.UUID, key: s
           brand_id: Optional[uuid.UUID] = None) -> Optional[str]:
     """The sentence that refuses adding `adding` to `key` (an ITEMS key) when it would pass the limit; None if there is room.
     `adding` is in bytes for the storage. For the addresses, pass the brand: the limit is per brand."""
+    if adding <= 0:  # replacing a visual of the same name adds nothing, even above a limit lowered under the usage
+        return None
     entries = overview(conn, base, org_id)
     if not entries:
         return None

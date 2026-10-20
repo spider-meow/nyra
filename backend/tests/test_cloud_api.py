@@ -1745,3 +1745,64 @@ def test_invitations_stop_at_the_days_limit_but_an_existing_account_sends_no_mai
     assert late.status_code == 429 and "Réessayez demain" in late.json()["detail"]
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT 1 FROM auth.users WHERE email = %s", (second,)).fetchone() is None  # nothing was sent
+
+
+def test_adopting_site_images_is_refused_at_the_library_or_storage_limit(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, _, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand)
+        image = conn.execute("INSERT INTO site_images (org_id, site_id, url, storage_path, content_hash) VALUES (%s, %s, 'https://target.test/a.jpg', 'x', 'h') RETURNING id",
+                             (org_id, site)).fetchone()["id"]
+    body = {"site_image_ids": [str(image)]}
+    for limit in ({"references": 0}, {"storage_gb": 0}):
+        _limits(client, admin_id, org_id, **limit)
+        refused = client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json=body)
+        assert refused.status_code == 403 and refused.json()["detail"].startswith("Limite atteinte")
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM reference_images WHERE org_id = %s", (org_id,)).fetchone()["n"] == 0
+
+
+def test_staff_routes_for_quotas_refuse_an_organization_admin_who_is_not_staff(client, org_with_users, cloud_database_url):
+    org_id, *_ = org_with_users
+    plain = uuid.uuid4()
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (plain, f"{plain}@x.com"))
+        cloud_db.add_membership(conn, user_id=plain, org_id=org_id, role="admin")
+    assert _limits(client, plain, org_id, brands=99).status_code == 403
+    assert client.get("/api/staff/usage", headers=_headers(plain)).status_code == 403
+    assert client.get(f"/api/orgs/{org_id}/usage", headers=_headers(plain)).status_code == 200  # its own usage is its to see
+
+
+def test_limits_lowered_under_the_usage_still_allow_replacing_and_an_invalid_row_falls_back_to_the_defaults(
+        client, org_with_users, cloud_database_url, caplog):
+    import logging
+
+    org_id, base, admin_id, _, _ = org_with_users
+    assert _upload(client, base, admin_id, "a.jpg").json()["saved"] == ["a.jpg"]
+    with caplog.at_level(logging.INFO, logger="nyra.usage"):
+        _limits(client, admin_id, org_id, references=0)
+    assert any(f"changed by {admin_id}" in record.getMessage() for record in caplog.records)  # who changed the limits
+    assert _upload(client, base, admin_id, "a.jpg").json()["replaced"] == ["a.jpg"]  # nothing added: allowed
+    assert _upload(client, base, admin_id, "b.jpg").status_code == 403
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE organizations SET quota_overrides = '{\"brands\": \"many\"}' WHERE id = %s", (org_id,))
+    listed = client.get("/api/staff/usage", headers=_headers(admin_id))
+    assert listed.status_code == 200  # one bad row does not stop the back office
+    mine = next(o for o in listed.json()["organizations"] if o["id"] == str(org_id))
+    assert mine["overrides"] == {} and listed.json()["truncated"] is False
+
+
+def test_an_invitation_the_provider_refused_gives_its_place_back(client, org_with_users, cloud_database_url, monkeypatch):
+    from types import SimpleNamespace
+
+    org_id, _, admin_id, _, _ = org_with_users
+
+    def refuse(email, options):
+        raise RuntimeError("provider down")
+
+    fake = SimpleNamespace(auth=SimpleNamespace(admin=SimpleNamespace(invite_user_by_email=refuse)))
+    monkeypatch.setattr("nyra.cloud.storage.get_client", lambda *args: fake)
+    _limits(client, admin_id, org_id, emails_per_day=1)
+    for _ in range(2):  # the same place is available again: a 502 each time, never a 429
+        failed = client.post(f"/api/orgs/{org_id}/members", headers=_headers(admin_id), json={"email": f"{uuid.uuid4().hex}@x.com"})
+        assert failed.status_code == 502

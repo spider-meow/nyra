@@ -89,7 +89,9 @@ class QuotaConfig:
     brands: int = 10
     sites_per_brand: int = 10
     references: int = 5000        # visuals in the libraries of all its brands
-    storage_gb: float = 20.0      # library originals + working copies and thumbnails of the images read (1 Go = 10^9 bytes)
+    # Estimate (1 Go = 10^9 bytes): the library's originals (`byte_size`, missing on some old rows) + working copies and
+    # thumbnails of the images read. The working copies and thumbnails of the references are not counted.
+    storage_gb: float = 20.0
     members: int = 50
     emails_per_day: int = 20      # invitation e-mails a day (the free mail plan allows 100 a day for all organizations)
 
@@ -138,11 +140,14 @@ def validate_quota(raw: dict[str, Any] | None) -> dict[str, Any]:
         if value is None or value == "":
             continue
         low, high = QUOTA_BOUNDS[key]
+        kind = type(getattr(QuotaConfig(), key))
         try:
-            number = type(getattr(QuotaConfig(), key))(value)
-        except (TypeError, ValueError) as exc:
+            number = kind(value)
+        except (TypeError, ValueError, ArithmeticError) as exc:  # ArithmeticError: infinity, 10**400
             raise ValueError(f"Valeur invalide pour la limite {key}.") from exc
-        if isinstance(value, bool) or not low <= number <= high:
+        if isinstance(value, bool) or (kind is int and isinstance(value, float) and not value.is_integer()):
+            raise ValueError(f"La limite {key} doit être un nombre entier.")
+        if not low <= number <= high:
             raise ValueError(f"La limite {key} va de {low} à {high}.")
         out[key] = number
     return out

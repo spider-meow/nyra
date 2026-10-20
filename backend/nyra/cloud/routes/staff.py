@@ -149,8 +149,9 @@ def usage_overview(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> di
     """Every organization's usage of the month against its limits (the defaults of config.yaml unless overridden)."""
     base = ctx.settings.base_config().quota
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        organizations = cloud_usage.overview(conn, base)
-    return {"month": cloud_usage.month_start().isoformat(), "defaults": cloud_usage.defaults(base), "organizations": organizations}
+        organizations = cloud_usage.overview(conn, base, limit=cloud_usage.ORGS_LIMIT + 1)
+    return {"month": cloud_usage.month_start().isoformat(), "defaults": cloud_usage.defaults(base),
+            "organizations": organizations[:cloud_usage.ORGS_LIMIT], "truncated": len(organizations) > cloud_usage.ORGS_LIMIT}
 
 
 @router.put("/api/staff/organizations/{org_id}/quotas")
@@ -158,7 +159,7 @@ def set_quotas(org_id: uuid.UUID, body: QuotasBody, claims=Depends(staff_dep), c
     """Replace the limits of one organization: a value sets it, an empty one goes back to the default. Platform admins only."""
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
-            kept = cloud_usage.set_overrides(conn, org_id, body.limits)
+            kept = cloud_usage.set_overrides(conn, org_id, body.limits, claims.user_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if kept is None:
