@@ -204,6 +204,30 @@ cosine thresholds 0.50–0.99. Pick values that keep recall high without
 flooding "À vérifier", then set them in `config.yaml` or per organization
 in Settings.
 
+## A suspect read never says « retiré »
+
+"Gone" is concluded from a read that saw a page and not the image, so a bad read (site blocking us, empty pages, a read
+cut short) could announce removals that did not happen. When a full read of a site ends, `cloud_db.record_read_health`
+stores its figures on `crawl_runs` (pages read with success, share in error, images seen, known images seen again) and
+`crawl.suspect_reason` (pure, `test_crawl.py`) decides if it is **suspect**: no page read with success; more than 20 % of
+pages in error (no answer, 403, 429, 5xx, consent wall); or fewer than 70 % of the known images the best of the site's last
+3 reads saw again were seen again (`MIN_KNOWN_IMAGES_SHARE`, `MAX_ERROR_SHARE`, `BASELINE_READS`: starting prudent, to be
+calibrated on real sites). The comparison is between known images seen again, so a site that renews many images is not
+doubted; reads with no page read do not count; so the second read of a site (the first has no known image) is judged on
+errors only. Using the best of 3 reads catches two bad reads in a row, and a real drop of the site stops being suspect after
+3 reads. While the last finished read of a site is suspect, its pages that would be `gone` stay `unknown`, a photo marked
+removed reads `suspect` (not `gone`), and the interface says: « La dernière lecture de ce site semble incomplète : rien n'a
+été marqué retiré ». What a suspect read did see still counts as seen. A page read by a run that did not end properly
+(running, cancelled, error) after the last finished read is never `gone` either (`db.interrupted_sql`); a page checked alone
+after a clean read is not affected. A visual with a match that no page is known for is never `replaced`. A page that stays
+hidden behind a consent notice after we tried to close it (little text, all about cookies: `crawl.is_consent_wall`, on a
+2xx page) is recorded with `http_status` -1, shown « Bandeau de consentement », and is never `gone`.
+The monthly summary (AXE-523, not built yet) will have to say when a read is suspect.
+
+Known limits of this guard: an anti-bot page served as 200 with no consent wording is only caught in aggregate (known
+images lost), not page by page; three broken reads in a row become the reference; two reads of one site at the same time
+are not told apart; a consent wall that shows real text is not seen.
+
 ## Known limits, and what to try next
 
 - **A shared product cut-out** (the same bottle render on another
