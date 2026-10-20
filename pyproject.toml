@@ -30,7 +30,7 @@ dependencies = [
 worker = [
     "playwright>=1.44",
     "open_clip_torch>=2.24",
-    "torch>=2.2",
+    "torch>=2.14.1",
     "opencv-python-headless>=4.8",
 ]
 # Error reporting (Sentry), enabled by SENTRY_DSN. See docs/OBSERVABILITY.md.
