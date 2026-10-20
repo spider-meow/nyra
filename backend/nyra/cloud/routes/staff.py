@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 from .. import db as cloud_db
 from .. import hostmetrics
 from .. import insights as cloud_insights
+from .. import usage as cloud_usage
 from .common import Ctx, get_ctx, iso, staff_dep
 from .members import find_or_invite_user
 
@@ -137,3 +138,29 @@ def server_usage(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict
         workers = hostmetrics.published(conn)
     web = {"instance": socket.gethostname(), "role": "web", "reading": _WEB.read(), "age_seconds": 0.0}
     return {"services": [web, *workers]}
+
+
+class QuotasBody(BaseModel):
+    limits: dict[str, float | None] = Field(default_factory=dict, max_length=20)
+
+
+@router.get("/api/staff/usage")
+def usage_overview(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Every organization's usage of the month against its limits (the defaults of config.yaml unless overridden)."""
+    base = ctx.settings.base_config().quota
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        organizations = cloud_usage.overview(conn, base)
+    return {"month": cloud_usage.month_start().isoformat(), "defaults": cloud_usage.defaults(base), "organizations": organizations}
+
+
+@router.put("/api/staff/organizations/{org_id}/quotas")
+def set_quotas(org_id: uuid.UUID, body: QuotasBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Replace the limits of one organization: a value sets it, an empty one goes back to the default. Platform admins only."""
+    try:
+        with cloud_db.connect(ctx.settings.database_url) as conn:
+            kept = cloud_usage.set_overrides(conn, org_id, body.limits)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if kept is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable.")
+    return {"overrides": kept}

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import uuid
-from typing import Literal
+from typing import Callable, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from .. import db as cloud_db
 from .. import storage as cloud_storage
-from .common import Ctx, admin_or_staff_dep, get_ctx, member_or_staff_dep
+from .. import usage as cloud_usage
+from .common import Ctx, admin_or_staff_dep, enforce, get_ctx, member_or_staff_dep
 
 router = APIRouter()
 
@@ -26,12 +27,20 @@ class RoleBody(BaseModel):
     role: Literal["admin", "client"]
 
 
-def find_or_invite_user(database_url: str, supabase_url: str, service_key: str, public_url: str, email: str) -> tuple[str, bool]:
-    """Supabase Auth user id for this e-mail, inviting them if they have no account. Returns (id, invited)."""
+class EmailLimit(Exception):
+    """The organization's invitations of the day are used up."""
+
+
+def find_or_invite_user(database_url: str, supabase_url: str, service_key: str, public_url: str, email: str,
+                        claim: Optional[Callable[[], bool]] = None) -> tuple[str, bool]:
+    """Supabase Auth user id for this e-mail, inviting them if they have no account. Returns (id, invited).
+    `claim` is asked before an e-mail is sent (never for an existing account); False raises EmailLimit."""
     with cloud_db.connect(database_url) as conn:
         row = conn.execute("SELECT id FROM auth.users WHERE lower(email) = lower(%s)", (email,)).fetchone()
     if row is not None:
         return str(row["id"]), False
+    if claim is not None and not claim():
+        raise EmailLimit()
     client = cloud_storage.get_client(supabase_url, service_key)
     options = {"redirect_to": public_url.rstrip("/") + "/login"} if public_url else {}
     return str(client.auth.admin.invite_user_by_email(email, options).user.id), True
@@ -54,8 +63,16 @@ def invite_member(org_id: uuid.UUID, body: InviteBody, member=Depends(admin_or_s
     if "@" not in email or " " in email:
         raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
     s = ctx.settings
+    enforce(ctx, org_id, "members")
+
+    def claim() -> bool:
+        with cloud_db.connect(s.database_url) as conn:
+            return cloud_usage.claim_email(conn, org_id, cloud_usage.quota_for(conn, s.base_config().quota, org_id).emails_per_day)
+
     try:
-        user_id, invited = find_or_invite_user(s.database_url, s.supabase_url, s.service_role_key, s.public_url, email)
+        user_id, invited = find_or_invite_user(s.database_url, s.supabase_url, s.service_role_key, s.public_url, email, claim)
+    except EmailLimit as exc:
+        raise HTTPException(status_code=429, detail="Limite d'invitations atteinte pour aujourd'hui. Réessayez demain.") from exc
     except Exception as exc:  # noqa: BLE001 - the provider's refusal (bad address, rate limit) is shown to the admin
         raise HTTPException(status_code=502, detail=f"L'invitation n'a pas pu être envoyée : {str(exc)[:200]}") from exc
     with cloud_db.connect(s.database_url) as conn:

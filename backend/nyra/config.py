@@ -82,10 +82,31 @@ class ReportConfig:
 
 
 @dataclass(frozen=True)
+class QuotaConfig:
+    """What one organization may use. Starting values, to be confirmed by the team; the Nyra team can change them for
+    one organization (back office), an organization cannot (these keys are not in ORG_OVERRIDABLE)."""
+    pages_per_month: int = 5000   # pages read by crawls and page checks, counted from the 1st of the month (UTC)
+    brands: int = 10
+    sites_per_brand: int = 10
+    references: int = 5000        # visuals in the libraries of all its brands
+    storage_gb: float = 20.0      # library originals + working copies and thumbnails of the images read (1 Go = 10^9 bytes)
+    members: int = 50
+    emails_per_day: int = 20      # invitation e-mails a day (the free mail plan allows 100 a day for all organizations)
+
+
+# (smallest, largest) value of each quota, for config.yaml and for the back office.
+QUOTA_BOUNDS = {
+    "pages_per_month": (0, 1_000_000), "brands": (0, 1000), "sites_per_brand": (0, 100), "references": (0, 100_000),
+    "storage_gb": (0, 10_000), "members": (0, 1000), "emails_per_day": (0, 1000),
+}
+
+
+@dataclass(frozen=True)
 class Config:
     crawl: CrawlConfig = field(default_factory=CrawlConfig)
     match: MatchConfig = field(default_factory=MatchConfig)
     report: ReportConfig = field(default_factory=ReportConfig)
+    quota: QuotaConfig = field(default_factory=QuotaConfig)
 
 
 # Keys an organization may override from the interface. The model name is
@@ -108,6 +129,25 @@ def _build(cls, raw: dict[str, Any]):
     return cls(**values)
 
 
+def validate_quota(raw: dict[str, Any] | None) -> dict[str, Any]:
+    """The quotas of `raw` that are set, as numbers inside QUOTA_BOUNDS. Raises ValueError with a French message."""
+    out: dict[str, Any] = {}
+    for key, value in (raw or {}).items():
+        if key not in QUOTA_BOUNDS:
+            raise ValueError(f"Limite inconnue : {key}.")
+        if value is None or value == "":
+            continue
+        low, high = QUOTA_BOUNDS[key]
+        try:
+            number = type(getattr(QuotaConfig(), key))(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Valeur invalide pour la limite {key}.") from exc
+        if isinstance(value, bool) or not low <= number <= high:
+            raise ValueError(f"La limite {key} va de {low} à {high}.")
+        out[key] = number
+    return out
+
+
 def load_config(path: Path | str | None = None) -> Config:
     config_path = Path(path) if path else DEFAULT_CONFIG_PATH
     raw: dict[str, Any] = {}
@@ -118,6 +158,7 @@ def load_config(path: Path | str | None = None) -> Config:
         crawl=_build(CrawlConfig, raw.get("crawl", {})),
         match=_build(MatchConfig, raw.get("match", {})),
         report=_build(ReportConfig, raw.get("report", {})),
+        quota=replace(QuotaConfig(), **validate_quota(raw.get("quota"))),
     )
 
 
@@ -183,4 +224,5 @@ def with_overrides(config: Config, overrides: dict[str, Any] | None) -> Config:
         crawl=replace(config.crawl, **crawl_values),
         match=replace(config.match, **clean["match"]),
         report=replace(config.report, **clean["report"]),
+        quota=config.quota,
     )

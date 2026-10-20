@@ -1636,3 +1636,112 @@ def test_pages_are_marked_replaced_for_the_visual_that_shows_them(client, org_wi
 
     other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
     assert client.post(f"/api/orgs/{org_id}/brands/{other['id']}/visuals/{ref}/replaced", headers=_headers(admin_id), json={"urls": shown, "replaced": True}).status_code == 404
+
+
+# --- quotas (AXE-532) -------------------------------------------------------------
+
+def _limits(client, staff_id, org_id, **limits):
+    return client.put(f"/api/staff/organizations/{org_id}/quotas", headers=_headers(staff_id), json={"limits": limits})
+
+
+def _other_org(conn, admin_id):
+    org = cloud_db.create_organization(conn, name="Other", slug=f"other-{uuid.uuid4().hex[:10]}")
+    cloud_db.add_membership(conn, user_id=admin_id, org_id=org, role="admin")
+    return org, f"/api/orgs/{org}"
+
+
+def test_only_the_nyra_team_changes_an_organizations_limits_and_bad_values_are_refused(client, org_with_users):
+    org_id, _, admin_id, client_id, _ = org_with_users
+    assert _limits(client, client_id, org_id, brands=3).status_code == 403
+    assert client.put(f"/api/orgs/{org_id}/settings", headers=_headers(admin_id), json={"overrides": {"quota": {"brands": 99}}}).json() == {"overrides": {}}
+    assert _limits(client, admin_id, org_id, brands=3, storage_gb=1.5).json() == {"overrides": {"brands": 3, "storage_gb": 1.5}}
+    assert _limits(client, admin_id, org_id, brands=-1).status_code == 400
+    assert _limits(client, admin_id, org_id, nonsense=1).status_code == 400
+    assert _limits(client, admin_id, uuid.uuid4(), brands=1).status_code == 404
+    mine = next(o for o in client.get("/api/staff/usage", headers=_headers(admin_id)).json()["organizations"] if o["id"] == str(org_id))
+    assert {i["key"]: i["limit"] for i in mine["items"]}["brands"] == 3 and mine["overrides"] == {"brands": 3, "storage_gb": 1.5}
+    assert _limits(client, admin_id, org_id).json() == {"overrides": {}}  # empty: back to the defaults
+
+
+def test_an_organization_at_its_limit_cannot_grow_and_the_others_are_not_affected(
+        client, org_with_users, cloud_database_url, monkeypatch):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    from nyra import netguard
+
+    monkeypatch.setattr(netguard, "check_url", lambda url: None)
+    with cloud_db.connect(cloud_database_url) as conn:
+        other, other_base = _other_org(conn, admin_id)
+        other_brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (other,)).fetchone()["id"]
+    _limits(client, admin_id, org_id, brands=1, sites_per_brand=1, references=1, members=2)
+
+    refused = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Deux"})
+    assert refused.status_code == 403 and refused.json()["detail"].startswith("Limite atteinte")
+    assert client.post(f"{other_base}/brands", headers=_headers(admin_id), json={"name": "Deux"}).status_code == 200
+
+    site = {"url": "https://a.test/"}
+    assert client.post(f"{base}/sites", headers=_headers(admin_id), json=site).status_code == 200
+    assert client.post(f"{base}/sites", headers=_headers(admin_id), json={"url": "https://b.test/"}).status_code == 403
+    assert client.post(f"{other_base}/brands/{other_brand}/sites", headers=_headers(admin_id), json={"url": "https://c.test/"}).status_code == 200
+
+    assert _upload(client, base, admin_id, "a.jpg").json()["saved"] == ["a.jpg"]
+    assert _upload(client, base, admin_id, "a.jpg").json()["replaced"] == ["a.jpg"]  # replacing adds nothing
+    assert _upload(client, base, admin_id, "b.jpg").status_code == 403
+    assert _upload(client, f"{other_base}/brands/{other_brand}", admin_id, "b.jpg").json()["saved"] == ["b.jpg"]
+
+    assert client.post(f"/api/orgs/{org_id}/members", headers=_headers(admin_id), json={"email": "x@y.co"}).status_code == 403
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM reference_images WHERE org_id = %s", (org_id,)).fetchone()["n"] == 1
+
+
+def test_a_read_is_refused_once_the_months_pages_are_used_and_the_page_of_usage_says_so(
+        client, org_with_users, cloud_brand, cloud_database_url):
+    from nyra.cloud import usage as cloud_usage
+
+    org_id, base, admin_id, client_id, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        _site(conn, org_id, cloud_brand)
+        other, other_base = _other_org(conn, admin_id)
+    _limits(client, admin_id, org_id, pages_per_month=100)
+    usage = f"/api/orgs/{org_id}/usage"
+    assert client.get(usage, headers=_headers(client_id)).status_code == 403  # for administrators
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_usage.record(conn, org_id, pages=80)
+    pages = next(i for i in client.get(usage, headers=_headers(admin_id)).json()["items"] if i["key"] == "pages")
+    assert pages == {"key": "pages", "label": "Pages lues ce mois-ci", "used": 80, "limit": 100, "level": "warning"}
+    assert client.post(f"{base}/jobs/crawl", headers=_headers(admin_id), json={}).status_code == 200  # 20 pages are left
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = %s", (org_id,))  # one crawl at a time
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_usage.record(conn, org_id, pages=20)
+    refused = client.post(f"{base}/jobs/crawl", headers=_headers(admin_id), json={})
+    assert refused.status_code == 403 and "pages lues ce mois-ci" in refused.json()["detail"]
+    assert client.post(f"{base}/jobs/check", headers=_headers(admin_id), json={"urls": ["https://target.test/"]}).status_code == 403
+    assert next(i for i in client.get(usage, headers=_headers(admin_id)).json()["items"] if i["key"] == "pages")["level"] == "reached"
+    other_pages = next(i for i in client.get(f"{other_base}/usage", headers=_headers(admin_id)).json()["items"] if i["key"] == "pages")
+    assert other_pages["used"] == 0 and other_pages["level"] == "ok"
+    texts = " ".join([i["label"] for i in client.get(usage, headers=_headers(admin_id)).json()["items"]] + [refused.json()["detail"], cloud_usage.CAPPED]).lower()
+    assert not any(word in texts for word in ("factur", "prix", "tarif", "€", "abonnement", "payer"))  # usage and limit, never money
+
+
+def test_invitations_stop_at_the_days_limit_but_an_existing_account_sends_no_mail(
+        client, org_with_users, cloud_database_url, monkeypatch):
+    from types import SimpleNamespace
+
+    org_id, _, admin_id, client_id, outsider_id = org_with_users
+    base = f"/api/orgs/{org_id}/members"
+
+    def invite(email, options):
+        with cloud_db.connect(cloud_database_url) as conn:
+            user = conn.execute("INSERT INTO auth.users (email) VALUES (%s) RETURNING id", (email,)).fetchone()["id"]
+        return SimpleNamespace(user=SimpleNamespace(id=user))
+
+    fake = SimpleNamespace(auth=SimpleNamespace(admin=SimpleNamespace(invite_user_by_email=invite)))
+    monkeypatch.setattr("nyra.cloud.storage.get_client", lambda *args: fake)
+    _limits(client, admin_id, org_id, emails_per_day=1)
+    outsider, first, second = f"{outsider_id}@x.com", f"{uuid.uuid4().hex}@x.com", f"{uuid.uuid4().hex}@x.com"
+    assert client.post(base, headers=_headers(admin_id), json={"email": outsider}).json()["invited"] is False  # has an account: no mail
+    assert client.post(base, headers=_headers(admin_id), json={"email": first}).json()["invited"] is True
+    late = client.post(base, headers=_headers(admin_id), json={"email": second})
+    assert late.status_code == 429 and "Réessayez demain" in late.json()["detail"]
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT 1 FROM auth.users WHERE email = %s", (second,)).fetchone() is None  # nothing was sent

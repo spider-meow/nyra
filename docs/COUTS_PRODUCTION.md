@@ -126,6 +126,48 @@ il tourne autour de **0,5 € par marque et par mois**. Le vrai coût
 marginal d'une marque est humain (onboarding, bibliothèque de
 références, revue), pas l'infrastructure.
 
+## Garde-fous : quotas par organisation (AXE-532)
+
+Le coût ci-dessus suppose un usage raisonnable. Depuis la migration `20261020000030`, le code l'impose : chaque
+organisation a des limites et un compteur d'usage. **Les valeurs de départ ci-dessous sont des propositions, à valider
+par l'équipe** (`quota` dans `config.yaml`, bornes dans `QUOTA_BOUNDS` de `backend/nyra/config.py`).
+
+| Limite | Départ | Ce qui se passe au plafond |
+|---|---|---|
+| Pages lues par mois (lectures et vérifications de pages, de toutes les marques) | 5 000 | Une lecture qui atteindrait le plafond lit ce qui reste, puis s'arrête avec un message ; un nouveau lancement est refusé (403) |
+| Marques | 10 | Création refusée (réservée à l'équipe Nyra) |
+| Adresses par marque | 10 | Ajout refusé |
+| Visuels dans la bibliothèque (toutes marques) | 5 000 | Envoi refusé ; remplacer un visuel du même nom reste permis |
+| Stockage, Go (originaux de la bibliothèque + copies de travail et vignettes des images lues) | 20 | Envoi et lancement d'une lecture refusés |
+| Membres | 50 | Invitation refusée |
+| Invitations par jour | 20 | Refusée jusqu'au lendemain (429) |
+
+Pourquoi ces ordres de grandeur : 300 pages par marque et par passage hebdomadaire font environ 1 300 pages par mois et
+par marque ; 5 000 pages couvrent trois à quatre marques lues chaque semaine, avec de la marge pour des relectures.
+20 Go est un cinquième des 100 Go inclus dans Supabase Pro, avec 5 marques à 1,2 – 5,5 Go chacune. 20 invitations par
+jour et par organisation laissent cinq organisations sous les 100 e-mails par jour du plan gratuit de Resend.
+
+- **Réglage par organisation.** Seule l'équipe Nyra relève ou baisse une limite, dans le back office (page Usage,
+  `PUT /api/staff/organizations/{id}/quotas`, colonne `organizations.quota_overrides`). Une organisation ne le peut pas :
+  ces clés ne sont pas dans `ORG_OVERRIDABLE`.
+- **Compteur.** Table `usage_counters` : le worker y ajoute les pages lues, les images nouvelles et les octets
+  téléchargés du mois (au plus 5 s de retard, une panne perd au plus ces secondes) ; l'API compte les invitations du
+  jour. Une table dédiée plutôt qu'une somme sur `crawl_runs`, parce qu'une vérification de pages n'enregistre pas de
+  lecture et que le plafond, la page du client et le back office lisent ainsi un seul chiffre. Les autres lignes
+  (marques, adresses, visuels, stockage, membres) sont comptées dans les tables au moment de la lecture : elles ne
+  peuvent pas dériver. Le stockage est une estimation : les copies de travail et vignettes des références ne sont pas
+  mesurées, seulement leur original.
+- **Avertissement à 80 %** : sur la page Réglages > Usage du client, dans le back office, et dans le message de fin
+  d'une lecture.
+- **Ce qui n'est pas borné** : deux tâches de deux marques de la même organisation lancées en même temps peuvent
+  dépasser le plafond du mois d'une lecture ; une lecture déjà lancée ne s'arrête pas si le stockage atteint sa limite
+  en route (un passage tient en 1,3 Go au plus) ; il n'y a pas de limite de requêtes à l'API.
+- **E-mails.** Le code Nyra n'envoie qu'une sorte d'e-mail : l'invitation, par Supabase Auth (Resend en SMTP). Elle est
+  plafonnée par jour et par organisation (`usage.claim_email`). Les résumés et alertes d'AXE-523 n'existent pas
+  encore : ils devront appeler `claim_email` avant chaque envoi et garder le message en attente quand elle répond
+  non, pour l'envoyer le lendemain. Les invitations faites par l'équipe Nyra elle-même (back office, CLI) ne sont pas
+  plafonnées.
+
 ## Développement restant (coût ponctuel, distinct de l'infra)
 
 | Sujet | État dans le code | Estimation |
@@ -133,7 +175,7 @@ références, revue), pas l'infrastructure.
 | Migration SQLite → Postgres/pgvector | Fait (`supabase/migrations/`) | 0 j |
 | Multi-tenant (RLS, `org_id`) | Fait | 0 j |
 | Run hebdomadaire automatique | **Absent.** Les crawls ne partent que depuis l'interface ou l'API. À ajouter : un réglage par organisation et un déclencheur (pg_cron, inclus dans Supabase, qui insère un job `crawl`). **Attention :** le job doit passer `fresh: true`. Sinon le mode reprise saute toutes les pages déjà visitées (`crawl.py`, `discover`) et le passage hebdomadaire ne revérifie rien. Les images déjà connues ne sont de toute façon pas retéléchargées. | 1,5 – 2 j |
-| E-mails d'alerte | **Absent** (seuls les e-mails d'invitation Supabase existent). À ajouter : destinataires par organisation, envoi après le passage de comparaison (nouveaux matchs, expirations proches), gabarit, intégration Resend. | 2 – 3 j |
+| E-mails d'alerte | **Absent** (seuls les e-mails d'invitation Supabase existent, plafonnés par jour : voir « Garde-fous »). À ajouter : destinataires par organisation, envoi après le passage de comparaison (nouveaux matchs, expirations proches), gabarit, intégration Resend. | 2 – 3 j |
 | SMTP personnalisé pour Supabase Auth | Configuration seulement | 0,5 j |
 | Alerting sur jobs en échec + purge des images disparues du site | Absent, optionnel pour le pilote | 1 – 2 j |
 | **Total** | | **≈ 4 – 7,5 j** |
