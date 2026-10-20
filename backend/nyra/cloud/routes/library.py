@@ -30,6 +30,7 @@ from .common import (
     active_jobs,
     brand_admin_dep,
     brand_member_dep,
+    enforce,
     get_ctx,
     iso,
     log,
@@ -163,6 +164,19 @@ def _read_upload(upload_file: UploadFile) -> tuple[Optional[dict], str, bytes]:
     return None, filename, data
 
 
+def _new_names(conn, brand_id: uuid.UUID, files: list[UploadFile]) -> int:
+    """How many of these files add a visual to the library (the others replace one of the same name)."""
+    names = set()
+    for upload_file in files:
+        try:
+            names.add(safe_filename(upload_file.filename or ""))
+        except HTTPException:
+            continue  # refused one by one in the loop below, with its reason
+    known = conn.execute("SELECT COUNT(*) AS n FROM reference_images WHERE brand_id = %s AND filename = ANY(%s)",
+                         (brand_id, list(names))).fetchone()["n"]
+    return len(names) - known
+
+
 def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: UploadFile, filename: str,
                   data: bytes, rights: Optional[tuple[Optional[str], bool]]) -> tuple[Optional[bool], str]:
     """Store one file as a reference: (a reference of that name was replaced, why the file was refused).
@@ -211,6 +225,9 @@ def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unl
     failed: list[dict] = []
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)
+        new = _new_names(conn, scope.brand_id, files)
+    enforce(ctx, scope.org_id, "references", adding=new)
+    enforce(ctx, scope.org_id, "storage", adding=sum(upload_file.size or 0 for upload_file in files))
     for upload_file in files:
         refusal, filename, data = _read_upload(upload_file)
         if refusal:

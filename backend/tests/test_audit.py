@@ -2,7 +2,7 @@
 changing something writes a row (a new route that forgets fails here), that a failing trace cancels the action,
 what it refuses to keep, who may read it, and the retention."""
 
-# ruff: noqa: F811 (the fixtures of test_cloud_api are imported, then used by name)
+# ruff: noqa: F811 (the `org_with_users` fixture of test_cloud_api is imported, then used by name)
 from __future__ import annotations
 
 import ast
@@ -19,7 +19,7 @@ pytest.importorskip("psycopg")
 
 from fastapi.routing import APIRoute  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
-from test_cloud_api import _headers, _upload_bytes, client, org_with_users  # noqa: E402, F401
+from test_cloud_api import _headers, _upload_bytes, org_with_users  # noqa: E402, F401
 
 import nyra.cloud.routes as routes_package  # noqa: E402
 from nyra.cloud import audit as cloud_audit  # noqa: E402

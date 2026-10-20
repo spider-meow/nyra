@@ -1,7 +1,6 @@
 """Erasing an organization and exporting its data (nyra/cloud/offboarding.py): against a real Postgres, the in-memory
 Storage and a fake Auth admin. Nothing of another organization may be touched or exported."""
 
-# ruff: noqa: F811 (the `client` fixture of test_cloud_api is imported, then used by name)
 from __future__ import annotations
 
 import csv
@@ -15,7 +14,7 @@ import pytest
 pytest.importorskip("psycopg")
 
 from test_audit import _seed_matched_images  # noqa: E402
-from test_cloud_api import _headers, _upload_bytes, client  # noqa: E402, F401  (fixture)
+from test_cloud_api import _headers, _upload_bytes  # noqa: E402
 
 from nyra.cloud import audit as cloud_audit  # noqa: E402
 from nyra.cloud import db as cloud_db  # noqa: E402

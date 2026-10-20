@@ -33,6 +33,7 @@ supabase/migrations/
   20261017000026_page_checks.sql                    tâche `check` (relire seulement quelques pages), `pages.read_started_at` (additive ; les pages déjà lues ont un début approximatif)
   20261017000027_page_replacements.sql              pages marquées « remplacée » à la main, par visuel (additive)
   20261020000029_read_health.sql                    santé d'une lecture (`crawl_runs.pages_ok`, `error_share`, `images_seen`…) et `suspect` : une lecture suspecte ne marque rien « retiré » (additive ; les lectures déjà faites ne sont pas suspectes)
+  20261020000030_usage_quotas.sql                   compteurs d'usage par organisation (`usage_counters`) et limites propres à une organisation (`organizations.quota_overrides`) (additive ; à appliquer avant le code)
   20261020000031_audit_log.sql                      journal d'audit (`audit_log` : qui a fait quoi, lu par les admins de l'organisation, écrit par le backend, gardé 12 mois) et `deleted_organizations` (trace d'une suppression complète) (additive ; le numéro 030 est pris par une autre migration)
 ```
 

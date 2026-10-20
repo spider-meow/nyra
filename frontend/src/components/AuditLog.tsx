@@ -51,6 +51,7 @@ const ACTION_LABEL: Record<string, string> = {
   "job.report": `Lancement : ${jobLabel.report}`,
   "job.locate": `Lancement : ${jobLabel.locate}`,
   "organization.create": "Organisation créée",
+  "quota.set": "Limites d'usage modifiées",
   "organization.export": "Export des données",
 };
 

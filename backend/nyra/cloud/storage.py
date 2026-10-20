@@ -144,7 +144,11 @@ def _cache_root() -> Optional[Path]:
 
 def _prune(root: Path) -> None:
     limit = int(os.environ.get("NYRA_IMAGE_CACHE_MB", "2048")) * 1_000_000
-    files = [(entry.stat().st_atime, entry.stat().st_size, entry) for entry in root.rglob("*") if entry.is_file()]
+    files = []
+    for entry in root.rglob("*"):
+        if entry.is_file():
+            info = entry.stat()
+            files.append((info.st_atime, info.st_size, entry))
     total = sum(size for _, size, _ in files)
     if total <= limit:
         return
@@ -153,6 +157,14 @@ def _prune(root: Path) -> None:
         total -= size
         if total <= limit * 0.8:
             break
+
+
+def trim_cache() -> None:
+    """Bring the cache back under its size now (the worker's start: `_prune` otherwise runs every 200 writes of one
+    process, which a worker restarted over and over never reaches)."""
+    root = _cache_root()
+    if root is not None and root.is_dir():
+        _prune(root)
 
 
 def cached_download(client: Client, bucket: str, path: str, *, version: str = "") -> bytes:

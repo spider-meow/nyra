@@ -31,6 +31,7 @@ from .common import (
     brand_admin_dep,
     brand_json,
     brand_member_dep,
+    enforce,
     get_ctx,
     iso,
     site_json,
@@ -85,10 +86,12 @@ def _checked_site_url(raw: str) -> str:
 def create_brand(org_id: uuid.UUID, body: BrandBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """Platform admins only: each brand is billed, so an organization cannot add its own."""
     name, slug = _brand_name_and_slug(body)
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        if cloud_db.get_organization(conn, org_id) is None:
+            raise HTTPException(status_code=404, detail="Organisation introuvable.")
+    enforce(ctx, org_id, "brands")
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
-            if cloud_db.get_organization(conn, org_id) is None:
-                raise HTTPException(status_code=404, detail="Organisation introuvable.")
             brand_id = cloud_db.create_brand(conn, org_id=org_id, name=name, slug=slug, created_by=claims.user_id)
             cloud_audit.record(conn, org_id, claims.user_id, "brand.create", "brand", brand_id, brand_id=brand_id)
             brand = cloud_db.get_brand(conn, org_id, brand_id)
@@ -174,6 +177,7 @@ def list_sites(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends
 @router.post(f"{BRAND}/sites")
 def add_site(body: SiteBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     url = _checked_site_url(body.url)
+    enforce(ctx, scope.org_id, "sites", brand_id=scope.brand_id)
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
             site_id = cloud_db.create_site(conn, org_id=scope.org_id, brand_id=scope.brand_id, url=url,

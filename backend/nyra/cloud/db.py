@@ -94,7 +94,9 @@ def pool(database_url: str) -> ConnectionPool:
                 # there (NYRA_DB_POOL_MAX=2) so they don't exhaust the pooler.
                 min_size=0,
                 max_size=int(os.environ.get("NYRA_DB_POOL_MAX", "10")),
-                kwargs={"row_factory": dict_row},
+                # A database that does not answer fails in seconds instead of hanging a thread (the worker's heartbeat) forever.
+                kwargs={"row_factory": dict_row, "connect_timeout": 10, "keepalives_idle": 30, "keepalives_interval": 10,
+                        "keepalives_count": 3},
                 configure=_configure,
                 open=True,
                 name="nyra",
@@ -175,7 +177,7 @@ def users_overview(conn: psycopg.Connection) -> tuple[list[Row], list[Row], set[
         "SELECT u.id, u.email, (to_jsonb(u) ->> 'last_sign_in_at')::timestamptz AS last_sign_in_at FROM auth.users u ORDER BY lower(u.email)"
     ).fetchall()
     memberships = conn.execute(
-        "SELECT m.user_id, m.org_id, m.role, o.name AS org_name FROM memberships m JOIN organizations o ON o.id = m.org_id ORDER BY lower(o.name)"
+        "SELECT m.user_id, m.org_id, m.role, m.created_at AS since, o.name AS org_name FROM memberships m JOIN organizations o ON o.id = m.org_id ORDER BY lower(o.name)"
     ).fetchall()
     staff = {row["user_id"] for row in conn.execute("SELECT user_id FROM platform_staff").fetchall()}
     return users, memberships, staff
@@ -734,6 +736,15 @@ def stamp_compared(conn: psycopg.Connection, reference_ids: list[uuid.UUID], sit
 def get_match_signature(conn: psycopg.Connection, brand_id: uuid.UUID) -> Optional[str]:
     row = conn.execute("SELECT signature FROM match_meta WHERE brand_id = %s", (brand_id,)).fetchone()
     return None if row is None else row["signature"]
+
+
+def report_provenance(conn: psycopg.Connection, brand_id: uuid.UUID) -> dict:
+    """What a report states about its matches: the stored signature of the last pass and the finished reads of the sites (the last of each site: oldest and newest)."""
+    row = conn.execute(
+        """SELECT min(last) AS oldest, max(last) AS newest FROM
+             (SELECT max(c.started_at) AS last FROM crawl_runs c JOIN sites s ON s.id = c.site_id
+               WHERE s.brand_id = %s AND c.status = 'done' GROUP BY c.site_id) per_site""", (brand_id,)).fetchone()
+    return {"signature": get_match_signature(conn, brand_id), "read_at": (row["oldest"], row["newest"])}
 
 
 def set_match_signature(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, signature: str) -> None:

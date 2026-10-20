@@ -28,6 +28,7 @@ from .common import (
     Ctx,
     brand_admin_dep,
     brand_member_dep,
+    enforce,
     get_ctx,
     group_status,
     iso,
@@ -256,6 +257,8 @@ def adopt_site_images(body: AdoptBody, scope: BrandScope = Depends(brand_admin_d
         config = ctx.org_config(conn, scope.org_id)
         rows = cloud_db.site_images_by_id(conn, scope.brand_id, body.site_image_ids)
         taken = {row["filename"] for row in cloud_db.list_references(conn, scope.brand_id)}
+    enforce(ctx, scope.org_id, "references", adding=len(rows))
+    enforce(ctx, scope.org_id, "storage", adding=max(1, sum(row["byte_size"] or 0 for row in rows)))
     found = {row["id"] for row in rows}
     added: list[dict] = []
     failed: list[dict] = [
