@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { AuditLog } from "../../components/AuditLog";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Section } from "../../components/insights";
 import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton } from "../../components/ui";
@@ -77,6 +78,7 @@ function OrganizationCard(props: { org: StaffOrg }) {
   const { deleteBrand } = useStaffMutations();
   const confirm = useConfirm();
   const toast = useToast();
+  const [journal, setJournal] = useState(false);
 
   async function remove(brand: StaffOrg["brands"][number]) {
     const ok = await confirm({
@@ -107,6 +109,8 @@ function OrganizationCard(props: { org: StaffOrg }) {
         ))}
       </ul>
       <NewBrand org={org} />
+      <Button size="sm" variant="ghost" className="mt-3" aria-expanded={journal} onClick={() => setJournal(!journal)}>{journal ? "Masquer le journal d'activité" : "Journal d'activité"}</Button>
+      {journal ? <AuditLog path={`/staff/organizations/${org.id}/audit`} cacheKey={`staff-${org.id}`} /> : null}
     </Section>
   );
 }

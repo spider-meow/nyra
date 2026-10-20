@@ -96,6 +96,7 @@ BODIES = {
     ("POST", BR + "/library/tags"): lambda t: {"json": {"filenames": [t["filename"]], "add": ["x"]}},
     ("POST", BR + "/library/import-csv"): lambda t: {
         "files": {"file": ("x.csv", f"filename,credit\n{t['filename']},changed\n".encode(), "text/csv")}, "params": {"apply": "true"}},
+    ("GET", ORG + "/audit"): lambda t: {"params": {"brand_id": str(t["brand"]), "user_id": str(t["admin"])}},
     ("GET", BR + "/jobs/estimate"): lambda t: {"params": {"site_ids": [str(t["site"])]}},
     ("POST", BR + "/jobs/crawl"): lambda t: {"json": {"site_ids": [str(t["site"])]}},
     ("POST", BR + "/jobs/check"): lambda t: {"json": {"urls": [t["page"]]}},
@@ -228,10 +229,11 @@ class Watch:
 
     def rows_of(self, org) -> dict:
         """The caller's data as it is (a call with nothing but B's identifiers must leave it alone). Not the jobs, which a
-        refused call may leave queued behind, nor the labels a read creates once."""
+        refused call may leave queued behind, nor the labels a read creates once, nor the audit log, which is meant to keep the
+        trace of an attempt (B's own audit log stays watched by `changes`)."""
         sql = " UNION ALL ".join(
             f"""SELECT '{t}' AS what, md5(coalesce(string_agg(x::text, '|' ORDER BY x::text), '')) AS seen FROM "{t}" x WHERE x.org_id = %s"""
-            for t in self.tables if t not in ("jobs", "labels", "image_labels"))
+            for t in self.tables if t not in ("jobs", "labels", "image_labels", "audit_log"))
         with cloud_db.connect(self.url) as conn:
             return {row["what"]: row["seen"] for row in conn.execute(sql, [org] * sql.count("%s")).fetchall()}
 

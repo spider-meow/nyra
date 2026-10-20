@@ -20,6 +20,7 @@ from nyra.refs import RefValidationError, change_tags, normalize_tags, parse_rig
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
 from .. import storage as cloud_storage
+from ..csvcell import csv_cell, csv_text
 from .collections import collection_json, require_collection
 from .common import (
     BRAND,
@@ -188,7 +189,7 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
     stored = put_reference_files(client, scope.org_id, scope.brand_id, filename, data, img, content_type)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         existing = cloud_db.get_reference_by_filename(conn, scope.brand_id, filename)
-        cloud_db.upsert_reference_image(
+        ref_id = cloud_db.upsert_reference_image(
             conn, org_id=scope.org_id, brand_id=scope.brand_id, filename=filename,
             expiry_date=rights[0] if rights else iso(existing["expiry_date"]) if existing else None,
             unlimited_rights=rights[1] if rights else existing["unlimited_rights"] if existing else False,
@@ -196,6 +197,7 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
             notes=existing["notes"] if existing else None,
             **stored,
         )
+        scope.audit(conn, "library.upload", "reference", ref_id, replaced=bool(existing))  # one row per file, with its write
     if existing and existing["storage_path"] != stored["storage_path"]:
         # Uploaded before brands existed: the new file replaces the old one.
         ctx.remove_files(cloud_storage.BUCKET_REFS, [existing["storage_path"], existing["thumb_path"]])
@@ -267,21 +269,25 @@ def update_meta(filename: str, body: MetaBody, scope: BrandScope = Depends(brand
             conn, scope.brand_id, filename, expiry_date=expiry, unlimited_rights=unlimited,
             credit=body.credit.strip() or None, notes=body.notes.strip() or None, tags=tags,
         )
+        if found:
+            scope.audit(conn, "library.update", "reference", found, unlimited_rights=unlimited, has_expiry=bool(expiry))
     if not found:
         raise HTTPException(status_code=404, detail="Référence introuvable.")
     return {"ok": True, "expiry_date": expiry or "", "unlimited_rights": unlimited, "tags": tags}
 
 
-def _delete_filenames(ctx: Ctx, brand_id: uuid.UUID, filenames: list[str]) -> int:
+def _delete_filenames(ctx: Ctx, scope: BrandScope, filenames: list[str]) -> int:
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        deleted = cloud_db.delete_references(conn, brand_id, filenames)
+        deleted = cloud_db.delete_references(conn, scope.brand_id, filenames)
+        if deleted:
+            scope.audit(conn, "library.delete", "reference", deleted[0]["id"] if len(deleted) == 1 else None, count=len(deleted))
     ctx.remove_files(cloud_storage.BUCKET_REFS, [row[key] for row in deleted for key in ("storage_path", "thumb_path", "work_path")])
     return len(deleted)
 
 
 @router.delete(f"{BRAND}/library/{{filename}}")
 def delete_ref(filename: str, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    if not _delete_filenames(ctx, scope.brand_id, [safe_filename(filename)]):
+    if not _delete_filenames(ctx, scope, [safe_filename(filename)]):
         raise HTTPException(status_code=404, detail="Référence introuvable.")
     return {"ok": True}
 
@@ -289,7 +295,7 @@ def delete_ref(filename: str, scope: BrandScope = Depends(brand_admin_dep), ctx:
 @router.post(f"{BRAND}/library/delete")
 def delete_many(body: FilenamesBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     names = [safe_filename(name) for name in body.filenames]
-    return {"deleted": _delete_filenames(ctx, scope.brand_id, names)}
+    return {"deleted": _delete_filenames(ctx, scope, names)}
 
 
 @router.post(f"{BRAND}/library/expiry")
@@ -298,6 +304,7 @@ def bulk_expiry(body: BulkExpiryBody, scope: BrandScope = Depends(brand_admin_de
     names = [safe_filename(name) for name in body.filenames]
     with cloud_db.connect(ctx.settings.database_url) as conn:
         updated = cloud_db.set_expiry_for(conn, scope.brand_id, names, expiry, unlimited)
+        scope.audit(conn, "library.expiry", "reference", count=updated, unlimited_rights=unlimited, has_expiry=bool(expiry))
     return {"updated": updated}
 
 
@@ -322,29 +329,14 @@ def bulk_tags(body: BulkTagsBody, scope: BrandScope = Depends(brand_admin_dep), 
             if new != tags:
                 changed[name] = new
         updated = cloud_db.set_reference_tags(conn, scope.brand_id, changed)
+        scope.audit(conn, "library.tags", "reference", count=updated, added=len(add), removed=len(remove))
     return {"updated": updated}
-
-
-def _csv_cell(value: str) -> str:
-    """Spreadsheets run a cell that starts like a formula: such a cell gets a leading apostrophe, which makes it text.
-
-    `=` and `@` always; `+` and `-` unless a number or a space follows ("-20 %" and "+33 6" stay as they are).
-    """
-    first = value[:1]
-    if first in ("=", "@", "\t", "\r") or (first in ("+", "-") and len(value) > 1 and value[1] not in "0123456789 ."):
-        return "'" + value
-    return value
-
-
-def _csv_text(value: str) -> str:
-    """The reverse of `_csv_cell`, so an exported file imports back to the same text."""
-    return value[1:] if value.startswith("'") and _csv_cell(value[1:]) != value[1:] else value
 
 
 def _csv_entry(line: int, row: dict, has_tags: bool) -> Optional[dict]:
     """One CSV row as an import entry with its status; None for a row without a file name."""
     # A row with more cells than the header comes with a None key and a list: ignore the extra cells.
-    row = {key.strip().lower(): _csv_text((value or "").strip()) for key, value in row.items() if key is not None}
+    row = {key.strip().lower(): csv_text((value or "").strip()) for key, value in row.items() if key is not None}
     name = Path(row.get("filename", "")).name
     if not name:
         return None
@@ -403,6 +395,7 @@ def import_csv(file: UploadFile = File(...), apply: bool = Query(False),
                         unlimited_rights=entry["unlimited_rights"], credit=entry["credit"] or None, notes=entry["notes"] or None, tags=entry["tags"],
                     )
                     applied += 1
+            scope.audit(conn, "library.import_csv", "reference", count=applied, rows=len(parsed))
     return {"rows": parsed, "applied": applied}
 
 
@@ -414,8 +407,8 @@ def export_csv(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends
     writer = csv.writer(buf)
     writer.writerow(["filename", "expiry_date", "credit", "notes", "tags"])
     for row in rows:
-        writer.writerow([_csv_cell(row["filename"]), "illimité" if row["unlimited_rights"] else iso(row["expiry_date"]) or "", _csv_cell(row["credit"] or ""),
-                         _csv_cell(row["notes"] or ""), _csv_cell(", ".join(row["tags"]))])
+        writer.writerow([csv_cell(row["filename"]), "illimité" if row["unlimited_rights"] else iso(row["expiry_date"]) or "", csv_cell(row["credit"] or ""),
+                         csv_cell(row["notes"] or ""), csv_cell(", ".join(row["tags"]))])
     return Response(
         content=("﻿" + buf.getvalue()).encode("utf-8"),
         media_type="text/csv; charset=utf-8",

@@ -60,6 +60,16 @@ coûterait plus cher à démarrer que le calcul lui-même.
 | Sauvegarde des fichiers Storage | — | Copie vers Scaleway Object Storage ≈ 1 € | Les sauvegardes Supabase couvrent la base, pas les fichiers. |
 | Nom de domaine | ≈ 1 € | ≈ 1 € | |
 
+### Sauvegarde des fichiers (AXE-535)
+
+Supabase sauvegarde la base, pas les fichiers de Storage : la copie nocturne des trois buckets vers un stockage objet
+externe chiffré (procédure dans `DEPLOYMENT.md`) est le seul coût ajouté. Son volume est celui des buckets (15 à 65 Go
+estimés, voir plus bas) plus 35 jours de fichiers supprimés ou remplacés, soit quelques dizaines de Go de plus :
+de l'ordre de **1 à 3 €/mois** chez Scaleway Object Storage, déjà compté dans la ligne « Sauvegarde Storage + domaine ».
+Le premier passage lit tout le bucket une fois (sortie Supabase comptée dans les 250 Go d'egress inclus), les suivants
+ne lisent que les nouveautés. Les dumps de la base (30 jours) pèsent quelques centaines de Mo. À confirmer à la
+première sauvegarde réelle, qui n'a pas encore été jouée.
+
 ## Ce qui tourne réellement (18 octobre 2026)
 
 Nyra est en ligne sur `nyra.axelproject.fr` : un seul Droplet DigitalOcean (4 Go, 2 vCPU, 24 $/mois) fait tourner

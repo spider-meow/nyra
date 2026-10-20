@@ -614,16 +614,17 @@ def update_reference_meta(
     conn: psycopg.Connection, brand_id: uuid.UUID, filename: str, *,
     expiry_date: Optional[str], credit: Optional[str], notes: Optional[str],
     tags: Optional[list[str]] = None, unlimited_rights: bool = False,
-) -> bool:
-    """`tags=None` leaves the tags as they are (a CSV without a tags column must not wipe them).
+) -> Optional[uuid.UUID]:
+    """The reference's id, None if there is none of that name.
+    `tags=None` leaves the tags as they are (a CSV without a tags column must not wipe them).
     Unlimited rights and an expiry date exclude each other (the caller passes no date with them)."""
-    result = conn.execute(
+    row = conn.execute(
         """UPDATE reference_images
            SET expiry_date = %s, unlimited_rights = %s, credit = %s, notes = %s, tags = COALESCE(%s::text[], tags)
-           WHERE brand_id = %s AND filename = %s""",
+           WHERE brand_id = %s AND filename = %s RETURNING id""",
         (expiry_date, unlimited_rights, credit, notes, tags, brand_id, filename),
-    )
-    return result.rowcount > 0
+    ).fetchone()
+    return row["id"] if row else None
 
 
 def get_reference_tags(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str]) -> dict[str, list[str]]:
@@ -661,7 +662,7 @@ def delete_references(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: 
     """Delete and return the deleted rows' storage paths, for cleanup in Storage."""
     return conn.execute(
         """DELETE FROM reference_images WHERE brand_id = %s AND filename = ANY(%s)
-           RETURNING filename, storage_path, thumb_path, work_path""",
+           RETURNING id, filename, storage_path, thumb_path, work_path""",
         (brand_id, filenames),
     ).fetchall()
 

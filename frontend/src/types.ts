@@ -543,3 +543,18 @@ export type ServiceReading = {
     host: { cpus: number; load: number[]; memory_total: number | null; memory_available: number | null; disk_total: number; disk_used: number };
   };
 };
+
+/** One line of the activity log (what a person did); `detail` holds counters and codes, never content. */
+export type AuditEvent = {
+  id: number;
+  at: string;
+  action: string;
+  object_type: string;
+  object_id: string | null;
+  brand_id: string | null;
+  brand: string;
+  user_id: string | null;
+  email: string;
+  detail: Record<string, string | number | boolean | null>;
+};
+export type AuditPage = { events: AuditEvent[]; has_more: boolean };

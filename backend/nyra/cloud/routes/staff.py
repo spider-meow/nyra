@@ -13,6 +13,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from .. import audit as cloud_audit
 from .. import db as cloud_db
 from .. import hostmetrics
 from .. import insights as cloud_insights
@@ -86,6 +87,7 @@ def create_organization(body: OrganizationBody, claims=Depends(staff_dep), ctx: 
     with cloud_db.connect(ctx.settings.database_url) as conn:
         org_id = cloud_db.create_organization(conn, name=name, slug=slug, created_by=claims.user_id)
         cloud_db.add_membership(conn, user_id=user_id, org_id=org_id, role="admin")
+        cloud_audit.record(conn, org_id, claims.user_id, "organization.create", "organization", org_id, invited=invited)
     return {"id": str(org_id), "slug": slug, "invited": invited}
 
 
@@ -117,6 +119,7 @@ def add_admin(body: EmailBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get
     user_id, invited = _find_or_invite(ctx, _checked_email(body.email))
     with cloud_db.connect(ctx.settings.database_url) as conn:
         cloud_insights.set_staff(conn, user_id, True)
+        cloud_audit.record(conn, None, claims.user_id, "staff.add", "user", user_id)  # no organization: org_id is null
     return {"invited": invited}
 
 
@@ -128,6 +131,7 @@ def remove_admin(user_id: uuid.UUID, claims=Depends(staff_dep), ctx: Ctx = Depen
         if not cloud_insights.is_staff(conn, user_id):
             raise HTTPException(status_code=404, detail="Cette personne n'est pas platform admin.")
         cloud_insights.set_staff(conn, user_id, False)
+        cloud_audit.record(conn, None, claims.user_id, "staff.remove", "user", user_id)
     return {"removed": True}
 
 
@@ -160,6 +164,8 @@ def set_quotas(org_id: uuid.UUID, body: QuotasBody, claims=Depends(staff_dep), c
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
             kept = cloud_usage.set_overrides(conn, org_id, body.limits, claims.user_id)
+            if kept is not None:
+                cloud_audit.record(conn, org_id, claims.user_id, "quota.set", "organization", org_id, limits=len(kept))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if kept is None:

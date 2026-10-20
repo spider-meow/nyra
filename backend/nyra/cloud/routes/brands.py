@@ -16,6 +16,7 @@ from nyra import netguard
 from nyra import report as report_module
 from nyra.crawl import normalize_url
 
+from .. import audit as cloud_audit
 from .. import db as cloud_db
 from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
@@ -92,6 +93,7 @@ def create_brand(org_id: uuid.UUID, body: BrandBody, claims=Depends(staff_dep), 
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
             brand_id = cloud_db.create_brand(conn, org_id=org_id, name=name, slug=slug, created_by=claims.user_id)
+            cloud_audit.record(conn, org_id, claims.user_id, "brand.create", "brand", brand_id, brand_id=brand_id)
             brand = cloud_db.get_brand(conn, org_id, brand_id)
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(status_code=409, detail=f"Une marque utilise déjà l'identifiant {slug}.") from exc
@@ -106,6 +108,7 @@ def update_brand(org_id: uuid.UUID, brand_id: uuid.UUID, body: BrandBody, member
         with cloud_db.connect(ctx.settings.database_url) as conn:
             if not cloud_db.update_brand(conn, org_id, brand_id, name=name, slug=slug):
                 raise HTTPException(status_code=404, detail="Marque introuvable.")
+            cloud_audit.record(conn, org_id, member.user_id, "brand.update", "brand", brand_id, brand_id=brand_id)
             brand = cloud_db.get_brand(conn, org_id, brand_id)
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(status_code=409, detail=f"Une marque utilise déjà l'identifiant {slug}.") from exc
@@ -120,6 +123,8 @@ def delete_brand(org_id: uuid.UUID, brand_id: uuid.UUID, claims=Depends(staff_de
         if active_jobs(conn, brand_id, tuple(cloud_jobs.KINDS)):
             raise HTTPException(status_code=409, detail="Une tâche est en cours sur cette marque. Arrêtez-la d'abord.")
         orphans = cloud_db.delete_brand(conn, org_id, brand_id)
+        if orphans is not None:
+            cloud_audit.record(conn, org_id, claims.user_id, "brand.delete", "brand", brand_id, brand_id=brand_id)
     if orphans is None:
         raise HTTPException(status_code=404, detail="Marque introuvable.")
     ctx.remove_files(cloud_storage.BUCKET_REFS, orphans.refs)
@@ -150,6 +155,7 @@ def set_logo(file: UploadFile = File(...), scope: BrandScope = Depends(brand_adm
     data_uri = _logo_data_uri(raw)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         cloud_db.set_brand_logo(conn, scope.brand_id, data_uri)
+        scope.audit(conn, "brand.logo_set", "brand", scope.brand_id)
     return {"logo": data_uri}
 
 
@@ -157,6 +163,7 @@ def set_logo(file: UploadFile = File(...), scope: BrandScope = Depends(brand_adm
 def remove_logo(scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         cloud_db.delete_brand_logo(conn, scope.brand_id)
+        scope.audit(conn, "brand.logo_remove", "brand", scope.brand_id)
     return {"ok": True}
 
 
@@ -175,6 +182,7 @@ def add_site(body: SiteBody, scope: BrandScope = Depends(brand_admin_dep), ctx: 
         with cloud_db.connect(ctx.settings.database_url) as conn:
             site_id = cloud_db.create_site(conn, org_id=scope.org_id, brand_id=scope.brand_id, url=url,
                                            label=body.label.strip() or None)
+            scope.audit(conn, "site.add", "site", site_id)
             rows = cloud_db.list_sites(conn, scope.brand_id)
     except cloud_db.SiteTaken as exc:
         raise HTTPException(status_code=409, detail="Cette adresse appartient déjà à une autre marque.") from exc
@@ -187,6 +195,7 @@ def update_site(site_id: uuid.UUID, body: SiteLabelBody, scope: BrandScope = Dep
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if not cloud_db.update_site_label(conn, scope.brand_id, site_id, body.label.strip() or None):
             raise HTTPException(status_code=404, detail="Adresse introuvable.")
+        scope.audit(conn, "site.update", "site", site_id)
     return {"ok": True}
 
 
@@ -197,6 +206,8 @@ def delete_site(site_id: uuid.UUID, scope: BrandScope = Depends(brand_admin_dep)
         if active_jobs(conn, scope.brand_id, ("crawl", "match", "index")):
             raise HTTPException(status_code=409, detail="Une lecture ou une comparaison est en cours. Attendez sa fin.")
         orphans = cloud_db.delete_site(conn, scope.org_id, scope.brand_id, site_id)
+        if orphans is not None:
+            scope.audit(conn, "site.delete", "site", site_id)
     if orphans is None:
         raise HTTPException(status_code=404, detail="Adresse introuvable.")
     ctx.remove_files(cloud_storage.BUCKET_SITE_IMAGES, orphans)
