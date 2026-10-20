@@ -188,9 +188,11 @@ class JobContext:
         except Exception:  # noqa: BLE001 - exiting matters more
             log.exception("could not record the overrun of job %s", self.job["id"])
             failed = True
-        if failed:
-            os._exit(70)
-        timer.cancel()  # the run had already ended: this worker keeps going
+        try:
+            if failed:
+                os._exit(70)
+        finally:
+            timer.cancel()  # the run had already ended (this worker keeps going), or the exit was simulated by a test
 
     def _heartbeat(self, message: Optional[str] = None, progress: Optional[dict] = None) -> None:
         with self._lock:

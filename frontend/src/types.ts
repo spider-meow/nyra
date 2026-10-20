@@ -514,7 +514,7 @@ export type StaffUser = {
   email: string;
   last_sign_in_at: string | null;
   staff: boolean;
-  memberships: { org_id: string; org_name: string; role: Member["role"] }[];
+  memberships: { org_id: string; org_name: string; role: Member["role"]; since: string }[];
 };
 /** One line of usage against a limit (`GET /orgs/{id}/usage`): `level` turns to warning from 80 %. Storage is in bytes. */
 export type UsageItem = { key: string; label: string; used: number; limit: number; level: "ok" | "warning" | "reached" };
