@@ -8,7 +8,11 @@ here (the crawler's parsing is covered in test_crawl.py).
 
 from __future__ import annotations
 
+import errno
 import io
+import os
+import threading
+import time
 import uuid
 from dataclasses import replace
 
@@ -843,3 +847,84 @@ def test_a_site_that_renews_many_images_is_not_suspect_but_a_real_fall_is(cloud_
         assert cloud_db.record_read_health(conn, run, stats) is None  # 40 known images seen again, as in the earlier reads
         conn.execute("UPDATE site_images SET last_seen = now() - interval '2 hours' WHERE url ~ 'i([0-9]|[12][0-9])$'")  # 30 known images no longer seen
         assert "10 images déjà connues" in cloud_db.record_read_health(conn, run, stats)
+
+
+# --- guard rails: duration per kind, watchdog, leftovers, resources ---------------------------------------------
+
+def test_every_job_kind_has_its_own_duration_limit_and_an_unknown_one_is_bounded():
+    assert set(worker_module.JOB_LIMITS) == cloud_jobs.KINDS
+    assert max(seconds for seconds, _, _ in worker_module.JOB_LIMITS.values()) == worker_module.JOB_LIMITS["crawl"][0]
+    assert all(seconds < worker_module.JOB_LIMITS["crawl"][0] for kind, (seconds, _, _) in worker_module.JOB_LIMITS.items()
+               if kind != "crawl")
+    message = worker_module.overrun_message("check")
+    assert "dépassé sa durée maximale de 30 min" in message and "relancez-la" in message and "réduisez" in message
+    assert "60 min" in worker_module.overrun_message("no-such-kind")
+
+
+def test_a_job_over_its_limit_is_marked_failed_with_a_clear_message_and_the_worker_exits(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    exited = threading.Event()
+    codes: list[int] = []
+    monkeypatch.setattr(worker_module.os, "_exit", lambda code: (codes.append(code), exited.set()))
+    monkeypatch.setattr(worker_module, "HEARTBEAT_SECONDS", 0.05)
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="check", params={})
+        job = cloud_jobs.claim(conn)
+    ctx = worker_module.JobContext(cloud_database_url, job)
+    ctx._started -= worker_module.JOB_LIMITS["check"][0] + 1  # the clock says the job has run past its limit
+    assert exited.wait(5)
+    ctx.close()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert codes[0] == 70 and finished["status"] == "error"
+    assert finished["message"] == worker_module.overrun_message("check") and "30 min" in finished["message"]
+
+
+def test_a_job_within_its_limit_is_left_alone(worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    exited = threading.Event()
+    monkeypatch.setattr(worker_module.os, "_exit", lambda code: exited.set())
+    monkeypatch.setattr(worker_module, "HEARTBEAT_SECONDS", 0.05)
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="check", params={})
+        job = cloud_jobs.claim(conn)
+    ctx = worker_module.JobContext(cloud_database_url, job)
+    assert not exited.wait(0.3)
+    ctx.close()
+
+
+def test_the_watchdog_sees_an_alive_file_that_stopped_being_touched(tmp_path):
+    alive = tmp_path / "alive"
+    alive.touch()
+    now = time.time()
+    assert not worker_module.stalled(alive, worker_module.WATCHDOG_SECONDS, now + 10)
+    assert worker_module.stalled(alive, worker_module.WATCHDOG_SECONDS, now + worker_module.WATCHDOG_SECONDS + 10)
+    with pytest.raises(OSError):
+        worker_module.stalled(tmp_path / "missing", 1, now)
+
+
+def test_chromium_leftovers_are_removed_once_old_and_nothing_else(tmp_path):
+    old, fresh, other = (tmp_path / "playwright_chromiumdev_profile-old", tmp_path / "playwright-artifacts-new",
+                         tmp_path / "keep-me")
+    for folder in (old, fresh, other):
+        (folder / "Cache").mkdir(parents=True)
+        (folder / "Cache" / "data").write_bytes(b"x")
+    long_ago = time.time() - 2 * worker_module.TEMP_LEFTOVER_AGE_SECONDS
+    os.utime(old, (long_ago, long_ago))
+    os.utime(other, (long_ago, long_ago))
+    assert worker_module.clean_temp(time.time(), tmp_path) == 1
+    assert not old.exists() and fresh.exists() and other.exists()
+
+
+def test_running_out_of_memory_or_disk_says_so_and_what_to_do(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                              monkeypatch):
+    assert "mémoire" in worker_module.resource_problem(MemoryError())
+    assert "disque" in worker_module.resource_problem(OSError(errno.ENOSPC, "No space left on device"))
+    assert worker_module.resource_problem(RuntimeError("x")) is None
+
+    def full(*_args, **_kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(worker_module, "run_matching", full)
+    with cloud_db.connect(cloud_database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
+    assert worker.run_once()
+    assert "disque" in _job(cloud_database_url, cloud_brand, job["id"])["message"]

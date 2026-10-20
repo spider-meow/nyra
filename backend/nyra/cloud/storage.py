@@ -155,6 +155,14 @@ def _prune(root: Path) -> None:
             break
 
 
+def trim_cache() -> None:
+    """Bring the cache back under its size now (the worker's start: `_prune` otherwise runs every 200 writes of one
+    process, which a worker restarted over and over never reaches)."""
+    root = _cache_root()
+    if root is not None and root.is_dir():
+        _prune(root)
+
+
 def cached_download(client: Client, bucket: str, path: str, *, version: str = "") -> bytes:
     """`download`, through the worker's disk cache.
 

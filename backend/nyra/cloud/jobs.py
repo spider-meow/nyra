@@ -160,7 +160,8 @@ def reap_stale(conn: psycopg.Connection, older_than_seconds: int = STALE_AFTER_S
     ).fetchall()
     failed = conn.execute(
         f"""UPDATE jobs SET status = 'error', finished_at = now(),
-               message = 'Interrompu : le worker s''est arrêté pendant la tâche.',
+               message = CASE WHEN cancel_requested THEN 'Interrompu : le worker s''est arrêté pendant la tâche.'
+                   ELSE 'Interrompu : le worker s''est arrêté {MAX_RETRIES + 1} fois de suite pendant la tâche, le plus souvent faute de mémoire. Relancez-la en réduisant le nombre de pages ou d''images, ou prévenez l''équipe Nyra.' END,
                error = 'heartbeat lost'
            WHERE {stale}
            RETURNING id""",

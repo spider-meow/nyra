@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 pytest.importorskip("supabase")
@@ -141,3 +143,15 @@ def test_only_hash_named_site_images_get_a_long_cache_control():
     storage.upload(client, "refs", "o/b/a.jpg", b"x", content_type="image/jpeg")
     assert client.options[("site-images", "o/thumbs/h.jpg")]["cache-control"] == "31536000"
     assert "cache-control" not in client.options[("refs", "o/b/a.jpg")]
+
+
+def test_trim_cache_brings_the_cache_under_its_size_at_once_oldest_first(tmp_path, monkeypatch):
+    monkeypatch.setenv("NYRA_IMAGE_CACHE", str(tmp_path))
+    monkeypatch.setenv("NYRA_IMAGE_CACHE_MB", "1")
+    for age, name in enumerate(("newest", "middle", "oldest")):
+        (tmp_path / name).write_bytes(b"x" * 600_000)
+        os.utime(tmp_path / name, (1_000_000 - age, 1_000_000 - age))
+    storage.trim_cache()
+    assert not (tmp_path / "oldest").exists() and (tmp_path / "newest").exists()
+    monkeypatch.setenv("NYRA_IMAGE_CACHE", "off")
+    storage.trim_cache()  # no cache: nothing to do

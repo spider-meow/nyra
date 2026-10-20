@@ -24,6 +24,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from nyra.cloud import db as cloud_db
+from nyra.cloud import hostmetrics
 from nyra.cloud import jobs as cloud_jobs
 from nyra.cloud import storage as cloud_storage
 from nyra.cloud.api import CloudSettings, create_app
@@ -88,7 +89,8 @@ def test_healthz_and_auth_config_need_no_session(client):
 
 
 def test_workerz_says_503_when_a_job_has_waited_for_a_worker_that_is_not_there(client, cloud_org, cloud_brand,
-                                                                               cloud_database_url):
+                                                                               cloud_database_url, monkeypatch):
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.1)
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
         job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
@@ -100,6 +102,14 @@ def test_workerz_says_503_when_a_job_has_waited_for_a_worker_that_is_not_there(c
     with cloud_db.connect(cloud_database_url) as conn:
         cloud_jobs.claim(conn)
     assert client.get("/api/workerz").status_code == 200
+
+
+def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, monkeypatch):
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.79)
+    assert client.get("/api/workerz").status_code == 200
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.8)
+    answer = client.get("/api/workerz")
+    assert answer.status_code == 503 and answer.json()["status"] == "disk almost full" and answer.json()["disk_percent"] == 80
 
 
 def test_there_is_no_public_signup(client):

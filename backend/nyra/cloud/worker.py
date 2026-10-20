@@ -21,8 +21,10 @@ Job kinds:
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -54,9 +56,25 @@ log = logging.getLogger("nyra.worker")
 
 HEARTBEAT_SECONDS = 30
 PROGRESS_SECONDS = 1.0
-# A job running longer than this is taken for hung (a frozen browser keeps the heartbeat thread beating): the
-# worker exits, the container restarts, and the job is put back in the queue (see `jobs.reap_stale`).
-JOB_MAX_SECONDS = 6 * 3600
+# The longest a job of each kind may run, in seconds, with what the message calls it and what lightens it. A job
+# running longer is taken for hung (a frozen browser keeps the heartbeat thread beating): it is marked failed with that
+# message and the worker exits, so the container restarts. Starting values, from what each kind does: a crawl reads
+# every page of every address; an index embeds images on CPU (a first backfill is long); a match, a locate and a report
+# read stored data; a check reads 50 pages at most. Tighten them with the durations in the Statistiques page.
+JOB_LIMITS: dict[str, tuple[int, str, str]] = {
+    "crawl": (6 * 3600, "La lecture des sites", "le nombre de pages ou d'adresses"),
+    "index": (2 * 3600, "L'analyse des images", "le nombre d'images à analyser d'un coup"),
+    "match": (3600, "La comparaison", "le nombre d'images à comparer"),
+    "locate": (3600, "La recherche de copies", "le nombre d'images lues sur les sites"),
+    "report": (1800, "La génération du rapport", "la période du rapport"),
+    "check": (1800, "La vérification des pages", "le nombre de pages à relire"),
+}
+UNKNOWN_KIND_LIMIT = (3600, "La tâche", "son périmètre")  # a kind added without a limit still ends
+# The worker exits when its alive file is older than this (the image's health check calls 120 s unhealthy).
+WATCHDOG_SECONDS = 300
+# Chromium leaves its profile and scratch folders in the temp directory when it is killed; older than this, they are removed.
+TEMP_LEFTOVERS = ("playwright_chromiumdev_profile-*", "playwright-artifacts-*", ".org.chromium.Chromium.*")
+TEMP_LEFTOVER_AGE_SECONDS = 600
 # Touched while the worker lives, idle or busy; the container's health check reads its age.
 ALIVE_FILE = Path(os.environ.get("NYRA_WORKER_ALIVE_FILE") or Path(tempfile.gettempdir()) / "nyra-worker-alive")
 
@@ -66,6 +84,33 @@ def touch_alive() -> None:
         ALIVE_FILE.touch()
     except OSError:
         log.warning("could not touch %s; the health check will fail", ALIVE_FILE)
+
+
+def stalled(path: Path, limit: float, now: float) -> bool:
+    """True when `path` was last touched more than `limit` seconds before `now` (raises OSError if it is missing)."""
+    return now - path.stat().st_mtime > limit
+
+
+def clean_temp(now: float, root: Optional[Path] = None) -> int:
+    """Remove Chromium's leftovers older than `TEMP_LEFTOVER_AGE_SECONDS` from the temp directory; returns how many.
+    Run at start (after a crash) and after each job. The age keeps a browser still running (another worker sharing
+    this directory in development) safe: it keeps writing to its folder."""
+    removed = 0
+    for pattern in TEMP_LEFTOVERS:
+        for path in (root or Path(tempfile.gettempdir())).glob(pattern):
+            try:
+                old = now - path.stat().st_mtime > TEMP_LEFTOVER_AGE_SECONDS
+            except OSError:
+                continue  # gone since the listing: nothing to remove
+            if old:
+                shutil.rmtree(path, ignore_errors=True)  # best effort: a leftover that stays is retried at the next job
+                removed += 1
+    return removed
+
+
+def overrun_message(kind: str) -> str:
+    seconds, label, lighter = JOB_LIMITS.get(kind, UNKNOWN_KIND_LIMIT)
+    return f"{label} a dépassé sa durée maximale de {seconds // 60} min : relancez-la, ou réduisez {lighter}."
 
 
 class JobFailed(Exception):
@@ -83,6 +128,7 @@ class JobContext:
         self._lock = threading.Lock()
         self._done = threading.Event()
         self._started = time.monotonic()
+        self.max_seconds = JOB_LIMITS.get(job["kind"], UNKNOWN_KIND_LIMIT)[0]
         self._beat = threading.Thread(target=self._beat_loop, name=f"heartbeat-{job['id']}", daemon=True)
         self._beat.start()
 
@@ -90,10 +136,20 @@ class JobContext:
         while not self._done.wait(HEARTBEAT_SECONDS):
             self._heartbeat()
             touch_alive()
-            if time.monotonic() - self._started > JOB_MAX_SECONDS:
-                log.error("job %s ran over %d s: exiting so the container restarts and the job is retried",
-                          self.job["id"], JOB_MAX_SECONDS)
-                os._exit(70)  # a hung job cannot be stopped from a thread; the heartbeat then stops and the job is requeued
+            if time.monotonic() - self._started > self.max_seconds:
+                self._time_out()
+
+    def _time_out(self) -> None:
+        """Fail the job with a message that says why, then exit: a hung job cannot be stopped from a thread, and the
+        container restarts (a worker that cannot record the failure still exits, and the job is requeued)."""
+        log.error("job %s (%s) ran over %d s: marked failed, worker exiting", self.job["id"], self.job["kind"], self.max_seconds)
+        try:
+            with cloud_db.connect(self.database_url) as conn:
+                cloud_jobs.finish(conn, self.job["id"], status="error", message=overrun_message(self.job["kind"]),
+                                  error=f"max duration {self.max_seconds} s")
+        except Exception:  # noqa: BLE001 - exiting matters more; the lost heartbeat then requeues the job
+            log.exception("could not record the overrun of job %s", self.job["id"])
+        os._exit(70)
 
     def _heartbeat(self, message: Optional[str] = None, progress: Optional[dict] = None) -> None:
         with self._lock:
@@ -370,9 +426,26 @@ class Worker:
             except Exception:  # noqa: BLE001 - the figures are a convenience; a missed one must not stop the worker
                 log.exception("publishing server metrics failed")
 
+    def _watchdog(self) -> None:
+        """Exit when the main loop stops touching the alive file (a hung database call): `restart: unless-stopped`
+        then restarts the worker without any component reading the Docker socket. A job in progress is covered by
+        its heartbeat thread, which keeps touching the file, and by `JOB_LIMITS`."""
+        while not self._stop.wait(HEARTBEAT_SECONDS):
+            try:
+                hung = stalled(ALIVE_FILE, WATCHDOG_SECONDS, time.time())
+            except OSError:
+                continue  # `touch_alive` already warns that the file cannot be written
+            if hung:
+                log.error("no sign of life for %d s: worker exiting so the container restarts", WATCHDOG_SECONDS)
+                os._exit(70)
+
     def run_forever(self) -> None:
         log.info("worker started")
+        touch_alive()
+        log.info("%d leftover(s) removed from the temp directory", clean_temp(time.time()))
+        cloud_storage.trim_cache()
         threading.Thread(target=self._publish_metrics, name="metrics", daemon=True).start()
+        threading.Thread(target=self._watchdog, name="watchdog", daemon=True).start()
         last_reap = 0.0
         while not self._stop.is_set():
             touch_alive()
@@ -432,10 +505,11 @@ class Worker:
             log.error("job %s failed:\n%s", job["id"], traceback.format_exc())
             _capture(exc)
             with cloud_db.connect(self.database_url) as conn:
-                cloud_jobs.finish(conn, job["id"], status="error", message="La tâche a échoué.",
+                cloud_jobs.finish(conn, job["id"], status="error", message=resource_problem(exc) or "La tâche a échoué.",
                                   error=f"{type(exc).__name__}: {str(exc)[:500]}")
         finally:
             ctx.close()
+            clean_temp(time.time())
             log.info("job %s finished", job["id"])
 
     # --- helpers --------------------------------------------------------------
@@ -737,6 +811,15 @@ def browser_problem(exc: Exception) -> Optional[str]:
                 "(PLAYWRIGHT_BROWSERS_PATH doit pointer au même endroit), puis relancez la lecture.")
     if type(exc).__module__.startswith("playwright") and "launch" in text:
         return f"Le navigateur de lecture (Chromium) n'a pas pu démarrer sur le worker : {text.splitlines()[0][:200]}"
+    return None
+
+
+def resource_problem(exc: BaseException) -> Optional[str]:
+    """A job that ran out of memory or disk: say so, and what to do, instead of "La tâche a échoué."."""
+    if isinstance(exc, MemoryError):
+        return "La mémoire du serveur n'a pas suffi : relancez la tâche, ou réduisez le nombre de pages ou d'images traitées."
+    if isinstance(exc, OSError) and exc.errno == errno.ENOSPC:
+        return "Le disque du serveur est plein : prévenez l'équipe Nyra, puis relancez la tâche."
     return None
 
 
