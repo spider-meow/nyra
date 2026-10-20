@@ -57,6 +57,26 @@ Les mêmes actions existent en ligne de commande :
 | Donner l'accès | `nyra cloud-staff --email arthur@example.com` |
 | Retirer l'accès | `nyra cloud-staff --email arthur@example.com --remove` |
 
+## Données d'un client : journal, export, suppression
+
+Réservé à l'opérateur (celui qui peut lancer `docker compose run --rm web nyra …` sur le serveur). Procédures
+complètes, garde-fous et sauvegardes : `DEPLOYMENT.md`, section « Client data ».
+
+| Action | Commande |
+|---|---|
+| Voir qui a fait quoi | Réglages > Journal d'activité (admin de l'organisation) ; back office > Organisations > Journal d'activité |
+| Exporter les données d'un client | `nyra cloud-export-org remy-martin --out /exports/remy-martin-2026-10-20` |
+| Voir ce qu'une suppression effacerait | `nyra cloud-delete-org remy-martin --dry-run` |
+| Supprimer une organisation pour de bon | `nyra cloud-delete-org remy-martin` (demande de retaper le nom exact) |
+| Purger le journal de plus de 12 mois | `nyra cloud-purge-audit` (le worker le fait chaque jour) |
+
+- L'export écrit des CSV lisibles, les originaux de la bibliothèque, les rapports et `manifeste.json`. Il s'arrête
+  en erreur si un fichier manque (`complete: false`) : relancer la même commande sur le même dossier.
+- La suppression efface les lignes, les fichiers `{org_id}/` des trois buckets et les comptes qui n'appartiennent
+  qu'à cette organisation (jamais un membre d'une autre organisation ni un platform admin). Elle refuse s'il y a une
+  tâche en cours. Elle est **irréversible** et ne touche pas aux sauvegardes (elles expirent seules : 35 jours au plus).
+- La trace reste dans les logs (`ORGANIZATION DELETED …`) et dans la table `deleted_organizations`.
+
 ## Marques et sites
 
 Pas de commande CLI : tout se fait dans l'interface, **Réglages** d'une organisation.

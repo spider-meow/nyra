@@ -143,6 +143,18 @@ class _FakeBucketProxy:
             self.store.pop((self.bucket, p), None)
         return []
 
+    def list(self, path=None, options=None):
+        """The children of a folder like Storage lists them: files have an id, folders do not."""
+        options = options or {}
+        prefix, children = f"{path}/", {}
+        for bucket, name in self.store:
+            if bucket == self.bucket and name.startswith(prefix):
+                head, _, rest = name[len(prefix):].partition("/")
+                children[head] = children.get(head, False) or bool(rest)
+        entries = [{"name": name, "id": None if is_folder else "object"} for name, is_folder in sorted(children.items())]
+        start = options.get("offset", 0)
+        return entries[start:start + options.get("limit", 100)]
+
     def create_signed_url(self, path, expires_in, options=None):
         return {"signedUrl": f"https://fake-storage.test/{self.bucket}/{path}?expires_in={expires_in}"}
 
@@ -154,9 +166,17 @@ class _FakeBucketProxy:
 
 
 class FakeSupabaseClient:
+    """Storage in memory, and the Auth admin API reduced to `delete_user` (the ids asked for are kept)."""
+
     def __init__(self):
         self.store: dict = {}
+        self.deleted_users: list[str] = []
         self.storage = self
+        self.auth = self
+        self.admin = self
+
+    def delete_user(self, user_id: str) -> None:
+        self.deleted_users.append(user_id)
 
     def from_(self, bucket: str) -> _FakeBucketProxy:
         return _FakeBucketProxy(self.store, bucket)

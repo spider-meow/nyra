@@ -98,7 +98,9 @@ numbers and the report itself are pure functions over plain dicts in
 | `db.py` | SQLite schema and `LocalStore` for the CLI. |
 | `cloud/api.py` | The web process: `CloudSettings` and `create_app`, which wires the modules below in a fixed order (middleware, `/assets`, API routes, then the catch-all page). |
 | `cloud/routes/common.py` | What the route modules share: the request context (`Ctx`), the auth and brand dependencies, small helpers. |
-| `cloud/routes/` (`session`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `logos`, `reports_settings`) | The API routes, one module per domain, each exposing a `router`. |
+| `cloud/audit.py` | The activity log (`audit_log`): `record` (called by each route that changes something, in the transaction of the change), `events` (reading, filtered and bounded), `purge` (12 months, batches). |
+| `cloud/offboarding.py` | A client leaving: `delete_organization` (files, rows, accounts, trace) and `export_organization` (CSV, originals, manifest), behind `nyra cloud-delete-org` / `cloud-export-org`. Operator only, no route. |
+| `cloud/routes/` (`session`, `audit`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `logos`, `reports_settings`) | The API routes, one module per domain, each exposing a `router`. |
 | `cloud/routes/interface.py` | The built interface (single-page app), gzip and security headers, error handlers. |
 | `cloud/presence.py` | Where a visual is still online, page by page: `still` (seen by the last finished read of the site), `gone` (the page was read again with success and the image was not on it), `unknown` (the page was not read again, or not since `image_pages.last_seen` and `pages.links_tracked` exist). Counts per site version and section, and the pages; `GET .../visuals/{reference_id}/presence`. Images and links are never deleted when they disappear from a site, so nothing is stored: the state comes from the dates. While the last finished read of a site is **suspect** (`crawl_runs.suspect`, set when the read ends, see `MATCHING.md`), no page of it is `gone`. `replaced_references` lists the visuals replaced, which the home screen and the report leave out of "expired and online". |
 | `cloud/worker.py` | The job runner. |
@@ -121,6 +123,20 @@ numbers and the report itself are pure functions over plain dicts in
   that organization. Admin-only routes (brands, sites, library, crawls,
   settings, reports) check the role. Reviews are open to every member and
   are checked against the brand's own matches.
+- **Who did what is kept** (`audit_log`, 12 months). Each route that changes something
+  writes a row itself (`scope.audit(conn, "library.delete", …)`), on the connection of the change:
+  both commit or neither does, so an action never happens without its trace and a failing trace
+  is an error the person sees, not a silent gap. Explicit calls rather than a middleware on the
+  verbs: a middleware runs after the response is built (it cannot cancel the action) and knows a
+  URL, not "this image was ignored". `backend/tests/test_audit.py` enumerates every route that
+  changes something and fails for one that does not audit (or is not on a short, justified list), so
+  a future route cannot forget. A row holds identifiers and counters, never content (`record` refuses a
+  long text, a list, a file name). Read by the organization's admins (`GET /api/orgs/{org_id}/audit`) and
+  by the Nyra team (`GET /api/staff/organizations/{org_id}/audit`).
+- **Data leaves or goes only by operator command**: `nyra cloud-export-org` and `cloud-delete-org`
+  (exact name to type, `--dry-run`, trace in the logs and `deleted_organizations`); no route does either.
+  The cascade covering every table is checked on the catalog by a test. Backups of Storage and
+  restoration are a procedure (`DEPLOYMENT.md`), not code.
 - **The backend uses the service role**, which bypasses RLS; every query
   filters on `org_id` itself. RLS policies are the safety net for any
   other access path.

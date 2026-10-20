@@ -148,6 +148,228 @@ traceback is in the worker's log.
 - `crawl.max_pages_limit` in `config.yaml` bounds the cost of any single
   crawl, whatever an organization asks for.
 
+## Client data: activity log, export, erasure, backups
+
+Clients trust Nyra with licensed visuals and with their decisions. Four guarantees, and what each one needs
+from a person. **Only the code parts have been run (tests on a throwaway Postgres, fake Storage, fake Auth
+admin). Nothing below that touches the real Supabase, the real Storage or a backup target has been played:
+the procedures are to be rehearsed by the team, and the first rehearsal is also the first timing.**
+
+### Who can do what
+
+| Action | Who | How |
+|---|---|---|
+| Read the activity log of an organization | Its administrators; the Nyra team (platform admins) | Réglages > Journal d'activité; back office > Organisations > Journal d'activité; `GET /api/orgs/{org_id}/audit`, `GET /api/staff/organizations/{org_id}/audit` |
+| Export an organization's data | The operator (access to the server and `.env`) | `nyra cloud-export-org` |
+| Erase an organization | The operator, after the client's written request | `nyra cloud-delete-org` |
+| Run the backups and the restore | The operator | the commands below |
+| Brands: create and delete | Platform admins (unchanged) | interface |
+
+The operator is whoever can run `docker compose run --rm web nyra …` on the server: today, the Nyra team.
+No route of the API exports or erases a whole organization; a client asks, the operator acts.
+
+### Activity log
+
+Table `audit_log` (migration `20261020000031`): one row per action of a person that changes something, with the
+organization, the brand, the author (account id; the e-mail is read from Auth when the log is shown), a stable
+action code (`library.delete`, `exclusion.add`, `review.set`, `member.remove`, `job.crawl`…), the object
+(type and identifier) and a small `detail` of counters and codes. **No content**: no request body, no file name,
+no address, no reason typed by a person. `audit.record` refuses anything but numbers, flags and short codes.
+
+- Written by the route itself, in the same database transaction as the change. If the row cannot be written, the
+  change is rolled back and the person gets an error (HTTP 500, « Erreur interne du serveur »): an action that
+  leaves no trace does not happen. Decision recorded in `backend/nyra/cloud/audit.py`.
+- Covered: library (upload, edit, delete, expiry, tags, CSV import, adoption of site images, collections),
+  decisions (`review.set`, `visual.replaced`), exclusions, settings, logos, labels, team (invite, role,
+  removal), jobs started or cancelled by a person, brands, addresses, organization creation. Not covered, on
+  purpose: reads; jobs the system queues by itself after a change (the change carries the cause); the platform
+  admin list (no organization: logged as `platform admin … added/removed by …`). `test_audit.py` lists every
+  route that changes something and fails for one without an audit call, so a new route cannot forget it.
+- **Retention: 12 months.** `audit.purge` deletes older rows in batches of 1,000 (one transaction each). The
+  worker runs it once a day; by hand: `nyra cloud-purge-audit [--months 12]`.
+- The platform admin who acts as an administrator of a client organization appears under their own e-mail.
+- An export writes an `organization.export` row first; an erasure removes the log with the organization (the
+  trace of the erasure itself is below).
+
+### Exporting an organization
+
+```bash
+mkdir -p exports
+docker compose run --rm -v "$PWD/exports:/exports" web nyra cloud-export-org client-slug --out /exports/client-slug-2026-10-20
+```
+
+Writes, one row or one file at a time (memory does not grow with the organization):
+
+- CSV (UTF-8 with BOM, accents readable in a spreadsheet): `marques`, `sites`, `references` (brand, file, collection,
+  expiry date, unlimited rights, credit, notes, tags, date added, path of the original), `decisions`, `exclusions`,
+  `rapports`, `membres` (e-mail, role), `journal`;
+- `files/refs/…` (the original of each reference) and `files/reports/…` (the three files of each report);
+- `manifeste.json`: format and Nyra versions, date, operator, rows per CSV, files copied, failures, `complete`.
+
+Not included: the images read on the sites (they can be read again from the sites) and the thumbnails and
+working copies. A file larger than `--max-file-mb` (200) is a failure; the copy stops with an error at
+`--max-total-gb` (50). A file that cannot be downloaded is listed in the manifest and in the exit code
+(`complete: false`, exit 1): run the **same command again on the same folder**, files already there are kept.
+Check `complete: true` before telling the client. The folder holds personal data (e-mails) and licensed images:
+encrypt it (`age`, `gpg`) before it leaves the server, hand it over through a channel agreed with the client, and
+delete the local copy.
+
+### Erasing an organization
+
+```bash
+docker compose run --rm web nyra cloud-delete-org client-slug --dry-run     # lists, deletes nothing
+docker compose run --rm web nyra cloud-delete-org client-slug               # asks to type the exact name
+```
+
+1. Export first if the client wants its data, and keep the written request.
+2. `--dry-run` prints the report: rows per table, files per bucket, the accounts that would go. Read it.
+3. The real run refuses without the organization's **exact name** (typed at the prompt, or `--confirm-name`),
+   and while a task is queued or running (cancel it, wait).
+4. It deletes, in this order: the Storage files under `{org_id}/` in `refs`, `site-images` and `reports`
+   (listed and removed by batches of 100, checked empty at the end); the organization row, every other table
+   following through `on delete cascade` in the same transaction as the trace, then checked to hold no row of
+   the organization (otherwise the whole thing is rolled back); then the Auth accounts that were members of
+   this organization only. A member of another organization or of the Nyra team is never deleted.
+5. It prints the report (same shape as the dry run). If an account could not be deleted it says so and exits 1:
+   delete it in Supabase > Authentication.
+6. **Trace**: a log line `ORGANIZATION DELETED {json}` (identifier, name, slug, operator, counts; no e-mail)
+   and one row in `deleted_organizations` (identifier, name, slug, date, operator, counts). The organization's
+   own activity log goes with it. Keep the logs long enough to answer an audit (set the retention of your log
+   host accordingly) and give the client the date and the report.
+
+Run it while the client is not using the product: a file uploaded between the Storage step and the database step
+would stay behind (run the command again with the same slug only if the organization row still exists; otherwise
+delete the leftover prefix by hand). That the cascade covers every table is checked on the catalog by
+`test_offboarding.py`: a table added without it fails the test.
+
+**Not erased by the command**: Supabase's daily database backups, the file copies below, the e-mails the
+provider (Resend) already sent, and the logs. Tell the client the real delay: the data disappears from the
+backups when they expire (**35 days at most with the setup below, plus the Supabase retention, 7 days on the
+Pro plan: check it in Database > Backups**). To erase a client from the file copies sooner:
+`rclone purge "scw-crypt:refs/current/<org_id>"` for each bucket, and
+`rclone delete scw-crypt:refs/deleted --include "/*/<org_id>/**"`.
+
+### Backups
+
+What Supabase does and does not do: Postgres is backed up every day (Pro plan; point-in-time recovery is a paid
+add-on). **Storage files are not backed up** (images, thumbnails, reports): losing a bucket loses them for good.
+Nothing here has been run; set it up, then run the restore drill below.
+
+**1. A copy of the three buckets, every night.** Supabase Storage has an S3 endpoint (Project settings >
+Storage > S3 connection: create an access key there). On a machine that is **not** the production Droplet (a
+second small VPS, or the Droplet if there is nothing else, which protects against a Supabase accident only), with
+`rclone`:
+
+```ini
+# ~/.config/rclone/rclone.conf (0600)
+[supabase]
+type = s3
+provider = Other
+access_key_id = <S3 access key from Supabase>
+secret_access_key = <secret>
+endpoint = https://<project-ref>.storage.supabase.co/storage/v1/s3
+region = <project region>
+
+[scw]
+type = s3
+provider = Scaleway
+access_key_id = <key limited to the backup bucket>
+secret_access_key = <secret>
+endpoint = s3.fr-par.scw.cloud
+region = fr-par
+
+[scw-crypt]
+type = crypt
+remote = scw:nyra-backups
+password = <rclone obscure output>
+password2 = <rclone obscure output>
+```
+
+The `crypt` remote encrypts names and contents before they leave the machine. Keep its two passwords in the
+team's password manager **and** on paper in a safe place: without them the copy is unreadable, and they must not
+live only on the server that is being backed up. Never write these keys in the repository.
+
+```bash
+# nightly: current state, and what was deleted or overwritten kept 35 days
+for b in refs site-images reports; do
+  rclone sync "supabase:$b" "scw-crypt:$b/current" --backup-dir "scw-crypt:$b/deleted/$(date +%F)" --transfers 8 --checksum --fast-list
+  rclone delete "scw-crypt:$b/deleted" --min-age 35d && rclone rmdirs "scw-crypt:$b/deleted" --leave-root
+done
+```
+
+Schedule with a systemd timer (`/etc/systemd/system/nyra-storage-backup.{service,timer}`): the service runs the
+loop above as a dedicated user, `OnCalendar=*-*-* 03:30:00`, `Persistent=true`; `systemctl list-timers` shows
+the last and next run, `journalctl -u nyra-storage-backup` the output. Failure must be seen: add
+`OnFailure=` to a unit that sends an e-mail, or a Better Stack heartbeat call at the end of the script.
+Rotation of the keys: yearly, and at once when someone leaves the team.
+
+**2. A copy of the database we control**, in addition to Supabase's (it is the file the restore below reads):
+
+```bash
+pg_dump "$DATABASE_URL" --format=custom --no-owner -n public -n auth | \
+  rclone rcat "scw-crypt:db/nyra-$(date +%F).dump"
+rclone delete scw-crypt:db --min-age 30d
+```
+
+(`DATABASE_URL` in session mode, port 5432. `-n auth` brings `auth.users`; if Supabase refuses it for your role,
+take `-t auth.users` data only, or export the users with the Dashboard. To settle at the first run.) Weekly is
+enough if a day of loss is acceptable; daily costs a few hundred MB.
+
+**3. Check, weekly and after any change:** `scripts/check-storage-backup.sh` compares number and weight of
+objects in each bucket with the copy and the objects the copy lacks (exit 1 above `MAX_MISSING`). Look at the
+weight of `db/` too (a dump that suddenly shrinks is a problem). Written but **not run**.
+
+**Retention summary** (state it in the client contract): Supabase database backups 7 days (Pro, to verify);
+our database dumps 30 days; deleted or overwritten files 35 days; current files as long as the organization
+exists. So erased data can remain in backups up to 35 days (+ the Supabase delay).
+
+### Restoring one organization
+
+A bucket or table of one client was lost, or an organization was erased by mistake. Tool: a throwaway Postgres
+(pgvector), the dump, the file copy. **Time every step the first time and write the figures in the table at the
+end**; a restore nobody has timed is a guess.
+
+1. **Choose the point in time** and get the dump: ours (`rclone copy scw-crypt:db/nyra-YYYY-MM-DD.dump .`) or
+   Supabase's (Database > Backups > download). The newest dump taken *before* the loss.
+2. **Restore it in a scratch database, never in production:**
+
+   ```bash
+   createdb nyra_restore && psql nyra_restore -c 'create extension if not exists vector; create extension if not exists pgcrypto;'
+   pg_restore --no-owner --no-privileges -d nyra_restore nyra-YYYY-MM-DD.dump   # errors about Supabase-only roles: read them, most are harmless
+   ```
+
+3. **Keep only the organization** (every table follows the cascade, the same one `cloud-delete-org` relies on):
+
+   ```sql
+   delete from organizations where slug <> 'client-slug';
+   delete from jobs where status in ('queued', 'running');   -- the worker must not wake up on restored work
+   select count(*) from reference_images;                     -- compare with what the client expects
+   ```
+
+4. **Organization lost entirely** (erased, or the tables wiped): the accounts of its members changed if they were
+   deleted (a new invitation gives a new id), so drop what points at accounts before copying:
+   `delete from memberships;` and set to `null` the columns referencing `auth.users` (list them with
+   `select conrelid::regclass, a.attname from pg_constraint c join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey) where c.confrelid = 'auth.users'::regclass;`).
+   Then `pg_dump -Fc --data-only -n public nyra_restore | pg_restore --no-owner -d "$DATABASE_URL"` into
+   production (tables empty for this organization; the dump order follows the foreign keys), then re-create the
+   organization's first administrator with `nyra cloud-invite --role admin`.
+   **Organization partly damaged** (a table emptied, a library deleted): copy only those tables, with
+   `COPY … TO` from the scratch database and `COPY` into a staging table of production followed by
+   `insert … on conflict do nothing`; table by table, parents first.
+5. **Files**: for each bucket, `rclone copy "scw-crypt:refs/current/<org_id>" "supabase:refs/<org_id>"` (same for
+   `site-images` and `reports`). A file removed after the dump date is in `scw-crypt:<bucket>/deleted/<date>/`.
+6. **Check**: `rclone check` on the prefix; the row counts of step 3 against production; sign in as the
+   client's administrator and open the library, a visual, a report; write the restore in the log
+   (`insert into audit_log (org_id, action, object_type, detail) values ('<org_id>', 'organization.restore', 'organization', '{}')`).
+7. Drop the scratch database (`dropdb nyra_restore`): it holds client data.
+
+| Rehearsal | Date | Who | Dump + restore | Files | Total | Problems found |
+|---|---|---|---|---|---|---|
+| 1 | _not done_ | | | | | |
+
+Rehearse once before the first client depends on it, then every quarter, on a test organization (create it, load
+images, erase it, restore it). Note what you had to change in this procedure.
+
 ## Vercel (web only)
 
 Vercel can host the **web** process; it cannot host the worker (Chromium,

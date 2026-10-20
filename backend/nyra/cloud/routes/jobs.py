@@ -112,6 +112,8 @@ def start_index(scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends
 def cancel_job(job_id: uuid.UUID, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         job = cloud_jobs.request_cancel(conn, scope.brand_id, job_id)
+        if job is not None:
+            scope.audit(conn, "job.cancel", "job", job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Aucune tâche active avec cet identifiant.")
     return {"job": job}

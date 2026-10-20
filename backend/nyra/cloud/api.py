@@ -27,6 +27,7 @@ from nyra.config import Config, load_config
 
 from . import storage as cloud_storage
 from .routes import (
+    audit,
     brands,
     collections,
     interface,
@@ -115,7 +116,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
     # (the order of `/library/export-csv` against `/library/{filename}` matters), the catch-all page last.
     interface.add_security(app, settings.supabase_url, settings.sentry_browser_dsn)
     interface.mount_assets(app, dist)
-    for module in (session, staff, brands, members, collections, library, occurrences, jobs, matches, site_images, logos, reports_settings):
+    for module in (session, staff, audit, brands, members, collections, library, occurrences, jobs, matches, site_images, logos, reports_settings):
         app.include_router(module.router)
     if os.environ.get("NYRA_LABELS") == "1":  # labels (types and contents) are switched off until they are calibrated
         app.include_router(labels.router)

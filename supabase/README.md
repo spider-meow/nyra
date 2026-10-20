@@ -33,6 +33,7 @@ supabase/migrations/
   20261017000026_page_checks.sql                    tâche `check` (relire seulement quelques pages), `pages.read_started_at` (additive ; les pages déjà lues ont un début approximatif)
   20261017000027_page_replacements.sql              pages marquées « remplacée » à la main, par visuel (additive)
   20261020000029_read_health.sql                    santé d'une lecture (`crawl_runs.pages_ok`, `error_share`, `images_seen`…) et `suspect` : une lecture suspecte ne marque rien « retiré » (additive ; les lectures déjà faites ne sont pas suspectes)
+  20261020000031_audit_log.sql                      journal d'audit (`audit_log` : qui a fait quoi, lu par les admins de l'organisation, écrit par le backend, gardé 12 mois) et `deleted_organizations` (trace d'une suppression complète) (additive ; le numéro 030 est pris par une autre migration)
 ```
 
 ## Marques (012 puis 013)
@@ -90,6 +91,18 @@ miroir : le worker les complète via une tâche `index` (voir
 - Tout le binaire dans Storage : `refs/{org_id}/...`,
   `site-images/{org_id}/...`, `reports/{org_id}/{report_id}/...`,
   vignettes dans `{org_id}/thumbs/`.
+
+## Données des clients : journal, export, suppression, sauvegardes
+
+- **Journal d'audit** : `audit_log` (migration 031). RLS : lecture par les administrateurs de
+  l'organisation, aucune politique d'écriture (seul le backend écrit, avec la clé de service).
+  Conservation 12 mois (`nyra cloud-purge-audit`, lancé aussi chaque jour par le worker).
+- **Suppression complète d'une organisation** : toutes les tables suivent `organizations` par `on delete cascade`
+  (vérifié sur le catalogue par `backend/tests/test_offboarding.py`) ; les fichiers Storage `{org_id}/…` sont
+  supprimés par la commande, pas par la base. Une nouvelle table doit porter `org_id` avec la cascade.
+- **Sauvegardes** : Supabase sauvegarde Postgres chaque jour (Pro), **pas les fichiers de Storage**. Procédure de
+  copie des buckets, de sauvegarde de la base et de restauration d'une organisation : `docs/DEPLOYMENT.md`
+  (rien n'a été joué à ce jour).
 
 ## Tests
 

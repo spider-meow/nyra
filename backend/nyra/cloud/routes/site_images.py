@@ -278,6 +278,7 @@ def adopt_site_images(body: AdoptBody, scope: BrandScope = Depends(brand_admin_d
     job = None
     if added:
         with cloud_db.connect(ctx.settings.database_url) as conn:
+            scope.audit(conn, "library.adopt", "reference", added=len(added), refused=len(failed))
             job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind="index",
                                      created_by=scope.member.user_id)
     return {"added": added, "failed": failed, "job": job}
@@ -309,6 +310,7 @@ def add_exclusion(body: ExclusionBody, scope: BrandScope = Depends(brand_admin_d
                                           reason=body.reason.strip() or None, created_by=scope.member.user_id)
         if group_id is None:
             raise HTTPException(status_code=404, detail="Image introuvable.")
+        scope.audit(conn, "exclusion.add", "site_image", body.site_image_id, exclusion=group_id)
         config = ctx.org_config(conn, scope.org_id)
         excluded = match_module.excluded_site_ids(
             cloud_db.site_hashes(conn, scope.brand_id), cloud_db.load_exclusions(conn, scope.brand_id), config.match
@@ -326,6 +328,7 @@ def delete_exclusion(exclusion_id: uuid.UUID, scope: BrandScope = Depends(brand_
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if not cloud_db.delete_exclusion(conn, scope.brand_id, exclusion_id):
             raise HTTPException(status_code=404, detail="Exclusion introuvable.")
+        scope.audit(conn, "exclusion.delete", "exclusion", exclusion_id)
     # The match signature now differs: the next comparison brings the image back.
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:

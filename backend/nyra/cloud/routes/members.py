@@ -8,6 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from .. import audit as cloud_audit
 from .. import db as cloud_db
 from .. import storage as cloud_storage
 from .common import Ctx, admin_or_staff_dep, get_ctx, member_or_staff_dep
@@ -63,6 +64,7 @@ def invite_member(org_id: uuid.UUID, body: InviteBody, member=Depends(admin_or_s
         if existing is not None:
             raise HTTPException(status_code=409, detail="Cette personne fait déjà partie de l'équipe.")
         cloud_db.add_membership(conn, user_id=uuid.UUID(user_id), org_id=org_id, role=body.role)
+        cloud_audit.record(conn, org_id, member.user_id, "member.invite", "user", user_id, role=body.role, invited=invited)
     return {"invited": invited, "member": {"user_id": user_id, "email": email, "role": body.role, "you": False}}
 
 
@@ -83,6 +85,7 @@ def change_role(org_id: uuid.UUID, user_id: uuid.UUID, body: RoleBody, member=De
             _keep_one_admin(conn, org_id, user_id)
         if not cloud_db.set_member_role(conn, org_id=org_id, user_id=user_id, role=body.role):
             raise HTTPException(status_code=404, detail="Cette personne ne fait pas partie de l'équipe.")
+        cloud_audit.record(conn, org_id, member.user_id, "member.role", "user", user_id, role=body.role)
     return {"role": body.role}
 
 
@@ -94,4 +97,5 @@ def remove_member(org_id: uuid.UUID, user_id: uuid.UUID, member=Depends(admin_or
         _keep_one_admin(conn, org_id, user_id)
         if not cloud_db.remove_member(conn, org_id=org_id, user_id=user_id):
             raise HTTPException(status_code=404, detail="Cette personne ne fait pas partie de l'équipe.")
+        cloud_audit.record(conn, org_id, member.user_id, "member.remove", "user", user_id)
     return {"removed": True}

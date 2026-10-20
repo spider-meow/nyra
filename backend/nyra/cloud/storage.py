@@ -199,6 +199,55 @@ def delete(client: Client, bucket: str, paths: Iterable[Optional[str]]) -> None:
         forget_signed(bucket, paths)
 
 
+LIST_BATCH = 100
+LIST_MAX_CALLS = 200_000  # per pass: 20 million objects at LIST_BATCH each, far past any organization, but the loop ends
+DELETE_MAX_PASSES = 10_000
+
+
+def _list_pass(api, prefix: str, *, remove: bool) -> tuple[int, int]:
+    """Walk the folders under `prefix/` once: (entries seen, files removed or, without `remove`, files counted).
+
+    Each folder is listed from its start and its files are removed, so a folder holding more than `LIST_BATCH`
+    entries is finished by the next pass (an emptied folder disappears from the listing). Without `remove`
+    nothing disappears, so a folder is listed page after page instead."""
+    todo, seen, files_done = [(prefix, 0)], 0, 0
+    for _ in range(LIST_MAX_CALLS):
+        if not todo:
+            break
+        folder, offset = todo.pop()
+        entries = api.list(folder, {"limit": LIST_BATCH, "offset": offset}) or []
+        files = [f"{folder}/{entry['name']}" for entry in entries if entry.get("id")]
+        if files and remove:
+            api.remove(files)
+        seen, files_done = seen + len(entries), files_done + len(files)
+        if not remove and len(entries) >= LIST_BATCH:
+            todo.append((folder, offset + len(entries)))
+        todo.extend((f"{folder}/{entry['name']}", 0) for entry in entries if not entry.get("id"))
+    else:
+        raise RuntimeError(f"listing {prefix}/ did not end after {LIST_MAX_CALLS} calls")
+    return seen, files_done
+
+
+def delete_prefix(client: Client, bucket: str, prefix: str, *, dry_run: bool = False) -> int:
+    """Delete every object under `prefix/` (folders included, any depth) and return how many; with `dry_run`,
+    only count them.
+
+    Passes repeat until one finds nothing. A pass that finds objects and removes none (Storage accepts the call
+    and keeps them) stops with an error instead of reporting a deletion that did not happen."""
+    api = client.storage.from_(bucket)
+    if dry_run:
+        return _list_pass(api, prefix, remove=False)[1]
+    deleted = 0
+    for _ in range(DELETE_MAX_PASSES):
+        seen, removed = _list_pass(api, prefix, remove=True)
+        deleted += removed
+        if not seen:
+            return deleted
+        if not removed:
+            break
+    raise RuntimeError(f"{bucket}/{prefix}/ is not empty after deleting {deleted} object(s)")
+
+
 def signed_url(client: Client, bucket: str, path: str, *, expires_in: int = SIGNED_URL_TTL_SECONDS) -> str:
     result = client.storage.from_(bucket).create_signed_url(path, expires_in)
     url = result.get("signedUrl") or result.get("signedURL")

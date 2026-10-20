@@ -368,6 +368,75 @@ def cloud_staff(
     typer.secho(f"{email} has back office access{note}.", fg=typer.colors.GREEN)
 
 
+@app.command("cloud-delete-org")
+def cloud_delete_org(
+    slug: str = typer.Argument(..., help="Slug of the organization to erase for good."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List what would be deleted (rows, files, accounts); delete nothing."),
+    confirm_name: Optional[str] = typer.Option(None, "--confirm-name", help="The organization's exact name (asked for when not given)."),
+    operator: str = typer.Option("", "--operator", help="Who runs it, for the trace (default: the system user)."),
+) -> None:
+    """Erase an organization: database rows, Storage files, and the accounts that belong to nothing else. Irreversible.
+
+    Prints a report; the trace stays in the logs and in `deleted_organizations`. Export first (`cloud-export-org`).
+    """
+    import json
+
+    from nyra.cloud import storage as cloud_storage
+    from nyra.cloud.offboarding import OffboardingError, delete_organization
+
+    env = _cloud_env()
+    if not dry_run and confirm_name is None:
+        confirm_name = typer.prompt(f"This erases organization {slug!r} for good. Type its exact name to confirm")
+    client = cloud_storage.get_client(env["SUPABASE_URL"], env["SUPABASE_SERVICE_ROLE_KEY"])
+    try:
+        report = delete_organization(env["DATABASE_URL"], client, slug, confirm_name=confirm_name, operator=operator, dry_run=dry_run)
+    except OffboardingError as exc:
+        _fail(str(exc))
+    typer.echo(json.dumps(report, ensure_ascii=False, indent=2))
+    if report["users_failed"]:
+        _fail("Organization erased, but some accounts could not be deleted: delete them in the Supabase dashboard (Authentication).")
+    typer.secho("Dry run: nothing was deleted." if dry_run else "Organization erased.", fg=typer.colors.GREEN)
+
+
+@app.command("cloud-export-org")
+def cloud_export_org(
+    slug: str = typer.Argument(..., help="Slug of the organization to export."),
+    out: Path = typer.Option(..., "--out", help="Folder to write to (created; run again on the same folder to finish a stopped export)."),
+    operator: str = typer.Option("", "--operator", help="Who runs it, for the trace (default: the system user)."),
+    max_file_mb: int = typer.Option(200, "--max-file-mb", min=1, help="A file bigger than this is reported as failed."),
+    max_total_gb: int = typer.Option(50, "--max-total-gb", min=1, help="Stop when the files copied reach this size."),
+) -> None:
+    """Write an organization's data to a folder: CSV files, the library originals and the reports, and a manifest."""
+    from nyra.cloud import storage as cloud_storage
+    from nyra.cloud.offboarding import OffboardingError, export_organization
+
+    env = _cloud_env()
+    client = cloud_storage.get_client(env["SUPABASE_URL"], env["SUPABASE_SERVICE_ROLE_KEY"])
+    try:
+        manifest = export_organization(env["DATABASE_URL"], client, slug, out, operator=operator,
+                                       max_file_bytes=max_file_mb * 1_000_000, max_total_bytes=max_total_gb * 1_000_000_000)
+    except OffboardingError as exc:
+        _fail(str(exc))
+    files = manifest["files"]
+    typer.echo(f"{sum(manifest['tables'].values())} CSV rows, {files['copied']} file(s) copied, {files['already_there']} already there -> {out}")
+    if not manifest["complete"]:
+        for failure in files["failures"]:
+            typer.secho(f"FAILED {failure['bucket']}/{failure['path']}: {failure['error']}", fg=typer.colors.RED, err=True)
+        _fail(f"Export incomplete: {len(files['failures'])} file(s) missing. Run the same command again.")
+    typer.secho("Export complete.", fg=typer.colors.GREEN)
+
+
+@app.command("cloud-purge-audit")
+def cloud_purge_audit(
+    months: int = typer.Option(12, "--months", min=1, help="Keep this many months of the audit log."),
+) -> None:
+    """Delete audit log rows older than the retention (the worker does it every day; this is for by hand)."""
+    from nyra.cloud import audit
+
+    removed = audit.purge(_cloud_env(need_storage=False)["DATABASE_URL"], months)
+    typer.secho(f"{removed} audit row(s) older than {months} months deleted.", fg=typer.colors.GREEN)
+
+
 @app.command("cloud-usage")
 def cloud_usage(
     brands: int = typer.Option(3, "--brands", min=1, help="How many brands to plan for."),

@@ -62,6 +62,8 @@ before September 26, 2026 still point at their original.
 | `crawl_runs` | Crawl history, one per address read | counters, `errors`, `job_id` |
 | `reports` | Generated reports, per brand | `brand_id`, Storage paths of the three files, `stats` |
 | `platform_staff` | Nyra team members who see the back office | `user_id` (service role only, no RLS policy) |
+| `audit_log` | What people did, per organization: one row per action that changes something | `org_id` (deleted with the organization), `brand_id` (no foreign key: survives the brand), `user_id` (set to null if the Auth account is deleted), `action` (stable code: `library.delete`, `exclusion.add`, `member.remove`, `job.crawl`…), `object_type` + `object_id`, `detail` jsonb (counters and codes only, never content; 2 KB at most), `created_at`. Indexes `(org_id, created_at desc)` and `(created_at)` (the purge). RLS: read by the organization's admins; written by the backend, in the transaction of the change it traces. Kept 12 months (`audit.purge`) |
+| `deleted_organizations` | The trace of a complete erasure (`nyra cloud-delete-org`); outlives the organization | `org_id` (no foreign key), `name`, `slug`, `deleted_at`, `operator`, `report` jsonb (row and file counts: no content, no e-mail). Service role only, no RLS policy |
 
 `crawl_runs.metrics` (jsonb) holds each crawl's timings and byte counts.
 `crawl_runs` also keeps the health of a full read (`pages_ok`, `error_share`,
@@ -75,6 +77,17 @@ the migration have no figures and are not suspect. A page whose
 original's: only a JPEG working copy is stored) and `stored_bytes`
 (working copy + thumbnail); `reference_images.byte_size` is the uploaded
 original's weight.
+
+### Erasing an organization
+
+Every table holding an organization's data reaches `organizations` through `on delete cascade`: directly by an
+`org_id` column, or through its parent (`image_pages` through `pages`, `brand_logos` through `brands`). So
+`delete from organizations where id = …` removes every row, which `nyra cloud-delete-org` does after the Storage
+files. The tables that are not an organization's are `platform_staff`, `service_metrics` and
+`deleted_organizations`. `backend/tests/test_offboarding.py` reads the catalog: a new table must carry an
+`org_id` with the cascade (or be listed in `offboarding.INDIRECT` / `GLOBAL`), and no foreign key may be
+`no action`/`restrict`, or the test fails. Foreign keys to `auth.users` are `set null` (or `cascade` for
+`memberships` and `platform_staff`): deleting an account never blocks.
 
 ### The `insights` schema
 

@@ -24,6 +24,7 @@ from nyra import match as match_module
 from nyra.config import Config, with_overrides
 from nyra.refs import RefValidationError, parse_expiry, reference_features
 
+from .. import audit as cloud_audit
 from .. import auth as cloud_auth
 from .. import db as cloud_db
 from .. import insights as cloud_insights
@@ -76,6 +77,11 @@ class BrandScope:
     org_id: uuid.UUID
     brand_id: uuid.UUID
     name: str
+
+    def audit(self, conn, action: str, object_type: str, object_id=None, **detail) -> None:
+        """Trace an action of this person on this brand, on the connection (and transaction) of the change itself."""
+        cloud_audit.record(conn, self.org_id, self.member.user_id, action, object_type, object_id,
+                           brand_id=self.brand_id, **detail)
 
 
 async def get_ctx(request: Request) -> Ctx:
@@ -223,8 +229,10 @@ def active_jobs(conn, brand_id: uuid.UUID, kinds: tuple[str, ...], statuses: tup
 def enqueue(ctx: Ctx, scope: BrandScope, kind: str, params: dict) -> dict:
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
-            return {"job": cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind=kind,
-                                              params=params, created_by=scope.member.user_id)}
+            job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind=kind, params=params,
+                                     created_by=scope.member.user_id)
+            scope.audit(conn, f"job.{kind}", "job", job["id"])
+            return {"job": job}
     except cloud_jobs.JobConflict as exc:
         labels = {"crawl": "Une lecture", "match": "Une comparaison", "report": "Un rapport", "locate": "Une recherche d'image", "check": "Une vérification de pages"}
         label = labels.get(kind, "Une tâche")

@@ -41,6 +41,7 @@ from nyra.crawl import CrawlStats, crawl_pages, crawl_site, normalize_url
 from nyra.estimate import remaining_seconds
 from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching, warm_clip
 
+from . import audit as cloud_audit
 from . import db as cloud_db
 from . import hostmetrics
 from . import jobs as cloud_jobs
@@ -54,6 +55,7 @@ log = logging.getLogger("nyra.worker")
 
 HEARTBEAT_SECONDS = 30
 PROGRESS_SECONDS = 1.0
+AUDIT_PURGE_SECONDS = 24 * 3600  # retention of the audit log, see `audit.purge`
 # A job running longer than this is taken for hung (a frozen browser keeps the heartbeat thread beating): the
 # worker exits, the container restarts, and the job is put back in the queue (see `jobs.reap_stale`).
 JOB_MAX_SECONDS = 6 * 3600
@@ -373,9 +375,17 @@ class Worker:
     def run_forever(self) -> None:
         log.info("worker started")
         threading.Thread(target=self._publish_metrics, name="metrics", daemon=True).start()
-        last_reap = 0.0
+        last_reap, last_purge = 0.0, -AUDIT_PURGE_SECONDS
         while not self._stop.is_set():
             touch_alive()
+            if time.monotonic() - last_purge > AUDIT_PURGE_SECONDS:
+                last_purge = time.monotonic()
+                try:
+                    purged = cloud_audit.purge(self.database_url)
+                    if purged:
+                        log.info("audit log: %d row(s) older than %d months deleted", purged, cloud_audit.RETENTION_MONTHS)
+                except Exception:  # noqa: BLE001 - retention is housekeeping; tomorrow's run takes what this one missed
+                    log.exception("purging the audit log failed")
             if time.monotonic() - last_reap > 60:
                 last_reap = time.monotonic()
                 try:

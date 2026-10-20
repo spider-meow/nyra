@@ -231,6 +231,7 @@ def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unl
         with cloud_db.connect(ctx.settings.database_url) as conn:
             if collection_id:  # a replaced visual moves too: the person dropped it in that collection
                 cloud_db.set_reference_collection(conn, scope.brand_id, saved, collection_id)
+            scope.audit(conn, "library.upload", "reference", saved=len(saved), replaced=len(replaced), refused=len(failed))
             job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind="index",
                                      created_by=scope.member.user_id)
     return {"saved": saved, "replaced": replaced, "failed": failed, "job": job}
@@ -250,21 +251,25 @@ def update_meta(filename: str, body: MetaBody, scope: BrandScope = Depends(brand
             conn, scope.brand_id, filename, expiry_date=expiry, unlimited_rights=unlimited,
             credit=body.credit.strip() or None, notes=body.notes.strip() or None, tags=tags,
         )
+        if found:
+            scope.audit(conn, "library.update", "reference", found, unlimited_rights=unlimited, has_expiry=bool(expiry))
     if not found:
         raise HTTPException(status_code=404, detail="Référence introuvable.")
     return {"ok": True, "expiry_date": expiry or "", "unlimited_rights": unlimited, "tags": tags}
 
 
-def _delete_filenames(ctx: Ctx, brand_id: uuid.UUID, filenames: list[str]) -> int:
+def _delete_filenames(ctx: Ctx, scope: BrandScope, filenames: list[str]) -> int:
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        deleted = cloud_db.delete_references(conn, brand_id, filenames)
+        deleted = cloud_db.delete_references(conn, scope.brand_id, filenames)
+        if deleted:
+            scope.audit(conn, "library.delete", "reference", deleted[0]["id"] if len(deleted) == 1 else None, count=len(deleted))
     ctx.remove_files(cloud_storage.BUCKET_REFS, [row[key] for row in deleted for key in ("storage_path", "thumb_path", "work_path")])
     return len(deleted)
 
 
 @router.delete(f"{BRAND}/library/{{filename}}")
 def delete_ref(filename: str, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    if not _delete_filenames(ctx, scope.brand_id, [safe_filename(filename)]):
+    if not _delete_filenames(ctx, scope, [safe_filename(filename)]):
         raise HTTPException(status_code=404, detail="Référence introuvable.")
     return {"ok": True}
 
@@ -272,7 +277,7 @@ def delete_ref(filename: str, scope: BrandScope = Depends(brand_admin_dep), ctx:
 @router.post(f"{BRAND}/library/delete")
 def delete_many(body: FilenamesBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     names = [safe_filename(name) for name in body.filenames]
-    return {"deleted": _delete_filenames(ctx, scope.brand_id, names)}
+    return {"deleted": _delete_filenames(ctx, scope, names)}
 
 
 @router.post(f"{BRAND}/library/expiry")
@@ -281,6 +286,7 @@ def bulk_expiry(body: BulkExpiryBody, scope: BrandScope = Depends(brand_admin_de
     names = [safe_filename(name) for name in body.filenames]
     with cloud_db.connect(ctx.settings.database_url) as conn:
         updated = cloud_db.set_expiry_for(conn, scope.brand_id, names, expiry, unlimited)
+        scope.audit(conn, "library.expiry", "reference", count=updated, unlimited_rights=unlimited, has_expiry=bool(expiry))
     return {"updated": updated}
 
 
@@ -305,6 +311,7 @@ def bulk_tags(body: BulkTagsBody, scope: BrandScope = Depends(brand_admin_dep), 
             if new != tags:
                 changed[name] = new
         updated = cloud_db.set_reference_tags(conn, scope.brand_id, changed)
+        scope.audit(conn, "library.tags", "reference", count=updated, added=len(add), removed=len(remove))
     return {"updated": updated}
 
 
@@ -386,6 +393,7 @@ def import_csv(file: UploadFile = File(...), apply: bool = Query(False),
                         unlimited_rights=entry["unlimited_rights"], credit=entry["credit"] or None, notes=entry["notes"] or None, tags=entry["tags"],
                     )
                     applied += 1
+            scope.audit(conn, "library.import_csv", "reference", count=applied, rows=len(parsed))
     return {"rows": parsed, "applied": applied}
 
 
