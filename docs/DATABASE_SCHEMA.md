@@ -65,7 +65,7 @@ before September 26, 2026 still point at their original.
 
 `crawl_runs.metrics` (jsonb) holds each crawl's timings and byte counts.
 `crawl_runs` also keeps the health of a full read (`pages_ok`, `error_share`,
-`blocked_share`, `images_seen`, `images_known_seen`) and `suspect` /
+`images_seen`, `images_known_seen`) and `suspect` /
 `suspect_reason`: set when it ends if the read kept under 70 % of the images
 known before, or met too many errors (see `MATCHING.md`). Reads made before
 the migration have no figures and are not suspect. A page whose

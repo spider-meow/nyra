@@ -37,7 +37,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from nyra.crawl import BASELINE_READS, read_health, suspect_reason
+from nyra.crawl import BASELINE_READS, CrawlStats, read_health, suspect_reason
 
 Row = dict[str, Any]
 
@@ -813,7 +813,8 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
             SELECT array_agg(p.url ORDER BY p.url) AS urls,
                    -- a page that failed to load (or was never read) says nothing about what it shows
                    count(*) FILTER (WHERE p.crawled_at IS NULL OR p.crawled_at < rd.read_at
-                                      OR p.http_status IS NULL OR p.http_status NOT BETWEEN 200 AND 299) AS unread
+                                      OR p.http_status IS NULL OR p.http_status NOT BETWEEN 200 AND 299
+                                      OR """ + interrupted_sql("s.site_id", "rd.read_at") + """) AS unread
             FROM image_pages ip JOIN pages p ON p.id = ip.page_id
             WHERE ip.image_id = s.id
         ) pg ON true
@@ -1102,10 +1103,19 @@ def update_crawl_run_progress(conn: psycopg.Connection, run_id: uuid.UUID, stats
     )
 
 
-def record_read_health(conn: psycopg.Connection, run_id: uuid.UUID, stats) -> Optional[str]:
+def interrupted_sql(site: str, read_at: str) -> str:
+    """SQL condition on a page `p`: a run of `site` that did not end properly (running, cancelled, error) began after the
+    last finished read (`read_at`) and was going while `p` was read. Such a page was read by a run that was never judged,
+    so it cannot be taken for gone. A page checked alone after a clean read has no such run."""
+    return f"""EXISTS (SELECT 1 FROM crawl_runs i WHERE i.site_id = {site} AND i.status <> 'done' AND i.started_at > {read_at}
+                      AND i.started_at <= p.crawled_at AND (i.finished_at IS NULL OR p.crawled_at <= i.finished_at))"""
+
+
+def record_read_health(conn: psycopg.Connection, run_id: uuid.UUID, stats: CrawlStats) -> Optional[str]:
     """Work out the health of a read that ended (`crawl.read_health`), compare it with the best of the site's last
     reads (`crawl.suspect_reason`), store both on the run and return why it is suspect, or None. Call it before the run
-    is marked done, so no one reads a finished run that was not judged."""
+    is marked done, so no one reads a finished run that was not judged. (`nyra.crawl` is already imported by the worker
+    and the routes: the pure functions stay beside the crawler they measure.)"""
     health = read_health(stats)
     row = conn.execute(
         """SELECT r.started_at, r.site_id,
@@ -1114,17 +1124,20 @@ def record_read_health(conn: psycopg.Connection, run_id: uuid.UUID, stats) -> Op
            FROM crawl_runs r LEFT JOIN site_images s ON s.site_id = r.site_id WHERE r.id = %s GROUP BY r.id""",
         (run_id,),
     ).fetchone()
+    if row is None:
+        raise ValueError(f"crawl run {run_id} not found")
     # The best of the last reads, not the last one alone: a broken read followed by another broken one is still caught.
+    # A read with no page read (an empty resume) says nothing about the site: it does not count.
     baseline = conn.execute(
-        """SELECT max(images_seen) AS seen FROM (SELECT images_seen FROM crawl_runs
-               WHERE site_id = %s AND status = 'done' AND started_at < %s ORDER BY started_at DESC LIMIT %s) last""",
+        """SELECT max(images_known_seen) AS seen FROM (SELECT images_known_seen FROM crawl_runs
+               WHERE site_id = %s AND status = 'done' AND pages_ok > 0 AND started_at < %s ORDER BY started_at DESC LIMIT %s) last""",
         (row["site_id"], row["started_at"], BASELINE_READS),
     ).fetchone()["seen"]
     reason = suspect_reason(health, row["known_seen"], baseline)
     conn.execute(
-        """UPDATE crawl_runs SET pages_ok = %s, error_share = %s, blocked_share = %s, images_seen = %s,
+        """UPDATE crawl_runs SET pages_ok = %s, error_share = %s, images_seen = %s,
                images_known_seen = %s, suspect = %s, suspect_reason = %s WHERE id = %s""",
-        (health["pages_ok"], health["error_share"], health["blocked_share"], row["seen"], row["known_seen"],
+        (health["pages_ok"], health["error_share"], row["seen"], row["known_seen"],
          reason is not None, reason, run_id),
     )
     return reason

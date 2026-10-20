@@ -464,6 +464,7 @@ class CrawlStats:
     sitemap_urls: int = 0
     pages_failed: int = 0
     pages_redirected: int = 0      # the address answered with another page: read, but not recorded as itself
+    pages_ok: int = 0              # read with success: 2xx, the page asked for, no consent wall
     pages_walled: int = 0          # a consent notice still hid the page after we tried to close it (CONSENT_WALL)
     http_statuses: dict[str, int] = field(default_factory=dict)
     images_known: int = 0          # already stored under this URL: not downloaded again
@@ -506,25 +507,24 @@ class CrawlStats:
 # A read is "suspect" when it looks incomplete: nothing is then marked removed from it (`cloud/presence.py`). Prudent on
 # purpose: flagging a good read only keeps pages "unknown" until the next one; missing a bad one announces a removal that
 # did not happen.
-MIN_KNOWN_IMAGES_SHARE = 0.7   # of the images the best of the last reads saw, a read must see again at least this share
+MIN_KNOWN_IMAGES_SHARE = 0.7   # of the known images the best of the last reads saw again, a read must see again at least this share
 MAX_ERROR_SHARE = 0.2          # of the pages read, more than this share failed (403, 429, 5xx, timeout, consent wall)
-BASELINE_READS = 3             # a real drop of the site stops being suspect after this many reads
+BASELINE_READS = 3             # the last reads (with a page read) the comparison looks at: a real drop stops being suspect after this many
 
 
 def read_health(stats: CrawlStats) -> dict[str, Any]:
-    """The figures of a finished read: pages read with success, share of pages in error, share blocked by robots.txt."""
-    counts = {int(code): count for code, count in stats.http_statuses.items()}
-    refused = sum(count for code, count in counts.items() if code in (0, 403, 429) or code >= 500)
-    succeeded = sum(count for code, count in counts.items() if 200 <= code < 300)
-    asked = stats.pages_visited + stats.blocked_by_robots
-    return {"pages_ok": max(0, succeeded - stats.pages_redirected - stats.pages_walled),
-            "error_share": (stats.pages_failed + refused + stats.pages_walled) / max(stats.pages_visited, 1),
-            "blocked_share": stats.blocked_by_robots / max(asked, 1)}
+    """The figures of a finished read: pages read with success (`pages_ok`, counted by the crawler: 2xx, the page asked for,
+    no consent wall) and the share of pages in error: no answer, 403, 429, 5xx, or hidden by a consent wall (a wall is
+    only recorded on a 2xx page, a failed page has no status: the three are disjoint). Bounded to 1."""
+    refused = sum(count for code, count in stats.http_statuses.items() if int(code) in (0, 403, 429) or int(code) >= 500)
+    return {"pages_ok": stats.pages_ok,
+            "error_share": min(1.0, (stats.pages_failed + refused + stats.pages_walled) / max(stats.pages_visited, 1))}
 
 
 def suspect_reason(health: dict[str, Any], known_seen: int, baseline_seen: Optional[int]) -> Optional[str]:
     """Why this read cannot be trusted to say an image is gone, or None. `known_seen`: images already known that it saw
-    again; `baseline_seen`: the most images one of the last reads saw (None: no figure yet, only the errors count)."""
+    again; `baseline_seen`: the most known images one of the last reads saw again (None or 0: no figure yet, only the
+    errors count)."""
     if health["pages_ok"] == 0:
         return "aucune page lue avec succès"
     if health["error_share"] > MAX_ERROR_SHARE:
@@ -745,9 +745,11 @@ class _Crawl:
         if not same_page(url, final_url):
             self.stats.pages_redirected += 1
             http_status = REDIRECTED
-        elif walled:
+        elif walled and 200 <= http_status < 300:
             self.stats.pages_walled += 1
             http_status = CONSENT_WALL
+        elif 200 <= http_status < 300:
+            self.stats.pages_ok += 1
         await asyncio.to_thread(self._locked, self.store.mark_page, page_id, http_status)
         self.stats.pages_visited += 1
 

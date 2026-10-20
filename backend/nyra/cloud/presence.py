@@ -23,6 +23,8 @@ import psycopg
 
 from nyra.crawl import CONSENT_WALL
 
+from .db import interrupted_sql
+
 Row = dict
 STATES = ("still", "gone", "unknown")
 MAX_PAGES_PER_REQUEST = 100
@@ -35,7 +37,8 @@ def _pages(only_reference: bool) -> str:
            COALESCE(bool_or(p.read_started_at > pr.marked_at), false) AS checked, COALESCE(p.http_status = {CONSENT_WALL}, false) AS walled,
            '/' || split_part(split_part(regexp_replace(p.url, '^https?://[^/]+', ''), '?', 1), '/', 2) AS section,
            CASE WHEN p.status = 'done' AND p.links_tracked AND p.crawled_at >= rd.read_at AND COALESCE(bool_or(ip.last_seen >= p.read_started_at), false) THEN 'still'
-                WHEN p.status = 'done' AND (p.links_tracked OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at AND NOT rd.suspect THEN 'gone'
+                WHEN p.status = 'done' AND (p.links_tracked OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at AND NOT rd.suspect
+                     AND NOT {interrupted_sql('s.id', 'rd.read_at')} THEN 'gone'
                 ELSE 'unknown' END AS state
     FROM matches m
     JOIN site_images si ON si.id = m.site_image_id
@@ -119,9 +122,13 @@ def total(rows: list[Row], *, site: Optional[uuid.UUID] = None, section: Optiona
 def by_visual(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     """The visuals a person confirmed (a photo decided « à retirer » or « retiré »; unlimited rights are never replaced), with
     the pages in each state, marked replaced or not, and one row with no state for a visual no page is known for:
-    (reference, filename, expiry_date, unlimited_rights, thumb_path, storage_path, state, marked, pages)."""
+    (reference, filename, expiry_date, unlimited_rights, thumb_path, storage_path, state, marked, pages, unlinked)."""
     return conn.execute(
-        f"""SELECT r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, g.marked, count(g.url) AS pages
+        f"""SELECT r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, g.marked, count(g.url) AS pages,
+                   -- matches (not set aside) that no page is known for: where they are is unknown, so the visual cannot be replaced
+                   (SELECT count(*) FROM matches m LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
+                    WHERE m.reference_id = r.id AND v.decision IS DISTINCT FROM 'ecarte'
+                      AND NOT EXISTS (SELECT 1 FROM image_pages ip WHERE ip.image_id = m.site_image_id)) AS unlinked
             FROM reference_images r LEFT JOIN ({_pages(False)}) g ON g.reference_id = r.id
             WHERE r.brand_id = %(brand)s AND NOT r.unlimited_rights AND EXISTS (
                 SELECT 1 FROM matches m JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
@@ -133,7 +140,8 @@ def by_visual(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
 
 def visuals(rows: list[Row]) -> list[dict]:
     """One entry per visual from `by_visual`: its pages per state, and whether it is replaced: every page was read again
-    and none shows it (a page not read again is never taken for gone, so a visual not measured yet, or with no page known, is not replaced)."""
+    and none shows it (a page not read again is never taken for gone, so a visual not measured yet, or with no page known, or with a
+    match no page is known for, is not replaced)."""
     found: dict[uuid.UUID, dict] = {}
     for row in rows:
         item = found.setdefault(row["reference_id"], {"row": row, **dict.fromkeys(STATES, 0), "marked": 0})
@@ -141,7 +149,7 @@ def visuals(rows: list[Row]) -> list[dict]:
             item[row["state"]] += row["pages"]
             item["marked"] += row["pages"] if row["marked"] else 0
     return [{"row": item["row"], **{state: item[state] for state in STATES}, "marked": item["marked"], "pages": sum(item[state] for state in STATES),
-             "replaced": sum(item[state] for state in STATES) > 0 and item["still"] == 0 and item["unknown"] == 0} for item in found.values()]
+             "replaced": sum(item[state] for state in STATES) > 0 and item["still"] == 0 and item["unknown"] == 0 and not item["row"]["unlinked"]} for item in found.values()]
 
 
 def replaced_references(conn: psycopg.Connection, brand_id: uuid.UUID) -> frozenset:
