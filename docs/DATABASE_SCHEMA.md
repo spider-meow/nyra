@@ -39,10 +39,11 @@ before September 26, 2026 still point at their original.
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `organizations` | Clients | `slug` (lowercase, hyphens, unique) |
+| `organizations` | Clients | `slug` (lowercase, hyphens, unique), `quota_overrides` (jsonb: the limits the Nyra team changed for this organization, keys of `QuotaConfig`; empty = the defaults of `config.yaml`; written by the back office only) |
 | `memberships` | User ↔ organization | `role` ∈ {admin, client} |
 | `brands` | Brands of an organization | `slug` (unique per org), `created_by` (the platform admin who created it: the billing record), `set_aside_logos` (setting, off by default: the site images recognised as logos stay out of the comparison and out of "Droits non vérifiés") |
 | `brand_logos` | A brand's logo, shrunk by the API to a 128 px PNG and kept as a data URI (it travels with the list of brands) | `brand_id` (primary key, deleted with the brand), `data_uri` |
+| `usage_counters` | What an organization used: `kind` ∈ {pages_read, images_new, bytes_downloaded} per month (`period` = first day of the month) and `emails` (invitations) per day; added to by the worker (crawls and page checks, at most a few seconds late) and the API, read by the cap, the client's Usage page and the back office | `org_id` + `period` + `kind` (key), `amount` |
 | `org_settings` | Per-organization overrides of `config.yaml`, shared by its brands | `overrides` jsonb (whitelisted keys only) |
 | `sites` | A brand's addresses | `brand_id`, `url` (canonical, unique per org: an address belongs to one brand), `label` (US, FR...) |
 | `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `unlimited_rights` (never expires; excludes a date: a check forbids both), `collection_id` (its folder, null = unfiled), `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |

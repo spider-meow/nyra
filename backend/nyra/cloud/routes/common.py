@@ -30,6 +30,7 @@ from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
 from .. import logos as cloud_logos
 from .. import storage as cloud_storage
+from .. import usage as cloud_usage
 
 if TYPE_CHECKING:
     from ..api import CloudSettings
@@ -211,6 +212,14 @@ def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename
         phash_flip=features.phash_flip, dhash_flip=features.dhash_flip,
         embedding=None, width=width, height=height, thumb_path=thumb_path, work_path=work_path, byte_size=len(kept),
     )
+
+
+def enforce(ctx: Ctx, org_id: uuid.UUID, key: str, adding: int = 1, brand_id: Optional[uuid.UUID] = None) -> None:
+    """Refuse (403, with a sentence the person can read) what would take the organization past a limit of its quota."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        refusal = cloud_usage.check(conn, ctx.settings.base_config().quota, org_id, key, adding, brand_id)
+    if refusal:
+        raise HTTPException(status_code=403, detail=refusal)
 
 
 def active_jobs(conn, brand_id: uuid.UUID, kinds: tuple[str, ...], statuses: tuple[str, ...] = cloud_jobs.ACTIVE) -> bool:

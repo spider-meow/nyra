@@ -49,6 +49,7 @@ from . import hostmetrics
 from . import jobs as cloud_jobs
 from . import presence as cloud_presence
 from . import storage as cloud_storage
+from . import usage as cloud_usage
 from .locate import NotSearchable, locate_reference
 from .store import CloudCrawlStore, CloudMatchStore
 from .variants import update_variants
@@ -621,14 +622,23 @@ class Worker:
             raise JobFailed("Aucune adresse à lire pour cette marque.")
         limit = min(int(params.get("max_pages") or config.crawl.max_pages), config.crawl.max_pages_limit)
         runs = []
+        capped = False  # the month's page limit stopped the read before its own limit did
         for index, site in enumerate(sites):
             if ctx.cancelled:
                 break
+            left = self._pages_left(org_id, config)
+            # ponytail: jobs of several brands of one organization run side by side and each takes `min(limit, left)`
+            # without a lock, so the month can be passed by (concurrent jobs - 1) x crawl.max_pages_limit pages.
+            if left <= 0:
+                capped = True
+                break
             prefix = f"{site['label'] or site['url']} ({index + 1}/{len(sites)}) · " if len(sites) > 1 else ""
-            runs.append(self._crawl_site(ctx, org_id, site, config, limit, params, prefix))
+            runs.append(self._crawl_site(ctx, org_id, site, config, min(limit, left), params, prefix))
+            # stopped by the quota, not by the end of the site: it used what was left and pages were still waiting
+            capped = capped or (left < limit and runs[-1]["pages_visited"] >= left and runs[-1]["pages_queued"] > 0)
 
         result = {
-            "runs": [run["run_id"] for run in runs],
+            "runs": [run["run_id"] for run in runs], "quota_reached": capped,
             **{key: sum(run[key] for run in runs)
                for key in ("pages_visited", "images_found", "images_stored", "images_new", "blocked_by_robots")},
             "errors": [error for run in runs for error in run["errors"]][:8],
@@ -640,11 +650,25 @@ class Worker:
         for run in runs:
             if run["suspect"]:
                 message += f" La lecture de {run['site']} semble incomplète ({run['suspect']}) : rien n'est marqué retiré."
+        message += f" {cloud_usage.CAPPED}" if capped else self._usage_note(org_id, config)
         if params.get("then_match", True):
             result["match_metrics"] = {}
             result["matches"] = self._compare(ctx, org_id, brand_id, config, result["match_metrics"])
             message += f" {result['matches']} correspondance(s) au total."
         return message, result
+
+    def _pages_left(self, org_id: uuid.UUID, config: Config) -> int:
+        """Pages this organization may still read this month; 0 when its storage is full (asked again before each site)."""
+        with cloud_db.connect(self.database_url) as conn:
+            if cloud_usage.check(conn, config.quota, org_id, "storage"):
+                return 0
+            used, limit = cloud_usage.pages_used(conn, config.quota, org_id)
+        return limit - used
+
+    def _usage_note(self, org_id: uuid.UUID, config: Config) -> str:
+        """Once the month passes 80 % of its pages, what a finished read tells the person (nothing before)."""
+        with cloud_db.connect(self.database_url) as conn:
+            return cloud_usage.pages_note(*cloud_usage.pages_used(conn, config.quota, org_id))
 
     def _crawl_site(self, ctx: JobContext, org_id: uuid.UUID, site: dict, config: Config, limit: int,
                     params: dict, prefix: str) -> dict:
@@ -658,6 +682,7 @@ class Worker:
                                 storage_client=storage)
         last_run_update = 0.0
         reporter = _CrawlProgress(ctx, prefix, limit)
+        meter = cloud_usage.Meter(self.database_url, org_id)  # a crash loses at most the last few seconds of the count
 
         def progress(stats: CrawlStats) -> None:
             nonlocal last_run_update
@@ -666,6 +691,7 @@ class Worker:
                 last_run_update = time.monotonic()
                 with cloud_db.connect(self.database_url) as conn:
                     cloud_db.update_crawl_run_progress(conn, run_id, stats)
+                meter.flush(stats)
 
         ctx.report(f"{prefix}Lecture du sitemap…", {"phase": "crawl", "done": 0, "total": 0}, force=True)
         try:
@@ -692,12 +718,13 @@ class Worker:
             raise
 
         stats.model_load_seconds = model_load_seconds
+        meter.flush(stats)
         with cloud_db.connect(self.database_url) as conn:
             cloud_db.update_crawl_run_progress(conn, run_id, stats)
             suspect = None if ctx.cancelled else cloud_db.record_read_health(conn, run_id, stats)
             cloud_db.finish_crawl_run(conn, run_id, status="cancelled" if ctx.cancelled else "done", errors=stats.errors)
         return {"suspect": suspect, "site": site["label"] or site["url"],
-            "run_id": str(run_id), "pages_visited": stats.pages_visited, "images_found": stats.images_found,
+            "run_id": str(run_id), "pages_visited": stats.pages_visited, "pages_queued": stats.pages_queued, "images_found": stats.images_found,
             "images_stored": stats.images_stored, "images_new": stats.images_new,
             "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8],
         }
@@ -713,9 +740,18 @@ class Worker:
         total = sum(len(urls) for urls in groups.values())
         if not total or not sites:
             raise JobFailed("Aucune page à vérifier pour cette marque.")
+        left = self._pages_left(org_id, config)
+        if left <= 0:
+            raise JobFailed(cloud_usage.CAPPED)
         stats = CrawlStats()
+        capped = False
         for key, urls in groups.items():
             if ctx.cancelled or key not in sites:
+                continue
+            left = self._pages_left(org_id, config)  # again: the pages and the storage used by the groups before
+            capped = capped or len(urls) > left
+            urls = urls[:left]  # the month's page limit: what does not fit is not read
+            if not urls:
                 continue
             site = sites[key]
             store = CloudCrawlStore(org_id=org_id, site_id=site["id"], database_url=self.database_url,
@@ -739,7 +775,9 @@ class Worker:
             for name in ("pages_visited", "pages_failed", "pages_redirected", "pages_walled", "blocked_by_robots"):
                 setattr(stats, name, getattr(stats, name) + getattr(read, name))
             stats.errors += read.errors
-        return _check_message(ctx.cancelled, total, stats), {
+            cloud_usage.Meter(self.database_url, org_id).flush(read)
+        message = _check_message(ctx.cancelled, total, stats)
+        return (f"{message} {cloud_usage.CAPPED}" if capped and not ctx.cancelled else message), {
             "pages_read": stats.pages_visited - stats.pages_failed - stats.pages_redirected - stats.pages_walled, "pages_asked": total,
             "pages_failed": stats.pages_failed, "pages_redirected": stats.pages_redirected,
             "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8]}

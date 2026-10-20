@@ -26,7 +26,9 @@ import psycopg
 
 from nyra.cloud import db as cloud_db
 from nyra.cloud import jobs as cloud_jobs
+from nyra.cloud import usage as cloud_usage
 from nyra.cloud import worker as worker_module
+from nyra.config import Config
 from nyra.match import compute_hashes
 
 
@@ -727,6 +729,97 @@ def test_a_check_says_what_kept_pages_from_being_read():
     assert "arrêtée" in worker_module._check_message(True, 3, worker_module.CrawlStats())
 
 
+def _read_pages_of_a_fake_site(monkeypatch, available: int = 40):
+    """A site with `available` pages: a read opens as many as it is allowed, as the browser would."""
+    def fake_crawl_site(url, store, config, *, max_pages, progress=None, **_kwargs):
+        pages = min(max_pages, available)
+        stats = worker_module.CrawlStats(pages_visited=pages, pages_queued=available - pages, images_new=pages // 2, bytes_downloaded=pages * 1000)
+        if progress:
+            progress(stats)
+        return stats
+
+    monkeypatch.setattr(worker_module, "crawl_site", fake_crawl_site)
+
+
+def _crawl_all(worker, url, org_id, brand_id):
+    with cloud_db.connect(url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=org_id, brand_id=brand_id, kind="crawl", params={"then_match": False, "fresh": True})
+    assert worker.run_once()
+    return _job(url, brand_id, job["id"])
+
+
+def _pages_counted(url, org_id):
+    with cloud_db.connect(url) as conn:
+        return cloud_usage.pages_used(conn, Config().quota, org_id)[0]
+
+
+def test_a_read_stops_at_the_months_page_limit_and_the_counter_is_the_pages_really_read(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    _read_pages_of_a_fake_site(monkeypatch)
+    with cloud_db.connect(cloud_database_url) as conn:
+        other = cloud_db.create_organization(conn, name="Other", slug=f"other-{uuid.uuid4().hex[:10]}")
+        other_brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (other,)).fetchone()["id"]
+        for org, brand in ((cloud_org, cloud_brand), (other, other_brand)):
+            for n in (1, 2):
+                cloud_db.create_site(conn, org_id=org, brand_id=brand, url=f"https://t{n}.test/")
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 100})
+
+    first = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # 40 + 40 pages
+    assert first["status"] == "done" and first["result"]["pages_visited"] == 80 and not first["result"]["quota_reached"]
+    assert "Usage du mois : 80 pages lues sur 100" in first["message"]  # the warning from 80 %
+    with cloud_db.connect(cloud_database_url) as conn:
+        runs = conn.execute("SELECT pages_visited FROM crawl_runs WHERE org_id = %s", (cloud_org,)).fetchall()
+        counters = {r["kind"]: r["amount"] for r in conn.execute("SELECT kind, amount FROM usage_counters WHERE org_id = %s", (cloud_org,)).fetchall()}
+    assert _pages_counted(cloud_database_url, cloud_org) == sum(r["pages_visited"] for r in runs) == 80
+    assert counters == {"pages_read": 80, "images_new": 40, "bytes_downloaded": 80_000}
+
+    second = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # 20 pages are left: read them, then stop
+    assert second["result"]["pages_visited"] == 20 and second["result"]["quota_reached"] is True
+    assert "Limite d'usage atteinte" in second["message"]
+    assert _pages_counted(cloud_database_url, cloud_org) == 100
+
+    third = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # nothing is left: nothing is read
+    assert third["result"]["pages_visited"] == 0 and third["result"]["quota_reached"] is True
+    assert _pages_counted(cloud_database_url, cloud_org) == 100
+
+    other_read = _crawl_all(worker, cloud_database_url, other, other_brand)  # another organization is not affected
+    assert other_read["result"]["pages_visited"] == 80 and not other_read["result"]["quota_reached"]
+    assert _pages_counted(cloud_database_url, other) == 80 and _pages_counted(cloud_database_url, cloud_org) == 100
+
+
+def test_a_page_check_reads_only_the_pages_that_fit_in_the_limit_and_counts_them(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 3})
+        cloud_usage.record(conn, cloud_org, pages=1)
+        urls = [f"https://t.test/{n}" for n in range(5)]
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="check", params={"pages": {str(site): urls}})
+    asked = []
+
+    def fake_crawl_pages(site_url, wanted, store, config, **_kwargs):
+        asked.append(list(wanted))
+        return worker_module.CrawlStats(pages_visited=len(wanted))
+
+    monkeypatch.setattr(worker_module, "crawl_pages", fake_crawl_pages)
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert asked == [urls[:2]] and "Limite d'usage atteinte" in finished["message"]
+    assert _pages_counted(cloud_database_url, cloud_org) == 3
+
+
+def test_a_site_that_ends_exactly_at_the_limit_is_not_reported_as_cut_and_a_full_storage_stops_the_read(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    _read_pages_of_a_fake_site(monkeypatch)
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t1.test/")
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 40})
+    exact = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # 40 pages exist, 40 are allowed
+    assert exact["result"]["pages_visited"] == 40 and exact["result"]["quota_reached"] is False
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_usage.set_overrides(conn, cloud_org, {"pages_per_month": 1000, "storage_gb": 0})
+    full = _crawl_all(worker, cloud_database_url, cloud_org, cloud_brand)  # storage full: no page is read
+    assert full["result"]["pages_visited"] == 0 and full["result"]["quota_reached"] is True
 # --- a read that looks incomplete never says an image is gone ---------------------------------------------
 
 def _simulated_site(pages):

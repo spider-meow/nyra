@@ -198,6 +198,14 @@ The limits above are untested values. Before relying on them:
   guard that keeps crawls away from private addresses and cloud metadata.
 - `crawl.max_pages_limit` in `config.yaml` bounds the cost of any single
   crawl, whatever an organization asks for.
+- The `quota` section of `config.yaml` bounds what one organization uses over time (pages read per
+  month, brands, addresses per brand, library, storage, members, invitation e-mails per day; starting values
+  to be confirmed, see `COUTS_PRODUCTION.md`). Changing the file takes effect on the next request or job, no
+  restart. The Nyra team overrides a limit for one organization in the back office (Usage); an organization
+  cannot. Apply migration `20261020000030` before deploying the web and the worker: the counters are written
+  by the worker, read by the web.
+- Invitation e-mails go through Supabase Auth and your SMTP (Resend): `quota.emails_per_day` keeps one
+  organization from using the whole daily allowance of the provider (100 a day on Resend's free plan).
 - Supabase rate limits set (below), once, by hand.
 - GitHub: *Settings > Code security*: turn on secret scanning and push protection, Dependabot alerts.
   Not checked from the code; the CI covers the same ground with gitleaks and the audits.
