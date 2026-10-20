@@ -65,8 +65,9 @@ jobs:
       - run: npm run check:remember
 
   # Secrets in the whole git history. The gitleaks binary is pinned and checked against its SHA-256
-  # (gitleaks-action asks for a paid licence on GitHub organizations). Rules and the one named exception:
-  # .gitleaks.toml. Findings are redacted in the log.
+  # (gitleaks-action asks for a paid licence on GitHub organizations). Default rules, plus one false positive
+  # listed by exact fingerprint in .gitleaksignore. Both are read from the PR's own tree, so a PR can edit
+  # .gitleaksignore and turn this job green: review changes to that file (see docs/DEPLOYMENT.md). Findings are redacted.
   secrets:
     runs-on: ubuntu-latest
     steps:
@@ -77,4 +78,4 @@ jobs:
           curl -sSfL -o gitleaks.tgz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
           echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tgz" | sha256sum -c -
           tar -xzf gitleaks.tgz gitleaks
-      - run: ./gitleaks detect --source . --redact --no-banner
+      - run: ./gitleaks git --redact --no-banner .

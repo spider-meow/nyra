@@ -22,5 +22,8 @@ def test_interface_and_api_send_the_security_headers():
         assert headers["x-frame-options"] == "DENY", path
         assert headers["x-content-type-options"] == "nosniff", path
         assert headers["referrer-policy"] == "strict-origin-when-cross-origin", path
+        assert headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()", path
     # The CSP governs documents: the interface carries it, the JSON API does not need it.
-    assert "frame-ancestors 'none'" in client.get("/login").headers["content-security-policy"]
+    csp = client.get("/login").headers["content-security-policy"].split("; ")
+    assert {"default-src 'self'", "script-src 'self'", "frame-ancestors 'none'"} <= set(csp)
+    assert "content-security-policy" not in client.get("/api/auth/config").headers

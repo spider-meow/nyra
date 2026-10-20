@@ -154,14 +154,19 @@ traceback is in the worker's log.
 ### What CI checks
 
 - `pip-audit` (job `backend`): any known vulnerability in the installed Python dependencies fails the job
-  (the Python advisory database has no usable severity). To accept one, add `--ignore-vuln <ID>` to the
+  (the Python advisory database has no usable severity). `pyproject.toml` does not pin versions, so the first run on
+  GitHub may be red because of a package not audited here (torch, open_clip, playwright): upgrade it if a fix exists,
+  else ignore that one advisory. To accept one, add `--ignore-vuln <ID>` to the
   step in `.github/workflows/ci.yml` with a comment saying why and when to look again. Never remove the step.
 - `npm audit --audit-level=high` (job `frontend`): a **high** or critical advisory fails; moderate and low ones
   are left to Dependabot (`.github/dependabot.yml`, weekly, security updates grouped, 5 PRs open at most).
 - `gitleaks` (job `secrets`): the whole history (`fetch-depth: 0`), binary pinned to a version and a SHA-256.
-  Rules in `.gitleaks.toml` (the defaults plus one named exception: a fake JWT secret in a test). A real finding
-  means the secret is burnt: rotate it (below) *then* clean up, rewriting history alone is not enough.
-- Locally: `gitleaks detect --source . --redact` and `cd frontend && npm audit --audit-level=high`.
+  Default rules, plus one false positive (`jwt_secret=SECRET` in a test: a variable name, no value) allowed by its
+  exact fingerprint in `.gitleaksignore`, not by a rule. A real finding means the secret is burnt: rotate it (below)
+  *then* clean up, rewriting history alone is not enough. **Limit:** the job reads `.gitleaksignore` from the PR's own
+  tree, so a PR can add a line there and turn the job green. To decide: protect that file (and `.github/`) with a
+  `CODEOWNERS` entry and required review. Not created here.
+- Locally: `gitleaks git --redact --no-banner .` and `cd frontend && npm audit --audit-level=high`.
 
 ### Secrets: where they are
 
@@ -186,7 +191,7 @@ access and the DigitalOcean and GitHub accounts behind 2FA.
 ### Rotating a secret, step by step
 
 Rule for each one: **create the new value, deploy it, check, and only then revoke the old one.** Do one
-secret at a time, in a quiet hour. If the old value leaked, go faster: revoke at step 4 even if the check fails
+secret at a time, in a quiet hour. If the old value leaked, go faster: revoke at step 5 even if the check fails
 and fix forward.
 
 1. Create the new value (sections 1 to 5 below). Write it in your password manager, never in a chat or a ticket.
@@ -195,11 +200,11 @@ and fix forward.
 3. Restart so the new value is read (containers read `.env` only at start):
 
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.droplet.yml up -d --force-recreate worker
+   docker compose -f docker-compose.yml -f docker-compose.droplet.yml up -d --force-recreate --scale worker=N worker
    docker compose -f docker-compose.yml -f docker-compose.droplet.yml up -d --force-recreate web
    ```
 
-   `worker` first: Docker sends SIGTERM and waits `stop_grace_period: 30s`; a job still running then is picked up
+   (`N` = the number of workers you run now; without `--scale` compose goes back to one.) `worker` first: Docker sends SIGTERM and waits `stop_grace_period: 30s`; a job still running then is picked up
    again by the new worker after 3 minutes without a heartbeat (see *Staying up*), nothing is lost. `web` next:
    there is one instance behind Caddy, so expect a gap of a few seconds (Caddy answers 502, the interface retries on
    the next click). Not tested as a zero-downtime switch; if that matters, run two `web` instances first.
@@ -247,6 +252,11 @@ should run it once on a test environment (separate Supabase project, a Droplet o
 
 ### Sign-in attempts and rate limits
 
+*To confirm on the current Supabase dashboard:* the menu names used on this page (*Authentication > Providers*,
+*Rate Limits*, *Attack Protection*, *Emails > SMTP Settings*, *Project Settings > API Keys / JWT Keys*), the default and
+recommended numbers below, and what happens to the keys when the legacy JWT secret changes. They come from the product
+documentation as known when this was written, not from a check of the dashboard.
+
 **How sign-in works.** The browser talks to Supabase Auth directly with the public anon key (password sign-in,
 password reset, invitation links). Nyra's backend has no sign-in or sign-up route; it only checks the JWT that Supabase
 issued. The routes reachable without a token are `GET /api/healthz`, `GET /api/workerz`, `GET /api/auth/config`
@@ -281,19 +291,24 @@ against guessing, it adds a widget to the page, a decision for the team), *Provi
 
 The interface sends the CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy` and
 `Permissions-Policy`; the API sends the last four (a CSP governs documents, not JSON). Tested in
-`backend/tests/test_security_headers.py`. To look at the real server (read-only):
+`backend/tests/test_security_headers.py` (all five headers on the interface and the four on the API, and the `default-src`, `script-src` and
+`frame-ancestors` directives of the CSP). **Limit:** an unhandled exception (a 500) is answered by Starlette's outermost
+error middleware, outside the header middleware, so that response carries none of them (checked with a forced error). It is JSON, so the
+risk is small; not changed here. To look at the real server (read-only):
 
 ```bash
 curl -sS -D - -o /dev/null https://nyra.axelproject.fr/ | grep -i -E 'content-security|x-frame|x-content-type|referrer|permissions'
 ```
 
-Checked on 20 October 2026: all five are served (through Caddy). There is no `Strict-Transport-Security`
+Observed on 20 October 2026 from the agent's sandbox, with `curl -sSI https://nyra.axelproject.fr` (a HEAD, which the app answers
+with 405): the CSP, `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy` and `Permissions-Policy` were present,
+`via: 1.1 Caddy`. That was not independently reproduced: run the command above by hand and compare. There was no `Strict-Transport-Security`
 header; adding `header Strict-Transport-Security "max-age=31536000"` in the Caddyfile is a one-line option, to take once
 the HTTPS-only setup is certain, since browsers remember it.
 
 ### Two-factor authentication for platform administrators
 
-Supabase Auth supports TOTP (authenticator app) as a second factor: *Authentication > Sign In / Providers >
+Supabase Auth supports TOTP (authenticator app) as a second factor: *Authentication > Providers >
 Multi-Factor* (enable TOTP), then `supabase.auth.mfa.enroll`, `challenge` and `verify` in the browser; a session that
 passed the second factor carries `aal: "aal2"` in its JWT. Today Nyra has no screen for it and the backend does not read
 `aal`, so enabling it in the dashboard alone protects nothing. Enforcing it for platform administrators means: an
