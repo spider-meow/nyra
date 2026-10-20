@@ -331,7 +331,8 @@ class Run:
     def route(self, method, template, role):
         route = f"{method} {template}"
         if template.startswith("/api/staff/"):
-            for ids in ({"user_id": self.b["admin"]}, {"user_id": self.a["admin"]}):
+            for owner in (self.b, self.a):
+                ids = {"user_id": owner["admin"], "org_id": owner["org"]}
                 self.hit("staff route", method, template, ids, self.a[role], {}, {403})
             return
         if not template.startswith(ORG):
