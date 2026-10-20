@@ -7,7 +7,7 @@ readme = "README.md"
 # What the web process needs. The worker adds the [worker] extra.
 dependencies = [
     "typer>=0.12",
-    "imagehash>=4.3",
+    "imagehash>=4.3.2",
     "Pillow>=10.0",
     "numpy>=1.26",
     "Jinja2>=3.1",
