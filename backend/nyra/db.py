@@ -478,9 +478,9 @@ def get_stats(conn: sqlite3.Connection) -> Stats:
 
 
 def report_provenance(conn: sqlite3.Connection) -> dict:
-    """What a report states about its matches: the stored signature of the last pass and the last read of the pages."""
-    return {"signature": get_match_signature(conn),
-            "read_at": conn.execute("SELECT max(crawled_at) AS t FROM pages WHERE status = 'done'").fetchone()["t"]}
+    """What a report states about its matches: the stored signature of the last pass and the oldest and newest page read (one database is one site set)."""
+    row = conn.execute("SELECT min(crawled_at) AS oldest, max(crawled_at) AS newest FROM pages WHERE status = 'done'").fetchone()
+    return {"signature": get_match_signature(conn), "read_at": (row["oldest"], row["newest"])}
 
 
 # --- store adapter -------------------------------------------------------

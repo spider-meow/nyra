@@ -216,7 +216,7 @@ def test_report_states_its_thresholds_model_and_read_date():
 
     sig = signature(MatchConfig(), True, verified=True)
     files = report.build_report([_row("kept", "a")], [], within_days=90, stats={}, thumb_loader=lambda key: None,
-                                today=date(2026, 1, 1), provenance={"signature": sig, "read_at": "2026-01-01T08:30:00+00:00"})
+                                today=date(2026, 1, 1), provenance={"signature": sig, "read_at": ("2026-01-01T08:30:00+00:00", "2026-01-01T08:30:00+00:00")})
     for text in (files.html.decode("utf-8"), files.matches_csv.decode("utf-8")):
         assert "ViT-B-32/laion2b_s34b_b79k" in text and "0.92 / 0.85 / 0.75" in text and "01/01/2026" in text
         assert "20 correspondances" in text and "5% / 20%" in text
@@ -224,6 +224,16 @@ def test_report_states_its_thresholds_model_and_read_date():
     assert "sans CLIP" in describe_signature(signature(MatchConfig(), False))
     assert "sans contrôle" in describe_signature(signature(MatchConfig(), True, verified=False))
     assert describe_signature(None).startswith("inconnus")  # no pass finished: said so, never invented
+    assert describe_signature("stale").startswith("inconnus")  # nor a signature that is not understood, printed raw
+
+
+def test_the_read_date_is_a_utc_day_or_a_range_and_never_breaks_the_report():
+    assert report._read_on(("2026-01-01T23:30:00-02:00", "2026-01-01T23:30:00-02:00")) == "02/01/2026"  # UTC
+    assert report._read_on(("2026-01-01", "2026-01-20")) == "du 01/01/2026 au 20/01/2026"  # sites read on different days
+    assert report._read_on(("garbage", None)) == "" and report._read_on(None) == ""
+    files = report.build_report([_row("kept", "a")], [], within_days=90, stats={}, thumb_loader=lambda key: None,
+                                today=date(2026, 1, 1), provenance={"read_at": ("garbage", "")})
+    assert "date inconnue" in files.html.decode("utf-8")
 
 
 def test_dashboard_counts_only_live_occurrences():
@@ -381,11 +391,11 @@ def test_a_heavy_reference_is_kept_as_a_lighter_copy_and_a_light_one_untouched()
 
 _NYRA = Path(__file__).resolve().parents[1] / "nyra"
 # The writers of what a person decides (decisions on matches, exclusions, labels, the logo settings): the database layer.
-_DECISION_SQL = re.compile(r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:reviews|excluded_hashes|image_labels)\b|SET\s+(?:logo_kept|set_aside_logos)\b",
+_DECISION_SQL = re.compile(r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:reviews|excluded_hashes|image_labels|page_replacements)\b|SET\s+(?:logo_kept|set_aside_logos)\b",
                            re.IGNORECASE)
-_DECISION_WRITERS = {"db.py", "cloud/db.py", "cloud/logos.py", "cloud/labels.py"}
+_DECISION_WRITERS = {"db.py", "cloud/db.py", "cloud/logos.py", "cloud/labels.py", "cloud/presence.py"}
 # Their callers: the API routes (a person's request) and the offline command line, never a job or a pipeline step.
-_DECISION_CALLS = re.compile(r"\b(?:set_reviews|add_exclusion|delete_exclusion|set_enabled|keep|set_decision|add_content_label|delete_content_label)\(")
+_DECISION_CALLS = re.compile(r"\b(?:set_reviews|add_exclusion|delete_exclusion|set_enabled|keep|set_decision|add_content_label|delete_content_label|set_replaced)\(")
 
 
 def test_only_a_persons_request_writes_a_decision():

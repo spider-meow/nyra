@@ -302,9 +302,22 @@ def _load_thumbs(keys: set, loader: Callable[[Any], Optional[bytes]]) -> dict[An
         return dict(pool.map(one, keys))
 
 
-def _read_on(value: Any) -> str:
-    """The day the sites were last read, as the report prints it ("" when no read is recorded)."""
-    return date.fromisoformat(str(value)[:10]).strftime("%d/%m/%Y") if value else ""
+def _day(value: Any) -> str:
+    """A stored timestamp as a UTC day; "" when it is missing or malformed (the report is built all the same)."""
+    try:
+        moment = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
+    except ValueError:
+        return ""
+    return (moment.astimezone(timezone.utc) if moment.tzinfo else moment).strftime("%d/%m/%Y")
+
+
+def _read_on(bounds: Optional[Sequence[Any]]) -> str:
+    """When the sites were read, from (oldest, newest) of the last finished read of each site: one day, or
+    "du X au Y" when the sites were not read the same day. "" when no read is recorded."""
+    days = list(dict.fromkeys(day for day in map(_day, bounds or ()) if day))
+    if len(days) < 2:
+        return "".join(days)
+    return f"du {days[0]} au {days[-1]}"
 
 
 def _csv_bytes(fieldnames: Sequence[str], rows: list[dict], stamp: dict[str, str]) -> bytes:
@@ -392,7 +405,7 @@ def build_report(
     provenance: Optional[dict[str, Any]] = None,
 ) -> ReportFiles:
     """`provenance` is what the matches were produced with: `signature` (the one `run_matching` stored) and `read_at`
-    (the last read of the sites). Both are printed in the HTML footer and in two columns of each CSV."""
+    ((oldest, newest) of the last finished read of each site). Both are printed in the HTML footer and in two columns of each CSV."""
     provenance = provenance or {}
     stamp = {"site_read_on": _read_on(provenance.get("read_at")),
              "detection_settings": describe_signature(provenance.get("signature"))}

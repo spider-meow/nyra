@@ -411,8 +411,8 @@ def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[st
 def describe_signature(sig: Optional[str]) -> str:
     """A stored `signature` in words, for the reports: the thresholds and the model a pass was run with."""
     fields = (sig or "").split("|")
-    if len(fields) < 7:
-        return "inconnus (aucune comparaison terminée)" if not sig else sig
+    if len(fields) < 7:  # no pass finished, or a signature this function does not know: say so, never print it raw
+        return "inconnus (aucune comparaison terminée)"
     phash, dhash, high, medium, floor, model, check = fields[:7]
     clip = f"CLIP {model}, seuils {high} / {medium} / {floor}" if model != "hash" else "sans CLIP"
     if check.startswith("verified"):

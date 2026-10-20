@@ -115,16 +115,18 @@ besoin.
 
 ## Garde-fous de détection
 
-- **Un seuil se mesure avant de changer.** `backend/tests/test_calibration.py` échoue si la précision ou le rappel des
-  niveaux hachage et points clés passent sous un plancher. Changer un seuil ou le modèle, c'est refaire la mesure
-  (voir `docs/MATCHING.md`), pas contourner le test. Chaque rapport dit avec quels seuils, quel modèle et quelle date
+- **Un seuil se mesure sur de vraies images avant de changer.** `backend/tests/test_calibration.py` n'écarte que les
+  valeurs ABSURDES (hachage à 0, 2, 3 ou 64 bits, zéro point clé) sur des images générées ; des seuils de hachage de 4 à
+  16 bits y passent. Il ne remplace pas la mesure (voir `docs/MATCHING.md`) et on ne l'assouplit pas pour le faire
+  passer. Chaque rapport dit avec quels seuils, quel modèle et quelle date
   de lecture il a été produit.
 - **Une fonction à seuil reste derrière un drapeau, ou un réglage par marque désactivé par défaut, tant que la
   précision et le rappel n'ont pas été mesurés sur de vraies images.** La liste et l'état de chacune sont dans
   `docs/MATCHING.md`; toute nouvelle fonction à seuil s'y ajoute.
 - **L'algorithme propose, une personne décide.** Aucune suppression, aucun retrait, aucune conclusion définitive n'est
-  posée par un job : seules les routes de l'API écrivent une décision (`reviews`, `excluded_hashes`, logos remis,
-  étiquettes). Deux tests le gardent (voir `docs/MATCHING.md`) ; une nouvelle fonction automatique s'ajoute au premier.
+  posée par un job : une décision (`reviews`, `excluded_hashes`, logos remis, étiquettes, pages marquées remplacées)
+  n'est écrite que sur requête d'une personne (le SQL est dans la couche base de données, appelée seulement par les
+  routes de l'API). Deux tests le gardent (voir `docs/MATCHING.md`) ; une nouvelle fonction automatique s'ajoute au premier.
 
 ## Dette connue (mesurée le 2 octobre 2026)
 

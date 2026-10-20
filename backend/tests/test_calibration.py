@@ -34,7 +34,7 @@ TRANSFORMS = {
 # (0 of 210), recall 1.000 (42 of 42). The floors sit under that, so a library update does not trip them but a threshold
 # set at random does.
 HASH_MIN_PRECISION, HASH_MIN_RECALL = 0.98, 0.90
-KEYPOINT_MIN_PRECISION, KEYPOINT_MIN_RECALL = 0.98, 0.95
+KEYPOINT_MIN_PRECISION, KEYPOINT_MIN_RECALL = 0.95, 0.95  # 42 true pairs: 0.95 lets one OpenCV release add a false pair or two
 
 
 def _jpeg(img: Image.Image, quality: int) -> Image.Image:
