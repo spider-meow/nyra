@@ -24,7 +24,7 @@ from PIL import Image, ImageDraw, ImageOps
 
 from nyra import db, report, verify
 from nyra.config import MatchConfig, load_config
-from nyra.match import MatchStopped, compute_flip_hashes, compute_hashes, run_matching
+from nyra.match import MatchStopped, compute_flip_hashes, compute_hashes, run_matching, signature
 
 
 def scene(seed: int, size: int = 192) -> Image.Image:
@@ -283,7 +283,8 @@ REPORT_UNMATCHED = [
 
 def make_report():
     return report.build_report(REPORT_ROWS, REPORT_UNMATCHED, within_days=90, stats={"reference_images": 9, "site_images": 40},
-                               thumb_loader=_thumbs, organization="Rémy & Co <test>", today=date(2026, 1, 1))
+                               thumb_loader=_thumbs, organization="Rémy & Co <test>", today=date(2026, 1, 1),
+                               provenance={"signature": signature(MatchConfig(), True, verified=True), "read_at": "2025-12-28T10:00:00"})
 
 
 def normalized_html(files) -> str:
@@ -375,9 +376,9 @@ EXPECTED_VERIFY_HITS = ([(1, 2, 'phash', 0.99, 'haut'),
  [(1, 2, 'phash', 0.99, 'haut'), (1, 1, 'geo', 0.9, 'a_verifier')],
  [(1, 2, 'phash', 0.9, 'haut')])
 
-EXPECTED_MATCHES_CSV = '\ufefffilename,expiry_date,days_left,status,credit,notes,confidence,decision,score,level,site_url,pages\r\na-expired.jpg,2025-12-01,-31,Expiré,,,Confirmé,,0.97,phash,https://ex.com/2.jpg,https://ex.com/p0 | https://ex.com/p1 | https://ex.com/p2 | https://ex.com/p3 | https://ex.com/p4 | https://ex.com/p5 | https://ex.com/p6 | https://ex.com/p7 | https://ex.com/extra\r\na-expired.jpg,2025-12-01,-31,Expiré,,,À vérifier,,0.50,phash,https://ex.com/3.jpg,\r\nÉ-accent.jpg,2026-01-15,14,Moins de 30 jours,Zoë,,Confirmé,À retirer,0.12,phash,https://ex.com/9.jpg,\r\nb-soon.jpg,2026-01-20,19,Moins de 30 jours,,,Probable,,0.88,phash,https://ex.com/4.jpg,\r\ne-none.jpg,,,Date inconnue,"Photo ""X"", Paris\nline2",a;b <i>,Confirmé,Retiré,0.95,phash,https://ex.com/7.jpg,https://ex.com/é?a=1&b=2\r\nc-verify.jpg,2026-03-01,59,Moins de 90 jours,,,À vérifier,,0.80,phash,https://ex.com/5.jpg,\r\n'
+EXPECTED_MATCHES_CSV = '\ufefffilename,expiry_date,days_left,status,credit,notes,confidence,decision,score,level,site_url,pages,site_read_on,detection_settings\r\na-expired.jpg,2025-12-01,-31,Expiré,,,Confirmé,,0.97,phash,https://ex.com/2.jpg,https://ex.com/p0 | https://ex.com/p1 | https://ex.com/p2 | https://ex.com/p3 | https://ex.com/p4 | https://ex.com/p5 | https://ex.com/p6 | https://ex.com/p7 | https://ex.com/extra,28/12/2025,"hachage : écart de 8 / 8 bits au plus sur 64 ; CLIP ViT-B-32/laion2b_s34b_b79k, seuils 0.92 / 0.85 / 0.75 ; points clés : 20 correspondances minimum, couvertures 5% / 20%"\r\na-expired.jpg,2025-12-01,-31,Expiré,,,À vérifier,,0.50,phash,https://ex.com/3.jpg,,28/12/2025,"hachage : écart de 8 / 8 bits au plus sur 64 ; CLIP ViT-B-32/laion2b_s34b_b79k, seuils 0.92 / 0.85 / 0.75 ; points clés : 20 correspondances minimum, couvertures 5% / 20%"\r\nÉ-accent.jpg,2026-01-15,14,Moins de 30 jours,Zoë,,Confirmé,À retirer,0.12,phash,https://ex.com/9.jpg,,28/12/2025,"hachage : écart de 8 / 8 bits au plus sur 64 ; CLIP ViT-B-32/laion2b_s34b_b79k, seuils 0.92 / 0.85 / 0.75 ; points clés : 20 correspondances minimum, couvertures 5% / 20%"\r\nb-soon.jpg,2026-01-20,19,Moins de 30 jours,,,Probable,,0.88,phash,https://ex.com/4.jpg,,28/12/2025,"hachage : écart de 8 / 8 bits au plus sur 64 ; CLIP ViT-B-32/laion2b_s34b_b79k, seuils 0.92 / 0.85 / 0.75 ; points clés : 20 correspondances minimum, couvertures 5% / 20%"\r\ne-none.jpg,,,Date inconnue,"Photo ""X"", Paris\nline2",a;b <i>,Confirmé,Retiré,0.95,phash,https://ex.com/7.jpg,https://ex.com/é?a=1&b=2,28/12/2025,"hachage : écart de 8 / 8 bits au plus sur 64 ; CLIP ViT-B-32/laion2b_s34b_b79k, seuils 0.92 / 0.85 / 0.75 ; points clés : 20 correspondances minimum, couvertures 5% / 20%"\r\nc-verify.jpg,2026-03-01,59,Moins de 90 jours,,,À vérifier,,0.80,phash,https://ex.com/5.jpg,,28/12/2025,"hachage : écart de 8 / 8 bits au plus sur 64 ; CLIP ViT-B-32/laion2b_s34b_b79k, seuils 0.92 / 0.85 / 0.75 ; points clés : 20 correspondances minimum, couvertures 5% / 20%"\r\n'
 
-EXPECTED_NOT_FOUND_CSV = '\ufefffilename,expiry_date,days_left,status,credit,notes,verification\r\ng.jpg,2026-01-05,4,Moins de 30 jours,,x,"Comparée, rien trouvé"\r\nh.jpg,,,Date inconnue,,,Pas encore comparée\r\n'
+EXPECTED_NOT_FOUND_CSV = '\ufefffilename,expiry_date,days_left,status,credit,notes,verification,site_read_on,detection_settings\r\ng.jpg,2026-01-05,4,Moins de 30 jours,,x,"Comparée, rien trouvé",28/12/2025,"hachage : écart de 8 / 8 bits au plus sur 64 ; CLIP ViT-B-32/laion2b_s34b_b79k, seuils 0.92 / 0.85 / 0.75 ; points clés : 20 correspondances minimum, couvertures 5% / 20%"\r\nh.jpg,,,Date inconnue,,,Pas encore comparée,28/12/2025,"hachage : écart de 8 / 8 bits au plus sur 64 ; CLIP ViT-B-32/laion2b_s34b_b79k, seuils 0.92 / 0.85 / 0.75 ; points clés : 20 correspondances minimum, couvertures 5% / 20%"\r\n'
 
 EXPECTED_SUMMARY = {'confirmed': 4,
  'expired_online': 1,
@@ -407,6 +408,6 @@ EXPECTED_SUMMARY = {'confirmed': 4,
                'reference_id': 'c-verify'}],
  'urgent_online': 2}
 
-EXPECTED_HTML_SHA256 = '4c508a67082c13e1d732f183294d470c87f0b9ffb151229d77c1d8288fa633bd'
+EXPECTED_HTML_SHA256 = '90c83132876923b0add4a901f3eb1ce231663dfd4cc18773942c7445939c969f'
 
 EXPECTED_THUMBS = 10

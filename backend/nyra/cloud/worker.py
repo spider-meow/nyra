@@ -685,6 +685,7 @@ class Worker:
             matches = cloud_db.match_rows(conn, brand_id)
             unmatched = cloud_db.unmatched_rows(conn, brand_id)
             stats = asdict(cloud_db.get_stats(conn, brand_id))
+            provenance = cloud_db.report_provenance(conn, brand_id)
         for row in matches:
             row["ref_thumb"] = (cloud_storage.BUCKET_REFS, row["ref_thumb_path"] or row["ref_storage_path"])
             row["site_thumb"] = (cloud_storage.BUCKET_SITE_IMAGES, row["site_thumb_path"] or row["site_storage_path"])
@@ -697,7 +698,7 @@ class Worker:
 
         files = report_module.build_report(
             matches, unmatched, within_days=within_days, stats=stats, thumb_loader=loader,
-            organization=report_title(org, brand),
+            organization=report_title(org, brand), provenance=provenance,
         )
         report_id = uuid.uuid4()
         base = cloud_storage.path_for(org_id, str(report_id))

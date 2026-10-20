@@ -733,6 +733,14 @@ def get_match_signature(conn: psycopg.Connection, brand_id: uuid.UUID) -> Option
     return None if row is None else row["signature"]
 
 
+def report_provenance(conn: psycopg.Connection, brand_id: uuid.UUID) -> dict:
+    """What a report states about its matches: the stored signature of the last pass and the last read of the sites."""
+    row = conn.execute(
+        """SELECT (SELECT max(c.started_at) FROM crawl_runs c JOIN sites s ON s.id = c.site_id
+                    WHERE s.brand_id = %s) AS read_at""", (brand_id,)).fetchone()
+    return {"signature": get_match_signature(conn, brand_id), "read_at": row["read_at"]}
+
+
 def set_match_signature(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, signature: str) -> None:
     conn.execute(
         """

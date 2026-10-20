@@ -23,7 +23,8 @@ import psycopg
 from nyra.cloud import db as cloud_db
 from nyra.cloud import jobs as cloud_jobs
 from nyra.cloud import worker as worker_module
-from nyra.match import compute_hashes
+from nyra.config import MatchConfig
+from nyra.match import compute_hashes, signature
 
 
 def _image_bytes(seed: int) -> bytes:
@@ -487,6 +488,7 @@ def test_report_job_stores_files_without_false_positives(worker, cloud_database_
         cloud_db.write_matches(conn, cloud_org, [(kept, img_a, "phash", 1.0, "haut"), (dismissed, img_b, "phash", 1.0, "haut")])
         cloud_db.set_reviews(conn, brand_id=cloud_brand, reference_id=dismissed, site_image_ids=[img_b],
                              decision="ecarte", reviewed_by=None)
+        cloud_db.set_match_signature(conn, cloud_org, cloud_brand, signature(MatchConfig(), True, verified=True))
         job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="report", params={"within_days": 90})
 
     assert worker.run_once()
@@ -495,6 +497,9 @@ def test_report_job_stores_files_without_false_positives(worker, cloud_database_
     with cloud_db.connect(cloud_database_url) as conn:
         report = cloud_db.get_report(conn, cloud_brand, uuid.UUID(finished["result"]["report_id"]))
     html = fake_storage_client.store[("reports", report["storage_path_html"])].decode("utf-8")
+    csv_text = fake_storage_client.store[("reports", report["storage_path_csv"])].decode("utf-8")
+    for text in (html, csv_text):  # the settings the matches were produced with travel with the report
+        assert "ViT-B-32/laion2b_s34b_b79k" in text and "0.92 / 0.85 / 0.75" in text
     assert "kept.jpg" in html and "dismissed.jpg" not in html
     assert "data:image/jpeg;base64," in html  # thumbnails inlined, the file stands alone
     assert report["stats"]["expired_online"] == 1

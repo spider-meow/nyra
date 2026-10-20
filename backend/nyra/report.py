@@ -31,7 +31,7 @@ from urllib.parse import urlparse
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from nyra.config import Config
-from nyra.match import CONFIDENCE_HIGH, CONFIDENCE_TO_VERIFY
+from nyra.match import CONFIDENCE_HIGH, CONFIDENCE_TO_VERIFY, describe_signature
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -302,11 +302,18 @@ def _load_thumbs(keys: set, loader: Callable[[Any], Optional[bytes]]) -> dict[An
         return dict(pool.map(one, keys))
 
 
-def _csv_bytes(fieldnames: Sequence[str], rows: list[dict]) -> bytes:
+def _read_on(value: Any) -> str:
+    """The day the sites were last read, as the report prints it ("" when no read is recorded)."""
+    return date.fromisoformat(str(value)[:10]).strftime("%d/%m/%Y") if value else ""
+
+
+def _csv_bytes(fieldnames: Sequence[str], rows: list[dict], stamp: dict[str, str]) -> bytes:
+    """`stamp` (the settings and the read date) goes in two columns, not in comment lines: Excel keeps them when the
+    rows are sorted or filtered, and a CSV reader still finds its header on the first line."""
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=fieldnames, extrasaction="ignore")
+    writer = csv.DictWriter(buf, fieldnames=(*fieldnames, *stamp), extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(rows)
+    writer.writerows({**row, **stamp} for row in rows)
     # BOM so Excel opens accents correctly.
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
@@ -317,7 +324,7 @@ NOT_FOUND_COLUMNS = ("filename", "expiry_date", "days_left", "status", "credit",
 
 
 def _render_html(*, grouped: dict, missing: list[dict], within_days: int, stats: dict, summary: dict, thumbs: dict,
-                 organization: str) -> str:
+                 organization: str, stamp: dict[str, str]) -> str:
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(["html", "j2"]))
     return env.get_template("report.html.j2").render(
         organization=organization,
@@ -332,6 +339,8 @@ def _render_html(*, grouped: dict, missing: list[dict], within_days: int, stats:
         status_labels=STATUS_LABELS,
         confidence_labels=CONFIDENCE_LABELS,
         decision_labels=DECISION_LABELS,
+        settings=stamp["detection_settings"],
+        site_read_on=stamp["site_read_on"],
     )
 
 
@@ -380,7 +389,13 @@ def build_report(
     thumb_loader: Callable[[Any], Optional[bytes]],
     organization: str = "",
     today: Optional[date] = None,
+    provenance: Optional[dict[str, Any]] = None,
 ) -> ReportFiles:
+    """`provenance` is what the matches were produced with: `signature` (the one `run_matching` stored) and `read_at`
+    (the last read of the sites). Both are printed in the HTML footer and in two columns of each CSV."""
+    provenance = provenance or {}
+    stamp = {"site_read_on": _read_on(provenance.get("read_at")),
+             "detection_settings": describe_signature(provenance.get("signature"))}
     today = today or datetime.now(timezone.utc).date()
     kept = [row for row in match_rows if row.get("decision") != DECISION_FALSE_POSITIVE]
     grouped = group_matches(kept, within_days, today)
@@ -398,11 +413,11 @@ def build_report(
         "not_found": len(missing),
     })
     html = _render_html(grouped=grouped, missing=missing, within_days=within_days, stats=stats, summary=summary,
-                        thumbs=thumbs, organization=organization)
+                        thumbs=thumbs, organization=organization, stamp=stamp)
     return ReportFiles(
         html=html.encode("utf-8"),
-        matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(groups)),
-        not_found_csv=_csv_bytes(NOT_FOUND_COLUMNS, _not_found_rows(missing)),
+        matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(groups), stamp),
+        not_found_csv=_csv_bytes(NOT_FOUND_COLUMNS, _not_found_rows(missing), stamp),
         summary=summary,
     )
 
@@ -418,12 +433,13 @@ def generate_report(db_path: Path | str, out_dir: Path | str, config: Config, *,
         match_rows = db.match_rows(conn)
         unmatched = db.unmatched_rows(conn)
         stats = db.get_stats(conn).__dict__
+        provenance = db.report_provenance(conn)
 
     def load(path: str) -> Optional[bytes]:
         file = Path(path)
         return file.read_bytes() if file.is_file() else None
 
-    files = build_report(match_rows, unmatched, within_days=within_days, stats=stats, thumb_loader=load)
+    files = build_report(match_rows, unmatched, within_days=within_days, stats=stats, thumb_loader=load, provenance=provenance)
     paths = (out_dir / "report.html", out_dir / "matches.csv", out_dir / "not_found.csv")
     for path, data in zip(paths, (files.html, files.matches_csv, files.not_found_csv)):
         path.write_bytes(data)

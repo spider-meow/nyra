@@ -208,6 +208,22 @@ def test_report_leaves_out_false_positives():
     assert "Expiré" in html  # accents survive the round trip
 
 
+def test_report_states_its_thresholds_model_and_read_date():
+    from nyra.config import MatchConfig
+    from nyra.match import describe_signature, signature
+
+    sig = signature(MatchConfig(), True, verified=True)
+    files = report.build_report([_row("kept", "a")], [], within_days=90, stats={}, thumb_loader=lambda key: None,
+                                today=date(2026, 1, 1), provenance={"signature": sig, "read_at": "2026-01-01T08:30:00+00:00"})
+    for text in (files.html.decode("utf-8"), files.matches_csv.decode("utf-8")):
+        assert "ViT-B-32/laion2b_s34b_b79k" in text and "0.92 / 0.85 / 0.75" in text and "01/01/2026" in text
+        assert "20 correspondances" in text and "5% / 20%" in text
+    assert "8 / 8 bits" in describe_signature(sig)
+    assert "sans CLIP" in describe_signature(signature(MatchConfig(), False))
+    assert "sans contrôle" in describe_signature(signature(MatchConfig(), True, verified=False))
+    assert describe_signature(None).startswith("inconnus")  # no pass finished: said so, never invented
+
+
 def test_dashboard_counts_only_live_occurrences():
     today = date(2026, 1, 1)
     rows = [
