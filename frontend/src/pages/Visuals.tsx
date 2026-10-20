@@ -3,10 +3,10 @@ import { Link } from "react-router";
 import { Button, EmptyState, PageHeader, Segmented, Skeleton, StatusBadge, Thumb } from "../components/ui";
 import { InfoTip } from "../components/SettingsBlock";
 import { errorMessage } from "../lib/api";
-import { daysText, plural } from "../lib/format";
+import { daysText, hostOf, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useVisuals, type VisualItem } from "../lib/presence";
-import { useFullRead } from "./review/Removal";
+import { SuspectReadNotice, useFullRead } from "./review/Removal";
 
 type Tab = "todo" | "done" | "all";
 
@@ -31,6 +31,7 @@ export function Visuals() {
         title="Visuels à remplacer"
         actions={admin ? <Button variant="primary" loading={read.busy} onClick={read.read}>Relire les sites</Button> : undefined}
       />
+      {visuals.data.suspect_sites.map((site) => <SuspectReadNotice key={site.site_id} site={site.label || hostOf(site.site_url)} reason={site.reason} />)}
       <div className="mb-4 flex items-center gap-2">
         <Segmented<Tab>
           label="Visuels"

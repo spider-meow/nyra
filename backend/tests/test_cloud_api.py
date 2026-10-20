@@ -1530,7 +1530,7 @@ def test_presence_lists_the_pages_of_a_visual_and_stays_inside_its_brand(client,
 
     data = client.get(f"{base}/visuals/{ref}/presence", headers=_headers(client_id)).json()
     assert data["totals"] == {"still": 0, "gone": 0, "unknown": 1, "marked": 0, "pages": 1}  # no finished read of the site yet
-    assert data["pages"] == [{"url": "https://target.test/blogs/a?x=1", "site_id": str(site), "section": "/blogs", "state": "unknown", "marked": False, "checked": False}]
+    assert data["pages"] == [{"url": "https://target.test/blogs/a?x=1", "site_id": str(site), "section": "/blogs", "state": "unknown", "marked": False, "checked": False, "walled": False}]
     assert data["total"] == 1 and data["versions"][0]["sections"][0]["section"] == "/blogs"
     assert client.get(f"{base}/visuals/{ref}/presence?state=still", headers=_headers(client_id)).json()["pages"] == []
     assert client.get(f"{base}/visuals/{ref}/presence?state=nope", headers=_headers(client_id)).status_code == 422

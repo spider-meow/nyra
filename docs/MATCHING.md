@@ -204,6 +204,23 @@ cosine thresholds 0.50–0.99. Pick values that keep recall high without
 flooding "À vérifier", then set them in `config.yaml` or per organization
 in Settings.
 
+## A suspect read never says « retiré »
+
+"Gone" is concluded from a read that saw a page and not the image, so a bad read (site blocking us, empty pages, a read
+cut short) could announce removals that did not happen. When a full read of a site ends, `cloud_db.record_read_health`
+stores its figures on `crawl_runs` (pages read with success, share in error, share blocked by robots.txt, images seen,
+known images seen again) and `crawl.suspect_reason` (pure, `test_crawl.py`) decides if it is **suspect**: no page read
+with success; more than 20 % of pages in error (403, 429, 5xx, timeout, consent wall); or fewer than 70 % of the images the
+best of the site's last 3 reads saw were seen again (`MIN_KNOWN_IMAGES_SHARE`, `MAX_ERROR_SHARE`, `BASELINE_READS`: starting
+prudent, to be calibrated on real sites). Using the best of 3 reads, not the last one, catches two bad reads in a row, and
+a real drop of the site stops being suspect after 3 reads. While the last finished read of a site is suspect, its pages
+that would be `gone` stay `unknown`, a photo marked removed reads `suspect` (not `gone`), and the interface says: « La dernière
+lecture de ce site semble incomplète : rien n'a été marqué retiré ». What a suspect read did see still counts as seen.
+A page that stays hidden behind a consent notice after we tried to close it (little text, all about cookies:
+`crawl.is_consent_wall`) is recorded with `http_status` -1, shown « Bandeau de consentement », and is never `gone`.
+The monthly summary (AXE-523, not built yet) will have to say when a read is suspect. Not covered: the same site
+blocking only part of its pages below the error share, and a consent wall that shows real text.
+
 ## Known limits, and what to try next
 
 - **A shared product cut-out** (the same bottle render on another

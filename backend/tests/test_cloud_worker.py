@@ -721,3 +721,67 @@ def test_a_check_says_what_kept_pages_from_being_read():
     assert worker_module._check_message(False, 6, stats) == "2 page(s) relue(s) sur 6 ; 1 en échec, 1 redirigée(s) ailleurs, 2 bloquée(s) par robots.txt."
     assert worker_module._check_message(False, 3, worker_module.CrawlStats(pages_visited=3)) == "3 page(s) relue(s) sur 3."
     assert "arrêtée" in worker_module._check_message(True, 3, worker_module.CrawlStats())
+
+
+# --- a read that looks incomplete never says an image is gone ---------------------------------------------
+
+def _simulated_site(pages):
+    """A `crawl_site` standing for a site: `{path: (HTTP status, [image paths shown])}`; it opens, stamps and marks pages as the real one."""
+    def crawl(_site_url, store, _config, **_kwargs):
+        stats = worker_module.CrawlStats()
+        for path, (status, images) in pages.items():
+            page = store.upsert_page(f"https://t.test{path}")
+            if status == 200:
+                for image in store.known_images([f"https://t.test{name}" for name in images]).values():
+                    store.link(image, page)
+            store.mark_page(page, status)
+            stats.pages_visited += 1
+            stats.http_statuses[str(status)] = stats.http_statuses.get(str(status), 0) + 1
+        return stats
+    return crawl
+
+
+def _read(worker, monkeypatch, org, brand, site, pages):
+    from nyra.cloud import presence
+
+    monkeypatch.setattr(worker_module, "crawl_site", _simulated_site(pages))
+    with cloud_db.connect(worker.database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", params={"site_ids": [str(site)], "then_match": False})
+    assert worker.run_once()
+    with cloud_db.connect(worker.database_url) as conn:
+        run = cloud_db.list_crawl_runs(conn, brand)[0]
+        visual = presence.visuals(presence.by_visual(conn, brand))[0]
+        states = {row["url"][-2:]: row["state"] for row in presence.pages(conn, brand, visual["row"]["reference_id"])}
+    return run, visual, states, _job(worker.database_url, brand, job["id"])
+
+
+NORMAL = {"/a": (200, ["/i0", "/i1", "/i2", "/i3", "/i4"]), "/b": (200, ["/i5", "/i6", "/i7", "/i8", "/i9"])}
+
+
+@pytest.mark.parametrize("scenario, pages, suspect", [
+    ("empty pages answering 200", {"/a": (200, []), "/b": (200, [])}, True),
+    ("blocked with 403", {"/a": (403, []), "/b": (403, [])}, True),
+    ("a partial read", {"/a": (200, NORMAL["/a"][1])}, True),
+    ("a normal read of a site that dropped one image", {"/a": NORMAL["/a"], "/b": (200, ["/i6", "/i7", "/i8", "/i9"])}, False),
+])
+def test_a_suspect_read_marks_nothing_removed_and_a_normal_one_raises_no_alert(
+        worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch, scenario, pages, suspect):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        ref = cloud_db.upsert_reference_image(conn, org_id=cloud_org, brand_id=cloud_brand, filename="v.jpg", storage_path=f"{cloud_org}/v.jpg",
+                                              expiry_date="2026-12-01", credit=None, notes=None, phash="ffff0000ffff0000", dhash="ffff0000ffff0000")
+        ids = [conn.execute("INSERT INTO site_images (org_id, site_id, url, storage_path, phash, dhash) VALUES (%s, %s, %s, 'x', 'ffff0000ffff0000', 'ffff0000ffff0000') RETURNING id",
+                            (cloud_org, site, f"https://t.test/i{n}")).fetchone()["id"] for n in range(10)]
+        cloud_db.write_matches(conn, cloud_org, [(ref, ids[0], "phash", 1.0, "haut"), (ref, ids[5], "phash", 1.0, "haut")])
+        cloud_db.set_reviews(conn, brand_id=cloud_brand, reference_id=ref, site_image_ids=ids[:1] + ids[5:6], decision="retenu", reviewed_by=None)
+
+    first, _, states, _ = _read(worker, monkeypatch, cloud_org, cloud_brand, site, NORMAL)
+    assert (first["suspect"], states) == (False, {"/a": "still", "/b": "still"})  # the first read has nothing to be compared with
+    run, visual, states, job = _read(worker, monkeypatch, cloud_org, cloud_brand, site, pages)
+
+    assert run["suspect"] is suspect, scenario
+    assert ("semble incomplète" in job["message"]) is suspect
+    if suspect:
+        assert run["suspect_reason"] and "gone" not in states.values() and not visual["replaced"]  # pages stay unknown, no visual is replaced
+    else:
+        assert run["images_known_seen"] == 9 and states == {"/a": "still", "/b": "gone"}  # a trusted read still says an image left a page

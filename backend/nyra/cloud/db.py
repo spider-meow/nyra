@@ -37,6 +37,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from nyra.crawl import BASELINE_READS, read_health, suspect_reason
+
 Row = dict[str, Any]
 
 
@@ -795,6 +797,7 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
             -- What the last finished read of the image's site says about a removal (`report._removal`).
             COALESCE(rd.read_at > v.updated_at, false) AS read_after,
             COALESCE(s.last_seen >= rd.read_at, false) AS seen,
+            COALESCE(rd.suspect, false) AS suspect_read,
             COALESCE(pg.unread, 0) AS unread_pages,
             COALESCE(pg.urls, ARRAY[]::text[]) AS pages
         FROM matches m
@@ -803,7 +806,8 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
         JOIN sites st ON st.id = s.site_id
         LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
         LEFT JOIN LATERAL (
-            SELECT max(c.started_at) AS read_at FROM crawl_runs c WHERE c.site_id = s.site_id AND c.status = 'done'
+            SELECT c.started_at AS read_at, c.suspect FROM crawl_runs c
+            WHERE c.site_id = s.site_id AND c.status = 'done' ORDER BY c.started_at DESC LIMIT 1
         ) rd ON true
         LEFT JOIN LATERAL (
             SELECT array_agg(p.url ORDER BY p.url) AS urls,
@@ -1096,6 +1100,34 @@ def update_crawl_run_progress(conn: psycopg.Connection, run_id: uuid.UUID, stats
         (stats.pages_visited, stats.images_found, stats.images_stored, stats.images_new,
          stats.blocked_by_robots, json.dumps(stats.metrics()), run_id),
     )
+
+
+def record_read_health(conn: psycopg.Connection, run_id: uuid.UUID, stats) -> Optional[str]:
+    """Work out the health of a read that ended (`crawl.read_health`), compare it with the best of the site's last
+    reads (`crawl.suspect_reason`), store both on the run and return why it is suspect, or None. Call it before the run
+    is marked done, so no one reads a finished run that was not judged."""
+    health = read_health(stats)
+    row = conn.execute(
+        """SELECT r.started_at, r.site_id,
+                  count(s.id) FILTER (WHERE s.last_seen >= r.started_at) AS seen,
+                  count(s.id) FILTER (WHERE s.last_seen >= r.started_at AND s.first_seen < r.started_at) AS known_seen
+           FROM crawl_runs r LEFT JOIN site_images s ON s.site_id = r.site_id WHERE r.id = %s GROUP BY r.id""",
+        (run_id,),
+    ).fetchone()
+    # The best of the last reads, not the last one alone: a broken read followed by another broken one is still caught.
+    baseline = conn.execute(
+        """SELECT max(images_seen) AS seen FROM (SELECT images_seen FROM crawl_runs
+               WHERE site_id = %s AND status = 'done' AND started_at < %s ORDER BY started_at DESC LIMIT %s) last""",
+        (row["site_id"], row["started_at"], BASELINE_READS),
+    ).fetchone()["seen"]
+    reason = suspect_reason(health, row["known_seen"], baseline)
+    conn.execute(
+        """UPDATE crawl_runs SET pages_ok = %s, error_share = %s, blocked_share = %s, images_seen = %s,
+               images_known_seen = %s, suspect = %s, suspect_reason = %s WHERE id = %s""",
+        (health["pages_ok"], health["error_share"], health["blocked_share"], row["seen"], row["known_seen"],
+         reason is not None, reason, run_id),
+    )
+    return reason
 
 
 def finish_crawl_run(conn: psycopg.Connection, run_id: uuid.UUID, *, status: str, errors: list[str]) -> None:

@@ -44,6 +44,7 @@ from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashe
 from . import db as cloud_db
 from . import hostmetrics
 from . import jobs as cloud_jobs
+from . import presence as cloud_presence
 from . import storage as cloud_storage
 from .locate import NotSearchable, locate_reference
 from .store import CloudCrawlStore, CloudMatchStore
@@ -152,8 +153,9 @@ def _check_message(cancelled: bool, asked: int, stats: CrawlStats) -> str:
     """What a page check says: the pages that were read, then what kept the others from being read (told, never hidden)."""
     if cancelled:
         return "Vérification arrêtée. Les pages déjà relues sont à jour."
-    read = stats.pages_visited - stats.pages_failed - stats.pages_redirected
+    read = stats.pages_visited - stats.pages_failed - stats.pages_redirected - stats.pages_walled
     left_out = [f"{count} {text}" for count, text in ((stats.pages_failed, "en échec"), (stats.pages_redirected, "redirigée(s) ailleurs"),
+                                                       (stats.pages_walled, "cachée(s) par un bandeau de consentement"),
                                                        (stats.blocked_by_robots, "bloquée(s) par robots.txt")) if count]
     return f"{read} page(s) relue(s) sur {asked}" + (f" ; {', '.join(left_out)}" if left_out else "") + "."
 
@@ -516,6 +518,9 @@ class Worker:
             return "Lecture arrêtée. Les pages déjà lues sont conservées.", result
         where = f" sur {len(runs)} sites" if len(runs) > 1 else ""
         message = f"{result['pages_visited']} page(s) lue(s){where}, {result['images_new']} nouvelle(s) image(s)."
+        for run in runs:
+            if run["suspect"]:
+                message += f" La lecture de {run['site']} semble incomplète ({run['suspect']}) : rien n'est marqué retiré."
         if params.get("then_match", True):
             result["match_metrics"] = {}
             result["matches"] = self._compare(ctx, org_id, brand_id, config, result["match_metrics"])
@@ -570,8 +575,9 @@ class Worker:
         stats.model_load_seconds = model_load_seconds
         with cloud_db.connect(self.database_url) as conn:
             cloud_db.update_crawl_run_progress(conn, run_id, stats)
+            suspect = None if ctx.cancelled else cloud_db.record_read_health(conn, run_id, stats)
             cloud_db.finish_crawl_run(conn, run_id, status="cancelled" if ctx.cancelled else "done", errors=stats.errors)
-        return {
+        return {"suspect": suspect, "site": site["label"] or site["url"],
             "run_id": str(run_id), "pages_visited": stats.pages_visited, "images_found": stats.images_found,
             "images_stored": stats.images_stored, "images_new": stats.images_new,
             "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8],
@@ -611,11 +617,11 @@ class Worker:
                 if problem:
                     raise JobFailed(problem) from exc
                 raise
-            for name in ("pages_visited", "pages_failed", "pages_redirected", "blocked_by_robots"):
+            for name in ("pages_visited", "pages_failed", "pages_redirected", "pages_walled", "blocked_by_robots"):
                 setattr(stats, name, getattr(stats, name) + getattr(read, name))
             stats.errors += read.errors
         return _check_message(ctx.cancelled, total, stats), {
-            "pages_read": stats.pages_visited - stats.pages_failed - stats.pages_redirected, "pages_asked": total,
+            "pages_read": stats.pages_visited - stats.pages_failed - stats.pages_redirected - stats.pages_walled, "pages_asked": total,
             "pages_failed": stats.pages_failed, "pages_redirected": stats.pages_redirected,
             "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8]}
 
@@ -685,6 +691,7 @@ class Worker:
             matches = cloud_db.match_rows(conn, brand_id)
             unmatched = cloud_db.unmatched_rows(conn, brand_id)
             stats = asdict(cloud_db.get_stats(conn, brand_id))
+            replaced = cloud_presence.replaced_references(conn, brand_id)
         for row in matches:
             row["ref_thumb"] = (cloud_storage.BUCKET_REFS, row["ref_thumb_path"] or row["ref_storage_path"])
             row["site_thumb"] = (cloud_storage.BUCKET_SITE_IMAGES, row["site_thumb_path"] or row["site_storage_path"])
@@ -697,7 +704,7 @@ class Worker:
 
         files = report_module.build_report(
             matches, unmatched, within_days=within_days, stats=stats, thumb_loader=loader,
-            organization=report_title(org, brand),
+            organization=report_title(org, brand), replaced=replaced,
         )
         report_id = uuid.uuid4()
         base = cloud_storage.path_for(org_id, str(report_id))
