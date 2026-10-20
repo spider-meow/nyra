@@ -19,7 +19,7 @@ type Page = Presence["pages"][number];
 /** What a page says once the person's mark and the last read are put together. The state of a marked page answers the
  * mark only when the page was read again after it was marked: before that, it says the mark waits to be checked. */
 function statusOf(page: Page): { label: string; tone: string } {
-  if (!page.marked) return STATE_TEXT[page.state];
+  if (!page.marked) return page.walled && page.state === "unknown" ? { label: "Page masquée par un bandeau de consentement", tone: "bg-soon-soft text-soon" } : STATE_TEXT[page.state];
   if (page.checked && page.state === "gone") return { label: "Remplacée · confirmée", tone: "bg-ok-soft text-ok" };
   if (page.checked && page.state === "still") return { label: "Marquée remplacée · encore en ligne", tone: "bg-expired-soft text-expired" };
   return { label: "Remplacée · à vérifier", tone: "bg-soon-soft text-soon" };

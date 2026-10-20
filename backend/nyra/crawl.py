@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import random
+import re
 import threading
 import time
 import urllib.robotparser
@@ -49,6 +50,17 @@ IMAGE_DOWNLOADS_PER_PAGE = 6
 
 # What a page that answered with another page is recorded as (not 2xx: its links are not tracked).
 REDIRECTED = 302
+# What a page is recorded as when a consent or age notice still hid it after we tried to close it (not 2xx either).
+CONSENT_WALL = -1
+CONSENT_WORDS = re.compile(r"cookies?|consent|accept all|tout accepter|accepter et continuer|legal drinking age|âge légal|majeur", re.I)
+CONSENT_WALL_MAX_CHARS = 1200
+
+
+def is_consent_wall(text: str) -> bool:
+    """Whether what the page shows, once we tried to close its overlays, is only a consent or age notice: little text, and
+    it keeps talking about cookies or consent. A banner over a real page comes with the page's own text, so it is not one."""
+    text = text.strip()
+    return len(text) <= CONSENT_WALL_MAX_CHARS and len(CONSENT_WORDS.findall(text)) >= 2
 
 
 def same_page(requested: str, final: str) -> bool:
@@ -452,6 +464,8 @@ class CrawlStats:
     sitemap_urls: int = 0
     pages_failed: int = 0
     pages_redirected: int = 0      # the address answered with another page: read, but not recorded as itself
+    pages_ok: int = 0              # read with success: 2xx, the page asked for, no consent wall
+    pages_walled: int = 0          # a consent notice still hid the page after we tried to close it (CONSENT_WALL)
     http_statuses: dict[str, int] = field(default_factory=dict)
     images_known: int = 0          # already stored under this URL: not downloaded again
     images_duplicate: int = 0      # same bytes already stored under another URL
@@ -486,6 +500,38 @@ class CrawlStats:
             if isinstance(value, float):
                 out[key] = round(value, 3)
         return out
+
+
+# --- health of a read ---------------------------------------------------------
+
+# A read is "suspect" when it looks incomplete: nothing is then marked removed from it (`cloud/presence.py`). Prudent on
+# purpose: flagging a good read only keeps pages "unknown" until the next one; missing a bad one announces a removal that
+# did not happen.
+MIN_KNOWN_IMAGES_SHARE = 0.7   # of the known images the best of the last reads saw again, a read must see again at least this share
+MAX_ERROR_SHARE = 0.2          # of the pages read, more than this share failed (403, 429, 5xx, timeout, consent wall)
+BASELINE_READS = 3             # the last reads (with a page read) the comparison looks at: a real drop stops being suspect after this many
+
+
+def read_health(stats: CrawlStats) -> dict[str, Any]:
+    """The figures of a finished read: pages read with success (`pages_ok`, counted by the crawler: 2xx, the page asked for,
+    no consent wall) and the share of pages in error: no answer, 403, 429, 5xx, or hidden by a consent wall (a wall is
+    only recorded on a 2xx page, a failed page has no status: the three are disjoint). Bounded to 1."""
+    refused = sum(count for code, count in stats.http_statuses.items() if int(code) in (0, 403, 429) or int(code) >= 500)
+    return {"pages_ok": stats.pages_ok,
+            "error_share": min(1.0, (stats.pages_failed + refused + stats.pages_walled) / max(stats.pages_visited, 1))}
+
+
+def suspect_reason(health: dict[str, Any], known_seen: int, baseline_seen: Optional[int]) -> Optional[str]:
+    """Why this read cannot be trusted to say an image is gone, or None. `known_seen`: images already known that it saw
+    again; `baseline_seen`: the most known images one of the last reads saw again (None or 0: no figure yet, only the
+    errors count)."""
+    if health["pages_ok"] == 0:
+        return "aucune page lue avec succès"
+    if health["error_share"] > MAX_ERROR_SHARE:
+        return f"{health['error_share']:.0%} des pages en erreur"
+    if baseline_seen and known_seen < MIN_KNOWN_IMAGES_SHARE * baseline_seen:
+        return f"{known_seen} images déjà connues revues sur {baseline_seen}"
+    return None
 
 
 class CrawlStore(Protocol):
@@ -669,6 +715,7 @@ class _Crawl:
             await click_load_more(page)
             await autoscroll(page)
             html = await page.content()
+            walled = is_consent_wall(await page.evaluate("document.body ? document.body.innerText : ''"))
             try:
                 background_urls = await page.evaluate(BACKGROUND_IMAGE_JS)
             except Exception:  # noqa: BLE001 - CSS backgrounds are a bonus; the page's <img> tags were already read
@@ -698,6 +745,11 @@ class _Crawl:
         if not same_page(url, final_url):
             self.stats.pages_redirected += 1
             http_status = REDIRECTED
+        elif walled and 200 <= http_status < 300:
+            self.stats.pages_walled += 1
+            http_status = CONSENT_WALL
+        elif 200 <= http_status < 300:
+            self.stats.pages_ok += 1
         await asyncio.to_thread(self._locked, self.store.mark_page, page_id, http_status)
         self.stats.pages_visited += 1
 

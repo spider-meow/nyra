@@ -19,6 +19,7 @@ from nyra.crawl import normalize_url
 from .. import db as cloud_db
 from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
+from .. import presence as cloud_presence
 from .. import storage as cloud_storage
 from .common import (
     BRAND,
@@ -223,13 +224,14 @@ def overview(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(g
             "SELECT COUNT(*) AS c FROM reference_images WHERE brand_id = %s AND embedding IS NULL", (scope.brand_id,)
         ).fetchone()["c"]
         unreferenced_online = unreferenced_count(conn, scope.brand_id, config)
+        replaced = cloud_presence.replaced_references(conn, scope.brand_id)
     last_run = runs[0] if runs else None
     return {
         "organization": {"id": str(scope.org_id), "name": org["name"], "slug": org["slug"]},
         "brand": {"id": str(scope.brand_id), "name": scope.name},
         "role": scope.member.role,
         "stats": {**stats.__dict__, "references_pending_index": pending_index},
-        "dashboard": {**report_module.dashboard(matches, unmatched), "unreferenced_online": unreferenced_online},
+        "dashboard": {**report_module.dashboard(matches, unmatched, replaced=replaced), "unreferenced_online": unreferenced_online},
         "jobs": jobs,
         "last_crawl": None if last_run is None else {
             "site_url": last_run["site_url"], "site_label": last_run["site_label"] or "",

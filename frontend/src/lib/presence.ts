@@ -8,14 +8,14 @@ import { useInvalidate, useJobs } from "./queries";
 export type PageState = "still" | "gone" | "unknown";
 export type Counts = Record<PageState, number> & { marked: number };
 export type Section = Counts & { section: string };
-export type Version = Counts & { site_id: string; label: string; site_url: string; sections: Section[] };
+export type Version = Counts & { site_id: string; label: string; site_url: string; sections: Section[]; /** The last read of this site looks incomplete: nothing is "gone". */ suspect: boolean };
 export type Narrowing = { site?: string; section?: string; state?: PageState; marked?: boolean };
 
 export type Presence = {
   totals: Counts & { pages: number };
   versions: Version[];
   /** The pages for the narrowing, `total` of them, from `offset`. */
-  pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean; checked: boolean }[];
+  pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean; checked: boolean; /** A consent notice still hid the page: not read, never "gone". */ walled: boolean }[];
   total: number;
   offset: number;
 };
@@ -53,7 +53,7 @@ export function useVisuals() {
   const { apiPath, brand } = useOrg();
   return useQuery({
     queryKey: ["occurrences", brand.id, "visuals"],
-    queryFn: () => api.get<{ visuals: VisualItem[] }>(apiPath("/visuals")),
+    queryFn: () => api.get<{ visuals: VisualItem[]; suspect_sites: { site_id: string; label: string; site_url: string; reason: string }[] }>(apiPath("/visuals")),
   });
 }
 

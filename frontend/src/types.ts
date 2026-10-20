@@ -111,7 +111,7 @@ export type LibraryItem = {
   created_at: string;
 };
 
-export type Removal = "pending" | "online" | "unread" | "gone";
+export type Removal = "pending" | "online" | "unread" | "suspect" | "gone";
 
 export type Hit = {
   site_image_id: string;

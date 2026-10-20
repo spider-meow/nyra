@@ -32,6 +32,7 @@ supabase/migrations/
   20261017000025_page_presence.sql                  `image_pages.last_seen`, `pages.links_tracked` : une image est-elle encore sur une page (additive ; une page compte « pas relue » tant qu'elle n'est pas relue)
   20261017000026_page_checks.sql                    tâche `check` (relire seulement quelques pages), `pages.read_started_at` (additive ; les pages déjà lues ont un début approximatif)
   20261017000027_page_replacements.sql              pages marquées « remplacée » à la main, par visuel (additive)
+  20261020000029_read_health.sql                    santé d'une lecture (`crawl_runs.pages_ok`, `error_share`, `images_seen`…) et `suspect` : une lecture suspecte ne marque rien « retiré » (additive ; les lectures déjà faites ne sont pas suspectes)
   20261020000030_usage_quotas.sql                   compteurs d'usage par organisation (`usage_counters`) et limites propres à une organisation (`organizations.quota_overrides`) (additive ; à appliquer avant le code)
 ```
 

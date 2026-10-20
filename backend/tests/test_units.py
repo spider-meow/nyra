@@ -182,6 +182,8 @@ def test_a_photo_marked_removed_says_whether_the_last_read_confirms_it():
     assert removal(("a", gone), ("b", {**gone, "read_after": False})) == "pending"  # no read since it was marked
     assert removal(("a", gone), ("b", {**gone, "seen": True})) == "online"  # seen again: the removal is not done
     assert removal(("a", {**gone, "read_after": False, "seen": True})) == "pending"  # seen by a read from before the mark
+    assert removal(("a", {**gone, "suspect_read": True})) == "suspect"  # a read that looks incomplete proves nothing
+    assert removal(("a", {**gone, "suspect_read": True, "seen": True})) == "online"  # but what it saw is seen
     undecided = report.group_matches([_row("ref", "a")], 365, date(2026, 1, 1))["confirmed"][0]["hits"][0]
     assert undecided["removal"] is None
 
@@ -220,6 +222,7 @@ def test_dashboard_counts_only_live_occurrences():
     assert summary["urgent_online"] == 1
     assert summary["pending_review"] == 1
     assert summary["upcoming"][0]["reference_id"] == "soon"
+    assert report.dashboard(rows, [], today, replaced=frozenset({"expired-live"}))["expired_online"] == 0  # replaced: read again, gone
 
 
 # --- decoding -----------------------------------------------------------------------

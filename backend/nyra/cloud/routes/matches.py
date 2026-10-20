@@ -36,7 +36,7 @@ def _shaped(row: dict, ref_urls: dict[str, str], site_urls: dict[str, str]) -> d
         "expiry_date": row["expiry_date"], "unlimited_rights": row["unlimited_rights"],
         "credit": row["credit"] or "", "notes": row["notes"] or "",
         "site_image_id": str(row["site_image_id"]), "site_url": row["site_url"],
-        "content_hash": row["content_hash"], "variant_group": row["variant_group"], "site_label": row["site_label"], "read_after": row["read_after"], "seen": row["seen"],
+        "content_hash": row["content_hash"], "variant_group": row["variant_group"], "site_label": row["site_label"], "read_after": row["read_after"], "seen": row["seen"], "suspect_read": row["suspect_read"],
         "unread_pages": row["unread_pages"], "level": row["level"], "score": float(row["score"]),
         "confidence": row["confidence"], "decision": row["decision"], "pages": row["pages"],
         # The working copy when there is one: the original can weigh tens of MB.
@@ -81,7 +81,7 @@ def matches(within_days: Optional[int] = Query(None, ge=0, le=3650), country: li
             for hit in group["hits"]:
                 hit["site_image_ids"] = [str(item) for item in hit["site_image_ids"]]
                 hit.pop("content_hash", None)
-                for internal in ("variant_group", "read_after", "seen", "unread_pages", "site_label"):
+                for internal in ("variant_group", "read_after", "seen", "suspect_read", "unread_pages", "site_label"):
                     hit.pop(internal, None)
                 hit["pages"] = hit["pages"][:20]
     result["not_found"] = report_module.not_found_items([_unmatched_item(row, ref_urls) for row in unmatched], window)
@@ -117,7 +117,8 @@ def presence(reference_id: uuid.UUID, site: Optional[uuid.UUID] = None, section:
             raise HTTPException(status_code=404, detail="Référence introuvable.")
         counts = cloud_presence.counts(conn, scope.brand_id, reference_id)
         rows = cloud_presence.pages(conn, scope.brand_id, reference_id, site=site, section=section, state=state, marked=marked, limit=limit, offset=offset)
-    return {**cloud_presence.summary(counts), "total": cloud_presence.total(counts, site=site, section=section, state=state, marked=marked), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"], "marked": row["marked"], "checked": row["checked"]} for row in rows],
+        suspect = frozenset(row["site_id"] for row in cloud_presence.suspect_sites(conn, scope.brand_id))
+    return {**cloud_presence.summary(counts, suspect), "total": cloud_presence.total(counts, site=site, section=section, state=state, marked=marked), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"], "marked": row["marked"], "checked": row["checked"], "walled": row["walled"]} for row in rows],
             "offset": offset}
 
 
@@ -127,6 +128,7 @@ def visuals(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
     were not read again (see `cloud.presence`); `replaced` once every page was read again and none shows it."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         items = cloud_presence.visuals(cloud_presence.by_visual(conn, scope.brand_id))
+        suspect = cloud_presence.suspect_sites(conn, scope.brand_id)
     urls = ctx.sign(cloud_storage.BUCKET_REFS, [path for item in items for path in (item["row"]["thumb_path"], item["row"]["storage_path"]) if path])
     today = datetime.now(timezone.utc).date()
     out = []
@@ -138,7 +140,7 @@ def visuals(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
                     "days_left": left, "status": report_module.rights_status(row, left),
                     "thumb": urls.get(row["thumb_path"] or "") or urls.get(row["storage_path"] or "", ""),
                     **{key: item[key] for key in (*cloud_presence.STATES, "marked", "pages", "replaced")}})
-    return {"visuals": out}
+    return {"visuals": out, "suspect_sites": [{**row, "site_id": str(row["site_id"])} for row in suspect]}
 
 
 @router.post(f"{BRAND}/visuals/{{reference_id}}/replaced")

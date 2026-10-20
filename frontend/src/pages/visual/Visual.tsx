@@ -2,11 +2,11 @@ import { useMemo, useState } from "react";
 import { InfoTip } from "../../components/SettingsBlock";
 import { Button, DecisionBadge, EmptyState, Skeleton, Thumb } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
-import { plural } from "../../lib/format";
+import { hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { usePresence, type Narrowing } from "../../lib/presence";
 import { useMatches } from "../../lib/queries";
-import { useFullRead } from "../review/Removal";
+import { SuspectReadNotice, useFullRead } from "../review/Removal";
 import { photoRows } from "../review/rows";
 import type { MatchGroup } from "../../types";
 import { Pages } from "./Pages";
@@ -36,6 +36,7 @@ export function Visual(props: { referenceId: string; onBack: () => void }) {
     <>
       <Summary group={group} presence={presence.data} onBack={props.onBack} />
       {presence.error ? <p className="mb-4 text-sm text-expired">{errorMessage(presence.error)}</p> : null}
+      {presence.data?.versions.filter((version) => version.suspect).map((version) => <SuspectReadNotice key={version.site_id} site={version.label || hostOf(version.site_url)} />)}
       {presence.data ? (
         <>
           <div className="mb-3 flex items-center justify-between gap-3">

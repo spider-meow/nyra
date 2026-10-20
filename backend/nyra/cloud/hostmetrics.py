@@ -23,6 +23,15 @@ CGROUP = Path("/sys/fs/cgroup")
 KEEP_HOURS = 24
 
 
+# The disk is full enough to worry at this share (the Droplet's disk holds Docker layers, logs and the worker's image cache).
+DISK_ALERT = 0.8
+
+
+def disk_ratio() -> float:
+    usage = shutil.disk_usage("/")
+    return usage.used / usage.total
+
+
 def _kv(text: str) -> dict[str, int]:
     """`key value` lines (cpu.stat, memory.stat, /proc/meminfo's `key: value kB`) as numbers; other lines are skipped."""
     out: dict[str, int] = {}
