@@ -35,7 +35,7 @@ worker = [
 ]
 # Error reporting (Sentry), enabled by SENTRY_DSN. See docs/OBSERVABILITY.md.
 observability = [
-    "sentry-sdk[fastapi]>=2.0",
+    "sentry-sdk[fastapi]>=2.72.0",
 ]
 dev = [
     "pytest>=8.0",
