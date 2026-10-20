@@ -6,6 +6,7 @@ const STAFF_ITEMS: NavItem[] = [
   { to: "/back-office", label: "Vue d'ensemble", icon: "backoffice" },
   { to: "/back-office/organizations", label: "Organisations", icon: "library" },
   { to: "/back-office/server", label: "Serveur", icon: "server" },
+  { to: "/back-office/usage", label: "Usage", icon: "stats" },
   { to: "/back-office/billing", label: "Facturation", icon: "report" },
   { to: "/back-office/accounts", label: "Comptes", icon: "users" },
   { to: "/back-office/platform-admins", label: "Platform admins", icon: "user" },

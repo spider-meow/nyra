@@ -254,3 +254,29 @@ def test_a_page_that_answered_with_another_page_is_not_the_same_page():
     assert not same_page("https://t.test/collections", "https://t.test/collections/all")  # another page
     assert not same_page("https://t.test/blogs/x", "https://t.test/")  # sent to the home page
     assert not same_page("https://t.test/blogs/x", "https://other.test/blogs/x")
+
+
+def test_a_read_is_suspect_when_it_met_errors_or_lost_the_images_it_knew():
+    from nyra.crawl import CrawlStats, read_health, suspect_reason
+
+    def reason(known_seen, baseline, **counts):
+        stats = CrawlStats(**{"pages_visited": 10, "pages_ok": 10, "http_statuses": {"200": 10}, **counts})
+        return suspect_reason(read_health(stats), known_seen, baseline)
+
+    assert reason(95, 100) is None  # a normal read: no false alert
+    assert reason(100, None) is None and reason(0, 0) is None  # no earlier figure to compare with
+    assert reason(69, 100) and reason(70, 100) is None  # under 70 % of the known images seen again
+    assert reason(100, 100, pages_ok=7, http_statuses={"200": 7, "403": 3})  # blocked: 30 % of the pages in error
+    assert reason(100, 100, pages_ok=8, http_statuses={"200": 8, "502": 1}, pages_failed=1) is None  # 20 % is the limit
+    assert reason(100, 100, pages_ok=5, http_statuses={"200": 5, "429": 1}, pages_failed=4)  # timeouts count as errors
+    assert reason(100, 100, pages_ok=0, http_statuses={"403": 10}) == "aucune page lue avec succès"
+    assert reason(100, 100, pages_ok=0, pages_walled=10) == "aucune page lue avec succès"  # nothing but consent walls
+    assert read_health(CrawlStats(pages_visited=2, pages_failed=2, pages_walled=2, http_statuses={"403": 2}))["error_share"] == 1.0  # bounded
+
+
+def test_a_page_that_is_only_a_consent_notice_is_a_consent_wall():
+    from nyra.crawl import is_consent_wall
+
+    assert is_consent_wall("Nous utilisons des cookies pour améliorer votre expérience. Gérer mes cookies. Tout accepter")
+    assert not is_consent_wall("Cookies")  # a footer link alone
+    assert not is_consent_wall("Notre carafe. " * 200 + "cookies cookies")  # a banner over a real page comes with its text

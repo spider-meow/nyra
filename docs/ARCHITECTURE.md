@@ -100,13 +100,14 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/routes/common.py` | What the route modules share: the request context (`Ctx`), the auth and brand dependencies, small helpers. |
 | `cloud/routes/` (`session`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `logos`, `reports_settings`) | The API routes, one module per domain, each exposing a `router`. |
 | `cloud/routes/interface.py` | The built interface (single-page app), gzip and security headers, error handlers. |
-| `cloud/presence.py` | Where a visual is still online, page by page: `still` (seen by the last finished read of the site), `gone` (the page was read again with success and the image was not on it), `unknown` (the page was not read again, or not since `image_pages.last_seen` and `pages.links_tracked` exist). Counts per site version and section, and the pages; `GET .../visuals/{reference_id}/presence`. Images and links are never deleted when they disappear from a site, so nothing is stored: the state comes from the dates. |
+| `cloud/presence.py` | Where a visual is still online, page by page: `still` (seen by the last finished read of the site), `gone` (the page was read again with success and the image was not on it), `unknown` (the page was not read again, or not since `image_pages.last_seen` and `pages.links_tracked` exist). Counts per site version and section, and the pages; `GET .../visuals/{reference_id}/presence`. Images and links are never deleted when they disappear from a site, so nothing is stored: the state comes from the dates. While the last finished read of a site is **suspect** (`crawl_runs.suspect`, set when the read ends, see `MATCHING.md`), no page of it is `gone`. `replaced_references` lists the visuals replaced, which the home screen and the report leave out of "expired and online". |
 | `cloud/worker.py` | The job runner. |
 | `cloud/jobs.py` | The queue (enqueue, claim, heartbeat, cancel, reap). |
 | `cloud/store.py` | Postgres + Storage behind the store interfaces. |
 | `cloud/db.py` | Pooled Postgres access, one query per screen (no N+1). |
 | `cloud/storage.py` | Supabase Storage; signs URLs in batches and remembers a bounded number of them, so an image keeps the same URL while it is valid. |
 | `cloud/auth.py` | JWT verification (HS256 or JWKS) and membership/role checks. |
+| `cloud/usage.py` | Quotas and usage per organization: the counters (`usage_counters`, added to by the worker), the usage against the limits of `config.QuotaConfig` (the Nyra team overrides them per organization), the refusal sentences (`check`) and the day's e-mail allowance (`claim_email`). |
 | `cloud/insights.py` | Statistics for the Statistiques page and the back office, from the `insights` views. |
 | `observability.py` | JSON logs tagged with the job in progress, optional Sentry. |
 
@@ -151,6 +152,9 @@ numbers and the report itself are pure functions over plain dicts in
 - **Crawling is SSRF-guarded** (`netguard`), page counts are capped
   (`crawl.max_pages_limit`), downloads and uploads are size- and
   pixel-capped.
+- **Quotas per organization** (`quota` in `config.yaml`, `cloud/usage.py`): pages read per month (a read stops at
+  what is left, a new one is refused), brands, addresses, library, storage, members, invitations per day. Set by the
+  Nyra team only; the client sees its usage in Réglages > Usage.
 - **Headers:** CSP (no inline scripts, only the Supabase origin for
   connect/img, plus the Sentry ingest origin in connect when
   `SENTRY_BROWSER_DSN` is set and valid), `X-Frame-Options: DENY`, `nosniff`,
@@ -185,6 +189,8 @@ server.
 **One page for every image read ("Images en ligne").** Tabs: `qualify` (matches nothing in the library, not ignored, and not a logo when the brand sets them aside), `found` (a visual of the library is in it), `logos` (every recognised logo), `ignored` (exclusions) and `all`. `GET .../site-images?view=` returns one tab, `limit` entries from the start, narrowed by `site` and `q`, with the totals of every tab; only the thumbnails of the entries returned are signed. The entries are grouped one per photo (same bytes under several addresses, crops of one photo), in `routes/common.py` (`online_images`).
 
 **"À traiter" is the triage of matches.** `report._collapse_hits` merges, for one reference, the files of one photo: same bytes under several addresses, and the crops and resizes already grouped (`variant_group`). A hit carries `photo_key`, `file_count` and `versions` (the site versions it is on); its decision is the common one, or none while the files are not all decided alike. The interface (`pages/review/rows.ts`) puts one row per `photo_key` under the first reference that matches it, with how sure the match is, and two decisions: « C'est bien lui » (`retenu`: the visual is then to be replaced, see « Visuels à remplacer ») and « Faux positif » (`ecarte`). `traite` is the manual step « J'ai remplacé », taken on the page of a visual. **Checking removals.** A photo marked « Remplacé » (`traite`) carries `removal`, shown on the page of a visual, from the last finished read of each site (`report._removal`, columns of `db.match_rows`): `online` (a file was seen again since the mark: `site_images.last_seen` at or after the read's start), `pending` (a site was not read since the mark), `unread` (a page that showed it was not read again: `pages.crawled_at` before the read's start), `gone` (every page read again, nothing seen). Nothing is stored: the images and pages are never deleted when they disappear from a site, so the answer is worked out from the dates. « Relire les sites » is a full read (`POST .../jobs/crawl`, `fresh`, as many pages as allowed): a read that resumed leaves the old pages `unread`, never `gone`.
+
+**A suspect read.** When a full read ends, the worker stores its health on the run (`crawl.read_health`, `suspect_reason`: no page read, too many errors, or fewer than 70 % of the known images seen again) and `GET .../visuals` and `.../presence` say which sites are suspect; the interface shows « La dernière lecture de ce site semble incomplète : rien n'a été marqué retiré ». `report._removal` reads `suspect` in that case, never `gone`. A consent wall that stays after the overlays are closed is recorded on the page (`CONSENT_WALL`), never `gone`.
 
 **The page of a visual** (`/visuals/<reference id>`, `pages/VisualPage.tsx`, `pages/visual/`) shows, from `GET .../visuals/{reference_id}/presence` (`cloud/presence.py`): how many pages still show the visual at the last read, per site version and section, the pages (`still`, `gone`, `unknown`) 50 at a time, and its photos. It opens from « Visuels à remplacer » and from the panel of « À traiter » (« Voir où il est en ligne »); the way back goes where the person came from. The figures follow the last finished read of each site: a read that resumed leaves pages `unknown`, never `gone`.
 
