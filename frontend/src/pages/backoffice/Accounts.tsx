@@ -108,20 +108,23 @@ function UserRow(props: { user: StaffUser }) {
 }
 
 /** The administrators of every organization, for the periodic check: who, since when, last sign-in. */
-function OrgAdmins(props: { users: StaffUser[] }) {
-  const rows = props.users
+function OrgAdmins(props: { users: StaffUser[] | undefined; loading: boolean; error: unknown }) {
+  const rows = (props.users ?? [])
     .flatMap((user) => user.memberships.filter((m) => m.role === "admin").map((m) => ({ ...m, user })))
     .sort((a, b) => a.org_name.localeCompare(b.org_name) || a.user.email.localeCompare(b.user.email));
+  if (props.loading) return <Skeleton className="h-40" />;
+  if (props.error) return <EmptyState title="Impossible de charger les administrateurs" body={errorMessage(props.error)} />;
   return (
-    <Section title={`${rows.length} administrateurs d'organisation`} description="Contrôle périodique : chaque personne doit être connue de l'organisation et toujours y travailler. « Retirer » est dans la liste des comptes ci-dessous.">
+    <Section title={`${rows.length} ${rows.length > 1 ? "administrateurs" : "administrateur"} d'organisation`} description="Contrôle périodique : chaque personne doit être connue de l'organisation et toujours y travailler. « Retirer » est dans la liste des comptes ci-dessous.">
+      {rows.length === 0 ? <EmptyState title="Aucun administrateur d'organisation" body="Chaque organisation devrait en avoir au moins un." /> : null}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[560px] text-sm">
           <thead>
             <tr className="border-b border-line text-left text-xs text-muted">
-              <th className="py-2 pr-2 font-medium">Organisation</th>
-              <th className="px-2 py-2 font-medium">E-mail</th>
-              <th className="px-2 py-2 font-medium">Membre depuis</th>
-              <th className="py-2 pl-2 font-medium">Dernière connexion</th>
+              <th className="py-2 pr-2 font-medium" scope="col">Organisation</th>
+              <th className="px-2 py-2 font-medium" scope="col">E-mail</th>
+              <th className="px-2 py-2 font-medium" scope="col">Membre depuis</th>
+              <th className="py-2 pl-2 font-medium" scope="col">Dernière connexion</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -150,7 +153,7 @@ export function Accounts() {
       <PageHeader title="Comptes" />
       <div className="grid gap-4">
         <AddPerson />
-        {users.data ? <OrgAdmins users={users.data.users} /> : null}
+        <OrgAdmins users={users.data?.users} loading={users.isLoading} error={users.error} />
         <Section title={`${users.data?.users.length ?? 0} comptes`} aside={<Input aria-label="Chercher un e-mail" placeholder="Chercher un e-mail" value={search} onChange={(event) => setSearch(event.target.value)} className="w-56" />}>
           {users.isLoading ? <Skeleton className="h-40" /> : null}
           {users.error ? <EmptyState title="Impossible de charger les comptes" body={errorMessage(users.error)} /> : null}

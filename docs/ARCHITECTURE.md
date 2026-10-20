@@ -124,16 +124,22 @@ numbers and the report itself are pure functions over plain dicts in
 - **The backend uses the service role**, which bypasses RLS; every query
   filters on `org_id` itself. RLS policies are the safety net for any
   other access path.
-- **A test checks it** (`backend/tests/test_isolation.py`): two organizations, each with
-  data of every kind, and a member of A (admin, then client) calling every route
-  with the identifiers of B (its organization, its brand under A, its references,
-  jobs, files, labels... under A's own brand). Each answer must be a refusal
-  (403/404, never a 5xx), carry nothing of B, and leave the rows of B unchanged
-  (and write no row of A that points to B). **Adding a route**: the test finds it
-  by itself (it lists the routes of the application); give it a case in `BODIES`
-  if it takes a body or an identifier in its query, or, if it needs no
-  organization check (public, or the caller's own account), list it in `PUBLIC`
-  or `USER_LEVEL` with the reason. A route left out fails the test.
+- **A test looks for the holes** (`backend/tests/test_isolation.py`): two organizations, each with
+  data of every kind, and every route of the application called as an admin and as a client
+  with (1) the organization of B, (2) the brand of B under the caller's organization, (3) the
+  caller's brand with identifiers of B in the path, the body or the query, (4) the caller's own
+  valid identifiers (the handler really runs and answers 200, so a 404 or a 422 cannot pass for
+  isolation) and (5) mixed calls (a resource of the caller and one of B). No answer may be a 5xx or
+  carry data of B (body and headers); no row of B may change (tables with or without `org_id`); no row of the caller
+  may point to B; a call made only of B's identifiers leaves the caller's data alone. **Adding a
+  route**: the test finds it by itself; give it a case in `BODIES` (a valid body or query for a
+  tenant) if it takes a body or an identifier in its query, or list it in `PUBLIC` / `USER_LEVEL`
+  with the reason it needs no organization check. A route left out fails the test. Limits: it
+  catches a filter that is missing where B's data or identifiers can reach, not every possible
+  flaw (a query nobody calls with B's data, a leak that needs a particular row); the `/api/staff/*`
+  routes are only checked to refuse members (their nominal behaviour is in `test_cloud_api.py`);
+  Storage's RLS policies are never exercised, the backend signs with the service role; the
+  Supabase side of invitations is stubbed.
 - **Storage paths** start with the organization (`{org_id}/...`, references
   `{org_id}/{brand_id}/...`); a file name is folded to one segment (`safe_key`) and
   only looked up among the brand's own references, so a name or a path of another

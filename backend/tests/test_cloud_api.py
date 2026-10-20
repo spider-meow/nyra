@@ -20,6 +20,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("psycopg")
 
 import jwt as pyjwt
+from conftest import SECRET
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -27,8 +28,6 @@ from nyra.cloud import db as cloud_db
 from nyra.cloud import jobs as cloud_jobs
 from nyra.cloud import storage as cloud_storage
 from nyra.cloud.api import CloudSettings, create_app
-
-SECRET = "test-secret-at-least-32-bytes-long-enough!!"
 
 
 def _token(user_id) -> str:
@@ -39,16 +38,6 @@ def _token(user_id) -> str:
 
 def _headers(user_id) -> dict:
     return {"Authorization": f"Bearer {_token(user_id)}"}
-
-
-@pytest.fixture()
-def client(cloud_database_url, fake_storage_client):
-    settings = CloudSettings(
-        database_url=cloud_database_url, supabase_url="https://x.supabase.co",
-        service_role_key="key", jwt_secret=SECRET,
-    )
-    settings.storage_client = lambda: fake_storage_client  # no network
-    return TestClient(create_app(settings))
 
 
 @pytest.fixture()
@@ -1269,12 +1258,6 @@ def test_big_responses_are_gzipped_and_small_ones_are_not(static_client):
     assert big.text == "console.log(1);\n" * 500  # the client decompresses transparently
     assert "Content-Encoding" not in static_client.get("/api/nope", headers={"Accept-Encoding": "gzip"}).headers
     assert "Content-Encoding" not in static_client.get("/assets/app-abc123.js", headers={"Accept-Encoding": "identity"}).headers
-
-
-@pytest.fixture()
-def labels_on(monkeypatch):
-    """Labels are off unless NYRA_LABELS=1; this must come before `client` in a test's arguments (the app reads it when built)."""
-    monkeypatch.setenv("NYRA_LABELS", "1")
 
 
 def test_labels_are_off_by_default(client, org_with_users):
