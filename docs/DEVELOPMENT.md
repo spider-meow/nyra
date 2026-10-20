@@ -34,6 +34,9 @@ pytest
 - `test_units.py`, `test_match.py`, `test_crawl.py`, `test_integration.py`
   need nothing: no network, no browser, no model download (the one CLIP
   test downloads the model if `open_clip` is installed).
+- `test_calibration.py` is the threshold guard rail: precision and recall of the hash and keypoint levels on a
+  generated reference set (about 7 s; the keypoint half needs OpenCV). If it fails after you changed a threshold or
+  the model, measure first; to move the reference on purpose see « Calibration in CI » in `MATCHING.md`.
 - `test_cloud_*.py` need a disposable Postgres with pgvector:
 
   ```bash

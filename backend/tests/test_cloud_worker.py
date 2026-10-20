@@ -22,6 +22,7 @@ import psycopg
 
 from nyra.cloud import db as cloud_db
 from nyra.cloud import jobs as cloud_jobs
+from nyra.cloud import logos as cloud_logos
 from nyra.cloud import worker as worker_module
 from nyra.config import MatchConfig
 from nyra.match import compute_hashes, signature
@@ -726,3 +727,57 @@ def test_a_check_says_what_kept_pages_from_being_read():
     assert worker_module._check_message(False, 6, stats) == "2 page(s) relue(s) sur 6 ; 1 en échec, 1 redirigée(s) ailleurs, 2 bloquée(s) par robots.txt."
     assert worker_module._check_message(False, 3, worker_module.CrawlStats(pages_visited=3)) == "3 page(s) relue(s) sur 3."
     assert "arrêtée" in worker_module._check_message(True, 3, worker_module.CrawlStats())
+
+
+def _human_decisions(url, org_id) -> list:
+    """Everything a person decides in this brand, as stored: the decisions on matches, the exclusions, the logo settings."""
+    with cloud_db.connect(url) as conn:
+        return [
+            [dict(row) for row in conn.execute(query, (org_id,)).fetchall()]
+            for query in ("SELECT * FROM reviews WHERE org_id = %s ORDER BY reference_id, site_image_id",
+                          "SELECT * FROM excluded_hashes WHERE org_id = %s ORDER BY id",
+                          "SELECT id, set_aside_logos FROM brands WHERE org_id = %s ORDER BY id",
+                          "SELECT id FROM site_images WHERE org_id = %s AND logo_kept ORDER BY id")
+        ]
+
+
+def test_no_automatic_job_takes_a_decision_for_a_person(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                       fake_storage_client, monkeypatch):
+    """The algorithm proposes, a person decides: a full run of the jobs (index + comparison + grouping of crops,
+    full recomputation, locate, check) leaves every decision a person took exactly as it was, and puts none on the
+    matches it finds. The crawl needs Chromium and is covered by the static check in test_units."""
+    pytest.importorskip("cv2")
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        refs = {n: _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, f"r{n}.jpg", _image_bytes(n)) for n in (0, 40)}
+        images = {n: _add_site_image(conn, fake_storage_client, cloud_org, site, f"https://t.test/{n}.jpg", _image_bytes(n))
+                  for n in (0, 40, 120)}
+    assert _run_index(worker, cloud_database_url, cloud_org, cloud_brand)["status"] == "done"
+
+    with cloud_db.connect(cloud_database_url) as conn:  # what people do from the interface
+        cloud_db.set_reviews(conn, brand_id=cloud_brand, reference_id=refs[0], site_image_ids=[images[0]], decision="ecarte", reviewed_by=None)
+        cloud_db.set_reviews(conn, brand_id=cloud_brand, reference_id=refs[40], site_image_ids=[images[40]], decision="retenu", reviewed_by=None)
+        cloud_db.add_exclusion(conn, cloud_org, cloud_brand, images[120], reason="logo", created_by=None)
+        cloud_logos.set_enabled(conn, cloud_org, cloud_brand, True)
+        cloud_logos.keep(conn, cloud_brand, [images[40]], True)
+    before = _human_decisions(cloud_database_url, cloud_org)
+    assert [len(table) for table in before] == [2, 2, 1, 1]  # the decisions are really there to be kept
+
+    with cloud_db.connect(cloud_database_url) as conn:  # new material, and a signature that forces a full recomputation
+        _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "r80.jpg", _image_bytes(80))
+        _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/80.jpg", _image_bytes(80))
+        cloud_db.set_match_signature(conn, cloud_org, cloud_brand, "stale")
+    monkeypatch.setattr(worker_module, "crawl_pages", lambda *args, **kwargs: worker_module.CrawlStats())
+    with cloud_db.connect(cloud_database_url) as conn:
+        for kind, params in (("index", {}), ("match", {}), ("locate", {"reference_id": str(refs[0])}),
+                             ("check", {"pages": {str(site): ["https://t.test/80.jpg/page"]}})):
+            cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind=kind, params=params)
+    for _ in range(4):
+        assert worker.run_once()
+    with cloud_db.connect(cloud_database_url) as conn:
+        statuses = [row["status"] for row in conn.execute("SELECT status FROM jobs WHERE brand_id = %s", (cloud_brand,)).fetchall()]
+        new = conn.execute("""SELECT count(*) AS n FROM matches m LEFT JOIN reviews v USING (reference_id, site_image_id)
+                              WHERE m.org_id = %s AND v.decision IS NULL""", (cloud_org,)).fetchone()["n"]
+    assert statuses.count("done") == 5, statuses
+    assert new >= 1  # the new pair was proposed, undecided
+    assert _human_decisions(cloud_database_url, cloud_org) == before

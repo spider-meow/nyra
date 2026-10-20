@@ -7,7 +7,9 @@ decoder's refusal of decompression bombs. No database, no network.
 from __future__ import annotations
 
 import io
+import re
 from datetime import date
+from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw, ImageOps
@@ -373,3 +375,29 @@ def test_a_heavy_reference_is_kept_as_a_lighter_copy_and_a_light_one_untouched()
     transparent = noisy((3000, 2000), "PNG", "RGBA")
     kept, kind = fetch.make_stored_original(Image.open(io.BytesIO(transparent)), transparent, "image/png")
     assert kind == "image/png" and Image.open(io.BytesIO(kept)).mode == "RGBA"
+
+
+# --- the algorithm proposes, a person decides ------------------------------------
+
+_NYRA = Path(__file__).resolve().parents[1] / "nyra"
+# The writers of what a person decides (decisions on matches, exclusions, labels, the logo settings): the database layer.
+_DECISION_SQL = re.compile(r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:reviews|excluded_hashes|image_labels)\b|SET\s+(?:logo_kept|set_aside_logos)\b",
+                           re.IGNORECASE)
+_DECISION_WRITERS = {"db.py", "cloud/db.py", "cloud/logos.py", "cloud/labels.py"}
+# Their callers: the API routes (a person's request) and the offline command line, never a job or a pipeline step.
+_DECISION_CALLS = re.compile(r"\b(?:set_reviews|add_exclusion|delete_exclusion|set_enabled|keep|set_decision|add_content_label|delete_content_label)\(")
+
+
+def test_only_a_persons_request_writes_a_decision():
+    """Static guard. A new automatic function that writes a decision, or calls one of the functions that do, fails here.
+    Limits: a text scan of backend/nyra, so a write built by string concatenation or a writer not listed escapes it;
+    a new writer has to be added to these lists (and be called from a route), which is the point."""
+    def relative(path: Path) -> str:
+        return path.relative_to(_NYRA).as_posix()
+
+    files = [path for path in _NYRA.rglob("*.py") if "tests" not in path.parts]
+    writers = {relative(path) for path in files if _DECISION_SQL.search(path.read_text(encoding="utf-8"))}
+    assert writers == _DECISION_WRITERS, f"writes a decision outside the database layer: {writers - _DECISION_WRITERS}"
+    callers = {relative(path) for path in files if _DECISION_CALLS.search(path.read_text(encoding="utf-8"))}
+    stray = {name for name in callers if not name.startswith("cloud/routes/") and name not in _DECISION_WRITERS}
+    assert not stray, f"calls a decision writer outside the API routes: {stray}"

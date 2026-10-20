@@ -113,6 +113,19 @@ exécutable, le plus petit qui échoue si la logique casse. Pas de framework
 ajouté, pas de jeu de données lourd. Une fonction d'une ligne n'en a pas
 besoin.
 
+## Garde-fous de détection
+
+- **Un seuil se mesure avant de changer.** `backend/tests/test_calibration.py` échoue si la précision ou le rappel des
+  niveaux hachage et points clés passent sous un plancher. Changer un seuil ou le modèle, c'est refaire la mesure
+  (voir `docs/MATCHING.md`), pas contourner le test. Chaque rapport dit avec quels seuils, quel modèle et quelle date
+  de lecture il a été produit.
+- **Une fonction à seuil reste derrière un drapeau, ou un réglage par marque désactivé par défaut, tant que la
+  précision et le rappel n'ont pas été mesurés sur de vraies images.** La liste et l'état de chacune sont dans
+  `docs/MATCHING.md`; toute nouvelle fonction à seuil s'y ajoute.
+- **L'algorithme propose, une personne décide.** Aucune suppression, aucun retrait, aucune conclusion définitive n'est
+  posée par un job : seules les routes de l'API écrivent une décision (`reviews`, `excluded_hashes`, logos remis,
+  étiquettes). Deux tests le gardent (voir `docs/MATCHING.md`) ; une nouvelle fonction automatique s'ajoute au premier.
+
 ## Dette connue (mesurée le 2 octobre 2026)
 
 Ces règles s'appliquent au code qu'on écrit ou qu'on modifie. On ne réécrit
