@@ -1,6 +1,6 @@
 import { Select } from "../../components/Dropdown";
 import { useToast } from "../../components/feedback";
-import { OrgHoldNotice, useOrgHold } from "../../components/OrgHold";
+import { holdProps, useOrgHold } from "../../components/OrgHold";
 import { Button, Segmented, cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { hostOf, pathOf } from "../../lib/format";
@@ -92,9 +92,8 @@ export function Pages(props: { referenceId: string; data: Presence; narrowing: N
           {narrowing.section ? ` dans ${narrowing.section}` : ""}
         </p>
         {data.pages.length ? <Button size="sm" disabled={mark.isPending} onClick={() => setMarked(shown.map((page) => page.url), !allMarked)}>{allMarked ? "Tout démarquer" : "Tout marquer remplacé"}</Button> : null}
-        {admin && data.pages.length ? <Button size="sm" loading={busy} disabled={Boolean(hold)} onClick={() => verify(shown.map((page) => page.url))}>Vérifier ces {shown.length} pages</Button> : null}
+        {admin && data.pages.length ? <Button size="sm" loading={busy} disabled={Boolean(hold)} {...holdProps(hold)} onClick={() => verify(shown.map((page) => page.url))}>Vérifier ces {shown.length} pages</Button> : null}
       </div>
-      {admin && hold ? <div className="mb-3"><OrgHoldNotice hold={hold} /></div> : null}
       {data.pages.length ? (
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
           {data.pages.map((page) => (
@@ -104,7 +103,7 @@ export function Pages(props: { referenceId: string; data: Presence; narrowing: N
                 <span className="block truncate font-mono text-[13px]">{pathOf(page.url)}</span>
               </a>
               <span className={cx("shrink-0 rounded-md px-2 py-px text-xs font-medium", statusOf(page).tone)}>{statusOf(page).label}</span>
-              {admin ? <Button size="sm" variant="ghost" disabled={busy || Boolean(hold)} aria-label={`Vérifier la page ${pathOf(page.url)}`} onClick={() => verify([page.url])}>Vérifier</Button> : null}
+              {admin ? <Button size="sm" variant="ghost" disabled={busy || Boolean(hold)} {...holdProps(hold)} aria-label={`Vérifier la page ${pathOf(page.url)}`} onClick={() => verify([page.url])}>Vérifier</Button> : null}
               <label className="flex shrink-0 items-center gap-2 text-xs text-muted">
                 <input type="checkbox" className="h-[18px] w-[18px] accent-ink" checked={page.marked} disabled={mark.isPending} aria-label={`Page remplacée : ${pathOf(page.url)}`} onChange={(event) => setMarked([page.url], event.target.checked)} />
                 Remplacée

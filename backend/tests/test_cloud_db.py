@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import io
 import threading
+import time
 import uuid
+from pathlib import Path
 
 import numpy as np
+import psycopg
 import pytest
 from PIL import Image, ImageDraw
 
@@ -243,7 +246,6 @@ def test_claim_runs_one_job_per_organization_at_a_time(cloud_database_url):
         assert cloud_jobs.claim(conn)["id"] == b1["id"]
 
 
-
 def test_cancel_queued_is_immediate_and_running_is_flagged(cloud_database_url):
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
@@ -349,6 +351,54 @@ def test_two_simultaneous_launches_in_one_organization_let_only_one_through(clou
     assert sorted(outcomes) == ["queued"] + ["refused"] * 5
 
 
+def test_a_second_worker_claiming_in_the_same_organization_gets_nothing_and_no_error(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        org, brand_a, brand_b = _two_brands(conn)
+        first_job = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="match")
+        cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_b, kind="match")
+    answers = []
+
+    def second_worker():
+        with cloud_db.connect(cloud_database_url) as conn:
+            answers.append(cloud_jobs.claim(conn))
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert cloud_jobs.claim(conn)["id"] == first_job["id"]  # not committed yet: the other worker cannot see it
+        worker = threading.Thread(target=second_worker)
+        worker.start()
+        time.sleep(0.5)  # it picks the other brand's job and waits on the unique index
+    worker.join(timeout=30)
+    assert answers == [None]
+
+
+def test_the_migration_stops_with_a_clear_message_when_an_organization_runs_two_jobs(cloud_database_url):
+    sql = next((Path(__file__).resolve().parents[2] / "supabase" / "migrations").glob("*_one_running_job_per_org.sql")).read_text()
+    with pytest.raises(psycopg.errors.RaiseException, match="1 organization.*several running jobs"):
+        with cloud_db.connect(cloud_database_url) as conn:  # all of it is rolled back by the error
+            org, brand_a, brand_b = _two_brands(conn)
+            conn.execute("DROP INDEX jobs_one_running_per_org")
+            for brand in (brand_a, brand_b):
+                conn.execute("INSERT INTO jobs (org_id, brand_id, kind, status) VALUES (%s, %s, 'match', 'running')", (org, brand))
+            conn.execute(sql)
+    with cloud_db.connect(cloud_database_url) as conn:  # and the index is still there
+        assert conn.execute("SELECT 1 FROM pg_indexes WHERE indexname = 'jobs_one_running_per_org'").fetchone()
+
+
+def test_how_long_a_job_has_been_there_is_told_in_words():
+    assert cloud_jobs._duration(0, queued=False) == "à l'instant"
+    assert cloud_jobs._duration(12, queued=False) == "depuis 12 min"
+    assert cloud_jobs._duration(125, queued=False) == "depuis 2 h 05"
+    assert cloud_jobs._duration(0, queued=True) == "en attente depuis 0 min"
+
+
+def test_a_waiting_job_is_said_to_wait_and_an_unknown_author_is_named_for_an_administrator(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        org, brand_a, brand_b = _two_brands(conn)
+        cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="report")
+        [held] = cloud_jobs.current(conn, org, brand_b, admin=True)["organization"]
+    assert held["text"] == f"Un passage est en attente (marque {held['brand_name']}, lancé par une tâche automatique ou un compte supprimé, en attente depuis 0 min)."
+
+
 def test_a_job_that_stops_reporting_frees_the_organization(cloud_database_url):
     with cloud_db.connect(cloud_database_url) as conn:
         org, brand_a, brand_b = _two_brands(conn)
@@ -378,7 +428,7 @@ def test_who_started_the_job_is_told_to_an_administrator_only(cloud_database_url
             [held] = cloud_jobs.current(conn, org, brand_b, admin=admin)["organization"]
             assert held["by"] == by and (admin or email not in str(held))
             assert held["brand_name"] and held["kind"] == "crawl" and held["status"] == "running" and held["started_at"]
-            assert held["text"] == f"Un passage est déjà en cours (marque {held['brand_name']}, lancé par {by}, depuis 0 min)."
+            assert held["text"] == f"Un passage est déjà en cours (marque {held['brand_name']}, lancé par {by}, à l'instant)."
         assert cloud_jobs.current(conn, org, brand_a, admin=True)["organization"] == []  # its own brand's job is in `active`
 
 

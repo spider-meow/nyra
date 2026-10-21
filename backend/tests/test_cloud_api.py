@@ -922,7 +922,7 @@ def test_one_pass_at_a_time_per_organization(client, org_with_users, cloud_brand
     for path in ("jobs/match", "reports"):
         refused = client.post(f"{other_base}/{path}", headers=admin, json={})
         assert refused.status_code == 409
-        assert refused.json()["detail"] == f"Un passage est déjà en cours (marque {name}, lancé par {author}, depuis 0 min)."
+        assert refused.json()["detail"] == f"Un passage est déjà en cours (marque {name}, lancé par {author}, à l'instant)."
     # Same brand: the message names the job, not the brand.
     same = client.post(f"{base}/jobs/match", headers=admin)
     assert same.status_code == 409 and same.json()["detail"].startswith("Une comparaison est déjà en cours ou en attente (lancé par ")

@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useToast, type Toaster } from "../../components/feedback";
-import { OrgHoldNotice, useOrgHold } from "../../components/OrgHold";
+import { OrgHoldNotice, holdProps, useOrgHold } from "../../components/OrgHold";
 import { Button, Checkbox, FieldLabel, Input } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { approxDuration, hostOf, plural } from "../../lib/format";
@@ -68,10 +68,10 @@ export function RunCard(props: { list: Site[]; selected: Site[] }) {
   return (
     <form className="mb-6 rounded-xl border border-line bg-paper px-5 py-4" onSubmit={submit}>
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" variant="primary" loading={start.isPending && start.variables?.kind === "crawl"} disabled={busy || Boolean(hold) || start.isPending || noLibrary || !selected.length}>
+        <Button type="submit" variant="primary" loading={start.isPending && start.variables?.kind === "crawl"} disabled={busy || Boolean(hold) || start.isPending || noLibrary || !selected.length} {...holdProps(hold)}>
           {label}
         </Button>
-        <Button onClick={compareNow} loading={start.isPending && start.variables?.kind === "match"} disabled={busy || Boolean(hold) || start.isPending || !overview.data?.stats.site_images}>
+        <Button onClick={compareNow} loading={start.isPending && start.variables?.kind === "match"} disabled={busy || Boolean(hold) || start.isPending || !overview.data?.stats.site_images} {...holdProps(hold)}>
           Comparer sans relire
         </Button>
         {estimate.data && selected.length ? <EstimateLine estimate={estimate.data} sites={selected} thenMatch={thenMatch} /> : null}

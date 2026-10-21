@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useToast } from "../../components/feedback";
 import { Icon } from "../../components/icons";
-import { OrgHoldNotice, useOrgHold } from "../../components/OrgHold";
+import { OrgHoldNotice, holdProps, useOrgHold } from "../../components/OrgHold";
 import { Button, Segmented, Spinner, Thumb, cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDateTime, hostOf, pathOf, plural } from "../../lib/format";
@@ -94,7 +94,7 @@ function SearchBar({ item, data, onStarted }: { item: LibraryItem; data: Occurre
   return (
     <div className="px-4 py-3">
       {!data?.located_at ? <p className="mb-2 text-xs text-muted">Vérifie chaque image déjà lue, recadrages compris. Peut prendre plusieurs minutes.</p> : null}
-      <Button className="w-full" onClick={start} loading={locate.isPending} disabled={Boolean(running) || Boolean(hold)} title={running ? "Une recherche est déjà en cours pour un autre visuel." : undefined}>
+      <Button className="w-full" onClick={start} loading={locate.isPending} disabled={Boolean(running) || Boolean(hold)} {...holdProps(hold)} title={running ? "Une recherche est déjà en cours pour un autre visuel." : undefined}>
         {data?.located_at ? "Relancer la recherche" : "Lancer la recherche"}
       </Button>
       {hold ? <div className="mt-2"><OrgHoldNotice hold={hold} /></div> : null}

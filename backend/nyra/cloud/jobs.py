@@ -62,14 +62,24 @@ def _row(row: Optional[dict]) -> Optional[dict]:
     return out
 
 
+def _duration(minutes: int, queued: bool) -> str:
+    """How long a job has been there, in words: « à l'instant », « depuis 12 min », « depuis 2 h 05 »."""
+    if minutes < 1 and not queued:
+        return "à l'instant"
+    span = f"{minutes} min" if minutes < 60 else f"{minutes // 60} h {minutes % 60:02d}"
+    return ("en attente depuis " if queued else "depuis ") + span
+
+
 def holder(row: dict, *, admin: bool) -> dict:
     """The job that holds the organization, as shown to a person. Who started it is told to an administrator only:
     a member with the `client` role learns that a colleague did, never the colleague's e-mail."""
     job = _row(row)
-    by = job["author"] if admin and job["author"] else "un membre de l'équipe"
-    text = f"Un passage est déjà en cours (marque {job['brand_name']}, lancé par {by}, depuis {job['since_minutes']} min)."
-    keys = ("id", "kind", "status", "brand_id", "brand_name", "message", "progress", "created_at", "started_at", "since_minutes")
-    return {key: job[key] for key in keys} | {"by": by, "text": text}
+    queued = job["status"] == "queued"
+    by = (job["author"] or "une tâche automatique ou un compte supprimé") if admin else "un membre de l'équipe"
+    since = _duration(job["since_minutes"], queued)
+    text = f"Un passage est {'en attente' if queued else 'déjà en cours'} (marque {job['brand_name']}, lancé par {by}, {since})."
+    keys = ("id", "kind", "status", "brand_id", "brand_name", "message", "progress", "created_at", "started_at")
+    return {key: job[key] for key in keys} | {"by": by, "since": since, "text": text}
 
 
 def enqueue(

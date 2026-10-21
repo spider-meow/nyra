@@ -249,7 +249,7 @@ def enqueue(ctx: Ctx, scope: BrandScope, kind: str, params: dict) -> dict:
         detail = held["text"]
         if held["brand_id"] == str(scope.brand_id):  # this brand's own job: no need to name the brand
             labels = {"crawl": "Une lecture", "match": "Une comparaison", "report": "Un rapport", "locate": "Une recherche d'image", "check": "Une vérification de pages"}
-            detail = f"{labels.get(held['kind'], 'Une tâche')} est déjà en cours ou en attente (lancé par {held['by']}, depuis {held['since_minutes']} min)."
+            detail = f"{labels.get(held['kind'], 'Une tâche')} est déjà en cours ou en attente (lancé par {held['by']}, {held['since']})."
         raise HTTPException(status_code=409, detail=detail) from exc
 
 

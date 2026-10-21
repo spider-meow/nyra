@@ -1,21 +1,37 @@
 import { Link } from "react-router";
 import { brandLink, useOrg } from "../lib/org";
 import { useJobs } from "../lib/queries";
-import type { OrgJob } from "../types";
+import type { JobKind, OrgJob } from "../types";
 
-/** The job of another brand that makes the organization busy (one pass at a time): launches by hand are refused until it ends. */
-export function useOrgHold(): OrgJob | undefined {
-  return useJobs().data?.organization[0];
+const WHAT: Record<JobKind, string> = {
+  crawl: "Une lecture", match: "Une comparaison", report: "Un rapport", locate: "Une recherche d'image", check: "Une vérification de pages", index: "Une indexation",
+};
+
+/** What makes the organization busy: one pass at a time, so launches by hand are refused until it ends. `other` is a job of another brand. */
+export type Hold = { text: string; message: string; other?: OrgJob };
+
+/** The job in the way of a launch by hand: one of this brand (but an indexing, which only queues), else one of another brand. */
+export function useOrgHold(): Hold | undefined {
+  const data = useJobs().data;
+  const own = data?.active.find((job) => job.kind !== "index");
+  if (own) return { text: `${WHAT[own.kind]} est déjà en cours ou en attente.`, message: own.message };
+  const other = data?.organization?.[0];
+  return other && { text: other.text, message: other.message, other };
 }
 
-/** Says who started it, in which brand and since when, with a link to that brand, where it can be stopped. */
-export function OrgHoldNotice({ hold }: { hold: OrgJob }) {
+/** For the disabled launch buttons: they point at the notice. */
+export const holdProps = (hold: Hold | undefined) => ({ "aria-describedby": hold ? "org-hold" : undefined });
+
+/** For an administrator: the fixed sentence is the announced part; who, since when and the progress change with time and are not. */
+export function OrgHoldNotice({ hold }: { hold: Hold }) {
   const { org } = useOrg();
-  const brand = org.brands.find((item) => item.id === hold.brand_id);
+  const { other } = hold;
+  const brand = other && org.brands.find((item) => item.id === other.brand_id);
   return (
-    <p className="text-xs text-muted" role="status">
-      {hold.text} {hold.message}{" "}
-      {brand ? <Link className="text-ink underline" to={brandLink(org, brand.slug)}>Ouvrir la marque {brand.name}</Link> : null}
-    </p>
+    <div id="org-hold" className="text-xs text-muted">
+      <p role="status">{other ? `Un passage est déjà en cours dans la marque ${other.brand_name}.` : hold.text}</p>
+      <p>{other ? other.text : null} {hold.message}</p>
+      {brand ? <Link className="text-ink underline" to={brandLink(org, brand.slug)}>Pour l'annuler, ouvrez la marque {brand.name}</Link> : null}
+    </div>
   );
 }

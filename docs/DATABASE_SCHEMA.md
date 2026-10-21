@@ -108,7 +108,8 @@ only.
   organization: the brands of an organization take turns (the per-brand
   index of 013 is dropped). The migration stops with a clear message if an
   organization has two running jobs when it is applied: apply it when no
-  job runs.
+  job runs (see DEPLOYMENT.md for the order). `jobs_org_active_idx` (partial,
+  `org_id` where queued or running) serves `jobs/current`.
 - Claiming is `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)`.
 - Enqueuing takes a per-organization advisory lock. A job started by hand is
   refused while another job but an `index` waits or runs in the organization;

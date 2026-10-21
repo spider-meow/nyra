@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useToast } from "../components/feedback";
-import { OrgHoldNotice, useOrgHold } from "../components/OrgHold";
+import { OrgHoldNotice, holdProps, useOrgHold } from "../components/OrgHold";
 import { Button, Card, EmptyState, FieldLabel, PageHeader, Skeleton } from "../components/ui";
 import { Select } from "../components/Dropdown";
 import { errorMessage } from "../lib/api";
@@ -46,7 +46,7 @@ export function Reports() {
                 <option value="3650">Toutes les échéances</option>
               </Select>
             </div>
-            <Button variant="primary" onClick={generate} loading={generating || start.isPending} disabled={Boolean(hold)}>
+            <Button variant="primary" onClick={generate} loading={generating || start.isPending} disabled={Boolean(hold)} {...holdProps(hold)}>
               {generating ? "Préparation…" : "Générer un rapport"}
             </Button>
           </div>

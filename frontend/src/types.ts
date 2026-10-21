@@ -51,10 +51,10 @@ export type Occurrences = {
   pages_crawled: number;
 };
 
-/** A job of another brand of the organization that holds the queue: `by` is an e-mail for an administrator, « un membre de l'équipe » for a client; `text` is the sentence to show. */
-export type OrgJob = Pick<Job, "id" | "kind" | "status" | "message" | "progress" | "created_at" | "started_at"> & { brand_id: string; brand_name: string; by: string; since_minutes: number; text: string };
+/** A job of another brand of the organization that holds the queue: `by` is an e-mail for an administrator, « un membre de l'équipe » for a client; `text` is the sentence to show. Absent from an older answer. */
+export type OrgJob = Pick<Job, "id" | "kind" | "status" | "message" | "progress" | "created_at" | "started_at"> & { brand_id: string; brand_name: string; by: string; since: string; text: string };
 
-export type CurrentJobs = { active: Job[]; last: Job | null; organization: OrgJob[] };
+export type CurrentJobs = { active: Job[]; last: Job | null; organization?: OrgJob[] };
 
 export type Upcoming = { reference_id: string; filename: string; expiry_date: string; days_left: number; online: boolean };
 

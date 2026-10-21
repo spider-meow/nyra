@@ -119,15 +119,18 @@ images are missing thumbnails and mirror hashes; the worker fills them in
 with an `index` job. To run one immediately for an organization:
 
 ```sql
-insert into jobs (org_id, kind) select id, 'index' from organizations where slug = 'client';
+insert into jobs (org_id, brand_id, kind) select o.id, b.id, 'index' from organizations o join brands b on b.org_id = o.id where o.slug = 'client';
 ```
 
-Migration `20261021000032` (one running job per organization) fails, with a message and no change, if an
-organization has two running jobs when it is applied (the earlier rule allowed one per brand). Apply it when no
-job runs (check `select org_id, count(*) from jobs where status = 'running' group by 1 having count(*) > 1`; wait
-for those jobs, or stop the worker so they are requeued, then apply). The code and the migration can go in either
-order: the new code claims per organization whatever the index, and the old worker only retries if the new index
-stops it.
+Migration `20261021000032` (one running job per organization; it also adds the partial index
+`jobs_org_active_idx` that `jobs/current` reads) fails, with a message and no change, if an organization has two
+running jobs when it is applied (the earlier rule allowed one per brand). **The order matters**, in both directions:
+a new worker against the old per-brand index can start two jobs of one organization at once (and the migration then
+fails), and an old worker against the new index retries the same queued job of a busy organization in a loop, which
+holds up every organization. So: (1) stop the workers; (2) check that nothing runs
+(`select org_id, count(*) from jobs where status = 'running' group by 1 having count(*) > 1` must return no row;
+let the jobs end, or wait 3 minutes for `reap_stale` to requeue them); (3) apply the migration; (4) deploy the web
+process; (5) start the new workers.
 
 ## Logs and health
 
@@ -287,7 +290,7 @@ and fix forward.
    the service-role key signs the Storage URLs), and run a test job on a test organization:
 
    ```sql
-   insert into jobs (org_id, kind) select id, 'index' from organizations where slug = 'test-org';
+   insert into jobs (org_id, brand_id, kind) select o.id, b.id, 'index' from organizations o join brands b on b.org_id = o.id where o.slug = 'test-org';
    select status, error from jobs order by created_at desc limit 1;   -- 'done' within a few minutes
    ```
 5. Revoke the old value (below), then check `/api/healthz` and a sign-in once more.
