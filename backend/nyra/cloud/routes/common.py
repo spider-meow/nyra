@@ -236,16 +236,21 @@ def active_jobs(conn, brand_id: uuid.UUID, kinds: tuple[str, ...], statuses: tup
 
 
 def enqueue(ctx: Ctx, scope: BrandScope, kind: str, params: dict) -> dict:
+    """A job started by hand. Refused (409) while another job but an `index` waits or runs in the organization: the
+    answer says which one, in which brand and since when (and who started it: see `cloud_jobs.holder`)."""
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
             job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind=kind, params=params,
-                                     created_by=scope.member.user_id)
+                                     created_by=scope.member.user_id, manual=True)
             scope.audit(conn, f"job.{kind}", "job", job["id"])
             return {"job": job}
     except cloud_jobs.JobConflict as exc:
-        labels = {"crawl": "Une lecture", "match": "Une comparaison", "report": "Un rapport", "locate": "Une recherche d'image", "check": "Une vérification de pages"}
-        label = labels.get(kind, "Une tâche")
-        raise HTTPException(status_code=409, detail=f"{label} est déjà en cours ou en attente.") from exc
+        held = cloud_jobs.holder(exc.job, admin=scope.member.role == "admin")
+        detail = held["text"]
+        if held["brand_id"] == str(scope.brand_id):  # this brand's own job: no need to name the brand
+            labels = {"crawl": "Une lecture", "match": "Une comparaison", "report": "Un rapport", "locate": "Une recherche d'image", "check": "Une vérification de pages"}
+            detail = f"{labels.get(held['kind'], 'Une tâche')} est déjà en cours ou en attente (lancé par {held['by']}, depuis {held['since_minutes']} min)."
+        raise HTTPException(status_code=409, detail=detail) from exc
 
 
 def group_rows(shown: list[dict]) -> list[dict]:
