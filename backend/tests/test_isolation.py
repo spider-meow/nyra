@@ -66,7 +66,10 @@ USER_LEVEL = {
 
 # Routes whose nominal call is refused to an organization admin: platform admins only (each brand is billed).
 OWN_REFUSED = {("POST", ORG + "/brands"), ("DELETE", BR)}
-OWN_JOB = {("POST", BR + "/jobs/check"): "match"}  # the job a fresh organization starts with must not be of the route's own kind
+# The job a fresh organization starts with. The five routes that launch a job by hand answer 409 while a job but an
+# `index` waits in the organization, so their witness starts from an `index`. Every other route keeps the default
+# `check`, which does not stop the deletions (an address cannot be removed while a read, a comparison or an index waits).
+OWN_JOB = {("POST", BR + path): "index" for path in ("/jobs/crawl", "/jobs/check", "/jobs/match", "/library/{filename}/locate", "/reports")}
 
 
 def _bytes(name):

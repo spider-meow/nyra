@@ -3,7 +3,7 @@
 Runs in its own process (and container): it's the only part of the
 product that needs Chromium and torch. Several workers can run side by
 side; `jobs.claim` hands each one a different job and never two jobs of
-the same brand at once. Every job works on one brand: its library, its
+the same organization at once. Every job works on one brand: its library, its
 sites.
 
 Job kinds:

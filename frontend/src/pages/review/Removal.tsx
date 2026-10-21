@@ -1,4 +1,5 @@
 import { useConfirm, useToast } from "../../components/feedback";
+import { useOrgHold } from "../../components/OrgHold";
 import { cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useJobs, useOverview, useStartJob } from "../../lib/queries";
@@ -34,6 +35,7 @@ export function useFullRead() {
   const toast = useToast();
   // As many pages as allowed: a page left unread cannot confirm that a photo is gone.
   const maxPages = useOverview().data?.defaults.max_pages_limit;
+  const hold = useOrgHold();
   const reading = (useJobs().data?.active ?? []).some((job) => job.kind === "crawl");
 
   async function read() {
@@ -46,5 +48,5 @@ export function useFullRead() {
     start.mutate({ kind: "crawl", body: { fresh: true, max_pages: maxPages } }, { onError: (error) => toast.show({ tone: "error", message: "La lecture n'a pas démarré", description: errorMessage(error) }) });
   }
 
-  return { read: () => void read(), busy: start.isPending || reading };
+  return { read: () => void read(), busy: start.isPending || reading, hold };
 }
