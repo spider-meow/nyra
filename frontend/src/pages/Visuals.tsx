@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
+import { OrgHoldNotice } from "../components/OrgHold";
 import { Button, EmptyState, PageHeader, Segmented, Skeleton, StatusBadge, Thumb } from "../components/ui";
 import { InfoTip } from "../components/SettingsBlock";
 import { errorMessage } from "../lib/api";
@@ -29,8 +30,9 @@ export function Visuals() {
     <>
       <PageHeader
         title="Visuels à remplacer"
-        actions={admin ? <Button variant="primary" loading={read.busy} onClick={read.read}>Relire les sites</Button> : undefined}
+        actions={admin ? <Button variant="primary" loading={read.busy} disabled={Boolean(read.hold)} title={read.hold?.text} onClick={read.read}>Relire les sites</Button> : undefined}
       />
+      {read.hold ? <div className="mb-4"><OrgHoldNotice hold={read.hold} /></div> : null}
       {visuals.data.suspect_sites.map((site) => <SuspectReadNotice key={site.site_id} site={site.label || hostOf(site.site_url)} reason={site.reason} />)}
       <div className="mb-4 flex items-center gap-2">
         <Segmented<Tab>

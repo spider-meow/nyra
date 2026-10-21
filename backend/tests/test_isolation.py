@@ -66,7 +66,9 @@ USER_LEVEL = {
 
 # Routes whose nominal call is refused to an organization admin: platform admins only (each brand is billed).
 OWN_REFUSED = {("POST", ORG + "/brands"), ("DELETE", BR)}
-OWN_JOB = {("POST", BR + "/jobs/check"): "match"}  # the job a fresh organization starts with must not be of the route's own kind
+# The job a fresh organization starts with. An `index` is the one that never makes a job started by hand answer 409
+# (one per organization at a time); any other would, but an `index` in the way refuses to delete an address.
+OWN_JOB = {("POST", BR + path): "index" for path in ("/jobs/crawl", "/jobs/check", "/jobs/match", "/library/{filename}/locate", "/reports")}
 
 
 def _bytes(name):

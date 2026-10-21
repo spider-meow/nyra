@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useToast } from "../components/feedback";
+import { OrgHoldNotice, useOrgHold } from "../components/OrgHold";
 import { Button, Card, EmptyState, FieldLabel, PageHeader, Skeleton } from "../components/ui";
 import { Select } from "../components/Dropdown";
 import { errorMessage } from "../lib/api";
@@ -11,6 +12,7 @@ export function Reports() {
   const { admin } = useOrg();
   const overview = useOverview();
   const jobs = useJobs();
+  const hold = useOrgHold();
   const start = useStartJob();
   const toast = useToast();
   const [withinDays, setWithinDays] = useState<string>("");
@@ -44,10 +46,11 @@ export function Reports() {
                 <option value="3650">Toutes les échéances</option>
               </Select>
             </div>
-            <Button variant="primary" onClick={generate} loading={generating || start.isPending}>
+            <Button variant="primary" onClick={generate} loading={generating || start.isPending} disabled={Boolean(hold)}>
               {generating ? "Préparation…" : "Générer un rapport"}
             </Button>
           </div>
+          {hold ? <div className="mt-3"><OrgHoldNotice hold={hold} /></div> : null}
         </Card>
       ) : null}
 

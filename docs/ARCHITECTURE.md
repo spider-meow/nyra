@@ -24,14 +24,27 @@ reproducible given the same inputs and thresholds.
   comparing, computing embeddings, building a report — becomes a row in
   `jobs`. The web image has neither Chromium nor torch.
 - **worker** claims queued jobs (`FOR UPDATE SKIP LOCKED`), at most one
-  running job per brand, several brands (of one organization or not) in
-  parallel across workers. It heartbeats every 30 s and while it reports progress; a job
+  running job per **organization** (its brands take turns), organizations
+  in parallel across workers. It heartbeats every 30 s and while it reports progress; a job
   whose heartbeat stops (crash, redeploy) is marked failed by the next
   worker instead of staying "running" forever. Cancellation is a flag the
   worker checks between steps.
 - The interface polls one cheap endpoint (`jobs/current`) — every 2 s
   while something runs, every 20 s otherwise — and refreshes the lists a
   finished job changed.
+
+**One pass at a time per organization.** Queue rules (`cloud/jobs.py`): `enqueue` takes an advisory lock per
+organization, `claim` skips an organization that has a job running, and the unique index `jobs_one_running_per_org`
+backs both. A job started **by hand** (`manual`: `crawl`, `check`, `locate`, `match`, `report`) is refused with a 409 as
+soon as another job but an `index` is queued or running anywhere in the organization; the answer names the job (kind,
+brand, who started it, since when) and `jobs/current` carries the same in `organization` (the jobs of the other
+brands) so the interface disables the buttons and links to that brand. Who: the e-mail for an administrator, « un
+membre de l'équipe » for a `client` member (decided in `jobs.holder`, on the server, from the role of the person who
+asks). What **follows an action** is queued behind without error and never blocks a launch: the indexing after an
+upload or an adoption, the comparison after an exclusion or a change of the logos setting (`behind_running`); an `index`
+asked by hand joins the one already waiting. Cancelling is never refused (per brand: from the brand of the running
+job). A job that crashes or overruns leaves `running` (`reap_stale`, `fail_running`), which frees the organization. The
+monthly pass (AXE-523) is a launch by the system: it must queue without being refused, to wait for its turn.
 
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
@@ -43,7 +56,7 @@ reference against every stored site image to find its copies and crops; see `MAT
 An organization is a client; it holds brands. A brand owns a library and
 one or more sites (typically one per market: louis-xiii.com/us, /fr...),
 and its references are only ever compared with images read on its own
-sites. Exclusions, reports and the job queue are per brand; settings and
+sites. Exclusions and reports are per brand (the job queue runs one job per organization); settings and
 memberships per organization. Product routes live under
 `/api/orgs/{org_id}/brands/{brand_id}/...`, the interface under
 `/o/{org}/b/{brand}/...` (English since October 2026; the old French addresses

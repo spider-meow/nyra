@@ -112,7 +112,7 @@ export function useJobs() {
   return useQuery({
     queryKey: ["jobs", brand.id],
     queryFn: () => api.get<CurrentJobs>(apiPath("/jobs/current")),
-    refetchInterval: (query) => ((query.state.data?.active.length ?? 0) > 0 ? 2000 : 20_000),
+    refetchInterval: (query) => ((query.state.data?.active.length ?? 0) + (query.state.data?.organization.length ?? 0) > 0 ? 2000 : 20_000),
   });
 }
 

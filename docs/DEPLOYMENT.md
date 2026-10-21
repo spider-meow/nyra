@@ -122,6 +122,13 @@ with an `index` job. To run one immediately for an organization:
 insert into jobs (org_id, kind) select id, 'index' from organizations where slug = 'client';
 ```
 
+Migration `20261021000032` (one running job per organization) fails, with a message and no change, if an
+organization has two running jobs when it is applied (the earlier rule allowed one per brand). Apply it when no
+job runs (check `select org_id, count(*) from jobs where status = 'running' group by 1 having count(*) > 1`; wait
+for those jobs, or stop the worker so they are requeued, then apply). The code and the migration can go in either
+order: the new code claims per organization whatever the index, and the old worker only retries if the new index
+stops it.
+
 ## Logs and health
 
 Both processes log to stdout (`NYRA_LOG_FORMAT=json` for one JSON object

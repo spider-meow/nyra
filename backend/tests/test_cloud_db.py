@@ -7,6 +7,7 @@ Skips unless TEST_DATABASE_URL points at a disposable Postgres with the
 from __future__ import annotations
 
 import io
+import threading
 import uuid
 
 import numpy as np
@@ -209,34 +210,38 @@ def test_enqueue_refuses_a_second_crawl_and_coalesces_index(cloud_database_url, 
         index_a = cloud_jobs.enqueue(conn, **brand, kind="index")
         index_b = cloud_jobs.enqueue(conn, **brand, kind="index")
         assert index_a["id"] == index_b["id"]
-        # Another brand of the same organization has its own queue.
+        # What follows an action (not `manual`) of another brand of the organization only waits its turn.
         other = cloud_db.create_brand(conn, org_id=cloud_org, name="Louis XIII", slug="louis-xiii")
-        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=other, kind="crawl")
-        current = cloud_jobs.current(conn, cloud_brand)
+        queued_for_other = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=other, kind="crawl")
+        current = cloud_jobs.current(conn, cloud_org, cloud_brand, admin=True)
     assert [job["id"] for job in current["active"]] == [first["id"], index_a["id"]]
+    assert [job["id"] for job in current["organization"]] == [queued_for_other["id"]]
 
 
-def test_claim_runs_one_job_per_brand_at_a_time(cloud_database_url):
+def test_claim_runs_one_job_per_organization_at_a_time(cloud_database_url):
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
         org = cloud_db.create_organization(conn, name="A", slug=f"a-{uuid.uuid4().hex[:8]}")
         brand_a = _brand(conn, org)
         brand_b = cloud_db.create_brand(conn, org_id=org, name="B", slug="b")
+        other_org = cloud_db.create_organization(conn, name="C", slug=f"c-{uuid.uuid4().hex[:8]}")
         a1 = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="match")
         a2 = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="report")
         b1 = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_b, kind="match")
+        c1 = cloud_jobs.enqueue(conn, org_id=other_org, brand_id=_brand(conn, other_org), kind="match")
+    claimed = []
+    for _ in range(4):
+        with cloud_db.connect(cloud_database_url) as conn:
+            claimed.append(cloud_jobs.claim(conn))
+    # First in, first out across organizations: a1, then c1 (b1 and a2 wait, the organization already runs a1), then nothing.
+    assert [job and job["id"] for job in claimed] == [a1["id"], c1["id"], None, None]
     with cloud_db.connect(cloud_database_url) as conn:
-        first = cloud_jobs.claim(conn)
-    with cloud_db.connect(cloud_database_url) as conn:
-        second = cloud_jobs.claim(conn)
-    with cloud_db.connect(cloud_database_url) as conn:
-        third = cloud_jobs.claim(conn)
-    assert first["id"] == a1["id"]
-    assert second["id"] == b1["id"]  # a2 waits: brand A already has a running job, brand B doesn't
-    assert third is None
-    with cloud_db.connect(cloud_database_url) as conn:
-        cloud_jobs.finish(conn, first["id"], status="done", message="ok")
-        assert cloud_jobs.claim(conn)["id"] == a2["id"]
+        cloud_jobs.finish(conn, claimed[0]["id"], status="done", message="ok")
+        assert cloud_jobs.claim(conn)["id"] == a2["id"]  # the oldest of the organization, whatever its brand
+        assert cloud_jobs.claim(conn) is None
+        cloud_jobs.finish(conn, a2["id"], status="done", message="ok")
+        assert cloud_jobs.claim(conn)["id"] == b1["id"]
+
 
 
 def test_cancel_queued_is_immediate_and_running_is_flagged(cloud_database_url):
@@ -287,6 +292,102 @@ def test_reap_stale_does_not_restart_a_job_the_user_asked_to_stop(cloud_database
         assert cloud_jobs.reap_stale(conn) == (0, 1)
         stopped = cloud_jobs.get(conn, brand, job_id)
         assert stopped["status"] == "error" and "mémoire" not in stopped["message"]
+
+
+def _two_brands(conn):
+    """A fresh organization with two brands: (org, brand A, brand B). Nothing else is waiting or running anywhere."""
+    conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+    org = cloud_db.create_organization(conn, name="F", slug=f"f-{uuid.uuid4().hex[:8]}")
+    return org, _brand(conn, org), cloud_db.create_brand(conn, org_id=org, name="Louis XIII", slug="louis-xiii")
+
+
+def test_a_manual_launch_is_refused_while_another_brand_holds_the_organization_but_what_follows_an_action_waits(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        org, brand_a, brand_b = _two_brands(conn)
+        other_org = cloud_db.create_organization(conn, name="G", slug=f"g-{uuid.uuid4().hex[:8]}")
+        crawl = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="crawl", manual=True)
+    for kind in ("crawl", "match", "report", "locate", "check"):  # queued, then running: the same answer
+        for brand in (brand_a, brand_b):
+            with pytest.raises(cloud_jobs.JobConflict) as refused:
+                with cloud_db.connect(cloud_database_url) as conn:
+                    cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind=kind, manual=True)
+            assert refused.value.job["id"] == uuid.UUID(crawl["id"]) and refused.value.job["brand_name"]
+        with cloud_db.connect(cloud_database_url) as conn:
+            if kind == "crawl":
+                cloud_jobs.claim(conn)
+    with cloud_db.connect(cloud_database_url) as conn:
+        # An indexing and the follow-ups queue behind, without error, in either brand; another organization is not concerned.
+        assert cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_b, kind="index", manual=True)["status"] == "queued"
+        assert cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_b, kind="match", behind_running=True)["status"] == "queued"
+        assert cloud_jobs.enqueue(conn, org_id=other_org, brand_id=_brand(conn, other_org), kind="crawl", manual=True)
+        # Nothing but an index waiting in the organization: a launch by hand is accepted.
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = %s AND kind <> 'index'", (org,))
+        assert cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="report", manual=True)["status"] == "queued"
+
+
+def test_two_simultaneous_launches_in_one_organization_let_only_one_through(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        org, brand_a, brand_b = _two_brands(conn)
+    start = threading.Barrier(6)
+    outcomes = []
+
+    def launch(brand, kind):
+        start.wait()
+        try:
+            with cloud_db.connect(cloud_database_url) as conn:
+                cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind=kind, manual=True)
+            outcomes.append("queued")
+        except cloud_jobs.JobConflict:
+            outcomes.append("refused")
+
+    threads = [threading.Thread(target=launch, args=(brand, kind)) for brand, kind in
+               ((brand_a, "crawl"), (brand_b, "crawl"), (brand_a, "match"), (brand_b, "report"), (brand_a, "check"), (brand_b, "locate"))]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert sorted(outcomes) == ["queued"] + ["refused"] * 5
+
+
+def test_a_job_that_stops_reporting_frees_the_organization(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        org, brand_a, brand_b = _two_brands(conn)
+        job = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="crawl", params={"retries": cloud_jobs.MAX_RETRIES})
+        claimed = cloud_jobs.claim(conn)
+        with pytest.raises(cloud_jobs.JobConflict):
+            cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_b, kind="match", manual=True)
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET heartbeat_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
+        assert cloud_jobs.reap_stale(conn) == (0, 1)  # out of retries: failed, not requeued
+        assert cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_b, kind="match", manual=True)["status"] == "queued"
+        # The worker's own time limit (`_time_out`) goes through `fail_running`: same release.
+        second = cloud_jobs.claim(conn)
+        assert cloud_jobs.fail_running(conn, second, message="trop long", error="max duration")
+        assert cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="report", manual=True)["status"] == "queued"
+    assert claimed["id"] == job["id"]
+
+
+def test_who_started_the_job_is_told_to_an_administrator_only(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        org, brand_a, brand_b = _two_brands(conn)
+        user = conn.execute("INSERT INTO auth.users (email) VALUES (%s) RETURNING id", (f"{uuid.uuid4().hex[:8]}@x.com",)).fetchone()["id"]
+        email = conn.execute("SELECT email FROM auth.users WHERE id = %s", (user,)).fetchone()["email"]
+        cloud_jobs.enqueue(conn, org_id=org, brand_id=brand_a, kind="crawl", created_by=user)
+        cloud_jobs.claim(conn)
+        for admin, by in ((True, email), (False, "un membre de l'équipe")):
+            [held] = cloud_jobs.current(conn, org, brand_b, admin=admin)["organization"]
+            assert held["by"] == by and (admin or email not in str(held))
+            assert held["brand_name"] and held["kind"] == "crawl" and held["status"] == "running" and held["started_at"]
+            assert held["text"] == f"Un passage est déjà en cours (marque {held['brand_name']}, lancé par {by}, depuis 0 min)."
+        assert cloud_jobs.current(conn, org, brand_a, admin=True)["organization"] == []  # its own brand's job is in `active`
+
+
+def test_migrations_leave_one_running_job_per_organization_and_none_per_brand(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        indexes = {row["indexname"]: row["indexdef"] for row in conn.execute("SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'jobs'")}
+    assert "jobs_one_running_per_brand" not in indexes
+    assert "UNIQUE" in indexes["jobs_one_running_per_org"] and "(org_id)" in indexes["jobs_one_running_per_org"]
+    assert "running" in indexes["jobs_one_running_per_org"]
 
 
 def test_stalled_seconds_is_only_set_when_a_job_waits_and_nothing_runs(cloud_database_url):

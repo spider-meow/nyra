@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useToast, type Toaster } from "../../components/feedback";
+import { OrgHoldNotice, useOrgHold } from "../../components/OrgHold";
 import { Button, Checkbox, FieldLabel, Input } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { approxDuration, hostOf, plural } from "../../lib/format";
@@ -33,6 +34,7 @@ export function RunCard(props: { list: Site[]; selected: Site[] }) {
   const { list, selected } = props;
   const overview = useOverview();
   const jobs = useJobs();
+  const hold = useOrgHold();
   const start = useStartJob();
   const toast = useToast();
   const [maxPages, setMaxPages] = useState<number | "">("");
@@ -66,14 +68,15 @@ export function RunCard(props: { list: Site[]; selected: Site[] }) {
   return (
     <form className="mb-6 rounded-xl border border-line bg-paper px-5 py-4" onSubmit={submit}>
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" variant="primary" loading={start.isPending && start.variables?.kind === "crawl"} disabled={busy || start.isPending || noLibrary || !selected.length}>
+        <Button type="submit" variant="primary" loading={start.isPending && start.variables?.kind === "crawl"} disabled={busy || Boolean(hold) || start.isPending || noLibrary || !selected.length}>
           {label}
         </Button>
-        <Button onClick={compareNow} loading={start.isPending && start.variables?.kind === "match"} disabled={busy || start.isPending || !overview.data?.stats.site_images}>
+        <Button onClick={compareNow} loading={start.isPending && start.variables?.kind === "match"} disabled={busy || Boolean(hold) || start.isPending || !overview.data?.stats.site_images}>
           Comparer sans relire
         </Button>
         {estimate.data && selected.length ? <EstimateLine estimate={estimate.data} sites={selected} thenMatch={thenMatch} /> : null}
       </div>
+      {hold ? <div className="mt-2"><OrgHoldNotice hold={hold} /></div> : null}
       {noLibrary ? <p className="mt-2 text-xs text-muted">Ajoutez d'abord des visuels à la bibliothèque.</p> : null}
       <details className="mt-3">
         <summary className="w-fit cursor-pointer text-sm text-muted hover:text-ink">Options de lecture</summary>
