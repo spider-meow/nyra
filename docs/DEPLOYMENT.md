@@ -90,7 +90,8 @@ Chromium; `index`, `match` and `locate` load the CLIP model and the library's ve
 measured**: raise it only after recording the worker's memory (`docker stats`) during a crawl, and during an
 indexing or a comparison of the largest library, then check that N times that peak (not the 2560 MiB limit
 times N) fits in the machine. The cap is global, so with `--scale worker=2` and a cap of 1 the second worker
-idles unless a `report` is waiting. To change it, edit `.env` and restart the workers. `.env.example` does not
+idles unless a `report` is waiting. Independently of the cap, two jobs never read the same domain (host without
+`www.`) at the same time, whatever the customers: the second `crawl` or `check` waits for the first to end. To change it, edit `.env` and restart the workers. `.env.example` does not
 list it yet (that file could not be edited in this change): add `NYRA_MAX_HEAVY_JOBS=1` there.
 
 ## Supabase setup, once

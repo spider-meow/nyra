@@ -16,6 +16,8 @@ Rules:
   (torch) and hold the library's vectors. Among the jobs that may start, the organization whose last job started
   least recently goes first, then first come first served, so an organization with twenty queued jobs does not
   push the others back;
+- a job that reads sites (`crawl`, `check`) does not start while a running job reads the same domain (host without
+  `www.`), whatever the organization: two customers must not double the load on a third party's site;
 - a job started by hand (`manual`) is refused (`JobConflict`, which carries
   the job in the way) while any job but an `index` is queued or running in
   the organization; what follows an action (indexing after an upload, a
@@ -155,24 +157,50 @@ def enqueue(
     return _row(row)
 
 
+def _hosts(job: str) -> str:
+    """SQL: the domains (host without `www.`) that the job aliased `job` reads, as a text[]. A `crawl` reads the sites in
+    `params.site_ids`, or all the brand's sites when none is given; a `check` reads the sites that are the keys of
+    `params.pages`; no other kind reads a site. Where the sites cannot be told (none left, params not shaped as expected)
+    the array is empty: the job conflicts with nothing and starts, the worker then fails it with its own message."""
+    ids = (f"CASE WHEN jsonb_typeof({job}.params -> 'site_ids') = 'array' "
+           f"THEN ARRAY(SELECT jsonb_array_elements_text({job}.params -> 'site_ids')) ELSE '{{}}'::text[] END")
+    pages = (f"CASE WHEN jsonb_typeof({job}.params -> 'pages') = 'object' "
+             f"THEN ARRAY(SELECT jsonb_object_keys({job}.params -> 'pages')) ELSE '{{}}'::text[] END")
+    return (f"ARRAY(SELECT substring(lower(s.url) from '^[a-z][a-z0-9+.-]*://(?:[^/@?#]*@)?(?:www\\.)?([^/:?#]+)') FROM sites s "
+            f"WHERE s.brand_id = {job}.brand_id AND (({job}.kind = 'crawl' AND (s.id::text = ANY({ids}) "
+            f"OR (cardinality({ids}) = 0 AND {job}.params ->> 'site' IS NULL))) "
+            f"OR ({job}.kind = 'check' AND s.id::text = ANY({pages}))))")
+
+
+# Everything, once the organization is known to be idle, that lets queued job `j` start (placeholders: the light
+# kinds twice, then the cap): a light kind or a free place among the heavy jobs running anywhere, and no job running
+# that reads one of its domains (two customers must not double the load on a third party's site).
+_CAN_START = f"""(j.kind = ANY(%s)
+        OR (SELECT count(*) FROM jobs r WHERE r.status = 'running' AND r.kind <> ALL(%s)) < %s)
+    AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.status = 'running' AND {_hosts('r')} && {_hosts('j')})"""
+_ORG_IDLE = "NOT EXISTS (SELECT 1 FROM jobs r WHERE r.org_id = j.org_id AND r.status = 'running')"
+
+
+def _can_start_params() -> tuple:
+    return list(LIGHT_KINDS), list(LIGHT_KINDS), _max_heavy_jobs()
+
+
 def claim(conn: psycopg.Connection) -> Optional[dict]:
     """Take the next queued job: of an organization that has nothing running, and, for a heavy kind, only while fewer
-    than `NYRA_MAX_HEAVY_JOBS` heavy jobs run anywhere. The organization whose last job started least recently goes
-    first (one that never ran counts as the least recent), then the oldest job; a `locate` after the other kinds."""
+    than `NYRA_MAX_HEAVY_JOBS` heavy jobs run anywhere, and never one that reads a domain a running job reads (see
+    `_CAN_START`). The organization whose last job started least recently goes first (one that never ran counts as
+    the least recent), then the oldest job; a `locate` after the other kinds."""
     # The unique index only guards one organization. The global count needs every claim to see the previous one's
     # `running` row, so claims queue on one transaction-level lock, released with the commit that makes that row
     # visible; it is held for a few milliseconds. A count and an UPDATE in one statement would not do: under READ
     # COMMITTED, two concurrent statements both count the same running jobs and both pass.
     conn.execute("SELECT pg_advisory_xact_lock(hashtext('jobs:claim'))")
     row = conn.execute(
-        """
+        f"""
         UPDATE jobs SET status = 'running', started_at = now(), heartbeat_at = now(), message = 'Démarrage…'
         WHERE id = (
             SELECT j.id FROM jobs j
-            WHERE j.status = 'queued'
-              AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.org_id = j.org_id AND r.status = 'running')
-              AND (j.kind = ANY(%s)
-                   OR (SELECT count(*) FROM jobs r WHERE r.status = 'running' AND r.kind <> ALL(%s)) < %s)
+            WHERE j.status = 'queued' AND {_ORG_IDLE} AND {_CAN_START}
             ORDER BY (j.kind = 'locate'),  -- a long search never waits ahead of another kind
                      (SELECT max(s.started_at) FROM jobs s WHERE s.org_id = j.org_id) NULLS FIRST,
                      j.created_at
@@ -181,7 +209,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
         )
         RETURNING *
         """,
-        (list(LIGHT_KINDS), list(LIGHT_KINDS), _max_heavy_jobs()),
+        _can_start_params(),
     ).fetchone()
     return _row(row)
 
@@ -315,21 +343,20 @@ def current(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, *,
                      ORDER BY (j.status = 'running') DESC, j.created_at""",
         (org_id, brand_id, list(ACTIVE)),
     ).fetchall()
-    full = _server_is_full(conn, org_id)
-    jobs = [_row(row) | {"waiting_for_capacity": full and row["status"] == "queued" and row["kind"] not in LIGHT_KINDS}
-            for row in active]
+    waiting = _waiting_for_capacity(conn, [row["id"] for row in active if row["status"] == "queued"])
+    jobs = [_row(row) | {"waiting_for_capacity": row["id"] in waiting} for row in active]
     return {"active": jobs, "last": _row(last), "organization": [holder(row, admin=admin) for row in others]}
 
 
-def _server_is_full(conn: psycopg.Connection, org_id: uuid.UUID) -> bool:
-    """Whether the organization has nothing running while the global cap of heavy jobs is reached: its queued heavy
-    jobs then wait for a place on the server. A yes or no only, nothing about the jobs of the other organizations."""
-    row = conn.execute(
-        """SELECT count(*) FILTER (WHERE kind <> ALL(%s)) AS heavy, count(*) FILTER (WHERE org_id = %s) AS mine
-           FROM jobs WHERE status = 'running'""",
-        (list(LIGHT_KINDS), org_id),
-    ).fetchone()
-    return row["mine"] == 0 and row["heavy"] >= _max_heavy_jobs()
+def _waiting_for_capacity(conn: psycopg.Connection, queued_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """Those of these queued jobs whose organization runs nothing but which cannot start for another reason: the cap
+    of heavy jobs is reached, or a job of another organization is reading the same domain. They wait for a place on
+    the server. A yes or no per job, nothing about the jobs of the other organizations."""
+    rows = conn.execute(
+        f"SELECT j.id FROM jobs j WHERE j.id = ANY(%s) AND {_ORG_IDLE} AND NOT ({_CAN_START})",
+        [queued_ids, *_can_start_params()],
+    ).fetchall()
+    return {row["id"] for row in rows}
 
 
 def recent(conn: psycopg.Connection, brand_id: uuid.UUID, limit: int = 20) -> list[dict]:

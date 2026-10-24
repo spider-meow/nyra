@@ -56,6 +56,13 @@ an organization with many queued jobs does not push the others back. `jobs/curre
 `waiting_for_capacity` when its organization runs nothing while the cap is reached: a yes or no, with nothing about
 the other organizations' jobs.
 
+**One domain at a time (AXE-530).** `claim` also keeps a `crawl` or `check` queued while a running job reads one of
+its domains (host without `www.`, any organization): a `crawl` reads the sites of `params.site_ids`, or all the
+brand's sites when none is given; a `check` reads the sites that are the keys of `params.pages` (`_hosts` in
+`cloud/jobs.py`). The other kinds read no site. When the domain cannot be told (the sites were deleted, odd params),
+the job conflicts with nothing and starts: the worker then fails it with its own message, rather than the job
+waiting for ever. A job held back by a domain is `waiting_for_capacity` like one held back by the cap.
+
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
 queued after every upload, also backfills older rows; an administrator can start it from Réglages > Général > Maintenance, `POST .../jobs/index`), `report`, `locate` (checks one
