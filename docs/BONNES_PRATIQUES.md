@@ -148,7 +148,12 @@ pas l'existant d'un bloc : on corrige ce qu'on touche (règle du scout).
 - **CLI hors ligne** : le pipeline SQLite sert au débogage et aux tests, pas au
   produit. Une base locale ancienne garde ses résultats « à vérifier » tant
   qu'un recalcul complet n'est pas forcé ; on ne l'enrichit plus.
-- **Limites non traitées** : aucune limitation de débit sur l'API ; Supabase
+- **Limitation de débit** (`cloud/ratelimit.py`) : par utilisateur connecté
+  (jamais par adresse IP, voir `DEPLOYMENT.md`), en mémoire du processus. Avec
+  plusieurs processus web la limite réelle est multipliée par leur nombre, et un
+  redémarrage remet les compteurs à zéro. Les requêtes sans jeton valide ne sont
+  pas comptées (elles finissent en 401).
+- **Limites non traitées** : Supabase
   reste dans le premier chargement (mesuré : le charger plus tard ralentit la
   connexion) ; une vignette dont le fichier est absent est remplacée par
   l'image de travail, puis l'original, puis un pictogramme.
