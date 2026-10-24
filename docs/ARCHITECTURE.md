@@ -83,6 +83,8 @@ between organizations). Each launch writes one `schedule.run` row in the audit l
 *Switch:* `NYRA_SCHEDULER=0|false|off` stops it. *Limit:* the worker looks every 5 minutes but not during a job (it runs
 one at a time), so a read can start a few hours late; it could not have started before the running job ended anyway.
 
+*Setting (`cloud/routes/schedule_settings.py`):* `GET .../brands/{brand_id}/schedule` (any member) gives `{enabled, day_of_month, default_day, next_run_at, last_run_at}`; a brand without a row reads as off, with its default day. `PUT` (administrators) takes `{enabled, day_of_month}` (1 to 28, nothing else accepted), calls `schedule.enable` / `disable` and writes `schedule.enable` / `schedule.disable` in the audit log in the same transaction, then answers like the `GET`. `next_run_at` comes from `schedule.next_run` (pure, same rule as `is_due`): this month's date for a brand not read this month (already past = it goes at the next pass of the worker), next month's otherwise; null when off. The audit screen shows `schedule.*` and `digest.*` with no author as « Lecture automatique ».
+
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
 queued after every upload, also backfills older rows; an administrator can start it from Réglages > Général > Maintenance, `POST .../jobs/index`), `report`, `locate` (checks one
@@ -150,7 +152,7 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/routes/common.py` | What the route modules share: the request context (`Ctx`), the auth and brand dependencies, small helpers. |
 | `cloud/audit.py` | The activity log (`audit_log`): `record` (called by each route that changes something, in the transaction of the change), `events` (reading, filtered and bounded), `purge` (12 months, batches). |
 | `cloud/offboarding.py` | A client leaving: `delete_organization` (files, rows, accounts, trace) and `export_organization` (CSV, originals, manifest), behind `nyra cloud-delete-org` / `cloud-export-org`. Operator only, no route. |
-| `cloud/routes/` (`session`, `audit`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `logos`, `reports_settings`) | The API routes, one module per domain, each exposing a `router`. |
+| `cloud/routes/` (`session`, `audit`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `logos`, `reports_settings`, `schedule_settings`) | The API routes, one module per domain, each exposing a `router`. |
 | `cloud/routes/interface.py` | The built interface (single-page app), gzip and security headers, error handlers. |
 | `cloud/presence.py` | Where a visual is still online, page by page: `still` (seen by the last finished read of the site), `gone` (the page was read again with success and the image was not on it), `unknown` (the page was not read again, or not since `image_pages.last_seen` and `pages.links_tracked` exist). Counts per site version and section, and the pages; `GET .../visuals/{reference_id}/presence`. Images and links are never deleted when they disappear from a site, so nothing is stored: the state comes from the dates. While the last finished read of a site is **suspect** (`crawl_runs.suspect`, set when the read ends, see `MATCHING.md`), no page of it is `gone`. `replaced_references` lists the visuals replaced, which the home screen and the report leave out of "expired and online". |
 | `cloud/worker.py` | The job runner. |

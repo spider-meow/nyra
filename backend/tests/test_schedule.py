@@ -491,3 +491,23 @@ def test_the_longest_unread_brands_go_first_and_a_failing_brand_traces_once_an_h
         clock[0] += 3600
         schedule.enqueue_due(conn, at(2026, 6, 20, 2))
         assert len([r for r in caplog.records if r.exc_info]) == 2 * len(traces)
+
+
+# --- next_run: pure, the date shown to the person ----------------------------------------------------------------------
+
+def test_next_run_is_this_months_date_before_it_and_for_a_brand_not_read_this_month():
+    d = due(2026, 3)
+    assert schedule.next_run(BRAND, 10, None, d - timedelta(days=5)) == d  # never read, date to come
+    assert schedule.next_run(BRAND, 10, due(2026, 2), d - timedelta(minutes=1)) == d  # read last month, date to come
+    # read last month and this month's date has passed: due at the next pass of the worker (the date is in the past)
+    assert schedule.next_run(BRAND, 10, due(2026, 2), d + timedelta(days=3)) == d
+
+
+def test_next_run_is_next_months_date_once_the_month_is_read_and_crosses_the_year():
+    read = due(2026, 3) + timedelta(minutes=3)
+    assert schedule.next_run(BRAND, 10, read, read + timedelta(days=1)) == due(2026, 4)
+    assert schedule.next_run(BRAND, 10, read, due(2026, 3) - timedelta(days=1)) == due(2026, 4)  # read this month (day changed later)
+    december = due(2026, 12) + timedelta(minutes=3)
+    assert schedule.next_run(BRAND, 10, december, december + timedelta(days=2)) == due(2027, 1)
+    assert schedule.next_run(BRAND, 28, None, at(2026, 12, 29)) == due(2026, 12, 28)  # never read, passed: the (past) date
+    assert schedule.next_run(BRAND, 10, None, at(2026, 12, 1)).tzinfo is not None

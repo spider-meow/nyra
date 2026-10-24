@@ -16,6 +16,7 @@ import { Indexation } from "./settings/Indexation";
 import { Logos } from "./settings/Logos";
 import { Profile } from "./settings/Profile";
 import { Reading } from "./settings/Reading";
+import { Schedule } from "./settings/Schedule";
 import { Team } from "./settings/Team";
 import { Usage } from "./settings/Usage";
 
@@ -32,6 +33,7 @@ function General() {
       <Profile />
       {admin ? <Logos /> : null}
       <Exclusions />
+      <Schedule />
       {admin ? <Indexation /> : null}
       <DangerZone />
     </>

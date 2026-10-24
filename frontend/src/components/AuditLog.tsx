@@ -53,29 +53,39 @@ const ACTION_LABEL: Record<string, string> = {
   "organization.create": "Organisation créée",
   "quota.set": "Limites d'usage modifiées",
   "organization.export": "Export des données",
+  "schedule.run": "Lecture mensuelle automatique",
+  "schedule.enable": "Lecture mensuelle activée",
+  "schedule.disable": "Lecture mensuelle désactivée",
+  "digest.sent": "E-mail mensuel envoyé",
+  "digest.skipped": "E-mail mensuel non envoyé : rien à signaler",
+  "digest.failed": "E-mail mensuel : échec d'envoi",
 };
 
 const actionLabel = (code: string) => ACTION_LABEL[code] ?? code;
 
 /** What a decision field says: a review's decision, or what a person did with a label. */
 const DECISION_WORD: Record<string, string> = { ...decisionLabel, cleared: "Décision annulée", yes: "Étiquette posée", no: "Étiquette refusée", clear: "Étiquette retirée" };
+/** Why a monthly read queued nothing (`reason` of `schedule.run`). */
+const RUN_REASON: Record<string, string> = { no_site: "aucune adresse à lire", waiting: "une lecture était déjà prévue" };
 const ROLE_WORD: Record<string, string> = { admin: "Administrateur", client: "Lecture et validation" };
 /** The API refuses an offset past this (`MAX_OFFSET`); the interface stops offering more before that. */
 const MAX_OFFSET = 50_000;
 
 /** What the row adds to its title: a decision, a role, a number of items. */
 function summary(event: AuditEvent): string {
-  const { decision, role, count, replaced } = event.detail ?? {};
+  const { decision, role, count, replaced, reason } = event.detail ?? {};
   const parts: string[] = [];
   if (typeof decision === "string") parts.push(DECISION_WORD[decision] ?? decision);
   if (typeof role === "string") parts.push(ROLE_WORD[role] ?? role);
   if (typeof count === "number") parts.push(plural(count, "élément"));
+  if (event.action === "schedule.run" && typeof reason === "string" && reason) parts.push(RUN_REASON[reason] ?? reason);
   if (replaced === true) parts.push("remplace un visuel du même nom");
   return parts.join(" · ");
 }
 
-/** Who did it: an account's e-mail; an operator action (no account) is the Nyra team's; an account since deleted says so. */
-const author = (event: AuditEvent) => event.email || (event.user_id === null ? "Équipe Nyra" : "Compte supprimé");
+/** Who did it: an account's e-mail; the monthly read and e-mail (no account) are automatic; another operator action is the Nyra team's. */
+const automatic = (action: string) => action === "schedule.run" || action.startsWith("digest.");
+const author = (event: AuditEvent) => event.email || (event.user_id === null ? (automatic(event.action) ? "Lecture automatique" : "Équipe Nyra") : "Compte supprimé");
 
 /** The activity log of an organization: who did what, newest first. `path` is the API address (admin or back office). */
 export function AuditLog(props: { path: string; cacheKey: string }) {

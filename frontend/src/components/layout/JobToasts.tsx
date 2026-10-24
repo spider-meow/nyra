@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "../../lib/api";
-import { approxDuration, jobLabel } from "../../lib/format";
+import { approxDuration, jobLabel, jobTitle } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { refreshAfter, useCancelJob, useInvalidate, useJobs } from "../../lib/queries";
 import type { CurrentJobs, Job } from "../../types";
@@ -30,7 +30,7 @@ export function JobToasts() {
     for (const [id, kind] of seen.current) {
       if (activeIds.has(id)) continue;
       invalidate(...refreshAfter[kind]);
-      showOutcome(toast, toastFor.current, id, kind, data.last);
+      showOutcome(toast, toastFor.current, id, data.last);
     }
     seen.current = activeIds;
 
@@ -92,19 +92,20 @@ function useStopJobs(toast: Toaster) {
 }
 
 /** A task that just ended: its toast becomes the outcome (or goes away if it is not the last one). */
-function showOutcome(toast: Toaster, toastFor: Map<string, number>, id: string, kind: Job["kind"], last: Job | null) {
+function showOutcome(toast: Toaster, toastFor: Map<string, number>, id: string, last: Job | null) {
   const existing = toastFor.get(id);
   toastFor.delete(id);
   if (last?.id !== id) {
     if (existing !== undefined) toast.dismiss(existing);
     return;
   }
+  const title = jobTitle(last);
   const outcome =
     last.status === "error"
-      ? { tone: "error" as const, message: `${jobLabel[kind]} : échec`, description: last.message }
+      ? { tone: "error" as const, message: `${title} : échec`, description: last.message }
       : last.status === "cancelled"
-        ? { tone: "info" as const, message: `${jobLabel[kind]} arrêtée`, description: last.message }
-        : { tone: "success" as const, message: `${jobLabel[kind]} terminée`, description: last.message || undefined };
+        ? { tone: "info" as const, message: `${title} arrêtée`, description: last.message }
+        : { tone: "success" as const, message: `${title} terminée`, description: last.message || undefined };
   if (existing !== undefined) toast.update(existing, { ...outcome, progress: undefined, action: undefined });
   else toast.show(outcome);
 }
@@ -132,7 +133,7 @@ function describe(row: Job[], data: CurrentJobs, admin: boolean, stopping: Set<s
   const done = Number(job.progress.done || 0);
   return {
     tone: "loading",
-    message: jobLabel[job.kind],
+    message: jobTitle(job),
     description: queued
       ? [row.length > 1 ? groupLine(row.length, active) : capitalize(queued.line), queued.hint].filter(Boolean).join(". ")
       : [job.message, eta(job)].filter(Boolean).join(" · "),
