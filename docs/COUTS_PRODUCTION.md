@@ -12,7 +12,7 @@ fin septembre 2026, en euros HT, avec 1 $ ≈ 0,86 €.
   **Aucune migration SQLite → Postgres à chiffrer.**
 - **Multi-tenant.** Déjà en place : `org_id` sur toutes les tables, RLS
   (`20260920000005_row_level_security.sql`), rôles admin/client, objets
-  Storage préfixés par `{org_id}/`, un seul job actif par marque (pas par organisation : voir AXE-529).
+  Storage préfixés par `{org_id}/`, un seul job actif par organisation (AXE-529).
   Une marque correspond à une organisation. Un groupe qui gère plusieurs
   marques peut aussi n'avoir qu'une organisation avec plusieurs sites.
   **Aucun développement multi-tenant à chiffrer.**

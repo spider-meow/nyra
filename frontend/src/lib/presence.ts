@@ -67,7 +67,7 @@ export function useCheckPages() {
   const checking = (useJobs().data?.active ?? []).some((job) => job.kind === "check");
   const check = useMutation({
     mutationFn: (urls: string[]) => api.post<{ job: Job }>(apiPath("/jobs/check"), { urls }),
-    onSuccess: () => invalidate("jobs"),
+    onSettled: () => invalidate("jobs"),
   });
   return { check, busy: check.isPending || checking };
 }

@@ -13,6 +13,7 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from .. import alerts as cloud_alerts
 from .. import audit as cloud_audit
 from .. import db as cloud_db
 from .. import hostmetrics
@@ -137,11 +138,13 @@ def remove_admin(user_id: uuid.UUID, claims=Depends(staff_dep), ctx: Ctx = Depen
 
 @router.get("/api/staff/server")
 def server_usage(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    """What each container uses, as `docker stats` would show: the web process live, the workers as last published."""
+    """What each container uses, as `docker stats` would show: the web process live, the workers as last published,
+    and the `alerts` on right now (`cloud/alerts.py`)."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         workers = hostmetrics.published(conn)
+        state = cloud_alerts.current(conn, workers)
     web = {"instance": socket.gethostname(), "role": "web", "reading": _WEB.read(), "age_seconds": 0.0}
-    return {"services": [web, *workers]}
+    return {"services": [web, *workers], "alerts": state["alerts"]}
 
 
 class QuotasBody(BaseModel):

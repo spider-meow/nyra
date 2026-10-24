@@ -8,7 +8,7 @@ readme = "README.md"
 dependencies = [
     "typer>=0.12",
     "imagehash>=4.3.2",
-    "Pillow>=10.0",
+    "Pillow>=13.0.0",
     "numpy>=1.26",
     "Jinja2>=3.1",
     "PyYAML>=6.0.3",
@@ -19,7 +19,7 @@ dependencies = [
     "uvicorn>=0.30",
     "python-multipart>=0.0.9",
     "psycopg[binary,pool]>=3.3.6",
-    "pgvector>=0.3",
+    "pgvector>=0.5.1",
     "supabase>=2.6",
     "pyjwt[crypto]>=2.9",
 ]
@@ -28,6 +28,8 @@ dependencies = [
 # Chromium, the CLIP model and OpenCV (keypoint check of CLIP candidates):
 # `nyra worker` and the offline CLI pipeline.
 worker = [
+    # torch brings filelock; 3.32.3 has 3 known advisories (pip-audit), fixed in 4.2.1.
+    "filelock>=4.2.1",
     "playwright>=1.44",
     "open_clip_torch>=2.24",
     "torch>=2.14.1",

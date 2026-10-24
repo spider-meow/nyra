@@ -17,7 +17,7 @@ An organization holds **brands** (Rémy Martin, Louis XIII...). A brand
 owns its library, its sites (one per market: US, INT, UK, FR) and
 everything derived from them: its references are only compared with
 images crawled on its own sites. Exclusions, reports, the match
-signature and the job queue are per brand; settings and memberships stay
+signature are per brand (jobs carry a brand, but only one runs per organization); settings and memberships stay
 per organization. Tables that belong to one brand carry `brand_id`, with
 a composite foreign key `(brand_id, org_id)` so a row can't point at
 another organization's brand; pages, site images, matches, reviews and
@@ -103,12 +103,18 @@ only.
 
 ### The job queue
 
-- `jobs_one_running_per_brand` (partial unique index on `brand_id` where
-  `status = 'running'`) guarantees one running job per brand; two brands
-  of one organization run side by side.
+- `jobs_one_running_per_org` (partial unique index on `org_id` where
+  `status = 'running'`, migration 032) guarantees one running job per
+  organization: the brands of an organization take turns (the per-brand
+  index of 013 is dropped). The migration stops with a clear message if an
+  organization has two running jobs when it is applied: apply it when no
+  job runs (see DEPLOYMENT.md for the order). `jobs_org_active_idx` (partial,
+  `org_id` where queued or running) serves `jobs/current`.
 - Claiming is `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)`.
-- Enqueuing takes a per-brand advisory lock, refuses a second
-  crawl/match/report of the same kind, and merges `index` requests.
+- Enqueuing takes a per-organization advisory lock. A job started by hand is
+  refused while another job but an `index` waits or runs in the organization;
+  what follows an action only refuses a second job of the same kind waiting
+  in the brand. `index` requests merge.
 - A running job whose `heartbeat_at` is older than 3 minutes is marked
   `error` by the next worker, and its crawl run too.
 
