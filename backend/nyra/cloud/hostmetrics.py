@@ -72,9 +72,10 @@ def _cpu_limit() -> Optional[float]:
 def _host() -> dict:
     meminfo = _kv(_read(Path("/proc/meminfo")) or "")
     disk = shutil.disk_usage("/")
+    load = os.getloadavg() if hasattr(os, "getloadavg") else (0.0, 0.0, 0.0)  # Windows (a dev machine) has no load average
     return {
         "cpus": os.cpu_count() or 1,
-        "load": [round(value, 2) for value in os.getloadavg()],
+        "load": [round(value, 2) for value in load],
         "memory_total": meminfo.get("MemTotal"),
         "memory_available": meminfo.get("MemAvailable"),
         "disk_total": disk.total,
