@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -36,6 +37,25 @@ MAX_PER_TICK = 3
 SCAN_LIMIT = 100  # rows looked at in a pass (the due ones come first)
 JOB_PARAMS = {"fresh": True, "then_match": True, "scheduled": True}
 _OFF, _ON = ("0", "false", "off"), ("", "1", "true", "on")
+# What was told lately, so that a failure repeated at every pass (every 5 minutes) is told once an hour, not 12 times.
+TELL_EVERY_SECONDS, TELL_MAX_KEYS = 3600, 256
+_LAST_TOLD: dict[str, float] = {}
+
+
+def once_per_hour(key: str) -> bool:
+    """True the first time `key` is asked in an hour (and records it). The memory is bounded: when full it is emptied,
+    which at worst tells one more time."""
+    now = time.monotonic()
+    if now - _LAST_TOLD.get(key, -TELL_EVERY_SECONDS) < TELL_EVERY_SECONDS:
+        return False
+    if len(_LAST_TOLD) >= TELL_MAX_KEYS:
+        _LAST_TOLD.clear()
+    _LAST_TOLD[key] = now
+    return True
+
+
+class _Deferred(Exception):
+    """A read started by hand is in the way: this brand's pass is cancelled (savepoint) and tried again later."""
 
 
 def default_day(brand_id: uuid.UUID) -> int:
@@ -74,15 +94,18 @@ def _check_day(day: int) -> int:
 
 def enable(conn, brand_id: uuid.UUID, org_id: uuid.UUID, day_of_month: Optional[int] = None,
            now: Optional[datetime] = None) -> None:
-    """Switch the monthly read on (the brand's own default day if none is given). If this month's date has already
-    passed the brand is marked as read now: the first read is on the chosen day of the next month, not at once."""
+    """Switch the monthly read on (the brand's own default day if none is given). A brand NEVER read whose date of this
+    month has already passed is marked as read now: its first read is on the chosen day of the next month, not at once.
+    A brand already read (even months ago) keeps its `last_run_at`, whatever the day chosen or a switch off and on: the
+    ordinary rule applies, so if the new date has passed and it was not read this month it is read at the next pass,
+    and if it was read this month it waits for the next one. Nothing is skipped and nothing is read twice."""
     day = _check_day(default_day(brand_id) if day_of_month is None else day_of_month)
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     passed = due_date(brand_id, day, now.year, now.month) <= now
     conn.execute(
         """INSERT INTO brand_schedules (brand_id, org_id, enabled, day_of_month, last_run_at) VALUES (%s, %s, true, %s, %s)
            ON CONFLICT (brand_id) DO UPDATE SET enabled = true, day_of_month = EXCLUDED.day_of_month, updated_at = now(),
-               last_run_at = COALESCE(EXCLUDED.last_run_at, brand_schedules.last_run_at)""",
+               last_run_at = COALESCE(brand_schedules.last_run_at, EXCLUDED.last_run_at)""",
         (brand_id, org_id, day, now if passed else None),
     )
 
@@ -109,9 +132,13 @@ def _launch(conn, row: dict, now: datetime) -> Optional[dict]:
     else:
         try:
             job = jobs.enqueue(conn, org_id=row["org_id"], brand_id=row["brand_id"], kind="crawl", params=JOB_PARAMS)
-        except jobs.JobConflict:
-            reason = "waiting"  # a read of this brand already waits: it is the month's read
-            log.info("monthly read of brand %s: a read already waits, none added", row["brand_id"])
+        except jobs.JobConflict as conflict:
+            # Only a scheduled read of this brand is the month's read. A read started by hand may be partial (some
+            # addresses): the pass is cancelled, `last_run_at` stays, and the brand is tried again at the next pass.
+            if not conflict.job["params"].get("scheduled") or conflict.job["kind"] != "crawl":
+                raise _Deferred(conflict.job["id"]) from None
+            reason = "waiting"
+            log.info("monthly read of brand %s: a scheduled read already waits, none added", row["brand_id"])
     audit.record(conn, row["org_id"], None, "schedule.run", "brand_schedule", row["brand_id"],
                  brand_id=row["brand_id"], queued=int(job is not None), reason=reason)
     return job
@@ -124,7 +151,7 @@ def enqueue_due(conn, now: datetime, limit: int = MAX_PER_TICK) -> list[dict]:
     rows = conn.execute(
         """SELECT brand_id, org_id, enabled, day_of_month, last_run_at FROM brand_schedules
            WHERE enabled AND day_of_month <= %s AND (last_run_at IS NULL OR last_run_at < %s)
-           ORDER BY day_of_month, brand_id LIMIT %s""",
+           ORDER BY last_run_at NULLS FIRST, day_of_month, brand_id LIMIT %s""",
         (now.day, _month_start(now), SCAN_LIMIT),
     ).fetchall()
     queued: list[dict] = []
@@ -136,8 +163,17 @@ def enqueue_due(conn, now: datetime, limit: int = MAX_PER_TICK) -> list[dict]:
         try:
             with conn.transaction():
                 job = _launch(conn, row, now)
+        except _Deferred as way:
+            log.debug("monthly read of brand %s: job %s is in the way, tried again at the next pass", row["brand_id"], way)
+            continue
         except Exception:  # noqa: BLE001 - one brand's failure must not stop the others; it is logged and retried
-            log.exception("monthly read of brand %s failed; it will be tried again", row["brand_id"])
+            # ponytail: a brand that fails for good stays in the first SCAN_LIMIT rows (the oldest read come first), so
+            # 100 such brands would hold back the next ones. Upgrade: a failure counter or a last-attempt date. Until then
+            # the noise is bounded: one full trace per brand and hour, the other passes only a line.
+            if once_per_hour(f"fail:{row['brand_id']}"):
+                log.exception("monthly read of brand %s failed; it will be tried again", row["brand_id"])
+            else:
+                log.warning("monthly read of brand %s failed again; it will be tried again", row["brand_id"])
             continue
         if job is not None:
             queued.append(job)

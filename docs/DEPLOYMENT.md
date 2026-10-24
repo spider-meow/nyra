@@ -109,8 +109,9 @@ worker. It does nothing until a brand's schedule is switched on (the table `bran
 worker does one job at a time and does not look for due reads while it runs one, so a monthly read can start a few hours
 late (never earlier than it could have started anyway). Migration `20261024000033` creates the table: **apply it by hand
 on Supabase before deploying** (SQL editor, as for every migration). The reverse order is harmless: the table is empty and
-inactive, an old worker ignores it, and a new worker without the table only logs `queueing the monthly reads failed` every
-5 minutes until the migration is applied; nothing else is affected.
+inactive, an old worker ignores it, and a new worker without the table logs one warning an hour (« apply migration 20261024000033 », no trace, so no Sentry
+event every 5 minutes) until the migration is applied; nothing else is affected. Any other failure of the pass keeps its full
+error log.
 
 ## Supabase setup, once
 

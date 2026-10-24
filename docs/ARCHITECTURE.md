@@ -44,7 +44,7 @@ asks). What **follows an action** is queued behind without error and never block
 upload or an adoption, the comparison after an exclusion or a change of the logos setting (`behind_running`); an `index`
 asked by hand joins the one already waiting. Cancelling is never refused (per brand: from the brand of the running
 job). A job that crashes or overruns leaves `running` (`reap_stale`, `fail_running`), which frees the organization. The
-monthly pass (AXE-523) is a launch by the system: it must queue without being refused, to wait for its turn.
+monthly pass (AXE-523) is a launch by the system: it must queue without being refused, to wait for its turn. The reverse holds too: a monthly read still **waiting** (`params.scheduled`) does not stop a launch by hand (`enqueue(manual=True)` ignores it, `claim` serves the manual job first and the scheduled one after); a scheduled read already **running** blocks like any other job. One running job per organization stays guaranteed by the unique index.
 
 **Global caps (AXE-530).** On top of one job per organization, `claim` keeps two caps, all organizations together:
 `NYRA_MAX_HEAVY_JOBS` (default 1) on the jobs that read sites (`crawl`, `check`, `locate`) and `NYRA_MAX_MODEL_JOBS`
@@ -71,12 +71,12 @@ mensuelle automatique » in `jobs.holder`), `params.scheduled`. *When:* the bran
 slot between 02:00 and 05:00 UTC; the default day (1 to 7) and the slot come from the brand's uuid, never `hash()`, so
 customers spread out. *Due* (`is_due`, pure): on, this month's date and hour passed, not queued yet this month: a worker
 stopped on the day queues it once when it is back; a month is never read twice, whatever the restarts or a change of day;
-enabling after this month's date has passed waits for next month. *Atomic:* `enqueue_due` claims a brand with
+`enable` on a brand never read whose date has passed waits for next month; on a brand already read it changes nothing to `last_run_at` (a new day or a switch off and on skips no month and reads none twice). *Atomic:* `enqueue_due` claims a brand with
 `UPDATE ... WHERE <the due test> RETURNING` and queues the `crawl` in the same transaction (one savepoint per brand), so
-two workers queue one read and a failure leaves the brand due (logged, tried again 5 minutes later). It goes through
+two workers queue one read and a failure leaves the brand due (logged, tried again 5 minutes later; the oldest read first, at most 100 brands looked at per pass, and one full trace per brand and hour). It goes through
 `jobs.enqueue` without `manual`: it waits behind a job of the same organization (AXE-529), the global caps and the domain rule
-(AXE-530) and is never refused; if a read of the brand already waits or runs, that is the month's read and nothing is
-added. A brand without a site is marked done with a warning (else it would be retried for ever). *Per pass:* at most
+(AXE-530) and is never refused; if a *scheduled* read of the brand already waits or runs, that is the month's read and nothing is
+added; if the read in the way was started by hand (maybe partial), the brand is left as it was and tried again at the next pass. A brand without a site is marked done with a warning (else it would be retried for ever). *Per pass:* at most
 `MAX_PER_TICK = 3` brands, because after a stop of the worker dozens can be due; the rest go at the next pass. *Order:*
 `claim` serves a scheduled job after the jobs started by hand (one more key of its `ORDER BY`, before the fairness
 between organizations). Each launch writes one `schedule.run` row in the audit log (identifiers and counters, no user).

@@ -11,6 +11,7 @@ import uuid
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
+import psycopg
 import pytest
 from psycopg import OperationalError
 
@@ -197,14 +198,31 @@ def test_a_worker_that_read_the_row_before_another_queued_it_queues_nothing(quie
         assert len(jobs_of(conn, brand)) == 1 and len(audit_rows(conn, org)) == 1
 
 
-def test_a_read_already_waiting_for_the_brand_is_not_doubled_and_the_month_counts_as_done(quiet, caplog):
+def test_a_scheduled_read_already_waiting_is_not_doubled_and_the_month_counts_as_done(quiet):
     with cloud_db.connect(quiet) as conn:
         org, brand = enabled_brand(conn)
-        waiting = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl")
+        waiting = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", params={"scheduled": True})
         assert schedule.enqueue_due(conn, at(2026, 6, 20)) == []
         assert [str(j["id"]) for j in jobs_of(conn, brand)] == [waiting["id"]]
         assert schedule_row(conn, brand)["last_run_at"] == at(2026, 6, 20)
         assert audit_rows(conn, org)[0]["detail"]["queued"] == 0
+
+
+@pytest.mark.parametrize("status", ["queued", "running"])
+def test_a_read_started_by_hand_is_not_the_months_read_the_brand_is_tried_again(quiet, status, caplog):
+    """A partial or manual crawl of the brand (queued or running) must not make the month count as read."""
+    with cloud_db.connect(quiet) as conn:
+        org, brand = enabled_brand(conn)
+        manual = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", manual=True, params={"site_ids": []})
+        conn.execute("UPDATE jobs SET status = %s WHERE id = %s", (status, manual["id"]))
+        with caplog.at_level(logging.WARNING, logger="nyra.cloud.schedule"):
+            assert schedule.enqueue_due(conn, at(2026, 6, 20)) == []
+            assert schedule.enqueue_due(conn, at(2026, 6, 20, 1)) == []
+        assert schedule_row(conn, brand)["last_run_at"] is None and audit_rows(conn, org) == []
+        assert [str(j["id"]) for j in jobs_of(conn, brand)] == [manual["id"]]
+        conn.execute("UPDATE jobs SET status = 'done' WHERE id = %s", (manual["id"],))
+        assert len(schedule.enqueue_due(conn, at(2026, 6, 20, 2))) == 1  # tried again once the way is clear
+    assert caplog.text == ""  # no warning, no trace at each pass
 
 
 def test_a_brand_without_a_site_queues_nothing_and_is_not_retried_in_a_loop(quiet, caplog):
@@ -275,8 +293,6 @@ def test_enable_without_a_day_takes_the_brands_own_and_a_bad_day_is_refused(quie
 
 
 def test_a_schedule_cannot_point_at_another_organizations_brand(quiet):
-    import psycopg
-
     with cloud_db.connect(quiet) as conn:
         _, brand = make_brand(conn)
         other, _ = make_brand(conn)
@@ -346,7 +362,8 @@ def test_a_scheduled_read_goes_after_the_reads_started_by_hand_whatever_the_orga
 def test_a_job_without_author_is_shown_as_the_system_not_as_a_crash(quiet):
     with cloud_db.connect(quiet) as conn:
         org, brand = make_brand(conn)
-        cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", params={"scheduled": True})
+        running = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", params={"scheduled": True})
+        conn.execute("UPDATE jobs SET status = 'running' WHERE id = %s", (running["id"],))
         other = cloud_db.create_brand(conn, org_id=org, name="Autre", slug="autre")
         current = cloud_jobs.current(conn, org, other, admin=True)
         member = cloud_jobs.current(conn, org, other, admin=False)
@@ -355,3 +372,122 @@ def test_a_job_without_author_is_shown_as_the_system_not_as_a_crash(quiet):
     for shown in (current["organization"][0], member["organization"][0], cloud_jobs.holder(conflict.value.job, admin=False)):
         assert "lecture mensuelle automatique" in shown["text"] and "None" not in shown["text"]
     assert cloud_jobs.holder(conflict.value.job, admin=True)["by"] == "la lecture mensuelle automatique"
+
+
+def test_a_queued_scheduled_read_does_not_stop_a_manual_launch_which_goes_first_but_a_running_one_does(quiet):
+    with cloud_db.connect(quiet) as conn:
+        org, brand = make_brand(conn)
+        other = cloud_db.create_brand(conn, org_id=org, name="Autre", slug="autre")
+        planned = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", params={"scheduled": True})
+        conn.execute("UPDATE jobs SET created_at = now() - interval '1 hour' WHERE id = %s", (planned["id"],))
+        manual = cloud_jobs.enqueue(conn, org_id=org, brand_id=other, kind="crawl", manual=True)  # accepted
+        with pytest.raises(cloud_jobs.JobConflict):  # a second manual launch still meets the first (AXE-529)
+            cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="report", manual=True)
+    served = []
+    for _ in range(2):
+        with cloud_db.connect(quiet) as conn:
+            job = cloud_jobs.claim(conn)
+            served.append(job and job["id"])
+            if job:
+                cloud_jobs.finish(conn, job["id"], status="done", message="ok")
+    assert served == [manual["id"], planned["id"]]  # the planned read goes after, whatever its age
+    with cloud_db.connect(quiet) as conn:
+        running = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", params={"scheduled": True})
+        conn.execute("UPDATE jobs SET status = 'running' WHERE id = %s", (running["id"],))
+        with pytest.raises(cloud_jobs.JobConflict):  # a running one still blocks
+            cloud_jobs.enqueue(conn, org_id=org, brand_id=other, kind="crawl", manual=True)
+        with pytest.raises(psycopg.errors.UniqueViolation):  # and the index still allows one running job per organization
+            conn.execute("INSERT INTO jobs (org_id, brand_id, kind, status) VALUES (%s, %s, 'match', 'running')", (org, other))
+
+
+# --- enable after a change of day, a missing table, the order of the passes -------------------------------------------
+
+def test_changing_the_day_of_a_brand_already_read_does_not_skip_a_month(quiet):
+    with cloud_db.connect(quiet) as conn:
+        org, brand = make_brand(conn)
+        schedule.enable(conn, brand, org, 25, now=at(2026, 8, 1))
+        assert len(schedule.enqueue_due(conn, at(2026, 9, 26))) == 1  # read on 25 September
+        conn.execute("UPDATE jobs SET status = 'done' WHERE brand_id = %s", (brand,))
+        read = schedule_row(conn, brand)["last_run_at"]
+        schedule.enable(conn, brand, org, 10, now=at(2026, 10, 24))  # on 24 October, day 10 has passed
+        assert schedule_row(conn, brand)["last_run_at"] == read  # untouched
+        assert len(schedule.enqueue_due(conn, at(2026, 10, 24, 12))) == 1  # October is read at the next pass
+        assert schedule.enqueue_due(conn, at(2026, 10, 24, 13)) == []
+
+
+def test_enabling_again_after_a_read_this_month_waits_and_a_never_read_brand_waits_for_the_next_date(quiet):
+    with cloud_db.connect(quiet) as conn:
+        org, brand = make_brand(conn)
+        schedule.enable(conn, brand, org, 3, now=at(2026, 6, 1))
+        assert len(schedule.enqueue_due(conn, at(2026, 6, 20))) == 1
+        conn.execute("UPDATE jobs SET status = 'done' WHERE brand_id = %s", (brand,))
+        schedule.disable(conn, brand)
+        schedule.enable(conn, brand, org, 3, now=at(2026, 6, 21))
+        assert schedule.enqueue_due(conn, at(2026, 6, 22)) == []  # already read in June
+        assert len(schedule.enqueue_due(conn, at(2026, 7, 5))) == 1
+        # Never read, enabled with its date passed: the first read is the next date, and a change of day keeps that.
+        other_org, other = make_brand(conn)
+        schedule.enable(conn, other, other_org, 3, now=at(2026, 6, 20))
+        schedule.enable(conn, other, other_org, 4, now=at(2026, 6, 21))
+        assert schedule_row(conn, other)["last_run_at"] == at(2026, 6, 20)
+        assert schedule.enqueue_due(conn, at(2026, 6, 25)) == []
+
+
+def test_a_missing_table_is_one_short_warning_an_hour_and_any_other_error_keeps_its_trace(monkeypatch, caplog, cloud_database_url):
+    from nyra.cloud import worker
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        try:
+            conn.execute("SELECT 1 FROM brand_schedules_that_is_missing")
+        except psycopg.errors.UndefinedTable as error:
+            missing = error
+    clock = [1000.0]
+    monkeypatch.setattr(schedule.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(schedule, "_LAST_TOLD", {})
+    runner = worker.Worker.__new__(worker.Worker)
+    runner.database_url = "unused"
+
+    def raising(error):
+        def connect(url):
+            raise error
+        return connect
+
+    monkeypatch.setattr(worker.cloud_db, "connect", raising(missing))
+    with caplog.at_level(logging.WARNING, logger="nyra.worker"):
+        for _ in range(5):  # five passes, 5 minutes apart
+            runner._enqueue_scheduled()
+            clock[0] += 300
+        assert caplog.text.count("20261024000033") == 1 and not any(r.exc_info for r in caplog.records)
+        clock[0] += 3600
+        runner._enqueue_scheduled()
+        assert caplog.text.count("20261024000033") == 2
+        caplog.clear()
+        monkeypatch.setattr(worker.cloud_db, "connect", raising(OperationalError("down")))
+        runner._enqueue_scheduled()
+    assert any(r.exc_info for r in caplog.records)
+
+
+def test_the_longest_unread_brands_go_first_and_a_failing_brand_traces_once_an_hour(quiet, monkeypatch, caplog):
+    with cloud_db.connect(quiet) as conn:
+        old, never, *recent = [enabled_brand(conn, day=1)[1] for _ in range(12)]  # many, so the order is not luck
+        conn.execute("UPDATE brand_schedules SET last_run_at = %s WHERE brand_id = %s", (at(2026, 4, 1), old))
+        conn.execute("UPDATE brand_schedules SET last_run_at = %s WHERE brand_id = ANY(%s)", (at(2026, 5, 20), recent))
+        first = [str(j["brand_id"]) for j in schedule.enqueue_due(conn, at(2026, 6, 20), limit=2)]
+    assert first == [str(never), str(old)]
+    clock = [1000.0]
+    monkeypatch.setattr(schedule.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(schedule, "_LAST_TOLD", {})
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(cloud_jobs, "enqueue", broken)
+    with cloud_db.connect(quiet) as conn, caplog.at_level(logging.WARNING, logger="nyra.cloud.schedule"):
+        for _ in range(4):
+            schedule.enqueue_due(conn, at(2026, 6, 20, 1))
+            clock[0] += 300
+        traces = [r.args for r in caplog.records if r.exc_info]
+        assert traces and len(traces) == len(set(traces))  # one trace per brand in the hour, not one per pass
+        clock[0] += 3600
+        schedule.enqueue_due(conn, at(2026, 6, 20, 2))
+        assert len([r for r in caplog.records if r.exc_info]) == 2 * len(traces)

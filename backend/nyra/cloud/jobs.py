@@ -21,7 +21,7 @@ Rules:
   `www.`), whatever the organization: two customers must not double the load on a third party's site;
 - a job started by hand (`manual`) is refused (`JobConflict`, which carries
   the job in the way) while any job but an `index` is queued or running in
-  the organization; what follows an action (indexing after an upload, a
+  the organization (a scheduled read that only waits does not count: `claim` serves the manual job first); what follows an action (indexing after an upload, a
   comparison after an exclusion, `behind_running`) is queued behind
   instead, and an `index` request joins the one already queued. Without
   `manual`, the only refusal is the same kind already waiting in the brand;
@@ -178,7 +178,7 @@ def enqueue(
     manual: bool = False,
 ) -> dict:
     """Queue a job. `manual` (a person pressed the button): refused while another job but an `index` is waiting or
-    running in the organization. Otherwise (what follows an action) only a job of the same kind still waiting in the
+    running in the organization, except a scheduled read still waiting (`params.scheduled`): `claim` serves it after. Otherwise (what follows an action) only a job of the same kind still waiting in the
     brand is a conflict. `behind_running`: even a running job of the same kind is no conflict, so one can be queued behind
     the one that runs: for a change the running job did not see, which the next one must pick up."""
     if kind not in KINDS:
@@ -196,7 +196,8 @@ def enqueue(
             return _row(waiting)
     else:
         in_the_way = conn.execute(
-            HOLDER + """ WHERE j.status = ANY(%s) AND ((%s AND j.org_id = %s AND j.kind <> 'index')
+            HOLDER + """ WHERE j.status = ANY(%s) AND ((%s AND j.org_id = %s AND j.kind <> 'index'
+                                                      AND NOT (j.status = 'queued' AND j.params @> '{"scheduled": true}'))
                                                     OR (NOT %s AND j.brand_id = %s AND j.kind = %s))
                         ORDER BY (j.status = 'running') DESC, j.created_at LIMIT 1""",
             (list(ACTIVE) if manual or not behind_running else ["queued"], manual, org_id, manual, brand_id, kind),

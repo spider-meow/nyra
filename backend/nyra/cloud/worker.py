@@ -38,6 +38,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+import psycopg
+
 from nyra import fetch, netguard, observability
 from nyra import report as report_module
 from nyra.config import Config, load_config, with_overrides
@@ -496,6 +498,9 @@ class Worker:
                 queued = cloud_schedule.enqueue_due(conn, datetime.now(timezone.utc))
             if queued:
                 log.info("monthly reads queued: %d", len(queued))
+        except psycopg.errors.UndefinedTable:
+            if cloud_schedule.once_per_hour("missing-table"):  # a warning an hour, not an event every 5 minutes
+                log.warning("monthly reads are not queued: table brand_schedules is missing, apply migration 20261024000033")
         except Exception:  # noqa: BLE001 - housekeeping must not stop the worker loop; the brands stay due
             log.exception("queueing the monthly reads failed")
 
