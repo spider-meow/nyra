@@ -4,10 +4,10 @@
 // No test framework: the file is compiled in memory and `fetch` is replaced by a fake. Run: `npm run check:retry`.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import ts from "typescript";
+import { transformWithOxc } from "vite";
 
 const source = readFileSync(new URL("../src/lib/api.ts", import.meta.url), "utf8");
-const { outputText } = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+const { code: outputText } = await transformWithOxc(source, "source.ts", { target: "es2022" });
 const { api, ApiError } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 
 const reply = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers });
