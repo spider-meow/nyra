@@ -77,23 +77,51 @@ def test_healthz_and_auth_config_need_no_session(client):
     assert client.get("/api/auth/config").json()["supabaseUrl"] == "https://x.supabase.co"
 
 
+def _worker_publishes(conn, instance="w1", memory=1 << 30):
+    """A worker that has just published its reading (a 2.5 GiB limit, as in docker-compose)."""
+    hostmetrics.publish(conn, instance, "worker", {"cpu_percent": 1.0, "cpu_limit": 1.5, "memory": memory, "memory_limit": 2560 << 20,
+                                                   "host": {"cpus": 2, "load": [0, 0, 0], "memory_total": 4 << 30, "memory_available": 2 << 30,
+                                                            "disk_total": 100, "disk_used": 10}})
+
+
 def test_workerz_says_503_when_a_job_has_waited_for_a_worker_that_is_not_there(client, cloud_org, cloud_brand,
                                                                                cloud_database_url, monkeypatch):
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.1)
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        _worker_publishes(conn)
         job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
     assert client.get("/api/workerz").status_code == 200  # just queued: a worker may be about to take it
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
     answer = client.get("/api/workerz")
-    assert answer.status_code == 503 and answer.json()["status"] == "no worker"
+    assert answer.status_code == 503 and answer.json()["status"] == "no worker" and answer.json()["problems"] == ["no worker"]
     with cloud_db.connect(cloud_database_url) as conn:
         cloud_jobs.claim(conn)
     assert client.get("/api/workerz").status_code == 200
 
 
-def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, monkeypatch):
+def test_workerz_waits_five_minutes_of_silence_and_ignores_an_environment_without_worker(client, cloud_database_url, monkeypatch):
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.1)
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        conn.execute("DELETE FROM service_metrics")
+    answer = client.get("/api/workerz")  # dev, CI, a fresh table: no worker ever published, nothing to page about
+    assert answer.status_code == 200 and [a["code"] for a in answer.json()["alerts"]] == ["worker_absent"]
+    with cloud_db.connect(cloud_database_url) as conn:
+        _worker_publishes(conn)
+        conn.execute("UPDATE service_metrics SET sampled_at = now() - interval '2 minutes'")  # a deployment in progress
+    assert client.get("/api/workerz").status_code == 200
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE service_metrics SET sampled_at = now() - interval '6 minutes'")
+    answer = client.get("/api/workerz")
+    assert answer.status_code == 503 and answer.json()["status"] == "no worker" and answer.json()["problems"] == ["no worker"]
+    assert [(a["code"], a["severity"]) for a in answer.json()["alerts"]] == [("worker_absent", "critical")]
+
+
+def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, cloud_database_url, monkeypatch):
+    with cloud_db.connect(cloud_database_url) as conn:
+        _worker_publishes(conn)
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.79)
     assert client.get("/api/workerz").status_code == 200
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.8)
@@ -102,10 +130,21 @@ def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, monkeypat
     assert answer.json()["problems"] == ["disk almost full"]
 
 
+def test_a_worker_near_its_memory_limit_is_a_warning_the_monitor_does_not_page_for(client, cloud_database_url, monkeypatch):
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.1)
+    with cloud_db.connect(cloud_database_url) as conn:
+        _worker_publishes(conn, memory=2400 << 20)
+    answer = client.get("/api/workerz")
+    assert answer.status_code == 200 and answer.json()["problems"] == []
+    assert [(a["code"], a["severity"]) for a in answer.json()["alerts"]] == [("worker_memory", "warning")]
+    assert "instance" not in answer.json()["alerts"][0] and "w1" not in answer.text  # no host name on the public probe
+
+
 def test_workerz_reports_both_problems_and_survives_an_unreadable_disk(client, cloud_org, cloud_brand, cloud_database_url,
                                                                        monkeypatch):
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        _worker_publishes(conn)
         job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
         conn.execute("UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.9)
@@ -114,6 +153,24 @@ def test_workerz_reports_both_problems_and_survives_an_unreadable_disk(client, c
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: (_ for _ in ()).throw(OSError("no disk")))
     answer = client.get("/api/workerz")
     assert answer.status_code == 503 and answer.json()["problems"] == ["no worker"] and answer.json()["disk_percent"] is None
+
+
+def test_the_serveur_page_gets_the_alerts_and_only_platform_admins_may_read_them(client, org_with_users, cloud_database_url, monkeypatch):
+    _, _, admin_id, client_id, _ = org_with_users  # admin_id is a platform admin
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.9)
+    monkeypatch.setattr(hostmetrics.os, "getloadavg", lambda: (0.0, 0.0, 0.0), raising=False)  # absent on Windows
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DELETE FROM service_metrics")
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+    assert client.get("/api/staff/server").status_code == 401
+    assert client.get("/api/staff/server", headers=_headers(client_id)).status_code == 403
+    body = client.get("/api/staff/server", headers=_headers(admin_id)).json()
+    assert [a["code"] for a in body["alerts"]] == ["worker_absent", "disk_full"] and body["services"][0]["role"] == "web"
+    with cloud_db.connect(cloud_database_url) as conn:
+        _worker_publishes(conn, "w1", memory=2400 << 20)
+        _worker_publishes(conn, "w2", memory=2400 << 20)
+    memory = [a for a in client.get("/api/staff/server", headers=_headers(admin_id)).json()["alerts"] if a["code"] == "worker_memory"]
+    assert sorted(a["instance"] for a in memory) == ["w1", "w2"]
 
 
 def test_there_is_no_public_signup(client):

@@ -195,14 +195,36 @@ traceback is in the worker's log.
   15 s, and the exit happens after 20 s whatever the database does.
 - **Disk**: the worker removes Chromium's leftovers (`playwright_chromiumdev_profile-*` and similar, in which nothing was
   written for 10 minutes) from the temp directory at start and after every job, even a failed one, and trims its image cache
-  to `NYRA_IMAGE_CACHE_MB` (2048) at start (and every 200 writes). `GET /api/workerz` also answers 503 with
-  `"status": "disk almost full"` when the machine's disk is 80 % full (`disk_percent` and the list `problems` are in the answer, which is public like the rest of this probe: it shows only a disk percentage), so the
-  uptime monitor below alerts; the Serveur page of the back office shows the same figure. Docker's own images
+  to `NYRA_IMAGE_CACHE_MB` (2048) at start (and every 200 writes). Docker's own images
   and logs are not cleaned: run `docker system prune` from time to time. A job that hits a full disk or
   memory error fails with a message that says so.
+- **Supervision alerts** (`backend/nyra/cloud/alerts.py`): four thresholds are judged on the latest readings and the
+  queue. They are shown at the top of the Serveur page of the back office (« Tout va bien » when none is crossed) and
+  listed in `alerts` of `GET /api/staff/server` and of `GET /api/workerz`, as `{code, severity, message}` (no
+  organization, brand or user in them). Nothing is sent yet (no e-mail, no Slack): the notification to come reads
+  that list. Each can be set in `.env`; a value that is not a whole number in range is ignored with a warning in the log.
+
+  | Code | Severity | Raised when | Default | Setting (range) |
+  |---|---|---|---|---|
+  | `worker_absent` | critical; warning when the metrics table holds no worker at all | every worker has been silent for over N seconds | 300 s (a worker publishes every 15 s from a thread, jobs or not, but a deployment recreates the container with a new host name and its first reading comes 15 s or more after the start) | `NYRA_ALERT_WORKER_SILENT_SECONDS` (30 to 3600) |
+  | `queue_stalled` | critical | a queued job has waited over N minutes while no job runs anywhere | 5 min (an idle worker claims a job within seconds) | `NYRA_ALERT_QUEUE_MINUTES` (1 to 1440) |
+  | `disk_full` | critical | the machine's disk is N % used | 80 % | `NYRA_ALERT_DISK_PERCENT` (1 to 100) |
+  | `worker_memory` | warning | a worker uses N % of its memory limit | 85 % | `NYRA_ALERT_WORKER_MEMORY_PERCENT` (1 to 100) |
+
+  The memory is judged against the container's own limit (`WORKER_MEM_LIMIT`, 2560m in `docker-compose.yml`, read from
+  the cgroup); a worker with no limit is judged against the machine's memory. 85 % of 2560m is 2.1 GiB, above the
+  1.88 GiB (73 %) measured during a crawl with CLIP: past it the worker is close to being killed. The `web`
+  service judges the thresholds (both services read `.env`): restart it after changing one. The Serveur table
+  still marks a worker « muet » after a fixed minute (a table row, not an alert), whatever `NYRA_ALERT_WORKER_SILENT_SECONDS`.
+  **An environment without a worker** (development, CI, a table purged after the 24 h the readings are kept) has no
+  worker row: the alert is then a warning, never a 503. A worker dead for over a day is still caught by `queue_stalled`
+  as soon as a job waits.
 - **No worker at all**: point an uptime monitor (UptimeRobot, Better Stack...) at `GET /api/workerz`.
-  It answers 503 when a queued job has waited over 5 minutes while no job runs anywhere, or the disk is
-  80 % full. Keep
+  It answers 503 while a **critical** alert is on, and 200 `"status": "ok"` otherwise. `status` and `problems` keep their
+  historical words, unchanged: `"no worker"` (a job waiting for nothing, or every worker silent for over 5 minutes) and
+  `"disk almost full"`; the new codes are only in `alerts`. A `worker_memory` warning does not make it fail;
+  `queued_wait_seconds` and `disk_percent` are in the answer too. Most monitors alert on the change of state (up to
+  down), so a deployment that stays under 5 minutes of silence stays green. Keep
   `GET /api/healthz` for the web process. The interface already tells an administrator that a task
   waits for a worker after a minute.
 
