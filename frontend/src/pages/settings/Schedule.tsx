@@ -55,7 +55,7 @@ export function Schedule() {
         </select>
       </SettingsRow>
       {data.next_run_at ? <SettingsRow label={`Prochaine lecture : ${nextText(data.next_run_at)}`} /> : null}
-      {data.last_run_at ? <SettingsRow label={`Dernière lecture automatique : ${frenchDay(data.last_run_at)}`} /> : null}
+      {data.last_read_at ? <SettingsRow label={`Dernière lecture automatique : ${frenchDay(data.last_read_at)}`} /> : null}
     </SettingsBlock>
   );
 }

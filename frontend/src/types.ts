@@ -229,7 +229,7 @@ export type BrandSchedule = {
   day_of_month: number;
   default_day: number;
   next_run_at: string | null;
-  last_run_at: string | null;
+  last_read_at: string | null;
 };
 
 export type Exclusion = { id: string; reason: string; site_url: string; thumb_url: string; created_at: string };

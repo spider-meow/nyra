@@ -28,8 +28,15 @@ def _state(conn, scope: BrandScope) -> dict:
     day = row["day_of_month"] if row else default
     last = row["last_run_at"] if row else None
     next_at = schedule.next_run(scope.brand_id, day, last, datetime.now(timezone.utc)) if enabled else None
+    # `last_run_at` is the rule of the due date (it is also set as a mark when a never-read brand is switched on after its
+    # date): what is shown as the last read is the end of the last scheduled read that really finished.
+    read = conn.execute(
+        """SELECT finished_at FROM jobs WHERE brand_id = %s AND kind = 'crawl' AND status = 'done'
+           AND params @> '{"scheduled": true}' ORDER BY finished_at DESC NULLS LAST LIMIT 1""",
+        (scope.brand_id,),
+    ).fetchone()
     return {"enabled": enabled, "day_of_month": day, "default_day": default, "next_run_at": iso(next_at),
-            "last_run_at": iso(last)}
+            "last_read_at": iso(read["finished_at"]) if read else None}
 
 
 @router.get(f"{BRAND}/schedule")
