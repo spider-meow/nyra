@@ -247,6 +247,14 @@ def test_claim_runs_one_job_per_organization_at_a_time(cloud_database_url, monke
         assert cloud_jobs.claim(conn)["id"] == b1["id"]
 
 
+def _queue(conn, **job):
+    """`enqueue`, then give the job its own creation time: in one transaction `now()` is the same for every job, and
+    the order of arrival is what these tests are about."""
+    queued = cloud_jobs.enqueue(conn, **job)
+    conn.execute("UPDATE jobs SET created_at = clock_timestamp() WHERE id = %s", (queued["id"],))
+    return queued["id"]
+
+
 def _orgs_with_a_job(conn, kinds):
     """A fresh organization per kind, each with one queued job of that kind (nothing else waits or runs anywhere):
     the list of job ids, oldest first."""
@@ -254,7 +262,7 @@ def _orgs_with_a_job(conn, kinds):
     jobs = []
     for kind in kinds:
         org = cloud_db.create_organization(conn, name="O", slug=f"o-{uuid.uuid4().hex[:8]}")
-        jobs.append(cloud_jobs.enqueue(conn, org_id=org, brand_id=_brand(conn, org), kind=kind)["id"])
+        jobs.append(_queue(conn, org_id=org, brand_id=_brand(conn, org), kind=kind))
     return jobs
 
 
@@ -325,9 +333,8 @@ def test_the_organization_that_started_a_job_least_recently_goes_first(cloud_dat
         other = cloud_db.create_organization(conn, name="C", slug=f"c-{uuid.uuid4().hex[:8]}")
         busy_brand, other_brand = _brand(conn, busy), _brand(conn, other)
         # `busy` queued four, `other` queued one afterwards: first come first served would run all of `busy` first.
-        mine = [cloud_jobs.enqueue(conn, org_id=busy, brand_id=busy_brand, kind=kind)["id"]
-                for kind in ("crawl", "match", "index", "check")]
-        theirs = cloud_jobs.enqueue(conn, org_id=other, brand_id=other_brand, kind="crawl")["id"]
+        mine = [_queue(conn, org_id=busy, brand_id=busy_brand, kind=kind) for kind in ("crawl", "match", "index", "check")]
+        theirs = _queue(conn, org_id=other, brand_id=other_brand, kind="crawl")
     order = []
     for _ in range(3):
         order.append(_claim(cloud_database_url)["id"])
@@ -351,18 +358,18 @@ def test_a_job_is_told_to_wait_for_a_place_only_when_its_organization_is_idle_an
         org_b = cloud_db.create_organization(conn, name="B", slug=f"b-{uuid.uuid4().hex[:8]}")
         brand_a, brand_b = _brand(conn, org_a), _brand(conn, org_b)
         brand_a2 = cloud_db.create_brand(conn, org_id=org_a, name="A2", slug="a2")
-        cloud_jobs.enqueue(conn, org_id=org_a, brand_id=brand_a, kind="crawl")
-        waiting = cloud_jobs.enqueue(conn, org_id=org_b, brand_id=brand_b, kind="crawl")
-        sibling = cloud_jobs.enqueue(conn, org_id=org_a, brand_id=brand_a2, kind="match")
+        _queue(conn, org_id=org_a, brand_id=brand_a, kind="crawl")
+        waiting = _queue(conn, org_id=org_b, brand_id=brand_b, kind="crawl")
+        sibling = _queue(conn, org_id=org_a, brand_id=brand_a2, kind="match")
         assert cloud_jobs.current(conn, org_b, brand_b, admin=True)["active"][0]["waiting_for_capacity"] is False  # room: not yet
         running = cloud_jobs.claim(conn)
         assert running["org_id"] == str(org_a)
         mine = cloud_jobs.current(conn, org_b, brand_b, admin=True)
-        assert [(job["id"], job["waiting_for_capacity"]) for job in mine["active"]] == [(waiting["id"], True)]
+        assert [(job["id"], job["waiting_for_capacity"]) for job in mine["active"]] == [(waiting, True)]
         assert mine["organization"] == []  # nothing of the other organization leaks
         # The organization that runs something is waiting for itself, not for a place.
         own = cloud_jobs.current(conn, org_a, brand_a2, admin=True)
-        assert [(job["id"], job["waiting_for_capacity"]) for job in own["active"]] == [(sibling["id"], False)]
+        assert [(job["id"], job["waiting_for_capacity"]) for job in own["active"]] == [(sibling, False)]
         assert cloud_jobs.current(conn, org_a, brand_a, admin=True)["active"][0]["waiting_for_capacity"] is False
 
 
