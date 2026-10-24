@@ -19,3 +19,8 @@ def test_cpu_percent_is_a_share_of_one_core(monkeypatch):
     reading = sampler.read()
     assert reading["cpu_percent"] == 150.0
     assert reading["memory"] > 0 and reading["host"]["cpus"] >= 1
+
+
+def test_host_reading_survives_a_machine_without_load_average(monkeypatch):
+    monkeypatch.delattr(hostmetrics.os, "getloadavg", raising=False)  # Windows has none: the Server page must still open
+    assert hostmetrics._host()["load"] == [0.0, 0.0, 0.0]
