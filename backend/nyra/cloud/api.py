@@ -25,7 +25,7 @@ from fastapi import Depends, FastAPI, HTTPException
 
 from nyra.config import Config, load_config
 
-from . import ratelimit
+from . import mailer, ratelimit
 from . import storage as cloud_storage
 from .routes import (
     audit,
@@ -67,6 +67,8 @@ class CloudSettings:
         anon_key: str = "",
         sentry_browser_dsn: str = "",
         public_url: str = "",
+        resend_api_key: str = "",
+        mail_from: str = "",
         config_path: Optional[Path] = None,
     ):
         self.database_url = database_url
@@ -76,6 +78,8 @@ class CloudSettings:
         self.anon_key = anon_key
         self.sentry_browser_dsn = sentry_browser_dsn
         self.public_url = public_url
+        self.resend_api_key = resend_api_key  # secret: never logged (see mailer.py)
+        self.mail_from = mail_from
         self.config_path = config_path
         self._storage = None
 
@@ -98,6 +102,7 @@ def settings_from_env(config_path: Optional[Path] = None) -> CloudSettings:
     missing = [key for key in ("DATABASE_URL", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY") if not os.environ.get(key)]
     if missing:
         raise RuntimeError(f"Missing environment variables: {', '.join(missing)} (see .env.example).")
+    mail_from = mailer.sender_from_env(os.environ.get("NYRA_MAIL_FROM", ""), bool(os.environ.get("RESEND_API_KEY")))
     return CloudSettings(
         database_url=os.environ["DATABASE_URL"],
         supabase_url=os.environ["SUPABASE_URL"],
@@ -106,6 +111,8 @@ def settings_from_env(config_path: Optional[Path] = None) -> CloudSettings:
         anon_key=os.environ.get("SUPABASE_ANON_KEY", ""),
         sentry_browser_dsn=os.environ.get("SENTRY_BROWSER_DSN", ""),
         public_url=os.environ.get("NYRA_PUBLIC_URL", ""),
+        resend_api_key=os.environ.get("RESEND_API_KEY", ""),
+        mail_from=mail_from,
         config_path=config_path,
     )
 
