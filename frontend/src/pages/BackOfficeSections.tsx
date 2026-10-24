@@ -17,7 +17,7 @@ function health(queue: PlatformInsights["queue"], running: PlatformInsights["run
   return { tone: "ok", label: "Tout tourne", detail: queue.running ? `${num(queue.running)} tâche(s) en cours.` : "Aucune tâche en cours, rien en attente." };
 }
 
-const toneClass = {
+export const toneClass = {
   ok: "border-ok/25 bg-ok-soft text-ok",
   warn: "border-urgent/25 bg-urgent-soft text-urgent",
   alert: "border-expired/25 bg-expired-soft text-expired",

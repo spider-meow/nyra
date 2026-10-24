@@ -48,7 +48,7 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -61,6 +61,7 @@ jobs:
       - run: npm run size
       - run: npm run check:scrub
       - run: npm run check:paths
+      - run: npm run check:retry
       - run: npx playwright install --with-deps chromium
       - run: npm run check:remember
 

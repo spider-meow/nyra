@@ -4,10 +4,10 @@
 // No test framework: the file is compiled in memory. Run: `npm run check:paths`.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import ts from "typescript";
+import { transformWithOxc } from "vite";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
-const { outputText } = ts.transpileModule(read("../src/lib/paths.ts"), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } });
+const { code: outputText } = await transformWithOxc(read("../src/lib/paths.ts"), "source.ts", { target: "es2022" });
 const paths = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 const { legacyTarget, legacySearch, currentPage, LEGACY_PAGES, LEGACY_BACK_OFFICE, RENAMED_PAGES } = paths;
 

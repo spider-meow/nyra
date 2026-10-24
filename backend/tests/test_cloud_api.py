@@ -20,6 +20,7 @@ pytest.importorskip("fastapi")
 pytest.importorskip("psycopg")
 
 import jwt as pyjwt
+from conftest import SECRET
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
@@ -28,8 +29,6 @@ from nyra.cloud import hostmetrics
 from nyra.cloud import jobs as cloud_jobs
 from nyra.cloud import storage as cloud_storage
 from nyra.cloud.api import CloudSettings, create_app
-
-SECRET = "test-secret-at-least-32-bytes-long-enough!!"
 
 
 def _token(user_id) -> str:
@@ -40,16 +39,6 @@ def _token(user_id) -> str:
 
 def _headers(user_id) -> dict:
     return {"Authorization": f"Bearer {_token(user_id)}"}
-
-
-@pytest.fixture()
-def client(cloud_database_url, fake_storage_client):
-    settings = CloudSettings(
-        database_url=cloud_database_url, supabase_url="https://x.supabase.co",
-        service_role_key="key", jwt_secret=SECRET,
-    )
-    settings.storage_client = lambda: fake_storage_client  # no network
-    return TestClient(create_app(settings))
 
 
 @pytest.fixture()
@@ -88,23 +77,51 @@ def test_healthz_and_auth_config_need_no_session(client):
     assert client.get("/api/auth/config").json()["supabaseUrl"] == "https://x.supabase.co"
 
 
+def _worker_publishes(conn, instance="w1", memory=1 << 30):
+    """A worker that has just published its reading (a 2.5 GiB limit, as in docker-compose)."""
+    hostmetrics.publish(conn, instance, "worker", {"cpu_percent": 1.0, "cpu_limit": 1.5, "memory": memory, "memory_limit": 2560 << 20,
+                                                   "host": {"cpus": 2, "load": [0, 0, 0], "memory_total": 4 << 30, "memory_available": 2 << 30,
+                                                            "disk_total": 100, "disk_used": 10}})
+
+
 def test_workerz_says_503_when_a_job_has_waited_for_a_worker_that_is_not_there(client, cloud_org, cloud_brand,
                                                                                cloud_database_url, monkeypatch):
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.1)
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        _worker_publishes(conn)
         job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
     assert client.get("/api/workerz").status_code == 200  # just queued: a worker may be about to take it
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
     answer = client.get("/api/workerz")
-    assert answer.status_code == 503 and answer.json()["status"] == "no worker"
+    assert answer.status_code == 503 and answer.json()["status"] == "no worker" and answer.json()["problems"] == ["no worker"]
     with cloud_db.connect(cloud_database_url) as conn:
         cloud_jobs.claim(conn)
     assert client.get("/api/workerz").status_code == 200
 
 
-def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, monkeypatch):
+def test_workerz_waits_five_minutes_of_silence_and_ignores_an_environment_without_worker(client, cloud_database_url, monkeypatch):
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.1)
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        conn.execute("DELETE FROM service_metrics")
+    answer = client.get("/api/workerz")  # dev, CI, a fresh table: no worker ever published, nothing to page about
+    assert answer.status_code == 200 and [a["code"] for a in answer.json()["alerts"]] == ["worker_absent"]
+    with cloud_db.connect(cloud_database_url) as conn:
+        _worker_publishes(conn)
+        conn.execute("UPDATE service_metrics SET sampled_at = now() - interval '2 minutes'")  # a deployment in progress
+    assert client.get("/api/workerz").status_code == 200
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE service_metrics SET sampled_at = now() - interval '6 minutes'")
+    answer = client.get("/api/workerz")
+    assert answer.status_code == 503 and answer.json()["status"] == "no worker" and answer.json()["problems"] == ["no worker"]
+    assert [(a["code"], a["severity"]) for a in answer.json()["alerts"]] == [("worker_absent", "critical")]
+
+
+def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, cloud_database_url, monkeypatch):
+    with cloud_db.connect(cloud_database_url) as conn:
+        _worker_publishes(conn)
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.79)
     assert client.get("/api/workerz").status_code == 200
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.8)
@@ -113,10 +130,21 @@ def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, monkeypat
     assert answer.json()["problems"] == ["disk almost full"]
 
 
+def test_a_worker_near_its_memory_limit_is_a_warning_the_monitor_does_not_page_for(client, cloud_database_url, monkeypatch):
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.1)
+    with cloud_db.connect(cloud_database_url) as conn:
+        _worker_publishes(conn, memory=2400 << 20)
+    answer = client.get("/api/workerz")
+    assert answer.status_code == 200 and answer.json()["problems"] == []
+    assert [(a["code"], a["severity"]) for a in answer.json()["alerts"]] == [("worker_memory", "warning")]
+    assert "instance" not in answer.json()["alerts"][0] and "w1" not in answer.text  # no host name on the public probe
+
+
 def test_workerz_reports_both_problems_and_survives_an_unreadable_disk(client, cloud_org, cloud_brand, cloud_database_url,
                                                                        monkeypatch):
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        _worker_publishes(conn)
         job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
         conn.execute("UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.9)
@@ -125,6 +153,24 @@ def test_workerz_reports_both_problems_and_survives_an_unreadable_disk(client, c
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: (_ for _ in ()).throw(OSError("no disk")))
     answer = client.get("/api/workerz")
     assert answer.status_code == 503 and answer.json()["problems"] == ["no worker"] and answer.json()["disk_percent"] is None
+
+
+def test_the_serveur_page_gets_the_alerts_and_only_platform_admins_may_read_them(client, org_with_users, cloud_database_url, monkeypatch):
+    _, _, admin_id, client_id, _ = org_with_users  # admin_id is a platform admin
+    monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.9)
+    monkeypatch.setattr(hostmetrics.os, "getloadavg", lambda: (0.0, 0.0, 0.0), raising=False)  # absent on Windows
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DELETE FROM service_metrics")
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+    assert client.get("/api/staff/server").status_code == 401
+    assert client.get("/api/staff/server", headers=_headers(client_id)).status_code == 403
+    body = client.get("/api/staff/server", headers=_headers(admin_id)).json()
+    assert [a["code"] for a in body["alerts"]] == ["worker_absent", "disk_full"] and body["services"][0]["role"] == "web"
+    with cloud_db.connect(cloud_database_url) as conn:
+        _worker_publishes(conn, "w1", memory=2400 << 20)
+        _worker_publishes(conn, "w2", memory=2400 << 20)
+    memory = [a for a in client.get("/api/staff/server", headers=_headers(admin_id)).json()["alerts"] if a["code"] == "worker_memory"]
+    assert sorted(a["instance"] for a in memory) == ["w1", "w2"]
 
 
 def test_there_is_no_public_signup(client):
@@ -913,15 +959,59 @@ def test_putting_a_logo_back_covers_every_file_of_the_photo(
         assert [row["logo_kept"] for row in conn.execute("SELECT logo_kept FROM site_images WHERE id = ANY(%s)", (ids,)).fetchall()] == [True, True]
 
 
-def test_each_brand_has_its_own_queue(client, org_with_users, cloud_brand, cloud_database_url):
+def _audited(conn, org_id, action):
+    return conn.execute("SELECT count(*) AS n FROM audit_log WHERE org_id = %s AND action = %s", (org_id, action)).fetchone()["n"]
+
+
+def test_one_pass_at_a_time_per_organization(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    admin = _headers(admin_id)
+    other = client.post(f"/api/orgs/{org_id}/brands", headers=admin, json={"name": "Autre"}).json()["brand"]
+    other_base = f"/api/orgs/{org_id}/brands/{other['id']}"
+    first = client.post(f"{base}/jobs/match", headers=admin)
+    assert first.status_code == 200
+    author = f"{admin_id}@x.com"
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'running', started_at = now() WHERE id = %s", (first.json()["job"]["id"],))
+        name = conn.execute("SELECT name FROM brands WHERE id = %s", (cloud_brand,)).fetchone()["name"]
+        before = _audited(conn, org_id, "job.match")
+    # Another brand of the organization: refused by hand, whatever the kind; the answer says which brand, who, since when.
+    for path in ("jobs/match", "reports"):
+        refused = client.post(f"{other_base}/{path}", headers=admin, json={})
+        assert refused.status_code == 409
+        assert refused.json()["detail"] == f"Un passage est déjà en cours (marque {name}, lancé par {author}, à l'instant)."
+    # Same brand: the message names the job, not the brand.
+    same = client.post(f"{base}/jobs/match", headers=admin)
+    assert same.status_code == 409 and same.json()["detail"].startswith("Une comparaison est déjà en cours ou en attente (lancé par ")
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert _audited(conn, org_id, "job.match") == before and _audited(conn, org_id, "job.report") == 0  # a refusal traces nothing
+    # An indexing is not refused: it waits behind.
+    queued = client.post(f"{other_base}/jobs/index", headers=admin)
+    assert queued.status_code == 200 and queued.json()["job"]["status"] == "queued"
+    # Everyone sees it in the other brand: the administrator with the e-mail, the client without.
+    held = client.get(f"{other_base}/jobs/current", headers=admin).json()["organization"]
+    assert [(job["kind"], job["by"], job["brand_id"]) for job in held] == [("match", f"{admin_id}@x.com", str(cloud_brand))]
+    as_client = client.get(f"{other_base}/jobs/current", headers=_headers(client_id)).json()["organization"]
+    assert as_client[0]["by"] == "un membre de l'équipe" and f"{admin_id}" not in str(as_client)
+    assert client.get(f"{other_base}/overview", headers=_headers(client_id)).json()["jobs"]["organization"][0]["brand_name"]
+    # Cancelling is never refused, and only from the job's own brand.
+    job_id = first.json()["job"]["id"]
+    assert client.post(f"{other_base}/jobs/{job_id}/cancel", headers=admin).status_code == 404
+    assert client.post(f"{base}/jobs/{job_id}/cancel", headers=admin).status_code == 200
+
+
+def test_another_organization_is_not_held_up(client, org_with_users, cloud_database_url):
     org_id, base, admin_id, _, _ = org_with_users
-    other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
     assert client.post(f"{base}/jobs/match", headers=_headers(admin_id)).status_code == 200
-    other_job = client.post(f"/api/orgs/{org_id}/brands/{other['id']}/jobs/match", headers=_headers(admin_id))
-    assert other_job.status_code == 200
-    # A brand can't cancel another brand's job.
-    r = client.post(f"{base}/jobs/{other_job.json()['job']['id']}/cancel", headers=_headers(admin_id))
-    assert r.status_code == 404
+    with cloud_db.connect(cloud_database_url) as conn:
+        other = cloud_db.create_organization(conn, name="Z", slug=f"z-{uuid.uuid4().hex[:8]}")
+        other_brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (other,)).fetchone()["id"]
+        cloud_db.add_membership(conn, user_id=admin_id, org_id=other, role="admin")
+    second = client.post(f"/api/orgs/{other}/brands/{other_brand}/jobs/match", headers=_headers(admin_id))
+    assert second.status_code == 200
+    with cloud_db.connect(cloud_database_url) as conn:  # both run at once: the unique index is per organization
+        conn.execute("UPDATE jobs SET status = 'running', started_at = now() WHERE org_id = ANY(%s) AND kind = 'match'", ([org_id, other],))
+        assert conn.execute("SELECT count(*) AS n FROM jobs WHERE status = 'running' AND org_id = ANY(%s)", ([org_id, other],)).fetchone()["n"] == 2
 
 
 def test_matches_sign_urls_in_batch_and_reviews_are_scoped(client, org_with_users, cloud_brand, cloud_database_url):
@@ -1296,12 +1386,6 @@ def test_big_responses_are_gzipped_and_small_ones_are_not(static_client):
     assert "Content-Encoding" not in static_client.get("/assets/app-abc123.js", headers={"Accept-Encoding": "identity"}).headers
 
 
-@pytest.fixture()
-def labels_on(monkeypatch):
-    """Labels are off unless NYRA_LABELS=1; this must come before `client` in a test's arguments (the app reads it when built)."""
-    monkeypatch.setenv("NYRA_LABELS", "1")
-
-
 def test_labels_are_off_by_default(client, org_with_users):
     _, base, admin_id, _, _ = org_with_users
     assert client.get(f"{base}/labels", headers=_headers(admin_id)).status_code in {404, 405}
@@ -1661,3 +1745,173 @@ def test_pages_are_marked_replaced_for_the_visual_that_shows_them(client, org_wi
 
     other = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Autre"}).json()["brand"]
     assert client.post(f"/api/orgs/{org_id}/brands/{other['id']}/visuals/{ref}/replaced", headers=_headers(admin_id), json={"urls": shown, "replaced": True}).status_code == 404
+
+
+# --- quotas (AXE-532) -------------------------------------------------------------
+
+def _limits(client, staff_id, org_id, **limits):
+    return client.put(f"/api/staff/organizations/{org_id}/quotas", headers=_headers(staff_id), json={"limits": limits})
+
+
+def _other_org(conn, admin_id):
+    org = cloud_db.create_organization(conn, name="Other", slug=f"other-{uuid.uuid4().hex[:10]}")
+    cloud_db.add_membership(conn, user_id=admin_id, org_id=org, role="admin")
+    return org, f"/api/orgs/{org}"
+
+
+def test_only_the_nyra_team_changes_an_organizations_limits_and_bad_values_are_refused(client, org_with_users):
+    org_id, _, admin_id, client_id, _ = org_with_users
+    assert _limits(client, client_id, org_id, brands=3).status_code == 403
+    assert client.put(f"/api/orgs/{org_id}/settings", headers=_headers(admin_id), json={"overrides": {"quota": {"brands": 99}}}).json() == {"overrides": {}}
+    assert _limits(client, admin_id, org_id, brands=3, storage_gb=1.5).json() == {"overrides": {"brands": 3, "storage_gb": 1.5}}
+    assert _limits(client, admin_id, org_id, brands=-1).status_code == 400
+    assert _limits(client, admin_id, org_id, nonsense=1).status_code == 400
+    assert _limits(client, admin_id, uuid.uuid4(), brands=1).status_code == 404
+    mine = next(o for o in client.get("/api/staff/usage", headers=_headers(admin_id)).json()["organizations"] if o["id"] == str(org_id))
+    assert {i["key"]: i["limit"] for i in mine["items"]}["brands"] == 3 and mine["overrides"] == {"brands": 3, "storage_gb": 1.5}
+    assert _limits(client, admin_id, org_id).json() == {"overrides": {}}  # empty: back to the defaults
+
+
+def test_an_organization_at_its_limit_cannot_grow_and_the_others_are_not_affected(
+        client, org_with_users, cloud_database_url, monkeypatch):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    from nyra import netguard
+
+    monkeypatch.setattr(netguard, "check_url", lambda url: None)
+    with cloud_db.connect(cloud_database_url) as conn:
+        other, other_base = _other_org(conn, admin_id)
+        other_brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (other,)).fetchone()["id"]
+    _limits(client, admin_id, org_id, brands=1, sites_per_brand=1, references=1, members=2)
+
+    refused = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Deux"})
+    assert refused.status_code == 403 and refused.json()["detail"].startswith("Limite atteinte")
+    assert client.post(f"{other_base}/brands", headers=_headers(admin_id), json={"name": "Deux"}).status_code == 200
+
+    site = {"url": "https://a.test/"}
+    assert client.post(f"{base}/sites", headers=_headers(admin_id), json=site).status_code == 200
+    assert client.post(f"{base}/sites", headers=_headers(admin_id), json={"url": "https://b.test/"}).status_code == 403
+    assert client.post(f"{other_base}/brands/{other_brand}/sites", headers=_headers(admin_id), json={"url": "https://c.test/"}).status_code == 200
+
+    assert _upload(client, base, admin_id, "a.jpg").json()["saved"] == ["a.jpg"]
+    assert _upload(client, base, admin_id, "a.jpg").json()["replaced"] == ["a.jpg"]  # replacing adds nothing
+    assert _upload(client, base, admin_id, "b.jpg").status_code == 403
+    assert _upload(client, f"{other_base}/brands/{other_brand}", admin_id, "b.jpg").json()["saved"] == ["b.jpg"]
+
+    assert client.post(f"/api/orgs/{org_id}/members", headers=_headers(admin_id), json={"email": "x@y.co"}).status_code == 403
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM reference_images WHERE org_id = %s", (org_id,)).fetchone()["n"] == 1
+
+
+def test_a_read_is_refused_once_the_months_pages_are_used_and_the_page_of_usage_says_so(
+        client, org_with_users, cloud_brand, cloud_database_url):
+    from nyra.cloud import usage as cloud_usage
+
+    org_id, base, admin_id, client_id, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        _site(conn, org_id, cloud_brand)
+        other, other_base = _other_org(conn, admin_id)
+    _limits(client, admin_id, org_id, pages_per_month=100)
+    usage = f"/api/orgs/{org_id}/usage"
+    assert client.get(usage, headers=_headers(client_id)).status_code == 403  # for administrators
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_usage.record(conn, org_id, pages=80)
+    pages = next(i for i in client.get(usage, headers=_headers(admin_id)).json()["items"] if i["key"] == "pages")
+    assert pages == {"key": "pages", "label": "Pages lues ce mois-ci", "used": 80, "limit": 100, "level": "warning"}
+    assert client.post(f"{base}/jobs/crawl", headers=_headers(admin_id), json={}).status_code == 200  # 20 pages are left
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = %s", (org_id,))  # one crawl at a time
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_usage.record(conn, org_id, pages=20)
+    refused = client.post(f"{base}/jobs/crawl", headers=_headers(admin_id), json={})
+    assert refused.status_code == 403 and "pages lues ce mois-ci" in refused.json()["detail"]
+    assert client.post(f"{base}/jobs/check", headers=_headers(admin_id), json={"urls": ["https://target.test/"]}).status_code == 403
+    assert next(i for i in client.get(usage, headers=_headers(admin_id)).json()["items"] if i["key"] == "pages")["level"] == "reached"
+    other_pages = next(i for i in client.get(f"{other_base}/usage", headers=_headers(admin_id)).json()["items"] if i["key"] == "pages")
+    assert other_pages["used"] == 0 and other_pages["level"] == "ok"
+    texts = " ".join([i["label"] for i in client.get(usage, headers=_headers(admin_id)).json()["items"]] + [refused.json()["detail"], cloud_usage.CAPPED]).lower()
+    assert not any(word in texts for word in ("factur", "prix", "tarif", "€", "abonnement", "payer"))  # usage and limit, never money
+
+
+def test_invitations_stop_at_the_days_limit_but_an_existing_account_sends_no_mail(
+        client, org_with_users, cloud_database_url, monkeypatch):
+    from types import SimpleNamespace
+
+    org_id, _, admin_id, client_id, outsider_id = org_with_users
+    base = f"/api/orgs/{org_id}/members"
+
+    def invite(email, options):
+        with cloud_db.connect(cloud_database_url) as conn:
+            user = conn.execute("INSERT INTO auth.users (email) VALUES (%s) RETURNING id", (email,)).fetchone()["id"]
+        return SimpleNamespace(user=SimpleNamespace(id=user))
+
+    fake = SimpleNamespace(auth=SimpleNamespace(admin=SimpleNamespace(invite_user_by_email=invite)))
+    monkeypatch.setattr("nyra.cloud.storage.get_client", lambda *args: fake)
+    _limits(client, admin_id, org_id, emails_per_day=1)
+    outsider, first, second = f"{outsider_id}@x.com", f"{uuid.uuid4().hex}@x.com", f"{uuid.uuid4().hex}@x.com"
+    assert client.post(base, headers=_headers(admin_id), json={"email": outsider}).json()["invited"] is False  # has an account: no mail
+    assert client.post(base, headers=_headers(admin_id), json={"email": first}).json()["invited"] is True
+    late = client.post(base, headers=_headers(admin_id), json={"email": second})
+    assert late.status_code == 429 and "Réessayez demain" in late.json()["detail"]
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT 1 FROM auth.users WHERE email = %s", (second,)).fetchone() is None  # nothing was sent
+
+
+def test_adopting_site_images_is_refused_at_the_library_or_storage_limit(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, _, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand)
+        image = conn.execute("INSERT INTO site_images (org_id, site_id, url, storage_path, content_hash) VALUES (%s, %s, 'https://target.test/a.jpg', 'x', 'h') RETURNING id",
+                             (org_id, site)).fetchone()["id"]
+    body = {"site_image_ids": [str(image)]}
+    for limit in ({"references": 0}, {"storage_gb": 0}):
+        _limits(client, admin_id, org_id, **limit)
+        refused = client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json=body)
+        assert refused.status_code == 403 and refused.json()["detail"].startswith("Limite atteinte")
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM reference_images WHERE org_id = %s", (org_id,)).fetchone()["n"] == 0
+
+
+def test_staff_routes_for_quotas_refuse_an_organization_admin_who_is_not_staff(client, org_with_users, cloud_database_url):
+    org_id, *_ = org_with_users
+    plain = uuid.uuid4()
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (plain, f"{plain}@x.com"))
+        cloud_db.add_membership(conn, user_id=plain, org_id=org_id, role="admin")
+    assert _limits(client, plain, org_id, brands=99).status_code == 403
+    assert client.get("/api/staff/usage", headers=_headers(plain)).status_code == 403
+    assert client.get(f"/api/orgs/{org_id}/usage", headers=_headers(plain)).status_code == 200  # its own usage is its to see
+
+
+def test_limits_lowered_under_the_usage_still_allow_replacing_and_an_invalid_row_falls_back_to_the_defaults(
+        client, org_with_users, cloud_database_url, caplog):
+    import logging
+
+    org_id, base, admin_id, _, _ = org_with_users
+    assert _upload(client, base, admin_id, "a.jpg").json()["saved"] == ["a.jpg"]
+    with caplog.at_level(logging.INFO, logger="nyra.usage"):
+        _limits(client, admin_id, org_id, references=0)
+    assert any(f"changed by {admin_id}" in record.getMessage() for record in caplog.records)  # who changed the limits
+    assert _upload(client, base, admin_id, "a.jpg").json()["replaced"] == ["a.jpg"]  # nothing added: allowed
+    assert _upload(client, base, admin_id, "b.jpg").status_code == 403
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE organizations SET quota_overrides = '{\"brands\": \"many\"}' WHERE id = %s", (org_id,))
+    listed = client.get("/api/staff/usage", headers=_headers(admin_id))
+    assert listed.status_code == 200  # one bad row does not stop the back office
+    mine = next(o for o in listed.json()["organizations"] if o["id"] == str(org_id))
+    assert mine["overrides"] == {} and listed.json()["truncated"] is False
+
+
+def test_an_invitation_the_provider_refused_gives_its_place_back(client, org_with_users, cloud_database_url, monkeypatch):
+    from types import SimpleNamespace
+
+    org_id, _, admin_id, _, _ = org_with_users
+
+    def refuse(email, options):
+        raise RuntimeError("provider down")
+
+    fake = SimpleNamespace(auth=SimpleNamespace(admin=SimpleNamespace(invite_user_by_email=refuse)))
+    monkeypatch.setattr("nyra.cloud.storage.get_client", lambda *args: fake)
+    _limits(client, admin_id, org_id, emails_per_day=1)
+    for _ in range(2):  # the same place is available again: a 502 each time, never a 429
+        failed = client.post(f"/api/orgs/{org_id}/members", headers=_headers(admin_id), json={"email": f"{uuid.uuid4().hex}@x.com"})
+        assert failed.status_code == 502

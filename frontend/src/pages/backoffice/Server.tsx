@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { ShareBar } from "../../components/charts";
 import { Section, Table } from "../../components/insights";
-import { EmptyState, PageHeader, Skeleton, Stat, StatusBadge } from "../../components/ui";
+import { EmptyState, PageHeader, Skeleton, Stat, StatusBadge, cx } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
-import { bytes, duration, num, percent } from "../../lib/format";
-import type { ServiceReading } from "../../types";
+import { bytes, duration, num, percent, plural } from "../../lib/format";
+import { toneClass } from "../BackOfficeSections";
+import type { ServerUsage, ServiceReading } from "../../types";
 
 /** A worker publishes every 15 s: past a minute without news it is taken for stopped. */
 const SILENT_SECONDS = 60;
@@ -53,11 +54,30 @@ function HostStats(props: { host: ServiceReading["reading"]["host"] }) {
   );
 }
 
+/** The thresholds crossed right now (computed by the server: disk, worker memory, queue, absent worker), or all clear. */
+function Alerts(props: { alerts: ServerUsage["alerts"] }) {
+  const { alerts } = props;
+  const tone = alerts.some((alert) => alert.severity === "critical") ? "alert" : alerts.length ? "warn" : "ok";
+  return (
+    <section className={cx("mb-4 rounded-xl border p-5", toneClass[tone])}>
+      <p className="text-lg font-semibold">
+        <span aria-hidden>{tone === "ok" ? "● " : "▲ "}</span>
+        {alerts.length ? plural(alerts.length, "alerte", "alertes") : "Tout va bien"}
+      </p>
+      {alerts.length ? (
+        <ul className="mt-1 list-disc pl-5 text-sm text-ink">{alerts.map((alert) => <li key={`${alert.code}/${alert.instance ?? ""}`}>{alert.message}{alert.instance ? ` (${alert.instance})` : ""}</li>)}</ul>
+      ) : (
+        <p className="text-sm text-ink-soft">Un worker publie, la file avance, le disque et la mémoire sont sous leurs seuils.</p>
+      )}
+    </section>
+  );
+}
+
 /** /back-office/server — what the web process and each worker use, like `docker stats`. */
 export function Server() {
   const usage = useQuery({
     queryKey: ["staff", "server"],
-    queryFn: () => api.get<{ services: ServiceReading[] }>("/staff/server"),
+    queryFn: () => api.get<ServerUsage>("/staff/server"),
     refetchInterval: 5_000,
   });
   const services = usage.data?.services ?? [];
@@ -66,6 +86,7 @@ export function Server() {
       <PageHeader title="Serveur" />
       {usage.isLoading ? <Skeleton className="h-72" /> : null}
       {!usage.data && usage.error ? <EmptyState title="Impossible de lire le serveur" body={errorMessage(usage.error)} /> : null}
+      {usage.data ? <Alerts alerts={usage.data.alerts} /> : null}
       {services.length ? (
         <>
           <HostStats host={services[0].reading.host} />

@@ -12,9 +12,16 @@ from nyra import estimate
 
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
-from .common import BRAND, BrandScope, Ctx, brand_admin_dep, brand_member_dep, enqueue, get_ctx, iso
+from .common import BRAND, BrandScope, Ctx, brand_admin_dep, brand_member_dep, enforce, enqueue, get_ctx, iso
 
 router = APIRouter()
+
+
+def _enforce_can_read(ctx: Ctx, scope: BrandScope) -> None:
+    """Reading pages uses up the month's pages and grows the storage: refused when either limit is reached."""
+    enforce(ctx, scope.org_id, "pages")
+    enforce(ctx, scope.org_id, "storage")
+
 
 # A page check reads each address in a browser: a few dozen is what a person changes by hand.
 MAX_CHECKED_PAGES = 50
@@ -34,7 +41,7 @@ class CrawlBody(BaseModel):
 @router.get(f"{BRAND}/jobs/current")
 def current_jobs(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        return cloud_jobs.current(conn, scope.brand_id)
+        return cloud_jobs.current(conn, scope.org_id, scope.brand_id, admin=scope.member.role == "admin")
 
 
 @router.get(f"{BRAND}/jobs/estimate")
@@ -74,6 +81,7 @@ def start_crawl(body: CrawlBody, scope: BrandScope = Depends(brand_admin_dep), c
         raise HTTPException(status_code=400, detail="Ajoutez d'abord une adresse à cette marque.")
     if any(site_id not in known for site_id in body.site_ids):
         raise HTTPException(status_code=404, detail="Adresse introuvable pour cette marque.")
+    _enforce_can_read(ctx, scope)
     max_pages = min(body.max_pages or config.crawl.max_pages, config.crawl.max_pages_limit)
     return enqueue(ctx, scope, "crawl", {"site_ids": [str(site_id) for site_id in body.site_ids], "max_pages": max_pages,
                                          "fresh": body.fresh, "then_match": body.then_match})
@@ -82,6 +90,7 @@ def start_crawl(body: CrawlBody, scope: BrandScope = Depends(brand_admin_dep), c
 @router.post(f"{BRAND}/jobs/check")
 def start_check(body: CheckBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """Read again only these pages (at most `MAX_CHECKED_PAGES`), each of them a page already read for this brand."""
+    _enforce_can_read(ctx, scope)
     urls = list(dict.fromkeys(body.urls))
     with cloud_db.connect(ctx.settings.database_url) as conn:
         rows = conn.execute(
@@ -112,6 +121,8 @@ def start_index(scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends
 def cancel_job(job_id: uuid.UUID, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         job = cloud_jobs.request_cancel(conn, scope.brand_id, job_id)
+        if job is not None:
+            scope.audit(conn, "job.cancel", "job", job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Aucune tâche active avec cet identifiant.")
     return {"job": job}

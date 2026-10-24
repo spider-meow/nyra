@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from nyra.config import validate_overrides, with_overrides
 
+from .. import audit as cloud_audit
 from .. import db as cloud_db
 from .. import storage as cloud_storage
 from .common import BRAND, BrandScope, Ctx, admin_dep, brand_admin_dep, brand_member_dep, enqueue, get_ctx, iso, member_dep
@@ -75,4 +76,5 @@ def put_settings(org_id: uuid.UUID, body: SettingsBody, member=Depends(admin_dep
     clean = {section: values for section, values in clean.items() if values}
     with cloud_db.connect(ctx.settings.database_url) as conn:
         cloud_db.set_overrides(conn, org_id, clean, member.user_id)
+        cloud_audit.record(conn, org_id, member.user_id, "settings.update", "settings", sections=",".join(sorted(clean)))
     return {"overrides": clean}
