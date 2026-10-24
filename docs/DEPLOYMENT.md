@@ -99,7 +99,7 @@ starts, indexing included, whatever the caps say. Another customer's indexing on
 two workers run (`--scale worker=2`), and the 4 GB Droplet (worker limited to 2560 MiB, about 3.2 GiB of limits in
 all) probably cannot host a second one without changing size. The caps are what keeps two workers from reading the same
 sites or loading the model twice, once a second worker exists; until then jobs simply wait their turn in the queue, the
-customer who started a job least recently first. Independently of the caps nothing is refused. `.env.example` should
+customer who started a job least recently first. Independently of the caps nothing is refused, and two jobs never read the same domain (host without `www.`) at the same time, whatever the customers: the second `crawl` or `check` waits for the first to end. `.env.example` should
 list `# NYRA_MAX_HEAVY_JOBS=1` and `# NYRA_MAX_MODEL_JOBS=1`.
 
 ## Supabase setup, once

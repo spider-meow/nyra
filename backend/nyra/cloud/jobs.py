@@ -17,6 +17,8 @@ Rules:
   a place frees up. Only a running job whose heartbeat is recent holds a place: the row a dead worker leaves behind
   frees it. Among the jobs that may start, the organization whose last job started least recently goes first, then
   first come first served, so an organization with twenty queued jobs does not push the others back;
+- a job that reads sites (`crawl`, `check`) does not start while a running job reads the same domain (host without
+  `www.`), whatever the organization: two customers must not double the load on a third party's site;
 - a job started by hand (`manual`) is refused (`JobConflict`, which carries
   the job in the way) while any job but an `index` is queued or running in
   the organization; what follows an action (indexing after an upload, a
@@ -95,6 +97,27 @@ _ORG_IDLE = "NOT EXISTS (SELECT 1 FROM jobs r WHERE r.org_id = j.org_id AND r.st
 _ROOM = f"""(j.kind = ANY(%s)
     OR (j.kind = ANY(%s) AND (SELECT count(*) FROM jobs r WHERE r.status = 'running' AND {_FRESH} AND r.kind = ANY(%s)) < %s)
     OR (j.kind = ANY(%s) AND (SELECT count(*) FROM jobs r WHERE r.status = 'running' AND {_FRESH} AND r.kind = ANY(%s)) < %s))"""
+
+
+def _hosts(job: str) -> str:
+    """SQL: the domains (host without `www.`) that the job aliased `job` reads, as a text[]. A `crawl` reads the sites in
+    `params.site_ids`, or all the brand's sites when none is given; a `check` reads the sites that are the keys of
+    `params.pages`; no other kind reads a site. Where the sites cannot be told (none left, params not shaped as expected)
+    the array is empty: the job conflicts with nothing and starts, the worker then fails it with its own message."""
+    ids = (f"CASE WHEN jsonb_typeof({job}.params -> 'site_ids') = 'array' "
+           f"THEN ARRAY(SELECT jsonb_array_elements_text({job}.params -> 'site_ids')) ELSE '{{}}'::text[] END")
+    pages = (f"CASE WHEN jsonb_typeof({job}.params -> 'pages') = 'object' "
+             f"THEN ARRAY(SELECT jsonb_object_keys({job}.params -> 'pages')) ELSE '{{}}'::text[] END")
+    return (f"ARRAY(SELECT substring(lower(s.url) from '^[a-z][a-z0-9+.-]*://(?:[^/@?#]*@)?(?:www\\.)?([^/:?#]+)') FROM sites s "
+            f"WHERE s.brand_id = {job}.brand_id AND (({job}.kind = 'crawl' AND (s.id::text = ANY({ids}) "
+            f"OR (cardinality({ids}) = 0 AND {job}.params ->> 'site' IS NULL))) "
+            f"OR ({job}.kind = 'check' AND s.id::text = ANY({pages}))))")
+
+
+# Everything, once the organization is known to be idle, that lets queued job `j` start: a place of its kind
+# (`_ROOM`) and no job running (with a recent heartbeat) that reads one of its domains.
+_CAN_START = f"""{_ROOM}
+    AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.status = 'running' AND {_FRESH} AND {_hosts('r')} && {_hosts('j')})"""
 
 
 # When the organization last started a job: the start of its most recently CREATED job that did start. Not
@@ -187,7 +210,8 @@ def enqueue(
 
 def claim(conn: psycopg.Connection) -> Optional[dict]:
     """Take the next queued job: of an organization that has nothing running, and only while its kind has a place
-    (`_ROOM`: fewer than `NYRA_MAX_HEAVY_JOBS` reads or `NYRA_MAX_MODEL_JOBS` analyses running anywhere). The
+    (`_ROOM`: fewer than `NYRA_MAX_HEAVY_JOBS` reads or `NYRA_MAX_MODEL_JOBS` analyses running anywhere), and
+    never one that reads a domain a running job reads (`_CAN_START`). The
     organization whose last job started least recently goes first (one that never ran counts as the least recent), then
     the oldest job; a `locate` after the other kinds."""
     # The unique index only guards one organization. The global count needs every claim to see the previous one's
@@ -200,7 +224,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
         UPDATE jobs SET status = 'running', started_at = now(), heartbeat_at = now(), message = 'Démarrage…'
         WHERE id = (
             SELECT j.id FROM jobs j
-            WHERE j.status = 'queued' AND {_ORG_IDLE} AND {_ROOM}
+            WHERE j.status = 'queued' AND {_ORG_IDLE} AND {_CAN_START}
             ORDER BY (j.kind = 'locate'),  -- a long search never waits ahead of another kind
                      {_LAST_STARTED} NULLS FIRST,
                      j.created_at
@@ -349,10 +373,11 @@ def current(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, *,
 
 
 def _waiting_for_capacity(conn: psycopg.Connection, queued_ids: list[uuid.UUID]) -> set[uuid.UUID]:
-    """Those of these queued jobs whose organization runs nothing but whose kind has no place left on the server.
-    A yes or no per job, nothing about the jobs of the other organizations."""
+    """Those of these queued jobs whose organization runs nothing but which cannot start for another reason: their
+    kind has no place left on the server, or a job of another organization is reading the same domain. A yes or no per
+    job, nothing about the jobs of the other organizations."""
     rows = conn.execute(
-        f"SELECT j.id FROM jobs j WHERE j.id = ANY(%s) AND {_ORG_IDLE} AND NOT {_ROOM}",
+        f"SELECT j.id FROM jobs j WHERE j.id = ANY(%s) AND {_ORG_IDLE} AND NOT ({_CAN_START})",
         [queued_ids, *_room_params()],
     ).fetchall()
     return {row["id"] for row in rows}

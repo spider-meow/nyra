@@ -329,6 +329,72 @@ def test_workers_claiming_at_the_same_moment_never_pass_the_cap(cloud_database_u
     assert len([job for job in claimed if job]) == 1 and len(claimed) == 8
 
 
+def _org_with_sites(conn, *urls):
+    """A fresh organization with its brand and one site per address: (org, brand, [site ids])."""
+    org = cloud_db.create_organization(conn, name="S", slug=f"s-{uuid.uuid4().hex[:8]}")
+    brand = _brand(conn, org)
+    return org, brand, [cloud_db.create_site(conn, org_id=org, brand_id=brand, url=url) for url in urls]
+
+
+def test_two_organizations_never_read_the_same_domain_at_the_same_time(cloud_database_url, monkeypatch):
+    monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", "10")
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        org_a, brand_a, [site_a] = _org_with_sites(conn, "https://www.louis-xiii.com/fr")
+        org_b, brand_b, [site_b] = _org_with_sites(conn, "https://louis-xiii.com/")  # same domain, without `www.`
+        org_c, brand_c, [site_c] = _org_with_sites(conn, "https://other-brand.com/")
+        a = _queue(conn, org_id=org_a, brand_id=brand_a, kind="crawl", params={"site_ids": [str(site_a)]})
+        b = _queue(conn, org_id=org_b, brand_id=brand_b, kind="crawl", params={"site_ids": []})  # all of its sites
+        c = _queue(conn, org_id=org_c, brand_id=brand_c, kind="crawl", params={"site_ids": [str(site_c)]})
+        # An indexing reads no site: the domain being read does not hold it back.
+        org_d, brand_d, _ = _org_with_sites(conn)
+        index = _queue(conn, org_id=org_d, brand_id=brand_d, kind="index")
+    # (queued in one transaction, the jobs share a creation time: the order they start in is not the point)
+    assert {_claim(cloud_database_url)["id"] for _ in range(3)} == {a, c, index}  # another domain, and no domain: in parallel
+    assert _claim(cloud_database_url) is None  # b waits for a
+    with cloud_db.connect(cloud_database_url) as conn:
+        waiting = cloud_jobs.current(conn, org_b, brand_b, admin=True)["active"]
+        assert [(job["id"], job["waiting_for_capacity"]) for job in waiting] == [(b, True)]
+        cloud_jobs.finish(conn, a, status="done", message="ok")
+    assert _claim(cloud_database_url)["id"] == b
+
+
+def test_a_check_reads_the_domains_of_its_pages_and_a_job_without_a_known_domain_is_not_held_back(cloud_database_url, monkeypatch):
+    monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", "10")
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        org_a, brand_a, [site_a] = _org_with_sites(conn, "https://shop.example.org/")
+        org_b, brand_b, [site_b] = _org_with_sites(conn, "https://shop.example.org/en")
+        org_c, brand_c, _ = _org_with_sites(conn)
+        crawl = _queue(conn, org_id=org_a, brand_id=brand_a, kind="crawl", params={"site_ids": [str(site_a)]})
+        check = _queue(conn, org_id=org_b, brand_id=brand_b, kind="check",
+                       params={"pages": {str(site_b): ["https://shop.example.org/en/p"]}})
+        # Nothing to tell the domain from (no site, a site that no longer exists): it starts, and the worker says why it fails.
+        lost = _queue(conn, org_id=org_c, brand_id=brand_c, kind="crawl",
+                      params={"site_ids": [str(uuid.uuid4())], "pages": "not an object"})
+    assert {_claim(cloud_database_url)["id"] for _ in range(2)} == {crawl, lost}
+    assert _claim(cloud_database_url) is None  # the check reads the domain the crawl is reading
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_jobs.finish(conn, crawl, status="done", message="ok")
+    assert _claim(cloud_database_url)["id"] == check
+
+
+def test_a_dead_worker_does_not_keep_its_domain_busy(cloud_database_url, monkeypatch):
+    monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", "10")
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        org_a, brand_a, [site_a] = _org_with_sites(conn, "https://dead.example.net/")
+        org_b, brand_b, [site_b] = _org_with_sites(conn, "https://dead.example.net/")
+        dead = _queue(conn, org_id=org_a, brand_id=brand_a, kind="crawl", params={"site_ids": [str(site_a)]})
+        waiting = _queue(conn, org_id=org_b, brand_id=brand_b, kind="crawl", params={"site_ids": [str(site_b)]})
+    assert _claim(cloud_database_url)["id"] == dead
+    assert _claim(cloud_database_url) is None  # fresh heartbeat: the domain is being read
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET heartbeat_at = now() - make_interval(secs => %s) WHERE id = %s",
+                     (cloud_jobs.STALE_AFTER_SECONDS + 5, dead))
+    assert _claim(cloud_database_url)["id"] == waiting
+
+
 @pytest.mark.parametrize("variable, kind", [("NYRA_MAX_HEAVY_JOBS", "crawl"), ("NYRA_MAX_MODEL_JOBS", "index")])
 def test_each_cap_is_set_by_its_environment_variable(cloud_database_url, monkeypatch, variable, kind):
     monkeypatch.setenv(variable, "2")
