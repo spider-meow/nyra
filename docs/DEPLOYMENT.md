@@ -82,6 +82,26 @@ worker is killed (exit 137), `restart: unless-stopped` starts it again, and its 
 `WORKER_MEM_LIMIT` adjusted. If only Chromium (a child process) is killed, the job fails with the browser's message
 instead of the worker restarting.
 
+**Two global caps on what runs at once** (integers >= 1, default **1** each, read by every worker at each poll; an invalid
+value is logged once as a warning and the default is used; edit `.env` and restart the workers to change them):
+`NYRA_MAX_HEAVY_JOBS` for the jobs that read sites (`crawl` and `check`, which load Chromium, and `locate`), and
+`NYRA_MAX_MODEL_JOBS` for the jobs that analyse images (`index` and `match`, which load the CLIP model and the
+library's vectors). A job only takes a place of its own kind, so a long crawl does not hold back another customer's
+indexing; `report` has no cap. The excess stays queued (nothing is refused or lost) and starts when a place frees up,
+the customer who started a job least recently first. Only a running job whose heartbeat is less than 3 minutes old
+holds a place: the row a dead worker leaves behind frees it. **Keep 1 until the peak is measured**: record the worker's
+memory (`docker stats`) during a crawl, and during an indexing or a comparison of the largest library, then check that
+N times that peak (not the 2560 MiB limit times N) fits in the machine.
+
+**The caps change nothing with a single worker.** A worker process runs ONE job at a time (`run_once`), and
+`docker-compose.yml` starts one `worker` container. While it runs a 12-hour crawl for one customer, no other job
+starts, indexing included, whatever the caps say. Another customer's indexing only moves during a crawl when at least
+two workers run (`--scale worker=2`), and the 4 GB Droplet (worker limited to 2560 MiB, about 3.2 GiB of limits in
+all) probably cannot host a second one without changing size. The caps are what keeps two workers from reading the same
+sites or loading the model twice, once a second worker exists; until then jobs simply wait their turn in the queue, the
+customer who started a job least recently first. Independently of the caps nothing is refused, and two jobs never read the same domain (host without `www.`) at the same time, whatever the customers: the second `crawl` or `check` waits for the first to end. `.env.example` should
+list `# NYRA_MAX_HEAVY_JOBS=1` and `# NYRA_MAX_MODEL_JOBS=1`.
+
 ## Supabase setup, once
 
 1. **Migrations**: apply `supabase/migrations/` in order (see
