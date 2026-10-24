@@ -293,9 +293,11 @@ Complete list (grep of `os.environ` in `backend/nyra`):
 | `DATABASE_URL` (carries the database password) | **yes** | web, worker | 3 |
 | `SENTRY_DSN` | low (can only send events) | web, worker | 4 |
 | `SENTRY_BROWSER_DSN`, `SUPABASE_ANON_KEY` | public by design (sent to the browser) | web | only if abused |
-| Resend API key | **yes**, but **not in `.env`**: it is the SMTP password in Supabase | Supabase Auth | 5 |
+| Resend API key (invitations) | **yes**, but **not in `.env`**: it is the SMTP password in Supabase | Supabase Auth | 5 |
+| `RESEND_API_KEY` (the summaries and alerts Nyra sends itself) | **yes**, never logged | web, worker | 6 |
 
-Not secrets: `SUPABASE_URL`, `NYRA_PUBLIC_URL`, `NYRA_DOMAIN`, `NYRA_ENV`, `NYRA_RELEASE`, `NYRA_LABELS`,
+Not secrets: `NYRA_MAIL_FROM` (the sender, `Nyra <nyra@your-domain.com>` or `nyra@your-domain.com`, on a domain verified in Resend;
+checked at start: a wrong form stops the server with a clear message. Set it together with `RESEND_API_KEY`: with only one of the two the server starts, a key alone logs one warning, and sending a mail raises `MailNotConfigured`), `SUPABASE_URL`, `NYRA_PUBLIC_URL`, `NYRA_DOMAIN`, `NYRA_ENV`, `NYRA_RELEASE`, `NYRA_LABELS`,
 `NYRA_LOG_FORMAT`, `NYRA_LOG_LEVEL`, `SENTRY_TRACES_SAMPLE_RATE`, `NYRA_DB_POOL_MAX`, `NYRA_IMAGE_CACHE`,
 `NYRA_IMAGE_CACHE_MB`, `NYRA_WORKER_ALIVE_FILE`, `NYRA_ALLOW_PRIVATE_HOSTS`, `NYRA_RATE_READ_PER_MIN`,
 `NYRA_RATE_WRITE_PER_MIN`. Also keep the Droplet's SSH
@@ -359,6 +361,12 @@ there is no overlap: expect failed requests until both restarts are done, and ch
 
 **5. Resend key.** Resend > *API Keys*: create a key limited to sending, paste it in Supabase > *Authentication >
 Emails > SMTP Settings* (password), send yourself a password-reset e-mail from the sign-in page and check it arrives; then delete the old key in Resend.
+
+**6. Resend key for Nyra's own e-mails.** Resend > *API Keys*: create a second key limited to sending (one key per use,
+so that revoking one does not break the other), put it in `RESEND_API_KEY` in `.env` **together with** `NYRA_MAIL_FROM` (an address of a domain verified in Resend; without it mail stays off and the server logs a warning), restart `web` and `worker`, then
+send yourself a test mail from a Python prompt on the server (`from nyra.cloud import mailer; mailer.deliver(key, sender, ["you@example.com"], "Test", "<p>Test</p>", "Test")`,
+typed at the prompt, not in a command line) and check it arrives; then delete the old key in Resend. Every mail
+counts against the organization's `quota.emails_per_day`, and a failed send gives its place back. A caller that may retry after a failure (the monthly summary) passes `idempotency_key="monthly:<org_id>:<YYYY-MM>"`, so Resend never sends the same mail twice within 24 hours.
 
 *Not yet done:* this procedure has been written from the code and the product documentation, not played. The team
 should run it once on a test environment (separate Supabase project, a Droplet or a local compose) and fix this page where it differs.
