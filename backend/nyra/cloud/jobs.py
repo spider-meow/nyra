@@ -162,7 +162,10 @@ def holder(row: dict, *, admin: bool) -> dict:
     a member with the `client` role learns that a colleague did, never the colleague's e-mail."""
     job = _row(row)
     queued = job["status"] == "queued"
-    by = (job["author"] or "une tâche automatique ou un compte supprimé") if admin else "un membre de l'équipe"
+    if job["params"].get("scheduled"):  # started by the system (no author): the monthly read, told to everyone alike
+        by = "la lecture mensuelle automatique"
+    else:
+        by = (job["author"] or "une tâche automatique ou un compte supprimé") if admin else "un membre de l'équipe"
     since = _duration(job["since_minutes"], queued)
     text = f"Un passage est {'en attente' if queued else 'déjà en cours'} (marque {job['brand_name']}, lancé par {by}, {since})."
     keys = ("id", "kind", "status", "brand_id", "brand_name", "message", "progress", "created_at", "started_at")
@@ -213,7 +216,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
     (`_ROOM`: fewer than `NYRA_MAX_HEAVY_JOBS` reads or `NYRA_MAX_MODEL_JOBS` analyses running anywhere), and
     never one that reads a domain a running job reads (`_CAN_START`). The
     organization whose last job started least recently goes first (one that never ran counts as the least recent), then
-    the oldest job; a `locate` after the other kinds."""
+    the oldest job; a `locate` after the other kinds, and a scheduled read (`params.scheduled`) after the jobs started by hand."""
     # The unique index only guards one organization. The global count needs every claim to see the previous one's
     # `running` row, so claims queue on one transaction-level lock, released with the commit that makes that row
     # visible; it is held for a few milliseconds. A count and an UPDATE in one statement would not do: under READ
@@ -226,6 +229,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
             SELECT j.id FROM jobs j
             WHERE j.status = 'queued' AND {_ORG_IDLE} AND {_CAN_START}
             ORDER BY (j.kind = 'locate'),  -- a long search never waits ahead of another kind
+                     j.params @> '{{"scheduled": true}}',  -- the monthly read waits behind what a person asked for
                      {_LAST_STARTED} NULLS FIRST,
                      j.created_at
             FOR UPDATE SKIP LOCKED

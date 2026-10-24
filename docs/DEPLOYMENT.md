@@ -102,6 +102,16 @@ sites or loading the model twice, once a second worker exists; until then jobs s
 customer who started a job least recently first. Independently of the caps nothing is refused, and two jobs never read the same domain (host without `www.`) at the same time, whatever the customers: the second `crawl` or `check` waits for the first to end. `.env.example` should
 list `# NYRA_MAX_HEAVY_JOBS=1` and `# NYRA_MAX_MODEL_JOBS=1`.
 
+**Monthly read** (`cloud/schedule.py`). The worker looks every 5 minutes for the brands whose monthly read is due and
+queues it (see `ARCHITECTURE.md`, « Monthly read »). `NYRA_SCHEDULER=0` (or `false`, `off`) stops it; unset, `1`, `true`
+or `on` keep it on; any other value is logged once as a warning and the default (on) is used. Edit `.env` and restart the
+worker. It does nothing until a brand's schedule is switched on (the table `brand_schedules` is empty at first). Limit: the
+worker does one job at a time and does not look for due reads while it runs one, so a monthly read can start a few hours
+late (never earlier than it could have started anyway). Migration `20261024000033` creates the table: **apply it by hand
+on Supabase before deploying** (SQL editor, as for every migration). The reverse order is harmless: the table is empty and
+inactive, an old worker ignores it, and a new worker without the table only logs `queueing the monthly reads failed` every
+5 minutes until the migration is applied; nothing else is affected.
+
 ## Supabase setup, once
 
 1. **Migrations**: apply `supabase/migrations/` in order (see
