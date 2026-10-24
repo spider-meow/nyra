@@ -275,7 +275,8 @@ Complete list (grep of `os.environ` in `backend/nyra`):
 
 Not secrets: `SUPABASE_URL`, `NYRA_PUBLIC_URL`, `NYRA_DOMAIN`, `NYRA_ENV`, `NYRA_RELEASE`, `NYRA_LABELS`,
 `NYRA_LOG_FORMAT`, `NYRA_LOG_LEVEL`, `SENTRY_TRACES_SAMPLE_RATE`, `NYRA_DB_POOL_MAX`, `NYRA_IMAGE_CACHE`,
-`NYRA_IMAGE_CACHE_MB`, `NYRA_WORKER_ALIVE_FILE`, `NYRA_ALLOW_PRIVATE_HOSTS`. Also keep the Droplet's SSH
+`NYRA_IMAGE_CACHE_MB`, `NYRA_WORKER_ALIVE_FILE`, `NYRA_ALLOW_PRIVATE_HOSTS`, `NYRA_RATE_READ_PER_MIN`,
+`NYRA_RATE_WRITE_PER_MIN`. Also keep the Droplet's SSH
 access and the DigitalOcean and GitHub accounts behind 2FA.
 
 ### Rotating a secret, step by step
@@ -367,8 +368,29 @@ Also in *Authentication*: *Attack Protection* (CAPTCHA, Turnstile or hCaptcha, o
 against guessing, it adds a widget to the page, a decision for the team), *Providers > Email* (minimum password length
 8 or more; leaked-password protection on plans that have it), and no sign-up (step 2 of the setup).
 
-**Why Nyra does not add its own per-IP limit.** Evaluated and not built:
-- The only unauthenticated routes are static or cheap probes; the login itself never reaches Nyra.
+**Rate limit of the API (per signed-in user).** `web` refuses a person who sends too many requests in a minute with
+`429` and a `Retry-After` header (a sentence in French in `detail`; the interface shows it like any other error). A token
+bucket per user, in the process's memory, with a burst as large as the minute's allowance:
+
+| Variable | Default | Counts |
+|---|---|---|
+| `NYRA_RATE_READ_PER_MIN` | `300` | `GET`/`HEAD`/`OPTIONS` of one user (the interface polls `jobs/current` every 2 s: 30 a minute) |
+| `NYRA_RATE_WRITE_PER_MIN` | `120` | every other method of one user (launching a job, sending files, editing; an upload sends 8 files per request) |
+
+A value that is not a whole number of 1 or more is ignored with a warning in the log (the default stays). Never limited:
+`GET /api/healthz`, `GET /api/workerz`, `GET /api/auth/config`, the static interface, and any request without a valid token
+(it ends in 401 anyway). The counters live in the memory of each process: with several `web` instances the real limit is
+multiplied by their number, and a restart resets them (at most 10 000 buckets are kept, idle ones are swept every minute).
+The identity is the verified JWT, **never the IP address**, for the reason below. The interface's HTTP client
+(`frontend/src/lib/api.ts`) answers a `429` by waiting `Retry-After` seconds (at most 30, 2 when absent) and sending the
+same request again, up to 3 times, before showing the error: a burst such as excluding 200 images at once is spread
+over time instead of failing. Only a 429 that carries `Retry-After` is replayed (the limiter always sets it; the daily
+invitation limit, also a 429, does not and is final). A 429 is raised before the route code runs, so replaying a `POST`
+cannot do it twice; but FastAPI reads a multipart body before it solves the dependencies, so a refused file upload has
+already been received, and the interface does not replay uploads (`FormData`): they fail with the sentence, to be sent again.
+
+**Why the rate limit is not per IP.** Evaluated and not built:
+- The unauthenticated routes are static or cheap probes; the login itself never reaches Nyra.
 - Behind Caddy the client IP is only known from `X-Forwarded-For`, and uvicorn (`proxy_headers=True`) trusts that header
   only from `127.0.0.1` (its `--forwarded-allow-ips` default). Caddy runs in another container, so uvicorn ignores the header and
   every visitor looks like the Caddy container: a per-IP limit would be **one bucket for the whole world**, one script would lock
