@@ -532,6 +532,11 @@ export type StaffUsage = {
 };
 export type StaffAdmin = { user_id: string; email: string; you: boolean };
 
+/** One alarm of the supervision thresholds (`cloud/alerts.py`), in French. */
+export type SupervisionAlert = { code: string; severity: "warning" | "critical"; message: string };
+/** `GET /staff/server`: the containers' readings and the alarms on right now. */
+export type ServerUsage = { services: ServiceReading[]; alerts: SupervisionAlert[] };
+
 /** One container's reading (`GET /staff/server`): CPU as % of one core, as in `docker stats`. */
 export type ServiceReading = {
   instance: string;
