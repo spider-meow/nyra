@@ -32,12 +32,13 @@ class Thresholds:
 # Disk 80 %: the Droplet's disk holds Docker layers, logs and the worker's image cache, and a full one fails every job.
 # Memory 85 %: a crawl with CLIP was measured at 1.88 GiB of the 2.5 GiB limit (73 %), so 85 % (2.1 GiB) is above
 # what a normal crawl needs, and the kernel kills the worker at 100 %. Queue 5 min: an idle worker claims a job within
-# seconds (it polls every 2 s), as in the probe's former 300 s. Silent 60 s: a worker publishes every 15 s, so four missed.
+# seconds (it polls every 2 s), as in the probe's former 300 s. Silent 300 s: a worker publishes every 15 s, but a deployment
+# recreates the container (new host name, first reading 15 s or more after the start) and must not page the uptime monitor.
 SETTINGS = {
     "disk": ("NYRA_ALERT_DISK_PERCENT", 80, 1, 100),
     "worker_memory": ("NYRA_ALERT_WORKER_MEMORY_PERCENT", 85, 1, 100),
     "queue_minutes": ("NYRA_ALERT_QUEUE_MINUTES", 5, 1, 24 * 60),
-    "silent_seconds": ("NYRA_ALERT_WORKER_SILENT_SECONDS", 60, 30, 3600),
+    "silent_seconds": ("NYRA_ALERT_WORKER_SILENT_SECONDS", 300, 30, 3600),
 }
 
 
@@ -63,6 +64,15 @@ def _alert(code: str, severity: str, message: str, instance: Optional[str] = Non
     return {"code": code, "severity": severity, "message": message} | ({"instance": instance} if instance else {})
 
 
+# What the public probe has always said (a monitor may test these words): `status` is the first, `problems` lists them.
+LEGACY_PROBLEMS = {"worker_absent": "no worker", "queue_stalled": "no worker", "disk_full": "disk almost full"}
+
+
+def probe_problems(found: list[dict]) -> list[str]:
+    """The critical alerts as the probe's historical labels, each once, in order."""
+    return list(dict.fromkeys(LEGACY_PROBLEMS[a["code"]] for a in found if a["severity"] == "critical"))
+
+
 def public(found: list[dict]) -> list[dict]:
     """The alerts without the host name, for the unauthenticated probe."""
     return [{key: value for key, value in alert.items() if key != "instance"} for alert in found]
@@ -79,9 +89,13 @@ def evaluate(services: list[dict], stalled_seconds: float, disk: Optional[float]
     """`services`: the latest reading of each service (`hostmetrics.published`); `stalled_seconds`: `jobs.stalled_seconds`;
     `disk`: the used share of the disk, None if unreadable. Missing data never raises: no reading is « worker absent »."""
     found: list[dict] = []
-    alive = [s for s in services if s.get("role") == "worker" and s.get("age_seconds", limits.silent_seconds + 1) <= limits.silent_seconds]
-    if not alive:
-        found.append(_alert("worker_absent", "critical", f"Aucun worker n'a donné de nouvelles depuis plus de {limits.silent_seconds} s : les tâches ne seront pas traitées."))
+    workers = [s for s in services if s.get("role") == "worker"]
+    alive = [s for s in workers if s.get("age_seconds", limits.silent_seconds + 1) <= limits.silent_seconds]
+    if workers and not alive:
+        quiet = min(s.get("age_seconds", 0) for s in workers)
+        found.append(_alert("worker_absent", "critical", f"Aucun worker n'a donné de nouvelles depuis {quiet / 60:.0f} min : les tâches ne seront pas traitées."))
+    elif not workers:  # none ever published (or the rows were purged after a day): a dev or CI environment must not page the monitor
+        found.append(_alert("worker_absent", "warning", "Aucun worker n'a publié de métriques (normal sans worker, par exemple en développement)."))
     for service in alive:
         ratio = _memory_ratio(service.get("reading") or {})
         if ratio is not None and ratio >= limits.worker_memory:

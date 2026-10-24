@@ -23,11 +23,12 @@ def healthz(ctx: Ctx = Depends(get_ctx)) -> dict:
 
 @router.get("/api/workerz")
 def workerz(ctx: Ctx = Depends(get_ctx)) -> JSONResponse:
-    """For an uptime monitor: 503 while a critical alert is on (`cloud/alerts.py`: no worker, a job waiting for nothing,
-    a full disk). `alerts` lists them all with their severity; it holds no organization, brand or user."""
+    """For an uptime monitor: 503 while a critical alert is on (`cloud/alerts.py`: a worker silent for 5 min, a job waiting
+    for nothing, a full disk), `status` and `problems` in the historical words ("no worker", "disk almost full").
+    `alerts` lists them all with their severity; it holds no organization, brand or user."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         state = cloud_alerts.current(conn)
-    critical = [a["code"] for a in state["alerts"] if a["severity"] == "critical"]
+    critical = cloud_alerts.probe_problems(state["alerts"])
     return JSONResponse({"status": critical[0] if critical else "ok", "problems": critical,
                          **state, "alerts": cloud_alerts.public(state["alerts"])},
                         status_code=503 if critical else 200)

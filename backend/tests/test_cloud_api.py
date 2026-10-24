@@ -95,24 +95,28 @@ def test_workerz_says_503_when_a_job_has_waited_for_a_worker_that_is_not_there(c
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
     answer = client.get("/api/workerz")
-    assert answer.status_code == 503 and answer.json()["status"] == "queue_stalled"
+    assert answer.status_code == 503 and answer.json()["status"] == "no worker" and answer.json()["problems"] == ["no worker"]
     with cloud_db.connect(cloud_database_url) as conn:
         cloud_jobs.claim(conn)
     assert client.get("/api/workerz").status_code == 200
 
 
-def test_workerz_says_503_when_no_worker_has_published_for_a_minute(client, cloud_database_url, monkeypatch):
+def test_workerz_waits_five_minutes_of_silence_and_ignores_an_environment_without_worker(client, cloud_database_url, monkeypatch):
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.1)
     with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
         conn.execute("DELETE FROM service_metrics")
-    answer = client.get("/api/workerz")
-    assert answer.status_code == 503 and answer.json()["status"] == "worker_absent"
+    answer = client.get("/api/workerz")  # dev, CI, a fresh table: no worker ever published, nothing to page about
+    assert answer.status_code == 200 and [a["code"] for a in answer.json()["alerts"]] == ["worker_absent"]
     with cloud_db.connect(cloud_database_url) as conn:
         _worker_publishes(conn)
+        conn.execute("UPDATE service_metrics SET sampled_at = now() - interval '2 minutes'")  # a deployment in progress
     assert client.get("/api/workerz").status_code == 200
     with cloud_db.connect(cloud_database_url) as conn:
-        conn.execute("UPDATE service_metrics SET sampled_at = now() - interval '2 minutes'")
-    assert client.get("/api/workerz").json()["problems"] == ["worker_absent"]
+        conn.execute("UPDATE service_metrics SET sampled_at = now() - interval '6 minutes'")
+    answer = client.get("/api/workerz")
+    assert answer.status_code == 503 and answer.json()["status"] == "no worker" and answer.json()["problems"] == ["no worker"]
+    assert [(a["code"], a["severity"]) for a in answer.json()["alerts"]] == [("worker_absent", "critical")]
 
 
 def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, cloud_database_url, monkeypatch):
@@ -122,8 +126,8 @@ def test_workerz_says_503_when_the_disk_is_eighty_percent_full(client, cloud_dat
     assert client.get("/api/workerz").status_code == 200
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.8)
     answer = client.get("/api/workerz")
-    assert answer.status_code == 503 and answer.json()["status"] == "disk_full" and answer.json()["disk_percent"] == 80
-    assert answer.json()["problems"] == ["disk_full"]
+    assert answer.status_code == 503 and answer.json()["status"] == "disk almost full" and answer.json()["disk_percent"] == 80
+    assert answer.json()["problems"] == ["disk almost full"]
 
 
 def test_a_worker_near_its_memory_limit_is_a_warning_the_monitor_does_not_page_for(client, cloud_database_url, monkeypatch):
@@ -145,10 +149,10 @@ def test_workerz_reports_both_problems_and_survives_an_unreadable_disk(client, c
         conn.execute("UPDATE jobs SET created_at = now() - interval '10 minutes' WHERE id = %s", (job["id"],))
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: 0.9)
     answer = client.get("/api/workerz")
-    assert answer.status_code == 503 and answer.json()["problems"] == ["queue_stalled", "disk_full"]
+    assert answer.status_code == 503 and answer.json()["problems"] == ["no worker", "disk almost full"]
     monkeypatch.setattr(hostmetrics, "disk_ratio", lambda: (_ for _ in ()).throw(OSError("no disk")))
     answer = client.get("/api/workerz")
-    assert answer.status_code == 503 and answer.json()["problems"] == ["queue_stalled"] and answer.json()["disk_percent"] is None
+    assert answer.status_code == 503 and answer.json()["problems"] == ["no worker"] and answer.json()["disk_percent"] is None
 
 
 def test_the_serveur_page_gets_the_alerts_and_only_platform_admins_may_read_them(client, org_with_users, cloud_database_url, monkeypatch):

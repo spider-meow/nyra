@@ -8,7 +8,7 @@ import pytest
 
 from nyra.cloud import alerts
 
-LIMITS = alerts.Thresholds(disk=0.8, worker_memory=0.85, queue_seconds=300, silent_seconds=60)
+LIMITS = alerts.Thresholds(disk=0.8, worker_memory=0.85, queue_seconds=300, silent_seconds=300)
 GIB = 1024**3
 
 
@@ -60,18 +60,21 @@ def test_a_queued_job_waiting_over_the_limit_with_nothing_running_is_stalled():
     assert codes(stalled_seconds=301) == ["queue_stalled"]
 
 
-def test_no_reading_at_all_means_no_worker_and_does_not_raise():
-    assert codes(services=[]) == ["worker_absent"]
+def test_no_reading_at_all_means_no_worker_but_only_a_warning():
+    """An environment without a worker (dev, CI, a fresh table) must not page the uptime monitor."""
+    found = alerts.evaluate([], 0.0, 0.1, LIMITS)
+    assert [(a["code"], a["severity"]) for a in found] == [("worker_absent", "warning")]
 
 
-def test_a_silent_worker_is_absent_and_its_memory_is_not_judged():
-    assert codes(services=[worker(age=60)]) == []
-    assert codes(services=[worker(age=61, memory=2559 * 1024**2)]) == ["worker_absent"]
+def test_a_silent_worker_is_critical_only_past_the_limit_and_its_memory_is_not_judged():
+    assert codes(services=[worker(age=300)]) == []
+    found = alerts.evaluate([worker(age=301, memory=2559 * 1024**2)], 0.0, 0.1, LIMITS)
+    assert [(a["code"], a["severity"]) for a in found] == [("worker_absent", "critical")]
 
 
 def test_the_web_process_does_not_count_as_a_worker():
     web = {"instance": "web", "role": "web", "age_seconds": 0.0, "reading": {}}
-    assert codes(services=[web]) == ["worker_absent"]
+    assert codes(services=[web]) == ["worker_absent"]  # (a warning: no worker row at all)
 
 
 def test_a_malformed_reading_is_skipped_not_fatal():
@@ -80,10 +83,16 @@ def test_a_malformed_reading_is_skipped_not_fatal():
 
 
 def test_every_alert_has_a_code_a_severity_and_a_french_message():
-    found = alerts.evaluate([], 900.0, 0.95, LIMITS)
+    found = alerts.evaluate([worker(age=900)], 900.0, 0.95, LIMITS)
     assert [a["code"] for a in found] == ["worker_absent", "queue_stalled", "disk_full"]
     assert all(set(a) <= {"code", "severity", "message", "instance"} and {"code", "severity", "message"} <= set(a) and a["severity"] in {"warning", "critical"} and a["message"] for a in found)
     assert "95 %" in found[2]["message"] and "15 min" in found[1]["message"]
+
+
+def test_the_probe_keeps_its_historical_words_each_once():
+    found = alerts.evaluate([worker(age=900)], 900.0, 0.95, LIMITS)  # worker_absent + queue_stalled + disk_full
+    assert alerts.probe_problems(found) == ["no worker", "disk almost full"]
+    assert alerts.probe_problems(alerts.evaluate([worker(memory=2400 << 20)], 0.0, 0.1, LIMITS)) == []  # a warning is not a problem
 
 
 def test_thresholds_default_to_the_documented_values(monkeypatch):
