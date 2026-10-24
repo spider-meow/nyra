@@ -41,7 +41,7 @@ class CrawlBody(BaseModel):
 @router.get(f"{BRAND}/jobs/current")
 def current_jobs(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        return cloud_jobs.current(conn, scope.brand_id)
+        return cloud_jobs.current(conn, scope.org_id, scope.brand_id, admin=scope.member.role == "admin")
 
 
 @router.get(f"{BRAND}/jobs/estimate")

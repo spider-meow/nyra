@@ -228,7 +228,7 @@ def overview(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(g
         stats = cloud_db.get_stats(conn, scope.brand_id)
         matches = cloud_db.match_rows(conn, scope.brand_id)
         unmatched = cloud_db.unmatched_rows(conn, scope.brand_id)
-        jobs = cloud_jobs.current(conn, scope.brand_id)
+        jobs = cloud_jobs.current(conn, scope.org_id, scope.brand_id, admin=scope.member.role == "admin")
         runs = cloud_db.list_crawl_runs(conn, scope.brand_id, limit=1)
         sites = cloud_db.list_sites(conn, scope.brand_id)
         pending_index = conn.execute(

@@ -29,6 +29,8 @@ export type Job = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** Queued, and the organization runs nothing: it only waits for a place on the server. Absent from an older answer. */
+  waiting_for_capacity?: boolean;
 };
 
 /** How long a read would take: per address (null without usable history), then in total. */
@@ -51,7 +53,10 @@ export type Occurrences = {
   pages_crawled: number;
 };
 
-export type CurrentJobs = { active: Job[]; last: Job | null };
+/** A job of another brand of the organization that holds the queue: `by` is an e-mail for an administrator, « un membre de l'équipe » for a client; `text` is the sentence to show. Absent from an older answer. */
+export type OrgJob = Pick<Job, "id" | "kind" | "status" | "message" | "progress" | "created_at" | "started_at"> & { brand_id: string; brand_name: string; by: string; since: string; text: string };
+
+export type CurrentJobs = { active: Job[]; last: Job | null; organization?: OrgJob[] };
 
 export type Upcoming = { reference_id: string; filename: string; expiry_date: string; days_left: number; online: boolean };
 
@@ -528,6 +533,11 @@ export type StaffUsage = {
   organizations: { id: string; name: string; slug: string; overrides: Record<string, number>; items: UsageItem[]; counters: OrgUsage["counters"] }[];
 };
 export type StaffAdmin = { user_id: string; email: string; you: boolean };
+
+/** One alarm of the supervision thresholds (`cloud/alerts.py`), in French. */
+export type SupervisionAlert = { code: string; severity: "warning" | "critical"; message: string; /** The container it is about, when there are several. */ instance?: string };
+/** `GET /staff/server`: the containers' readings and the alarms on right now. */
+export type ServerUsage = { services: ServiceReading[]; alerts: SupervisionAlert[] };
 
 /** One container's reading (`GET /staff/server`): CPU as % of one core, as in `docker stats`. */
 export type ServiceReading = {

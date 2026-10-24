@@ -49,7 +49,7 @@ PHASH = "ffff0000ffff0000"
 # Routes with no organization to check, and why. Anything else is tested below.
 PUBLIC = {
     ("GET", "/api/healthz"): "health check for the load balancer: answers {status: ok}, reads nothing",
-    ("GET", "/api/workerz"): "uptime monitor: a queue age in seconds, no name, no id",
+    ("GET", "/api/workerz"): "uptime monitor: alert codes, French sentences and two figures (queue wait, disk %), no name, no id",
     ("GET", "/api/auth/config"): "public sign-in settings (Supabase URL and anon key), needed before anyone is signed in",
     ("GET", "/"): "the app shell (static HTML), no data",
     ("GET", "/{full_path}"): "the app shell for every client-side route (/robot, /login, ...) and the build's files; "
@@ -66,7 +66,10 @@ USER_LEVEL = {
 
 # Routes whose nominal call is refused to an organization admin: platform admins only (each brand is billed).
 OWN_REFUSED = {("POST", ORG + "/brands"), ("DELETE", BR)}
-OWN_JOB = {("POST", BR + "/jobs/check"): "match"}  # the job a fresh organization starts with must not be of the route's own kind
+# The job a fresh organization starts with. The five routes that launch a job by hand answer 409 while a job but an
+# `index` waits in the organization, so their witness starts from an `index`. Every other route keeps the default
+# `check`, which does not stop the deletions (an address cannot be removed while a read, a comparison or an index waits).
+OWN_JOB = {("POST", BR + path): "index" for path in ("/jobs/crawl", "/jobs/check", "/jobs/match", "/library/{filename}/locate", "/reports")}
 
 
 def _bytes(name):
@@ -376,7 +379,8 @@ def test_public_and_user_level_routes_show_nothing_of_another_organization(clien
     a, b = world
     for method, template in sorted(PUBLIC):
         response = client.request(method, template.replace("{full_path}", "robot"))
-        assert response.status_code == 200 and not [t for t in b["canaries"] if t in response.text], template
+        allowed = {200, 503} if template == "/api/workerz" else {200}  # the probe says 503 while an alert is on (no worker here)
+        assert response.status_code in allowed and not [t for t in b["canaries"] if t in response.text], template
     # the catch-all page: /api/* unknown is a 404 (not the app shell), and a path out of the build folder is refused
     assert client.get("/api/unknown").status_code == 404 and client.get("/api/orgs/unknown/x").status_code == 404
     for path in ("/..%2f..%2fpyproject.toml", "/%2e%2e%2f%2e%2e%2fpyproject.toml", "/assets/..%2f..%2f..%2fpyproject.toml"):
