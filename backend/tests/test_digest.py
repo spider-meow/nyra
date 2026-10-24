@@ -174,13 +174,18 @@ def settings(url, key=VALUE, sender=SENDER, public="https://nyra.test"):
                          resend_api_key=key, mail_from=sender, public_url=public)
 
 
-def transport(answer=200, delay=0.0):
-    seen = []
+def transport(answer=200, delay=0.0, idempotent=False):
+    """A fake Resend. `idempotent`: like the real one, the same key with another body is refused (409 invalid_idempotent_request)."""
+    seen, keys = [], {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         time.sleep(delay)
+        if idempotent and keys.setdefault(request.headers["idempotency-key"], request.content) != request.content:
+            return httpx.Response(409, json={"name": "invalid_idempotent_request", "message": "different payload"})
         status = answer(len(seen)) if callable(answer) else answer
+        if isinstance(status, tuple):
+            return httpx.Response(status[0], json=status[1])
         return httpx.Response(status, json={"id": "mail-1"} if status == 200 else {"name": "validation_error", "message": "refused"})
 
     t = httpx.MockTransport(handler)
@@ -197,6 +202,7 @@ def make_org(conn, *, brands=1, admins=1, clients=1, day=10, enabled=True):
         cloud_db.create_site(conn, org_id=org, brand_id=brand_id, url=f"https://{uuid.uuid4().hex[:8]}.test/")
         if enabled:
             schedule.enable(conn, brand_id, org, day, now=NOW)
+    conn.execute("UPDATE brand_schedules SET created_at = %s WHERE org_id = %s", (OLD, org))   # switched on long before the dates
     people = {"admin": [], "client": []}
     for role, count in (("admin", admins), ("client", clients)):
         for i in range(count):
@@ -371,9 +377,24 @@ def test_the_recipients_are_the_administrators_only_at_most_ten(url):
         nobody = uuid.uuid4()
         conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, NULL)", (nobody,))
         cloud_db.add_membership(conn, user_id=nobody, org_id=org, role="admin")
-        found = digest.recipients(conn, org)
-    assert len(found) == digest.MAX_ADMINS == 10 and set(found) <= set(admins) and not set(found) & set(clients)
+        found = digest.admin_addresses(conn, org)
+    assert digest.MAX_ADMINS == 10 and sorted(found) == sorted(admins) and not set(found) & set(clients)
     assert found == sorted(found)
+
+
+def test_more_than_ten_administrators_get_ten_copies_and_the_audit_and_the_log_say_so(url, caplog):
+    with cloud_db.connect(url) as conn:
+        org, brands, admins, _ = make_org(conn, admins=12, clients=1)
+        add_hit(conn, org, brands[0], add_ref(conn, org, brands[0], "expire.jpg", days(-5)))
+    t = transport()
+    with caplog.at_level(logging.WARNING, logger="nyra.cloud.digest"):
+        assert run(url, t) == 1
+    sent = json.loads(t.seen[0].content)["to"]
+    assert len(sent) == 10 and set(sent) <= set(admins)
+    detail = audit_rows(url, org, "digest.sent")[0]["detail"]
+    assert (detail["recipients"], detail["admins"]) == (10, 12)
+    cut = [r for r in caplog.records if "12 administrators" in r.getMessage()]
+    assert len(cut) == 1 and str(org) in cut[0].getMessage() and all("@" not in r.getMessage() for r in caplog.records)
 
 
 def schedules_of(conn, org):
@@ -420,6 +441,65 @@ def test_it_waits_for_the_scheduled_reads_of_the_organization_but_only_48_hours(
         conn.execute("INSERT INTO jobs (org_id, brand_id, kind, status) VALUES (%s, %s, 'crawl', 'queued')", (org, b1))   # started by hand: not in the way
         conn.commit()
         assert org in due(url, latest + timedelta(hours=1))
+
+
+def test_a_brand_switched_on_after_its_date_does_not_count_this_month_but_does_the_next(url):
+    with cloud_db.connect(url) as conn:
+        org, (b1,), *_ = make_org(conn)
+        conn.execute("UPDATE brand_schedules SET created_at = %s WHERE org_id = %s", (NOW - timedelta(hours=1), org))   # after the 10th
+    assert org not in due(url)                                                      # no read this month, so no mail either
+    assert org in due(url, schedule.due_date(b1, 10, 2026, 12))                     # next month: the read ran, the mail follows
+    with cloud_db.connect(url) as conn:
+        conn.execute("UPDATE brand_schedules SET created_at = %s WHERE org_id = %s", (schedule.due_date(b1, 10, 2026, 11) - timedelta(seconds=1), org))
+    assert org in due(url)                                                          # existed just before the date: it counts
+
+
+def test_a_brand_switched_off_and_on_again_keeps_its_place(url):
+    with cloud_db.connect(url) as conn:
+        org, (b1,), *_ = make_org(conn)
+        schedule.disable(conn, b1)
+        schedule.enable(conn, b1, org, 10, now=NOW)
+        assert conn.execute("SELECT created_at = %s AS same FROM brand_schedules WHERE brand_id = %s", (OLD, b1)).fetchone()["same"]
+    assert org in due(url)
+
+
+def bare_org(conn, brands, day, org_id=None):
+    """An organization with `brands` schedules and nothing else (no site, no member)."""
+    if org_id is None:
+        org_id = uuid.uuid4()
+    conn.execute("INSERT INTO organizations (id, name, slug) VALUES (%s, 'Bare', %s)", (org_id, f"b-{uuid.uuid4().hex[:12]}"))
+    for i in range(brands):
+        brand = cloud_db.create_brand(conn, org_id=org_id, name=f"M{i}", slug=f"m{i}")
+        schedule.enable(conn, brand, org_id, day, now=NOW)
+    conn.execute("UPDATE brand_schedules SET created_at = %s, last_run_at = %s WHERE org_id = %s", (OLD, NOW, org_id))
+    return org_id
+
+
+def test_hundreds_of_brands_of_organizations_not_ready_do_not_hide_a_ready_one(url, monkeypatch):
+    monkeypatch.setattr(digest, "ORG_LIMIT", 20)
+    monkeypatch.setattr(digest, "MAX_PAGES", 1)
+    last = uuid.UUID("ffffffff-ffff-4fff-8fff-" + uuid.uuid4().hex[:12])          # sorts after the others: the old scan never reached it
+    with cloud_db.connect(url) as conn:
+        for _ in range(60):
+            bare_org(conn, 10, day=28)                                              # 600 rows, the 28th has not come
+        ready = bare_org(conn, 2, day=10, org_id=last)
+    found = due(url)
+    assert list(found) == [ready] and len(found[ready]["schedules"]) == 2
+
+
+def test_organizations_are_read_whole_and_page_after_page_up_to_the_bounds(url, monkeypatch):
+    monkeypatch.setattr(digest, "ORG_LIMIT", 2)
+    monkeypatch.setattr(digest, "MAX_PAGES", 10)
+    monkeypatch.setattr(digest, "MAX_PER_PASS", 100)
+    with cloud_db.connect(url) as conn:
+        orgs = {bare_org(conn, 3, day=10) for _ in range(5)}
+    found = due(url)
+    assert set(found) == orgs and all(len(item["schedules"]) == 3 for item in found.values())   # never half an organization
+    monkeypatch.setattr(digest, "MAX_PAGES", 2)
+    assert len(due(url)) == 4                                                       # 2 pages of 2 organizations: bounded
+    monkeypatch.setattr(digest, "MAX_PAGES", 10)
+    monkeypatch.setattr(digest, "MAX_PER_PASS", 3)
+    assert 3 <= len(due(url)) <= 4                                                  # it stops paging once enough are ready
 
 
 def test_an_organization_already_handled_this_month_is_not_due_again(url):
@@ -469,7 +549,7 @@ def test_the_mail_leaves_once_to_the_administrators_with_the_monthly_key_and_is_
     (row,) = digests(url, org)
     assert (row["month"], row["status"], row["attempts"]) == (MONTH, "sent", 1) and row["sent_at"] is not None
     (event,) = audit_rows(url, org, "digest.sent")
-    assert event["detail"] == {"new": 1, "soon": 1, "later": 0, "brands": 1, "recipients": 2} and event["user_id"] is None
+    assert event["detail"] == {"new": 1, "soon": 1, "later": 0, "brands": 1, "recipients": 2, "admins": 2} and event["user_id"] is None
     assert "@" not in json.dumps(event["detail"]) and "expire.jpg" not in json.dumps(event["detail"])
     # again, and again later in the month: nothing more leaves
     assert run(url, t) == 0 and run(url, t) == 0 and len(t.seen) == 1
@@ -581,6 +661,52 @@ def test_the_daily_limit_of_e_mails_is_a_failure_to_try_again_later(url, monkeyp
     assert audit_rows(url, org, "digest.failed")[0]["detail"]["error"] == "EmailLimit"
 
 
+def test_a_mail_that_left_but_was_not_marked_is_recognised_when_the_rebuilt_body_differs(url, monkeypatch, caplog):
+    """The worker died between the send and the mark. Next pass the content has changed (a new visual): Resend refuses the
+    same key with another body (409 invalid_idempotent_request). That means the first mail LEFT: the month is closed."""
+    org, brands, *_ = org_with_something_to_say(url)
+    t = transport(idempotent=True)
+    real = digest._mark
+    monkeypatch.setattr(digest, "_mark", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("killed")))
+    assert run(url, t) == 0 and len(t.seen) == 1
+    monkeypatch.setattr(digest, "_mark", real)
+    with cloud_db.connect(url) as conn:
+        add_hit(conn, org, brands[0], add_ref(conn, org, brands[0], "arrive-apres.jpg", days(-2)))       # the body is not the same any more
+    age(url, org)
+    with caplog.at_level(logging.INFO, logger="nyra.cloud.digest"):
+        assert run(url, t) == 1
+    assert len(t.seen) == 2 and t.seen[0].content != t.seen[1].content
+    (row,) = digests(url, org)
+    assert (row["status"], row["attempts"]) == ("sent", 2) and row["sent_at"] is not None
+    (event,) = audit_rows(url, org, "digest.sent")
+    assert event["detail"]["recovered"] == 1 and not audit_rows(url, org, "digest.failed")
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING and "not sent" in r.getMessage()]
+    assert any("already left" in r.getMessage() for r in caplog.records if r.levelno == logging.INFO)
+    assert run(url, t) == 0 and len(t.seen) == 2
+
+
+def test_an_identical_rebuilt_body_is_just_a_second_call_with_the_same_key(url, monkeypatch):
+    org, *_ = org_with_something_to_say(url)
+    t = transport(idempotent=True)
+    real = digest._mark
+    monkeypatch.setattr(digest, "_mark", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("killed")))
+    run(url, t)
+    monkeypatch.setattr(digest, "_mark", real)
+    age(url, org)
+    assert run(url, t) == 1 and len(t.seen) == 2
+    assert "recovered" not in audit_rows(url, org, "digest.sent")[0]["detail"]
+
+
+@pytest.mark.parametrize("answer", [(409, {"name": "concurrent_idempotent_requests", "message": "busy"}),
+                                    (409, {"name": "validation_error", "message": "nope"}), 422])
+def test_any_other_refusal_is_still_a_failure_counted_as_before(url, answer):
+    org, *_ = org_with_something_to_say(url)
+    assert run(url, transport(answer)) == 0
+    (row,) = digests(url, org)
+    assert (row["status"], row["attempts"]) == ("sending", 1)
+    assert len(audit_rows(url, org, "digest.failed")) == 1 and not audit_rows(url, org, "digest.sent")
+
+
 def test_after_5_attempts_it_gives_up_and_says_so_once_a_day(url, caplog):
     org, *_ = org_with_something_to_say(url)
     t = transport(422)
@@ -618,6 +744,16 @@ def test_without_a_key_nothing_is_marked_nothing_crashes_and_the_warning_comes_o
     assert run(url, t) == 1                                                       # configured at last: it leaves, once
 
 
+def test_without_a_public_address_the_mail_leaves_without_links_and_says_so_once_an_hour(url, caplog):
+    org, *_ = org_with_something_to_say(url)
+    t = transport()
+    with caplog.at_level(logging.WARNING, logger="nyra.cloud.digest"):
+        assert digest.run(settings(url, public=""), NOW, transport=t, sleep=NO_SLEEP) == 1
+        digest.run(settings(url, public=""), NOW, transport=t, sleep=NO_SLEEP)
+    assert "http" not in json.loads(t.seen[0].content)["text"] and "href" not in json.loads(t.seen[0].content)["html"]
+    assert len([r for r in caplog.records if "NYRA_PUBLIC_URL" in r.getMessage()]) == 1
+
+
 def test_nothing_is_logged_about_the_people_or_the_files(url, caplog):
     org, _, admins, _ = org_with_something_to_say(url)
     with caplog.at_level(logging.DEBUG):
@@ -630,6 +766,36 @@ def test_nothing_is_logged_about_the_people_or_the_files(url, caplog):
 
 def a_worker(url, **kw):
     return worker_module.Worker(database_url=url, storage_client_factory=lambda: None, **kw)
+
+
+def test_a_wrong_sender_stops_the_web_but_not_the_worker_which_goes_on_without_e_mail(monkeypatch, caplog):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x:x@db.invalid/none")
+    monkeypatch.setenv("SUPABASE_URL", "https://x.supabase.co")
+    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", VALUE)
+    monkeypatch.setenv("NYRA_MAIL_FROM", "not a sender at all")
+    monkeypatch.setattr("nyra.envfile.load_env_files", lambda *a, **k: None)
+    from nyra.cloud.api import settings_from_env
+
+    with pytest.raises(RuntimeError, match="NYRA_MAIL_FROM"):
+        settings_from_env()                                  # the web stays strict
+    with caplog.at_level(logging.ERROR):
+        assert worker_module.mail_settings_or_none(None) is None
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(errors) == 1 and "NYRA_MAIL_FROM invalide" in errors[0].getMessage() and "désactivés" in errors[0].getMessage()
+    assert VALUE not in caplog.text
+    monkeypatch.setenv("NYRA_MAIL_FROM", SENDER)
+    assert worker_module.mail_settings_or_none(None).mail_from == SENDER
+
+
+def test_without_settings_the_digest_is_unconfigured_and_does_not_crash(url, caplog):
+    org, *_ = org_with_something_to_say(url)
+    worker = a_worker(url)                                    # mail_settings=None
+    with caplog.at_level(logging.WARNING):
+        worker._send_digests()
+        worker._send_digests()
+    assert digests(url, org) == []
+    assert len([r for r in caplog.records if "not configured" in r.getMessage()]) == 1
+    assert digest.run(None, NOW, database_url=url) == 0
 
 
 def test_the_worker_sends_the_digests_unless_the_scheduler_is_off(monkeypatch):

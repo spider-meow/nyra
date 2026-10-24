@@ -94,19 +94,26 @@ neither); (4) one sentence per brand whose last read looks incomplete (`crawl_ru
 stopped by the month's page limit (`result.quota_reached` of the scheduled `crawl`) or is not finished (its scheduled read
 is not `done`, or still due). Each list shows 20 lines per brand at most, then « et N autres », and a link to the page
 (`NYRA_PUBLIC_URL` + `/o/<org>/b/<brand>/review` or `/library`). Every name is escaped in the HTML; no word on billing.
-*When:* at least one brand has the monthly read on, the date of the latest brand has passed, and no scheduled read of the
+*When:* at least one brand has the monthly read on, the date of the latest brand has passed (a brand counts only if its
+`brand_schedules` row existed before this month's date: `created_at`, which a switch off and on does not change; one switched
+on after the date is read next month and mails next month), and no scheduled read of the
 organization waits or runs, or 48 hours have passed since that date (the alert does not depend on the read: if it failed,
 the mail says so); never twice a month. It leaves only if there is something to say; else the month is `skipped`.
 *Once:* `claim` is one `INSERT ... ON CONFLICT DO UPDATE ... WHERE status = 'sending' AND <30 minutes old> AND attempts < 5
 RETURNING`: two workers cannot both send. A claim left `sending` (worker dead, or a refusal) is taken again after 30 minutes,
 5 attempts at most, always with the idempotency key `monthly:<org_id>:<YYYY-MM>`, so Resend never sends twice even if the
 worker died between the send and the mark. After 5 attempts the worker gives up and warns once a day. Without
-`RESEND_API_KEY` + `NYRA_MAIL_FROM` nothing is claimed or marked and one warning an hour is logged. *Audit:* `digest.sent`
+`RESEND_API_KEY` + `NYRA_MAIL_FROM` (or with a worker started without e-mail settings) nothing is claimed or marked and one warning an
+hour is logged; without `NYRA_PUBLIC_URL` it leaves without links, with one warning an hour. *Which organizations:* `due_orgs`
+filters in SQL by organization (the latest day of the month of its active brands has come, not handled yet), 200 per page in
+`org_id` order, 5 pages at most per pass, and reads an organization whole. *Recovery:* if Resend answers 409
+`invalid_idempotent_request` (same key, other body: an earlier attempt sent the mail and died before marking it, and the
+content changed since), the mail has left: the month is marked `sent`, `digest.sent` carries `recovered: 1`.
+More than 10 administrators: the first 10 (sorted) get it; `digest.sent` holds `recipients` and `admins`, and a warning is logged. *Audit:* `digest.sent`
 (counters only), `digest.skipped`, `digest.failed` (error type and attempt). *Switch:* `NYRA_SCHEDULER` (the same as the reads).
-*Limits:* the first month an organization switches the read on, the date has often passed already, so its first e-mail leaves
-at the next pass; a visual that expires while already online appears in the 30-day list of the e-mail before, not as « new »;
-if a retry rebuilds a different content under the same key, Resend refuses (409) and the attempts run out: the first mail
-had left.
+*Limits:* a reimport of the library gives the visuals new ids with no `reviews`: a visual already decided is « new » again; after
+more than 24 hours spent in `sending` (the worker down for a day between a successful send and its mark) Resend's idempotency
+key (valid 24 hours) no longer protects: the mail could leave twice; a visual that expires while already online appears in the 30-day list of the e-mail before, not as « new ».
 
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —

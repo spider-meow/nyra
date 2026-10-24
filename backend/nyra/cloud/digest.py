@@ -48,10 +48,12 @@ LATE_AFTER = timedelta(hours=48)  # after the date of the latest brand, the mail
 RESUME_MINUTES = 30             # a claim left `sending` this long is taken again
 MAX_ATTEMPTS = 5                # claims per organization and month
 MAX_PER_PASS = 5                # organizations handled by a pass (every 5 minutes): the rest go at the next one
-SCAN_LIMIT = 500                # schedule rows looked at in a pass
 MAX_BRANDS = 50
 GIVE_UP_LIST = 50
 DAY_SECONDS = 24 * 3600
+ORG_LIMIT = 200                 # organizations looked at per page of `due_orgs`
+MAX_PAGES = 5                   # pages per pass: at most 1,000 organizations
+ALREADY_SENT = "invalid_idempotent_request"  # Resend: this key was used with another body, so the first mail left
 _SENTENCES = {
     "unfinished": "La lecture de ce mois n'est pas terminée pour la marque « {} ». Les informations ci-dessous peuvent donc être partielles.",
     "suspect": "La dernière lecture de la marque « {} » semble incomplète : rien n'est marqué retiré pour cette marque.",
@@ -201,10 +203,9 @@ def period_start(conn, org_id: uuid.UUID, now: datetime) -> datetime:
     return row["at"] or now - timedelta(days=PERIOD_DAYS)
 
 
-def recipients(conn, org_id: uuid.UUID) -> list[str]:
-    """The administrators' addresses (read as the members list does), at most `MAX_ADMINS`."""
-    found = {m["email"].strip().lower() for m in cloud_db.list_members(conn, org_id) if m["role"] == "admin" and m["email"]}
-    return sorted(found)[:MAX_ADMINS]
+def admin_addresses(conn, org_id: uuid.UUID) -> list[str]:
+    """All the administrators' addresses, sorted (read as the members list does); the mail goes to the first `MAX_ADMINS`."""
+    return sorted({m["email"].strip().lower() for m in cloud_db.list_members(conn, org_id) if m["role"] == "admin" and m["email"]})
 
 
 def gather(conn, org_id: uuid.UUID, since: datetime, now: datetime, schedules: Sequence[dict]) -> dict:
@@ -245,29 +246,45 @@ def is_ready(latest_due: datetime, waiting_reads: int, now: datetime) -> bool:
     return now >= latest_due and (waiting_reads == 0 or now >= latest_due + LATE_AFTER)
 
 
-def due_orgs(conn, now: datetime) -> list[dict]:
-    """The organizations whose mail of this month may leave, `{org_id, schedules}`, at most `SCAN_LIMIT` schedule rows looked
-    at (those already handled, claimed or given up are not read). ponytail: the organizations come in `org_id` order, so
-    500 brands that are never ready would hold back the next ones; upgrade: filter by date in SQL."""
-    month = date(now.year, now.month, 1)
-    rows = conn.execute(
-        """SELECT s.brand_id, s.org_id, s.enabled, s.day_of_month, s.last_run_at FROM brand_schedules s
-           WHERE s.enabled AND NOT EXISTS (
-               SELECT 1 FROM monthly_digests d WHERE d.org_id = s.org_id AND d.month = %s
-                 AND (d.status <> 'sending' OR d.attempts >= %s OR d.updated_at > now() - make_interval(mins => %s)))
-           ORDER BY s.org_id, s.brand_id LIMIT %s""",
-        (month, MAX_ATTEMPTS, RESUME_MINUTES, SCAN_LIMIT)).fetchall()
-    if len(rows) == SCAN_LIMIT:  # the last organization may be cut in two: its latest date is not known
-        rows = [r for r in rows if r["org_id"] != rows[-1]["org_id"]]
+_CANDIDATES = """
+    SELECT s.org_id FROM brand_schedules s
+    WHERE s.enabled AND s.org_id > %s AND NOT EXISTS (
+        SELECT 1 FROM monthly_digests d WHERE d.org_id = s.org_id AND d.month = %s
+          AND (d.status <> 'sending' OR d.attempts >= %s OR d.updated_at > now() - make_interval(mins => %s)))
+    GROUP BY s.org_id HAVING max(s.day_of_month) <= %s
+    ORDER BY s.org_id LIMIT %s"""
+
+
+def _ready(conn, org_ids: list[uuid.UUID], now: datetime) -> list[dict]:
+    """Among these organizations (whole: all their rows), those whose mail may leave: `{org_id, schedules}`. A brand counts
+    only if its schedule existed BEFORE this month's date: one switched on after it is not read this month."""
     by_org: dict[uuid.UUID, list[dict]] = {}
-    for row in rows:
-        by_org.setdefault(row["org_id"], []).append(row)
-    latest = {org: max(schedule.due_date(r["brand_id"], r["day_of_month"], now.year, now.month) for r in group) for org, group in by_org.items()}
+    for row in conn.execute("SELECT brand_id, org_id, enabled, day_of_month, last_run_at, created_at FROM brand_schedules "
+                            "WHERE enabled AND org_id = ANY(%s) ORDER BY org_id, brand_id", (org_ids,)).fetchall():
+        if row["created_at"] < schedule.due_date(row["brand_id"], row["day_of_month"], now.year, now.month):
+            by_org.setdefault(row["org_id"], []).append(row)
+    latest = {org: max(schedule.due_date(r["brand_id"], r["day_of_month"], now.year, now.month) for r in rows) for org, rows in by_org.items()}
     passed = [org for org, at in latest.items() if at <= now]
     waiting = {r["org_id"]: r["n"] for r in conn.execute(
         """SELECT org_id, count(*) AS n FROM jobs WHERE org_id = ANY(%s) AND kind = 'crawl' AND status IN ('queued', 'running')
            AND params @> '{"scheduled": true}' GROUP BY org_id""", (passed,)).fetchall()}
     return [{"org_id": org, "schedules": by_org[org]} for org in passed if is_ready(latest[org], waiting.get(org, 0), now)]
+
+
+def due_orgs(conn, now: datetime) -> list[dict]:
+    """The organizations whose mail of this month may leave, `{org_id, schedules}`. The filter is per ORGANIZATION, in SQL:
+    those with the monthly read on whose latest day of the month has come and that are not handled, claimed or given up yet,
+    `ORG_LIMIT` per page in `org_id` order, at most `MAX_PAGES` pages, and it stops once `MAX_PER_PASS` are ready. An
+    organization is always read whole. (Day only: the hour is checked in Python by `_ready`.)"""
+    month, after, ready = date(now.year, now.month, 1), uuid.UUID(int=0), []
+    for _ in range(MAX_PAGES):
+        ids = [r["org_id"] for r in conn.execute(_CANDIDATES, (after, month, MAX_ATTEMPTS, RESUME_MINUTES, now.day, ORG_LIMIT)).fetchall()]
+        if ids:
+            ready += _ready(conn, ids, now)
+        if len(ids) < ORG_LIMIT or len(ready) >= MAX_PER_PASS:
+            break
+        after = ids[-1]
+    return ready
 
 
 def claim(conn, org_id: uuid.UUID, month: date) -> Optional[int]:
@@ -303,22 +320,42 @@ def _why(exc: BaseException) -> str:
     return str(exc) if isinstance(exc, mailer.MailError) else type(exc).__name__
 
 
-def _send(settings, org_id: uuid.UUID, month: date, now: datetime, mail: Mail, to: list[str], attempt: int,
+def _close_as_sent(database_url: str, org_id: uuid.UUID, month: date, now: datetime, mail: Mail, sent_to: int, admins: int,
+                   recovered: bool) -> None:
+    detail = {"recovered": 1} if recovered else {}
+    with cloud_db.connect(database_url) as conn:
+        if _mark(conn, org_id, month, "sent", now):
+            audit.record(conn, org_id, None, "digest.sent", "monthly_digest", org_id, recipients=sent_to, admins=admins, **mail.counts, **detail)
+
+
+def _send(settings, org_id: uuid.UUID, month: date, now: datetime, mail: Mail, to: list[str], admins: int, attempt: int,
           transport: Optional[httpx.BaseTransport], sleep: Callable[[float], None]) -> int:
     key = f"monthly:{org_id}:{month:%Y-%m}"
+    recovered = False
     try:
         # MailNotConfigured cannot come out of here: `run` checked the settings before claiming anything.
         mailer.send(settings, org_id, to, mail.subject, mail.html, mail.text, idempotency_key=key, transport=transport, sleep=sleep)
-    except (mailer.MailError, EmailLimit, ValueError) as exc:
-        log.warning("monthly e-mail of organization %s not sent (attempt %d of %d): %s", org_id, attempt, MAX_ATTEMPTS, _why(exc))
-        with cloud_db.connect(settings.database_url) as conn:
-            audit.record(conn, org_id, None, "digest.failed", "monthly_digest", org_id, error=type(exc).__name__, attempt=attempt)
-        return 0
-    with cloud_db.connect(settings.database_url) as conn:
-        if _mark(conn, org_id, month, "sent", now):
-            audit.record(conn, org_id, None, "digest.sent", "monthly_digest", org_id, recipients=len(to), **mail.counts)
+    except mailer.MailError as exc:
+        if exc.code != ALREADY_SENT:
+            return _failed(settings.database_url, org_id, attempt, exc)
+        # The key was seen with another body: an earlier attempt sent the mail and died before marking it (the content has
+        # changed since). It left; nothing is sent again.
+        recovered = True
+        log.info("monthly e-mail of organization %s had already left (the content changed since): marked as sent", org_id)
+    except (EmailLimit, ValueError) as exc:
+        return _failed(settings.database_url, org_id, attempt, exc)
+    _close_as_sent(settings.database_url, org_id, month, now, mail, len(to), admins, recovered)
+    if admins > len(to):
+        log.warning("monthly e-mail of organization %s: %d administrators, sent to the first %d only", org_id, admins, len(to))
     log.info("monthly e-mail of organization %s sent to %d administrator(s)", org_id, len(to))
     return 1
+
+
+def _failed(database_url: str, org_id: uuid.UUID, attempt: int, exc: BaseException) -> int:
+    log.warning("monthly e-mail of organization %s not sent (attempt %d of %d): %s", org_id, attempt, MAX_ATTEMPTS, _why(exc))
+    with cloud_db.connect(database_url) as conn:
+        audit.record(conn, org_id, None, "digest.failed", "monthly_digest", org_id, error=type(exc).__name__, attempt=attempt)
+    return 0
 
 
 def _handle(settings, org: dict, month: date, now: datetime, transport: Optional[httpx.BaseTransport],
@@ -330,12 +367,12 @@ def _handle(settings, org: dict, month: date, now: datetime, transport: Optional
         return 0
     with cloud_db.connect(settings.database_url) as conn:
         data = gather(conn, org_id, period_start(conn, org_id, now), now, org["schedules"])
-        to = recipients(conn, org_id)
+        admins = admin_addresses(conn, org_id)
     mail = build(data, settings.public_url)
-    if mail is None or not to:
+    if mail is None or not admins:
         _skip(settings.database_url, org_id, month, now, "nothing" if mail is None else "no_admin")
         return 0
-    return _send(settings, org_id, month, now, mail, to, attempt, transport, sleep)
+    return _send(settings, org_id, month, now, mail, admins[:MAX_ADMINS], len(admins), attempt, transport, sleep)
 
 
 def _report_given_up(conn, month: date) -> None:
@@ -346,21 +383,24 @@ def _report_given_up(conn, month: date) -> None:
             log.warning("monthly e-mail of organization %s abandoned after %d attempts this month: it will not be sent", row["org_id"], MAX_ATTEMPTS)
 
 
-def run(settings: Any, now: Optional[datetime] = None, *, transport: Optional[httpx.BaseTransport] = None,
-        sleep: Callable[[float], None] = time.sleep) -> int:
+def run(settings: Any, now: Optional[datetime] = None, *, database_url: Optional[str] = None,
+        transport: Optional[httpx.BaseTransport] = None, sleep: Callable[[float], None] = time.sleep) -> int:
     """One pass of the worker: send the monthly e-mails that are due (at most `MAX_PER_PASS` organizations); how many left.
-    One organization's failure is logged and does not stop the others."""
+    `settings` None means the e-mail settings were unusable at start (then `database_url` is needed): the same as not
+    configured. One organization's failure is logged and does not stop the others."""
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     month = date(now.year, now.month, 1)
-    with cloud_db.connect(settings.database_url) as conn:
+    with cloud_db.connect(database_url or settings.database_url) as conn:
         _report_given_up(conn, month)
         ready = due_orgs(conn, now)[:MAX_PER_PASS]
     if not ready:
         return 0
-    if not (settings.resend_api_key and settings.mail_from):
+    if settings is None or not (settings.resend_api_key and settings.mail_from):
         if schedule.once_per_hour("digest-not-configured"):
             log.warning("monthly e-mails are not sent: e-mail sending is not configured, set both RESEND_API_KEY and NYRA_MAIL_FROM")
         return 0
+    if not settings.public_url and schedule.once_per_hour("digest-no-public-url"):
+        log.warning("NYRA_PUBLIC_URL is not set: the monthly e-mails leave without links to the application")
     sent = 0
     for org in ready:
         try:

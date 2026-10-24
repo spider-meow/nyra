@@ -94,6 +94,18 @@ CLEAN_SCAN_LIMIT = 20_000
 ALIVE_FILE = Path(os.environ.get("NYRA_WORKER_ALIVE_FILE") or Path(tempfile.gettempdir()) / "nyra-worker-alive")
 
 
+def mail_settings_or_none(config_path: Optional[Path]) -> Any:
+    """The e-mail settings of the worker. A wrong NYRA_MAIL_FROM stops the web process, but must not stop the worker (no more
+    jobs, restart loop): it is logged as an error and the worker starts without e-mail (the monthly mails then warn once an hour)."""
+    from .api import settings_from_env
+
+    try:
+        return settings_from_env(config_path)
+    except RuntimeError as exc:
+        log.error("NYRA_MAIL_FROM invalide : les e-mails mensuels sont désactivés jusqu'à sa correction (%s)", str(exc)[:200])
+        return None
+
+
 def touch_alive() -> None:
     try:
         ALIVE_FILE.touch()
@@ -457,7 +469,7 @@ class Worker:
     def __init__(self, *, database_url: str, storage_client_factory: Callable[[], Any],
                  config_path: Optional[Path] = None, poll_seconds: float = 2.0, mail_settings: Any = None):
         self.database_url = database_url
-        self.mail_settings = mail_settings  # the sender's settings (`CloudSettings`): without them no monthly e-mail is looked for
+        self.mail_settings = mail_settings  # the sender's settings (`CloudSettings`); None: no monthly e-mail can leave
         self.storage_client_factory = storage_client_factory
         self.config_path = config_path
         self.poll_seconds = poll_seconds
@@ -508,10 +520,10 @@ class Worker:
 
     def _send_digests(self) -> None:
         """Send the monthly e-mails that are due, right after the reads are queued (same switch, same protections)."""
-        if self.mail_settings is None or not cloud_schedule.scheduler_enabled():
+        if not cloud_schedule.scheduler_enabled():
             return
         try:
-            sent = cloud_digest.run(self.mail_settings, datetime.now(timezone.utc))
+            sent = cloud_digest.run(self.mail_settings, datetime.now(timezone.utc), database_url=self.database_url)
             if sent:
                 log.info("monthly e-mails sent: %d", sent)
         except psycopg.errors.UndefinedTable:

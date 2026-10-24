@@ -118,8 +118,9 @@ sends each organization's e-mail once a month, to its administrators. *Before de
 `20261025000034_monthly_digests.sql` on Supabase (SQL editor; it creates `monthly_digests`, idempotent, empty at first). The
 reverse order is harmless: the new worker logs one warning an hour (« apply migrations 20261024000033 and 20261025000034 »,
 no trace) and sends nothing. *Variables:* `RESEND_API_KEY` **and** `NYRA_MAIL_FROM` together, plus `NYRA_PUBLIC_URL` for the links
-(the worker reads the same `.env` as the web process; a wrong `NYRA_MAIL_FROM` stops the worker at start, as it stops the web
-process). Without them nothing is sent, nothing is marked sent, and the worker logs one warning an hour; set them and restart
+(the worker reads the same `.env` as the web process; a wrong `NYRA_MAIL_FROM` stops the web process at start, but NOT the
+worker: it logs an error « NYRA_MAIL_FROM invalide : les e-mails mensuels sont désactivés » and starts without e-mail, so the jobs
+keep running; fix the variable and restart the worker. Without `NYRA_PUBLIC_URL` the e-mails leave without links, with one warning an hour). Without them nothing is sent, nothing is marked sent, and the worker logs one warning an hour; set them and restart
 the worker and the month's e-mail leaves at the next pass. `NYRA_SCHEDULER=0` also stops it. A refused or failed send is tried
 again after 30 minutes, 5 times a month at most, then abandoned with one warning a day (`abandoned after 5 attempts`).
 To check the sending by hand, from a Python prompt on the server (the key typed at the prompt, never in a command line):

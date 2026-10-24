@@ -30,6 +30,7 @@ MAX_RECIPIENTS = 10
 MAX_SUBJECT = 200
 MAX_BODY_BYTES = 200_000
 MAX_ERROR_CHARS = 200
+MAX_CODE_CHARS = 64
 MAX_ANSWER_BYTES = 64_000
 DEADLINE_SECONDS = 30.0       # the whole of `deliver`, tries and waits included
 
@@ -42,7 +43,12 @@ class MailNotConfigured(RuntimeError):
 
 
 class MailError(RuntimeError):
-    """The mail did not leave (network, Resend's refusal). The message is safe to show: no key, cut short."""
+    """The mail did not leave (network, Resend's refusal). The message is safe to show: no key, cut short.
+    `code` is Resend's error name (`invalid_idempotent_request`...), cut short, or "" when there is none (network)."""
+
+    def __init__(self, message: str, code: str = ""):
+        super().__init__(message)
+        self.code = code
 
 
 def parse_sender(value: str) -> str:
@@ -166,7 +172,7 @@ def deliver(api_key: str, sender: str, to: Sequence[str], subject: str, html: st
                     return str(_json(body).get("id", ""))
                 why = f"Resend answered {status}"
                 if not _retryable(status, body):
-                    raise MailError(f"{why}: {_refusal(body, api_key)}")
+                    raise MailError(f"{why}: {_refusal(body, api_key)}", code=str(_json(body).get("name") or "")[:MAX_CODE_CHARS])
             log.warning("mail to %s not sent (try %d of %d): %s", shown, attempt + 1, ATTEMPTS, why)
             wait = RETRY_WAIT_SECONDS * (attempt + 1)
             if attempt + 1 == ATTEMPTS or time.monotonic() + wait >= deadline:
