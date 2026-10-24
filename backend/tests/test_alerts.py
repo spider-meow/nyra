@@ -51,6 +51,8 @@ def test_each_worker_over_its_limit_raises_its_own_alert():
     heavy = 2400 * 1024**2
     found = alerts.evaluate([worker(memory=heavy, instance="a"), worker(memory=heavy, instance="b"), worker()], 0.0, 0.1, LIMITS)
     assert [a["code"] for a in found] == ["worker_memory", "worker_memory"]
+    assert [a["instance"] for a in found] == ["a", "b"]  # the page keys its list on code + instance
+    assert found[0]["message"] == found[1]["message"] and "a" not in found[0]["message"].split()  # the host name is not in the sentence
 
 
 def test_a_queued_job_waiting_over_the_limit_with_nothing_running_is_stalled():
@@ -80,7 +82,7 @@ def test_a_malformed_reading_is_skipped_not_fatal():
 def test_every_alert_has_a_code_a_severity_and_a_french_message():
     found = alerts.evaluate([], 900.0, 0.95, LIMITS)
     assert [a["code"] for a in found] == ["worker_absent", "queue_stalled", "disk_full"]
-    assert all(set(a) == {"code", "severity", "message"} and a["severity"] in {"warning", "critical"} and a["message"] for a in found)
+    assert all(set(a) <= {"code", "severity", "message", "instance"} and {"code", "severity", "message"} <= set(a) and a["severity"] in {"warning", "critical"} and a["message"] for a in found)
     assert "95 %" in found[2]["message"] and "15 min" in found[1]["message"]
 
 

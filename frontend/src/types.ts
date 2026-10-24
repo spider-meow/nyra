@@ -533,7 +533,7 @@ export type StaffUsage = {
 export type StaffAdmin = { user_id: string; email: string; you: boolean };
 
 /** One alarm of the supervision thresholds (`cloud/alerts.py`), in French. */
-export type SupervisionAlert = { code: string; severity: "warning" | "critical"; message: string };
+export type SupervisionAlert = { code: string; severity: "warning" | "critical"; message: string; /** The container it is about, when there are several. */ instance?: string };
 /** `GET /staff/server`: the containers' readings and the alarms on right now. */
 export type ServerUsage = { services: ServiceReading[]; alerts: SupervisionAlert[] };
 

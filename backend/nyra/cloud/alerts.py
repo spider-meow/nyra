@@ -57,8 +57,15 @@ def thresholds() -> Thresholds:
                       queue_seconds=_setting("queue_minutes") * 60, silent_seconds=_setting("silent_seconds"))
 
 
-def _alert(code: str, severity: str, message: str) -> dict:
-    return {"code": code, "severity": severity, "message": message}
+def _alert(code: str, severity: str, message: str, instance: Optional[str] = None) -> dict:
+    """`instance` (the container's host name) tells which of several services it is about; the sentence never contains it,
+    so the public probe can drop the field and keep the message (see `public`)."""
+    return {"code": code, "severity": severity, "message": message} | ({"instance": instance} if instance else {})
+
+
+def public(found: list[dict]) -> list[dict]:
+    """The alerts without the host name, for the unauthenticated probe."""
+    return [{key: value for key, value in alert.items() if key != "instance"} for alert in found]
 
 
 def _memory_ratio(reading: dict) -> Optional[float]:
@@ -78,7 +85,7 @@ def evaluate(services: list[dict], stalled_seconds: float, disk: Optional[float]
     for service in alive:
         ratio = _memory_ratio(service.get("reading") or {})
         if ratio is not None and ratio >= limits.worker_memory:
-            found.append(_alert("worker_memory", "warning", f"La mémoire d'un worker est à {ratio * 100:.0f} % de sa limite : il risque d'être arrêté."))
+            found.append(_alert("worker_memory", "warning", f"La mémoire d'un worker est à {ratio * 100:.0f} % de sa limite : il risque d'être arrêté.", service.get("instance")))
     if stalled_seconds > limits.queue_seconds:
         found.append(_alert("queue_stalled", "critical", f"Une tâche attend depuis {stalled_seconds / 60:.0f} min alors qu'aucune ne tourne."))
     if disk is not None and disk >= limits.disk:

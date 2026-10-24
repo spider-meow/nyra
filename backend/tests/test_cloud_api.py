@@ -133,6 +133,7 @@ def test_a_worker_near_its_memory_limit_is_a_warning_the_monitor_does_not_page_f
     answer = client.get("/api/workerz")
     assert answer.status_code == 200 and answer.json()["problems"] == []
     assert [(a["code"], a["severity"]) for a in answer.json()["alerts"]] == [("worker_memory", "warning")]
+    assert "instance" not in answer.json()["alerts"][0] and "w1" not in answer.text  # no host name on the public probe
 
 
 def test_workerz_reports_both_problems_and_survives_an_unreadable_disk(client, cloud_org, cloud_brand, cloud_database_url,
@@ -161,6 +162,11 @@ def test_the_serveur_page_gets_the_alerts_and_only_platform_admins_may_read_them
     assert client.get("/api/staff/server", headers=_headers(client_id)).status_code == 403
     body = client.get("/api/staff/server", headers=_headers(admin_id)).json()
     assert [a["code"] for a in body["alerts"]] == ["worker_absent", "disk_full"] and body["services"][0]["role"] == "web"
+    with cloud_db.connect(cloud_database_url) as conn:
+        _worker_publishes(conn, "w1", memory=2400 << 20)
+        _worker_publishes(conn, "w2", memory=2400 << 20)
+    memory = [a for a in client.get("/api/staff/server", headers=_headers(admin_id)).json()["alerts"] if a["code"] == "worker_memory"]
+    assert sorted(a["instance"] for a in memory) == ["w1", "w2"]
 
 
 def test_there_is_no_public_signup(client):

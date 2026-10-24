@@ -65,7 +65,7 @@ function Alerts(props: { alerts: ServerUsage["alerts"] }) {
         {alerts.length ? plural(alerts.length, "alerte", "alertes") : "Tout va bien"}
       </p>
       {alerts.length ? (
-        <ul className="mt-1 list-disc pl-5 text-sm text-ink">{alerts.map((alert) => <li key={alert.code + alert.message}>{alert.message}</li>)}</ul>
+        <ul className="mt-1 list-disc pl-5 text-sm text-ink">{alerts.map((alert) => <li key={`${alert.code}/${alert.instance ?? ""}`}>{alert.message}{alert.instance ? ` (${alert.instance})` : ""}</li>)}</ul>
       ) : (
         <p className="text-sm text-ink-soft">Un worker publie, la file avance, le disque et la mémoire sont sous leurs seuils.</p>
       )}
