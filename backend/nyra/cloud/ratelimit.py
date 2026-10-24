@@ -96,8 +96,10 @@ class RateLimiter:
 def enforce(limiter: RateLimiter, identify: Callable[[str], Optional[str]]):
     """An app-wide FastAPI dependency. `identify(token)` returns who a bearer token belongs to, or None when it is not valid.
 
-    App-level dependencies run before the route's own, so a 429 is raised before the route (or its body, or the
-    database) is touched: a refused request has done nothing, and the interface may safely replay it, POST included."""
+    App-level dependencies run before the route function, so a 429 is raised before the route code and the database are
+    touched: a refused request has done nothing, and the interface may replay it, POST included. Not before the body,
+    though: FastAPI reads a multipart body (`request.form()`, fastapi/routing.py) before it solves the dependencies, so a
+    refused file upload has already been received; the interface does not replay those (frontend/src/lib/api.ts)."""
 
     def dependency(request: Request) -> None:
         path = request.url.path

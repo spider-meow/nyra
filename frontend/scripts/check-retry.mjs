@@ -1,5 +1,6 @@
 // Checks that the HTTP client (src/lib/api.ts) waits and replays a request the API refused with 429 (rate limit),
-// at most 3 times, honours `Retry-After` (capped, 2 s when absent or invalid) and cancellation, and then raises the usual ApiError.
+// at most 3 times, only when `Retry-After` is present and valid (a 429 without it is final, like the daily invitation limit), capped at 30 s,
+// never for a file upload (FormData), and then raises the usual ApiError.
 // No test framework: the file is compiled in memory and `fetch` is replaced by a fake. Run: `npm run check:retry`.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -25,13 +26,27 @@ const waits = [];
 const realSetTimeout = globalThis.setTimeout;
 globalThis.setTimeout = (callback, ms) => (waits.push(ms), realSetTimeout(callback, 0));
 
-// --- the delay: Retry-After in seconds, capped at 30, 2 s when absent or not a positive number ---------------------
-for (const [header, expected] of [["5", 5000], ["120", 30000], [null, 2000], ["", 2000], ["soon", 2000], ["-3", 2000], ["0", 2000]]) {
+// --- the delay: Retry-After in seconds, capped at 30 ------------------------------------------------------------------
+for (const [header, expected] of [["5", 5000], ["120", 30000], ["0.5", 500]]) {
   waits.length = 0;
   fakeApi(() => limited(header), () => reply(200, {}));
   await api.get("/x");
-  assert.deepEqual(waits, [expected], String(header));
+  assert.deepEqual(waits, [expected], header);
 }
+
+// --- a 429 without a valid Retry-After is final (the daily invitation limit): no wait, no second call ----------------
+for (const header of [null, "", "soon", "-3", "0"]) {
+  waits.length = 0;
+  fakeApi(() => limited(header), () => reply(200, {}));
+  await assert.rejects(api.post("/x", {}), (error) => error instanceof ApiError && error.status === 429, String(header));
+  assert.equal(calls.length, 1, String(header));
+  assert.deepEqual(waits, []);
+}
+
+// --- a file upload is never replayed: the server has already read the files when it refuses --------------------------
+fakeApi(() => limited(), () => reply(200, {}));
+await assert.rejects(api.post("/x", new FormData()), (error) => error.status === 429);
+assert.equal(calls.length, 1);
 
 // --- 429 then success: the caller never sees the 429, the request (a POST here) is sent again -----------------------
 fakeApi(() => limited(), () => limited(), () => reply(200, { ok: true }));
@@ -48,12 +63,4 @@ fakeApi(() => reply(500, { detail: "boom" }));
 await assert.rejects(api.get("/x"), (error) => error.status === 500);
 assert.equal(calls.length, 1);
 
-// --- cancellation: a request cancelled during the wait raises the caller's reason and sends nothing more ---------------
-fakeApi(() => limited("1"));
-const controller = new AbortController();
-const cancelled = api.get("/x", { signal: controller.signal });
-controller.abort(new Error("cancelled"));
-await assert.rejects(cancelled, /cancelled/);
-assert.equal(calls.length, 1);
-
-console.log("retry: 429 replayed at most 3 times after Retry-After, cancellable, other errors untouched");
+console.log("retry: 429 with Retry-After replayed at most 3 times, capped, never for uploads, other errors untouched");

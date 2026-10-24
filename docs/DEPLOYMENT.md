@@ -364,7 +364,10 @@ multiplied by their number, and a restart resets them (at most 10 000 buckets ar
 The identity is the verified JWT, **never the IP address**, for the reason below. The interface's HTTP client
 (`frontend/src/lib/api.ts`) answers a `429` by waiting `Retry-After` seconds (at most 30, 2 when absent) and sending the
 same request again, up to 3 times, before showing the error: a burst such as excluding 200 images at once is spread
-over time instead of failing. A 429 is raised before the route runs, so replaying a `POST` cannot do it twice.
+over time instead of failing. Only a 429 that carries `Retry-After` is replayed (the limiter always sets it; the daily
+invitation limit, also a 429, does not and is final). A 429 is raised before the route code runs, so replaying a `POST`
+cannot do it twice; but FastAPI reads a multipart body before it solves the dependencies, so a refused file upload has
+already been received, and the interface does not replay uploads (`FormData`): they fail with the sentence, to be sent again.
 
 **Why the rate limit is not per IP.** Evaluated and not built:
 - The unauthenticated routes are static or cheap probes; the login itself never reaches Nyra.

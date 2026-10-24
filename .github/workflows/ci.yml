@@ -61,6 +61,7 @@ jobs:
       - run: npm run size
       - run: npm run check:scrub
       - run: npm run check:paths
+      - run: npm run check:retry
       - run: npx playwright install --with-deps chromium
       - run: npm run check:remember
 

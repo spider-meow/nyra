@@ -98,6 +98,7 @@ cd frontend && npm run size        # budget de taille du premier chargement
 cd frontend && npm run check:scrub # le masquage des données client dans Sentry
 cd frontend && npm run check:rows  # le regroupement par photo de « À traiter »
 cd frontend && npm run check:paths # les adresses de l'interface et la redirection des anciennes
+cd frontend && npm run check:retry # le rejeu des requêtes refusées par la limite de débit (429)
 pytest -q                          # sans warning non justifié
 ```
 
