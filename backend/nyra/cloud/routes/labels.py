@@ -62,6 +62,7 @@ def add_label(body: LabelBody, scope: BrandScope = Depends(brand_admin_dep), ctx
     name = _clean_name(body.name)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         label = cloud_labels.add_content_label(conn, scope.org_id, scope.brand_id, name)
+        scope.audit(conn, "label.create", "label", label["id"])
     return {"id": str(label["id"]), "kind": "content", "name": label["name"], "examples": 0}
 
 
@@ -70,6 +71,7 @@ def delete_label(label_id: uuid.UUID, scope: BrandScope = Depends(brand_admin_de
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if not cloud_labels.delete_content_label(conn, scope.brand_id, label_id):
             raise HTTPException(status_code=404, detail="Étiquette introuvable (les quatre types ne se suppriment pas).")
+        scope.audit(conn, "label.delete", "label", label_id)
     return {"ok": True}
 
 
@@ -91,6 +93,8 @@ def decide(label_id: uuid.UUID, body: DecisionBody, scope: BrandScope = Depends(
             raise HTTPException(status_code=400, detail="Un type d'image ne s'applique qu'aux images des sites.")
         written = cloud_labels.set_decision(conn, label, scope.brand_id, body.decision, site_image_ids=body.site_image_ids,
                                             reference_ids=body.reference_ids, user_id=scope.member.user_id)
+        scope.audit(conn, "label.decide", "label", label_id, decision=body.decision, images=len(body.site_image_ids),
+                    references=len(body.reference_ids), written=written)
     return {"written": written}
 
 

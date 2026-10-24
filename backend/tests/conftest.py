@@ -143,6 +143,20 @@ class _FakeBucketProxy:
             self.store.pop((self.bucket, p), None)
         return []
 
+    def list(self, path=None, options=None):
+        """The children of a folder like Storage lists them: files have an id, folders do not."""
+        options = options or {}
+        prefix, children = f"{path}/", {}
+        for (bucket, name), data in self.store.items():
+            if bucket == self.bucket and name.startswith(prefix):
+                head, _, rest = name[len(prefix):].partition("/")
+                folder, size = children.get(head, (False, 0))
+                children[head] = (folder or bool(rest), len(data))
+        entries = [{"name": name, "id": None if is_folder else "object", "metadata": None if is_folder else {"size": size}}
+                   for name, (is_folder, size) in sorted(children.items()) if options.get("search", "") in name]
+        start = options.get("offset", 0)
+        return entries[start:start + options.get("limit", 100)]
+
     def create_signed_url(self, path, expires_in, options=None):
         return {"signedUrl": f"https://fake-storage.test/{self.bucket}/{path}?expires_in={expires_in}"}
 
@@ -154,9 +168,17 @@ class _FakeBucketProxy:
 
 
 class FakeSupabaseClient:
+    """Storage in memory, and the Auth admin API reduced to `delete_user` (the ids asked for are kept)."""
+
     def __init__(self):
         self.store: dict = {}
+        self.deleted_users: list[str] = []
         self.storage = self
+        self.auth = self
+        self.admin = self
+
+    def delete_user(self, user_id: str) -> None:
+        self.deleted_users.append(user_id)
 
     def from_(self, bucket: str) -> _FakeBucketProxy:
         return _FakeBucketProxy(self.store, bucket)
@@ -165,3 +187,28 @@ class FakeSupabaseClient:
 @pytest.fixture()
 def fake_storage_client() -> FakeSupabaseClient:
     return FakeSupabaseClient()
+
+
+SECRET = "test-secret-at-least-32-bytes-long-enough!!"
+
+
+@pytest.fixture()
+def client(cloud_database_url, fake_storage_client):
+    """The cloud app on the test database and the fake Storage, called with a TestClient (sign a user with SECRET)."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from nyra.cloud.api import CloudSettings, create_app
+
+    settings = CloudSettings(
+        database_url=cloud_database_url, supabase_url="https://x.supabase.co",
+        service_role_key="key", jwt_secret=SECRET,
+    )
+    settings.storage_client = lambda: fake_storage_client  # no network
+    return TestClient(create_app(settings))
+
+
+@pytest.fixture()
+def labels_on(monkeypatch):
+    """Labels are off unless NYRA_LABELS=1; this must come before `client` in a test's arguments (the app reads it when built)."""
+    monkeypatch.setenv("NYRA_LABELS", "1")

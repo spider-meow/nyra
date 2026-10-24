@@ -60,11 +60,12 @@ export function SitesCard(props: {
   );
 }
 
-type SiteState = "reading" | "queued" | "error" | "never" | "ok";
+type SiteState = "reading" | "queued" | "waiting" | "error" | "never" | "ok";
 
-const STATE_PILL: Record<SiteState, { label: string; tone: string }> = {
+const STATE_PILL: Record<SiteState, { label: string; tone: string; note?: string }> = {
   reading: { label: "En cours", tone: "bg-soon-soft text-soon" },
   queued: { label: "En attente", tone: "bg-unknown-soft text-unknown" },
+  waiting: { label: "En attente", tone: "bg-unknown-soft text-unknown", note: "Démarre dès qu'une place se libère sur le serveur." },
   error: { label: "Dernière lecture en échec", tone: "bg-expired-soft text-expired" },
   never: { label: "Jamais lue", tone: "bg-unknown-soft text-unknown" },
   ok: { label: "Lue", tone: "bg-ok-soft text-ok" },
@@ -85,7 +86,7 @@ function useSiteStates(): (site: Site) => SiteState {
       const ids = (item.params.site_ids as string[] | undefined) ?? [];
       return ids.length === 0 || ids.includes(site.id);
     });
-    if (job) return job.status === "running" ? "reading" : "queued";
+    if (job) return job.status === "running" ? "reading" : job.waiting_for_capacity ? "waiting" : "queued";
     if (newest.get(site.id)?.status === "error") return "error";
     return site.last_crawled_at ? "ok" : "never";
   };
@@ -187,6 +188,7 @@ function SiteRow(props: { site: Site; state: SiteState; selectable: boolean; sel
         <p className="truncate text-xs text-muted">
           <a href={site.url} target="_blank" rel="noreferrer noopener" className="hover:underline">{site.url}</a>
         </p>
+        {STATE_PILL[props.state].note ? <p className="text-xs text-muted">{STATE_PILL[props.state].note}</p> : null}
       </div>
       {site.last_crawled_at ? (
         <p className="hidden text-right text-xs text-muted sm:block">

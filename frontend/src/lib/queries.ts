@@ -112,7 +112,7 @@ export function useJobs() {
   return useQuery({
     queryKey: ["jobs", brand.id],
     queryFn: () => api.get<CurrentJobs>(apiPath("/jobs/current")),
-    refetchInterval: (query) => ((query.state.data?.active.length ?? 0) > 0 ? 2000 : 20_000),
+    refetchInterval: (query) => ((query.state.data?.active.length ?? 0) + (query.state.data?.organization?.length ?? 0) > 0 ? 2000 : 20_000),
   });
 }
 
@@ -301,7 +301,7 @@ export function useStartJob() {
       const path = input.kind === "report" ? "/reports" : `/jobs/${input.kind}`;
       return api.post<{ job: Job }>(apiPath(path), input.body);
     },
-    onSuccess: () => invalidate("jobs"),
+    onSettled: () => invalidate("jobs"),
   });
 }
 
@@ -321,7 +321,7 @@ export function useLocate() {
   const invalidate = useInvalidate();
   return useMutation({
     mutationFn: (filename: string) => api.post<{ job: Job }>(apiPath(`/library/${encodeURIComponent(filename)}/locate`)),
-    onSuccess: () => invalidate("jobs"),
+    onSettled: () => invalidate("jobs"),
   });
 }
 

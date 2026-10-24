@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { OrgHoldNotice, holdProps } from "../../components/OrgHold";
 import { InfoTip } from "../../components/SettingsBlock";
 import { Button, DecisionBadge, EmptyState, Skeleton, Thumb } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
@@ -44,8 +45,9 @@ export function Visual(props: { referenceId: string; onBack: () => void }) {
               Où il est
               <InfoTip>Pages qui le montrent encore, sur celles où il a été vu, par version du site puis par rubrique. Un clic filtre la liste. Les chiffres viennent de la dernière lecture complète des sites.</InfoTip>
             </h2>
-            {admin ? <Button size="sm" variant="primary" loading={read.busy} onClick={read.read}>Relire les sites</Button> : null}
+            {admin ? <Button size="sm" variant="primary" loading={read.busy} disabled={Boolean(read.hold)} {...holdProps(read.hold)} onClick={read.read}>Relire les sites</Button> : null}
           </div>
+          {admin && read.hold ? <div className="mb-3"><OrgHoldNotice hold={read.hold} /></div> : null}
           <Versions versions={presence.data.versions} narrowing={narrowing} onNarrow={narrow} />
           <h2 className="mt-8 mb-3 text-base font-semibold">Les pages</h2>
           <Pages referenceId={props.referenceId} data={presence.data} narrowing={narrowing} onNarrow={narrow} onOffset={setOffset} />

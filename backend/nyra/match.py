@@ -408,6 +408,21 @@ def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[st
     )
 
 
+def describe_signature(sig: Optional[str]) -> str:
+    """A stored `signature` in words, for the reports: the thresholds and the model a pass was run with."""
+    fields = (sig or "").split("|")
+    if len(fields) < 7:  # no pass finished, or a signature this function does not know: say so, never print it raw
+        return "inconnus (aucune comparaison terminée)"
+    phash, dhash, high, medium, floor, model, check = fields[:7]
+    clip = f"CLIP {model}, seuils {high} / {medium} / {floor}" if model != "hash" else "sans CLIP"
+    if check.startswith("verified"):
+        inliers, review, confirm = check.removeprefix("verified").split("/")
+        keypoints = f"points clés : {inliers} correspondances minimum, couvertures {float(review):.0%} / {float(confirm):.0%}"
+    else:
+        keypoints = "sans contrôle des points clés"
+    return f"hachage : écart de {phash} / {dhash} bits au plus sur 64 ; {clip} ; {keypoints}"
+
+
 def excluded_site_ids(sites: Sequence[dict], exclusions: Sequence[tuple[str, str]], config: MatchConfig) -> set:
     """Site images within the usual Hamming threshold of an excluded hash.
 

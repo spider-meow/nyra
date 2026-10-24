@@ -13,9 +13,12 @@ from collections import defaultdict
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from .. import alerts as cloud_alerts
+from .. import audit as cloud_audit
 from .. import db as cloud_db
 from .. import hostmetrics
 from .. import insights as cloud_insights
+from .. import usage as cloud_usage
 from .common import Ctx, get_ctx, iso, staff_dep
 from .members import find_or_invite_user
 
@@ -85,6 +88,7 @@ def create_organization(body: OrganizationBody, claims=Depends(staff_dep), ctx: 
     with cloud_db.connect(ctx.settings.database_url) as conn:
         org_id = cloud_db.create_organization(conn, name=name, slug=slug, created_by=claims.user_id)
         cloud_db.add_membership(conn, user_id=user_id, org_id=org_id, role="admin")
+        cloud_audit.record(conn, org_id, claims.user_id, "organization.create", "organization", org_id, invited=invited)
     return {"id": str(org_id), "slug": slug, "invited": invited}
 
 
@@ -94,7 +98,7 @@ def list_users(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
         users, memberships, staff = cloud_db.users_overview(conn)
     by_user = defaultdict(list)
     for m in memberships:
-        by_user[m["user_id"]].append({"org_id": str(m["org_id"]), "org_name": m["org_name"], "role": m["role"]})
+        by_user[m["user_id"]].append({"org_id": str(m["org_id"]), "org_name": m["org_name"], "role": m["role"], "since": iso(m["since"])})
     return {"users": [
         {"user_id": str(u["id"]), "email": u["email"] or "", "last_sign_in_at": iso(u["last_sign_in_at"]),
          "staff": u["id"] in staff, "memberships": by_user[u["id"]]}
@@ -116,6 +120,7 @@ def add_admin(body: EmailBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get
     user_id, invited = _find_or_invite(ctx, _checked_email(body.email))
     with cloud_db.connect(ctx.settings.database_url) as conn:
         cloud_insights.set_staff(conn, user_id, True)
+        cloud_audit.record(conn, None, claims.user_id, "staff.add", "user", user_id)  # no organization: org_id is null
     return {"invited": invited}
 
 
@@ -127,13 +132,45 @@ def remove_admin(user_id: uuid.UUID, claims=Depends(staff_dep), ctx: Ctx = Depen
         if not cloud_insights.is_staff(conn, user_id):
             raise HTTPException(status_code=404, detail="Cette personne n'est pas platform admin.")
         cloud_insights.set_staff(conn, user_id, False)
+        cloud_audit.record(conn, None, claims.user_id, "staff.remove", "user", user_id)
     return {"removed": True}
 
 
 @router.get("/api/staff/server")
 def server_usage(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    """What each container uses, as `docker stats` would show: the web process live, the workers as last published."""
+    """What each container uses, as `docker stats` would show: the web process live, the workers as last published,
+    and the `alerts` on right now (`cloud/alerts.py`)."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         workers = hostmetrics.published(conn)
+        state = cloud_alerts.current(conn, workers)
     web = {"instance": socket.gethostname(), "role": "web", "reading": _WEB.read(), "age_seconds": 0.0}
-    return {"services": [web, *workers]}
+    return {"services": [web, *workers], "alerts": state["alerts"]}
+
+
+class QuotasBody(BaseModel):
+    limits: dict[str, float | None] = Field(default_factory=dict, max_length=20)
+
+
+@router.get("/api/staff/usage")
+def usage_overview(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Every organization's usage of the month against its limits (the defaults of config.yaml unless overridden)."""
+    base = ctx.settings.base_config().quota
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        organizations = cloud_usage.overview(conn, base, limit=cloud_usage.ORGS_LIMIT + 1)
+    return {"month": cloud_usage.month_start().isoformat(), "defaults": cloud_usage.defaults(base),
+            "organizations": organizations[:cloud_usage.ORGS_LIMIT], "truncated": len(organizations) > cloud_usage.ORGS_LIMIT}
+
+
+@router.put("/api/staff/organizations/{org_id}/quotas")
+def set_quotas(org_id: uuid.UUID, body: QuotasBody, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Replace the limits of one organization: a value sets it, an empty one goes back to the default. Platform admins only."""
+    try:
+        with cloud_db.connect(ctx.settings.database_url) as conn:
+            kept = cloud_usage.set_overrides(conn, org_id, body.limits, claims.user_id)
+            if kept is not None:
+                cloud_audit.record(conn, org_id, claims.user_id, "quota.set", "organization", org_id, limits=len(kept))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if kept is None:
+        raise HTTPException(status_code=404, detail="Organisation introuvable.")
+    return {"overrides": kept}

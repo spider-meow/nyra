@@ -7,11 +7,24 @@ worker that dies mid-job is noticed through its heartbeat.
 
 Rules:
 - every job belongs to one brand of an organization;
-- one running job per brand (unique partial index), several brands (of
-  the same organization or not) in parallel across workers;
-- a crawl, a match or a report is refused while the same kind is already
-  queued or running for the brand; an `index` request joins the one
-  already queued instead;
+- one running job per ORGANIZATION (unique partial index, and `claim`
+  skips an organization that has one): the brands of an organization take
+  turns, organizations run in parallel across workers;
+- two global caps, all organizations together, on what runs at once: reading sites (`crawl`, `check`, `locate`:
+  `NYRA_MAX_HEAVY_JOBS`) and analysing images (`index`, `match`, which load the CLIP model: `NYRA_MAX_MODEL_JOBS`),
+  1 each until the peak memory is measured on the server. A job only takes a place of its own kind, so a long read
+  never holds back another customer's analysis; `report` has no cap. The others stay `queued` and start as soon as
+  a place frees up. Only a running job whose heartbeat is recent holds a place: the row a dead worker leaves behind
+  frees it. Among the jobs that may start, the organization whose last job started least recently goes first, then
+  first come first served, so an organization with twenty queued jobs does not push the others back;
+- a job that reads sites (`crawl`, `check`) does not start while a running job reads the same domain (host without
+  `www.`), whatever the organization: two customers must not double the load on a third party's site;
+- a job started by hand (`manual`) is refused (`JobConflict`, which carries
+  the job in the way) while any job but an `index` is queued or running in
+  the organization; what follows an action (indexing after an upload, a
+  comparison after an exclusion, `behind_running`) is queued behind
+  instead, and an `index` request joins the one already queued. Without
+  `manual`, the only refusal is the same kind already waiting in the brand;
 - cancelling a queued job cancels it at once; a running one gets
   `cancel_requested`, which the worker checks between steps.
 """
@@ -19,12 +32,24 @@ Rules:
 from __future__ import annotations
 
 import json
+import logging
+import os
 import uuid
+from functools import lru_cache
 from typing import Any, Optional
 
 import psycopg
 
+log = logging.getLogger("nyra.cloud.jobs")
+
 KINDS = {"crawl", "match", "index", "report", "locate", "check"}
+# Each group has its own global cap (an environment variable), 1 until the worker's peak memory is measured; `report`
+# loads neither Chromium nor the CLIP model and has none. `locate` is counted with the reads: it holds the library's
+# vectors and every stored site image for a long time.
+SITE_KINDS = ("crawl", "check", "locate")
+MODEL_KINDS = ("index", "match")
+LIGHT_KINDS = ("report",)
+DEFAULT_CAP = 1
 ACTIVE = ("queued", "running")
 STALE_AFTER_SECONDS = 180
 # A job whose worker died goes back to the queue this many times before it is marked failed.
@@ -32,7 +57,83 @@ MAX_RETRIES = 2
 
 
 class JobConflict(Exception):
-    """A job of the same kind is already waiting or running."""
+    """A job is in the way; `job` is that job, with `brand_name` and `author` (see `HOLDER`)."""
+
+    def __init__(self, job: dict):
+        super().__init__(job["kind"])
+        self.job = job
+
+
+# A job with the name of its brand and the e-mail of whoever started it: what a person who is refused is told.
+HOLDER = """SELECT j.*, b.name AS brand_name, u.email AS author,
+                   (EXTRACT(epoch FROM now() - COALESCE(j.started_at, j.created_at)) / 60)::int AS since_minutes
+            FROM jobs j JOIN brands b ON b.id = j.brand_id LEFT JOIN auth.users u ON u.id = j.created_by"""
+
+
+@lru_cache(maxsize=16)
+def _cap_from(name: str, raw: str) -> int:
+    """The cap written in the environment variable `name`; the default when it is empty, and with a warning when it is
+    not an integer >= 1. Cached by value: the worker polls every few seconds and a bad value is told once, not at each poll."""
+    if not raw.strip():
+        return DEFAULT_CAP
+    try:
+        cap = int(raw)
+    except ValueError:
+        cap = 0
+    if cap < 1:
+        log.warning("%s=%r is not an integer >= 1: using %d", name, raw, DEFAULT_CAP)
+        return DEFAULT_CAP
+    return cap
+
+
+def _cap(name: str) -> int:
+    return _cap_from(name, os.environ.get(name, ""))
+
+
+# A running job holds a place only while its worker reports: the row of a dead worker stays `running` until `reap_stale`.
+_FRESH = f"r.heartbeat_at > now() - interval '{STALE_AFTER_SECONDS} seconds'"
+_ORG_IDLE = "NOT EXISTS (SELECT 1 FROM jobs r WHERE r.org_id = j.org_id AND r.status = 'running')"
+# Whether queued job `j` has a place of its own kind (placeholders, see `_room_params`).
+_ROOM = f"""(j.kind = ANY(%s)
+    OR (j.kind = ANY(%s) AND (SELECT count(*) FROM jobs r WHERE r.status = 'running' AND {_FRESH} AND r.kind = ANY(%s)) < %s)
+    OR (j.kind = ANY(%s) AND (SELECT count(*) FROM jobs r WHERE r.status = 'running' AND {_FRESH} AND r.kind = ANY(%s)) < %s))"""
+
+
+def _hosts(job: str) -> str:
+    """SQL: the domains (host without `www.`) that the job aliased `job` reads, as a text[]. A `crawl` reads the sites in
+    `params.site_ids`, or all the brand's sites when none is given; a `check` reads the sites that are the keys of
+    `params.pages`; no other kind reads a site. Where the sites cannot be told (none left, params not shaped as expected)
+    the array is empty: the job conflicts with nothing and starts, the worker then fails it with its own message."""
+    ids = (f"CASE WHEN jsonb_typeof({job}.params -> 'site_ids') = 'array' "
+           f"THEN ARRAY(SELECT jsonb_array_elements_text({job}.params -> 'site_ids')) ELSE '{{}}'::text[] END")
+    pages = (f"CASE WHEN jsonb_typeof({job}.params -> 'pages') = 'object' "
+             f"THEN ARRAY(SELECT jsonb_object_keys({job}.params -> 'pages')) ELSE '{{}}'::text[] END")
+    return (f"ARRAY(SELECT substring(lower(s.url) from '^[a-z][a-z0-9+.-]*://(?:[^/@?#]*@)?(?:www\\.)?([^/:?#]+)') FROM sites s "
+            f"WHERE s.brand_id = {job}.brand_id AND (({job}.kind = 'crawl' AND (s.id::text = ANY({ids}) "
+            f"OR (cardinality({ids}) = 0 AND {job}.params ->> 'site' IS NULL))) "
+            f"OR ({job}.kind = 'check' AND s.id::text = ANY({pages}))))")
+
+
+# Everything, once the organization is known to be idle, that lets queued job `j` start: a place of its kind
+# (`_ROOM`) and no job running (with a recent heartbeat) that reads one of its domains.
+_CAN_START = f"""{_ROOM}
+    AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.status = 'running' AND {_FRESH} AND {_hosts('r')} && {_hosts('j')})"""
+
+
+# When the organization last started a job: the start of its most recently CREATED job that did start. Not
+# `max(started_at)`, which reads the organization's whole history for every queued candidate at every poll (200 000
+# jobs over 20 organizations: 103 ms and 14 000 buffers against 0.3 ms and 370, no new index needed): this reads
+# `jobs_org_created_idx` backwards and stops at the first hit. The approximation: a job created earlier but started
+# later (it waited in the queue) is not seen as the last one, so the date can be older than the true last start by up
+# to the time a job waited. It only orders organizations that are all waiting now; "least recently served first"
+# stays true to within that wait, which is enough for fairness.
+_LAST_STARTED = ("(SELECT s.started_at FROM jobs s WHERE s.org_id = j.org_id AND s.started_at IS NOT NULL "
+                 "ORDER BY s.created_at DESC LIMIT 1)")
+
+
+def _room_params() -> tuple:
+    site, model = list(SITE_KINDS), list(MODEL_KINDS)
+    return list(LIGHT_KINDS), site, site, _cap("NYRA_MAX_HEAVY_JOBS"), model, model, _cap("NYRA_MAX_MODEL_JOBS")
 
 
 def _row(row: Optional[dict]) -> Optional[dict]:
@@ -48,16 +149,39 @@ def _row(row: Optional[dict]) -> Optional[dict]:
     return out
 
 
+def _duration(minutes: int, queued: bool) -> str:
+    """How long a job has been there, in words: « à l'instant », « depuis 12 min », « depuis 2 h 05 »."""
+    if minutes < 1 and not queued:
+        return "à l'instant"
+    span = f"{minutes} min" if minutes < 60 else f"{minutes // 60} h {minutes % 60:02d}"
+    return ("en attente depuis " if queued else "depuis ") + span
+
+
+def holder(row: dict, *, admin: bool) -> dict:
+    """The job that holds the organization, as shown to a person. Who started it is told to an administrator only:
+    a member with the `client` role learns that a colleague did, never the colleague's e-mail."""
+    job = _row(row)
+    queued = job["status"] == "queued"
+    by = (job["author"] or "une tâche automatique ou un compte supprimé") if admin else "un membre de l'équipe"
+    since = _duration(job["since_minutes"], queued)
+    text = f"Un passage est {'en attente' if queued else 'déjà en cours'} (marque {job['brand_name']}, lancé par {by}, {since})."
+    keys = ("id", "kind", "status", "brand_id", "brand_name", "message", "progress", "created_at", "started_at")
+    return {key: job[key] for key in keys} | {"by": by, "since": since, "text": text}
+
+
 def enqueue(
     conn: psycopg.Connection, *, org_id: uuid.UUID, brand_id: uuid.UUID, kind: str,
     params: Optional[dict] = None, created_by: Optional[uuid.UUID] = None, behind_running: bool = False,
+    manual: bool = False,
 ) -> dict:
-    """Queue a job. `behind_running`: only a job of the same kind still *waiting* is a conflict, so one can be queued behind
+    """Queue a job. `manual` (a person pressed the button): refused while another job but an `index` is waiting or
+    running in the organization. Otherwise (what follows an action) only a job of the same kind still waiting in the
+    brand is a conflict. `behind_running`: even a running job of the same kind is no conflict, so one can be queued behind
     the one that runs: for a change the running job did not see, which the next one must pick up."""
     if kind not in KINDS:
         raise ValueError(f"unknown job kind {kind}")
-    # Serialize enqueues per brand so two clicks can't both pass the check.
-    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"jobs:{brand_id}",))
+    # Serialize enqueues per organization so two clicks (even on two brands) can't both pass the check.
+    conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"jobs:{org_id}",))
     if kind == "index":
         # Every upload asks for one: they all join the one still waiting, even
         # while another index job is running.
@@ -67,11 +191,15 @@ def enqueue(
         ).fetchone()
         if waiting is not None:
             return _row(waiting)
-    elif conn.execute(
-        "SELECT 1 FROM jobs WHERE brand_id = %s AND kind = %s AND status = ANY(%s) LIMIT 1",
-        (brand_id, kind, ["queued"] if behind_running else list(ACTIVE)),
-    ).fetchone():
-        raise JobConflict(kind)
+    else:
+        in_the_way = conn.execute(
+            HOLDER + """ WHERE j.status = ANY(%s) AND ((%s AND j.org_id = %s AND j.kind <> 'index')
+                                                    OR (NOT %s AND j.brand_id = %s AND j.kind = %s))
+                        ORDER BY (j.status = 'running') DESC, j.created_at LIMIT 1""",
+            (list(ACTIVE) if manual or not behind_running else ["queued"], manual, org_id, manual, brand_id, kind),
+        ).fetchone()
+        if in_the_way is not None:
+            raise JobConflict(in_the_way)
     row = conn.execute(
         """INSERT INTO jobs (org_id, brand_id, kind, params, created_by, message)
            VALUES (%s, %s, %s, %s, %s, 'En attente…') RETURNING *""",
@@ -81,26 +209,32 @@ def enqueue(
 
 
 def claim(conn: psycopg.Connection) -> Optional[dict]:
-    """Take the oldest queued job of a brand that has nothing running."""
-    try:
-        row = conn.execute(
-            """
-            UPDATE jobs SET status = 'running', started_at = now(), heartbeat_at = now(), message = 'Démarrage…'
-            WHERE id = (
-                SELECT j.id FROM jobs j
-                WHERE j.status = 'queued'
-                  AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.brand_id = j.brand_id AND r.status = 'running')
-                ORDER BY (j.kind = 'locate'), j.created_at  -- a long search never waits ahead of another kind
-                FOR UPDATE SKIP LOCKED
-                LIMIT 1
-            )
-            RETURNING *
-            """
-        ).fetchone()
-    except psycopg.errors.UniqueViolation:
-        # Another worker started a job for the same brand in the meantime.
-        conn.rollback()
-        return None
+    """Take the next queued job: of an organization that has nothing running, and only while its kind has a place
+    (`_ROOM`: fewer than `NYRA_MAX_HEAVY_JOBS` reads or `NYRA_MAX_MODEL_JOBS` analyses running anywhere), and
+    never one that reads a domain a running job reads (`_CAN_START`). The
+    organization whose last job started least recently goes first (one that never ran counts as the least recent), then
+    the oldest job; a `locate` after the other kinds."""
+    # The unique index only guards one organization. The global count needs every claim to see the previous one's
+    # `running` row, so claims queue on one transaction-level lock, released with the commit that makes that row
+    # visible; it is held for a few milliseconds. A count and an UPDATE in one statement would not do: under READ
+    # COMMITTED, two concurrent statements both count the same running jobs and both pass.
+    conn.execute("SELECT pg_advisory_xact_lock(hashtext('jobs:claim'))")
+    row = conn.execute(
+        f"""
+        UPDATE jobs SET status = 'running', started_at = now(), heartbeat_at = now(), message = 'Démarrage…'
+        WHERE id = (
+            SELECT j.id FROM jobs j
+            WHERE j.status = 'queued' AND {_ORG_IDLE} AND {_CAN_START}
+            ORDER BY (j.kind = 'locate'),  -- a long search never waits ahead of another kind
+                     {_LAST_STARTED} NULLS FIRST,
+                     j.created_at
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        )
+        RETURNING *
+        """,
+        _room_params(),
+    ).fetchone()
     return _row(row)
 
 
@@ -215,8 +349,9 @@ def get(conn: psycopg.Connection, brand_id: uuid.UUID, job_id: uuid.UUID) -> Opt
     return _row(conn.execute("SELECT * FROM jobs WHERE id = %s AND brand_id = %s", (job_id, brand_id)).fetchone())
 
 
-def current(conn: psycopg.Connection, brand_id: uuid.UUID) -> dict[str, Any]:
-    """Active jobs (running first) and the most recently finished one."""
+def current(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, *, admin: bool) -> dict[str, Any]:
+    """Active jobs of the brand (running first), the most recently finished one, and `organization`: the jobs but
+    `index` waiting or running for the other brands of the organization, which hold the queue (see `holder`)."""
     active = conn.execute(
         """SELECT * FROM jobs WHERE brand_id = %s AND status = ANY(%s)
            ORDER BY (status = 'running') DESC, created_at""",
@@ -227,7 +362,25 @@ def current(conn: psycopg.Connection, brand_id: uuid.UUID) -> dict[str, Any]:
            ORDER BY finished_at DESC NULLS LAST LIMIT 1""",
         (brand_id, list(ACTIVE)),
     ).fetchone()
-    return {"active": [_row(row) for row in active], "last": _row(last)}
+    others = conn.execute(
+        HOLDER + """ WHERE j.org_id = %s AND j.brand_id <> %s AND j.kind <> 'index' AND j.status = ANY(%s)
+                     ORDER BY (j.status = 'running') DESC, j.created_at""",
+        (org_id, brand_id, list(ACTIVE)),
+    ).fetchall()
+    waiting = _waiting_for_capacity(conn, [row["id"] for row in active if row["status"] == "queued"])
+    jobs = [_row(row) | {"waiting_for_capacity": row["id"] in waiting} for row in active]
+    return {"active": jobs, "last": _row(last), "organization": [holder(row, admin=admin) for row in others]}
+
+
+def _waiting_for_capacity(conn: psycopg.Connection, queued_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """Those of these queued jobs whose organization runs nothing but which cannot start for another reason: their
+    kind has no place left on the server, or a job of another organization is reading the same domain. A yes or no per
+    job, nothing about the jobs of the other organizations."""
+    rows = conn.execute(
+        f"SELECT j.id FROM jobs j WHERE j.id = ANY(%s) AND {_ORG_IDLE} AND NOT ({_CAN_START})",
+        [queued_ids, *_room_params()],
+    ).fetchall()
+    return {row["id"] for row in rows}
 
 
 def recent(conn: psycopg.Connection, brand_id: uuid.UUID, limit: int = 20) -> list[dict]:

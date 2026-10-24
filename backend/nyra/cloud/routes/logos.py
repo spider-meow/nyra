@@ -77,6 +77,7 @@ def set_setting(body: SettingBody, scope: BrandScope = Depends(brand_admin_dep),
         if body.enabled:
             cloud_logos.score_pending(conn, scope.brand_id)
             removed = _drop_matches(conn, scope.org_id, cloud_logos.set_aside_ids(conn, scope.brand_id))
+        scope.audit(conn, "logos.setting", "brand", scope.brand_id, enabled=body.enabled, matches_removed=removed)
     return {"enabled": body.enabled, "matches_removed": removed, "job": _rematch(ctx, scope)}
 
 
@@ -88,4 +89,5 @@ def keep_logo(body: KeepBody, scope: BrandScope = Depends(brand_admin_dep), ctx:
             raise HTTPException(status_code=404, detail="Image introuvable.")
         if not body.kept:
             _drop_matches(conn, scope.org_id, cloud_logos.set_aside_ids(conn, scope.brand_id))
+        scope.audit(conn, "logos.keep", "site_image", None, kept=body.kept, images=len(body.site_image_ids))
     return {"ok": True, "job": _rematch(ctx, scope), "threshold": detector.THRESHOLD}

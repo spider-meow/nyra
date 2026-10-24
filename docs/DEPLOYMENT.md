@@ -82,6 +82,26 @@ worker is killed (exit 137), `restart: unless-stopped` starts it again, and its 
 `WORKER_MEM_LIMIT` adjusted. If only Chromium (a child process) is killed, the job fails with the browser's message
 instead of the worker restarting.
 
+**Two global caps on what runs at once** (integers >= 1, default **1** each, read by every worker at each poll; an invalid
+value is logged once as a warning and the default is used; edit `.env` and restart the workers to change them):
+`NYRA_MAX_HEAVY_JOBS` for the jobs that read sites (`crawl` and `check`, which load Chromium, and `locate`), and
+`NYRA_MAX_MODEL_JOBS` for the jobs that analyse images (`index` and `match`, which load the CLIP model and the
+library's vectors). A job only takes a place of its own kind, so a long crawl does not hold back another customer's
+indexing; `report` has no cap. The excess stays queued (nothing is refused or lost) and starts when a place frees up,
+the customer who started a job least recently first. Only a running job whose heartbeat is less than 3 minutes old
+holds a place: the row a dead worker leaves behind frees it. **Keep 1 until the peak is measured**: record the worker's
+memory (`docker stats`) during a crawl, and during an indexing or a comparison of the largest library, then check that
+N times that peak (not the 2560 MiB limit times N) fits in the machine.
+
+**The caps change nothing with a single worker.** A worker process runs ONE job at a time (`run_once`), and
+`docker-compose.yml` starts one `worker` container. While it runs a 12-hour crawl for one customer, no other job
+starts, indexing included, whatever the caps say. Another customer's indexing only moves during a crawl when at least
+two workers run (`--scale worker=2`), and the 4 GB Droplet (worker limited to 2560 MiB, about 3.2 GiB of limits in
+all) probably cannot host a second one without changing size. The caps are what keeps two workers from reading the same
+sites or loading the model twice, once a second worker exists; until then jobs simply wait their turn in the queue, the
+customer who started a job least recently first. Independently of the caps nothing is refused, and two jobs never read the same domain (host without `www.`) at the same time, whatever the customers: the second `crawl` or `check` waits for the first to end. `.env.example` should
+list `# NYRA_MAX_HEAVY_JOBS=1` and `# NYRA_MAX_MODEL_JOBS=1`.
+
 ## Supabase setup, once
 
 1. **Migrations**: apply `supabase/migrations/` in order (see
@@ -119,8 +139,18 @@ images are missing thumbnails and mirror hashes; the worker fills them in
 with an `index` job. To run one immediately for an organization:
 
 ```sql
-insert into jobs (org_id, kind) select id, 'index' from organizations where slug = 'client';
+insert into jobs (org_id, brand_id, kind) select o.id, b.id, 'index' from organizations o join brands b on b.org_id = o.id where o.slug = 'client';
 ```
+
+Migration `20261021000032` (one running job per organization; it also adds the partial index
+`jobs_org_active_idx` that `jobs/current` reads) fails, with a message and no change, if an organization has two
+running jobs when it is applied (the earlier rule allowed one per brand). **The order matters**, in both directions:
+a new worker against the old per-brand index can start two jobs of one organization at once (and the migration then
+fails), and an old worker against the new index retries the same queued job of a busy organization in a loop, which
+holds up every organization. So: (1) stop the workers; (2) check that nothing runs
+(`select org_id, count(*) from jobs where status = 'running' group by 1 having count(*) > 1` must return no row;
+let the jobs end, or wait 3 minutes for `reap_stale` to requeue them); (3) apply the migration; (4) deploy the web
+process; (5) start the new workers.
 
 ## Logs and health
 
@@ -165,14 +195,36 @@ traceback is in the worker's log.
   15 s, and the exit happens after 20 s whatever the database does.
 - **Disk**: the worker removes Chromium's leftovers (`playwright_chromiumdev_profile-*` and similar, in which nothing was
   written for 10 minutes) from the temp directory at start and after every job, even a failed one, and trims its image cache
-  to `NYRA_IMAGE_CACHE_MB` (2048) at start (and every 200 writes). `GET /api/workerz` also answers 503 with
-  `"status": "disk almost full"` when the machine's disk is 80 % full (`disk_percent` and the list `problems` are in the answer, which is public like the rest of this probe: it shows only a disk percentage), so the
-  uptime monitor below alerts; the Serveur page of the back office shows the same figure. Docker's own images
+  to `NYRA_IMAGE_CACHE_MB` (2048) at start (and every 200 writes). Docker's own images
   and logs are not cleaned: run `docker system prune` from time to time. A job that hits a full disk or
   memory error fails with a message that says so.
+- **Supervision alerts** (`backend/nyra/cloud/alerts.py`): four thresholds are judged on the latest readings and the
+  queue. They are shown at the top of the Serveur page of the back office (« Tout va bien » when none is crossed) and
+  listed in `alerts` of `GET /api/staff/server` and of `GET /api/workerz`, as `{code, severity, message}` (no
+  organization, brand or user in them). Nothing is sent yet (no e-mail, no Slack): the notification to come reads
+  that list. Each can be set in `.env`; a value that is not a whole number in range is ignored with a warning in the log.
+
+  | Code | Severity | Raised when | Default | Setting (range) |
+  |---|---|---|---|---|
+  | `worker_absent` | critical; warning when the metrics table holds no worker at all | every worker has been silent for over N seconds | 300 s (a worker publishes every 15 s from a thread, jobs or not, but a deployment recreates the container with a new host name and its first reading comes 15 s or more after the start) | `NYRA_ALERT_WORKER_SILENT_SECONDS` (30 to 3600) |
+  | `queue_stalled` | critical | a queued job has waited over N minutes while no job runs anywhere | 5 min (an idle worker claims a job within seconds) | `NYRA_ALERT_QUEUE_MINUTES` (1 to 1440) |
+  | `disk_full` | critical | the machine's disk is N % used | 80 % | `NYRA_ALERT_DISK_PERCENT` (1 to 100) |
+  | `worker_memory` | warning | a worker uses N % of its memory limit | 85 % | `NYRA_ALERT_WORKER_MEMORY_PERCENT` (1 to 100) |
+
+  The memory is judged against the container's own limit (`WORKER_MEM_LIMIT`, 2560m in `docker-compose.yml`, read from
+  the cgroup); a worker with no limit is judged against the machine's memory. 85 % of 2560m is 2.1 GiB, above the
+  1.88 GiB (73 %) measured during a crawl with CLIP: past it the worker is close to being killed. The `web`
+  service judges the thresholds (both services read `.env`): restart it after changing one. The Serveur table
+  still marks a worker « muet » after a fixed minute (a table row, not an alert), whatever `NYRA_ALERT_WORKER_SILENT_SECONDS`.
+  **An environment without a worker** (development, CI, a table purged after the 24 h the readings are kept) has no
+  worker row: the alert is then a warning, never a 503. A worker dead for over a day is still caught by `queue_stalled`
+  as soon as a job waits.
 - **No worker at all**: point an uptime monitor (UptimeRobot, Better Stack...) at `GET /api/workerz`.
-  It answers 503 when a queued job has waited over 5 minutes while no job runs anywhere, or the disk is
-  80 % full. Keep
+  It answers 503 while a **critical** alert is on, and 200 `"status": "ok"` otherwise. `status` and `problems` keep their
+  historical words, unchanged: `"no worker"` (a job waiting for nothing, or every worker silent for over 5 minutes) and
+  `"disk almost full"`; the new codes are only in `alerts`. A `worker_memory` warning does not make it fail;
+  `queued_wait_seconds` and `disk_percent` are in the answer too. Most monitors alert on the change of state (up to
+  down), so a deployment that stays under 5 minutes of silence stays green. Keep
   `GET /api/healthz` for the web process. The interface already tells an administrator that a task
   waits for a worker after a minute.
 
@@ -194,10 +246,19 @@ The limits above are untested values. Before relying on them:
   images (`.dockerignore` excludes it, as does `.gitignore`) and screenshots; rotate it if in
   doubt (procedure below).
 - Public sign-up disabled in Supabase (step 2 above).
+- Members reviewed every quarter (next section).
 - Never set `NYRA_ALLOW_PRIVATE_HOSTS` on a server: it turns off the
   guard that keeps crawls away from private addresses and cloud metadata.
 - `crawl.max_pages_limit` in `config.yaml` bounds the cost of any single
   crawl, whatever an organization asks for.
+- The `quota` section of `config.yaml` bounds what one organization uses over time (pages read per
+  month, brands, addresses per brand, library, storage, members, invitation e-mails per day; starting values
+  to be confirmed, see `COUTS_PRODUCTION.md`). Changing the file takes effect on the next request or job, no
+  restart. The Nyra team overrides a limit for one organization in the back office (Usage); an organization
+  cannot. Apply migration `20261020000030` before deploying the web and the worker: the counters are written
+  by the worker, read by the web.
+- Invitation e-mails go through Supabase Auth and your SMTP (Resend): `quota.emails_per_day` keeps one
+  organization from using the whole daily allowance of the provider (100 a day on Resend's free plan).
 - Supabase rate limits set (below), once, by hand.
 - GitHub: *Settings > Code security*: turn on secret scanning and push protection, Dependabot alerts.
   Not checked from the code; the CI covers the same ground with gitleaks and the audits.
@@ -236,7 +297,8 @@ Complete list (grep of `os.environ` in `backend/nyra`):
 
 Not secrets: `SUPABASE_URL`, `NYRA_PUBLIC_URL`, `NYRA_DOMAIN`, `NYRA_ENV`, `NYRA_RELEASE`, `NYRA_LABELS`,
 `NYRA_LOG_FORMAT`, `NYRA_LOG_LEVEL`, `SENTRY_TRACES_SAMPLE_RATE`, `NYRA_DB_POOL_MAX`, `NYRA_IMAGE_CACHE`,
-`NYRA_IMAGE_CACHE_MB`, `NYRA_WORKER_ALIVE_FILE`, `NYRA_ALLOW_PRIVATE_HOSTS`. Also keep the Droplet's SSH
+`NYRA_IMAGE_CACHE_MB`, `NYRA_WORKER_ALIVE_FILE`, `NYRA_ALLOW_PRIVATE_HOSTS`, `NYRA_RATE_READ_PER_MIN`,
+`NYRA_RATE_WRITE_PER_MIN`. Also keep the Droplet's SSH
 access and the DigitalOcean and GitHub accounts behind 2FA.
 
 ### Rotating a secret, step by step
@@ -271,7 +333,7 @@ and fix forward.
    the service-role key signs the Storage URLs), and run a test job on a test organization:
 
    ```sql
-   insert into jobs (org_id, kind) select id, 'index' from organizations where slug = 'test-org';
+   insert into jobs (org_id, brand_id, kind) select o.id, b.id, 'index' from organizations o join brands b on b.org_id = o.id where o.slug = 'test-org';
    select status, error from jobs order by created_at desc limit 1;   -- 'done' within a few minutes
    ```
 5. Revoke the old value (below), then check `/api/healthz` and a sign-in once more.
@@ -328,8 +390,29 @@ Also in *Authentication*: *Attack Protection* (CAPTCHA, Turnstile or hCaptcha, o
 against guessing, it adds a widget to the page, a decision for the team), *Providers > Email* (minimum password length
 8 or more; leaked-password protection on plans that have it), and no sign-up (step 2 of the setup).
 
-**Why Nyra does not add its own per-IP limit.** Evaluated and not built:
-- The only unauthenticated routes are static or cheap probes; the login itself never reaches Nyra.
+**Rate limit of the API (per signed-in user).** `web` refuses a person who sends too many requests in a minute with
+`429` and a `Retry-After` header (a sentence in French in `detail`; the interface shows it like any other error). A token
+bucket per user, in the process's memory, with a burst as large as the minute's allowance:
+
+| Variable | Default | Counts |
+|---|---|---|
+| `NYRA_RATE_READ_PER_MIN` | `300` | `GET`/`HEAD`/`OPTIONS` of one user (the interface polls `jobs/current` every 2 s: 30 a minute) |
+| `NYRA_RATE_WRITE_PER_MIN` | `120` | every other method of one user (launching a job, sending files, editing; an upload sends 8 files per request) |
+
+A value that is not a whole number of 1 or more is ignored with a warning in the log (the default stays). Never limited:
+`GET /api/healthz`, `GET /api/workerz`, `GET /api/auth/config`, the static interface, and any request without a valid token
+(it ends in 401 anyway). The counters live in the memory of each process: with several `web` instances the real limit is
+multiplied by their number, and a restart resets them (at most 10 000 buckets are kept, idle ones are swept every minute).
+The identity is the verified JWT, **never the IP address**, for the reason below. The interface's HTTP client
+(`frontend/src/lib/api.ts`) answers a `429` by waiting `Retry-After` seconds (at most 30, 2 when absent) and sending the
+same request again, up to 3 times, before showing the error: a burst such as excluding 200 images at once is spread
+over time instead of failing. Only a 429 that carries `Retry-After` is replayed (the limiter always sets it; the daily
+invitation limit, also a 429, does not and is final). A 429 is raised before the route code runs, so replaying a `POST`
+cannot do it twice; but FastAPI reads a multipart body before it solves the dependencies, so a refused file upload has
+already been received, and the interface does not replay uploads (`FormData`): they fail with the sentence, to be sent again.
+
+**Why the rate limit is not per IP.** Evaluated and not built:
+- The unauthenticated routes are static or cheap probes; the login itself never reaches Nyra.
 - Behind Caddy the client IP is only known from `X-Forwarded-For`, and uvicorn (`proxy_headers=True`) trusts that header
   only from `127.0.0.1` (its `--forwarded-allow-ips` default). Caddy runs in another container, so uvicorn ignores the header and
   every visitor looks like the Caddy container: a per-IP limit would be **one bucket for the whole world**, one script would lock
@@ -365,6 +448,255 @@ passed the second factor carries `aal: "aal2"` in its JWT. Today Nyra has no scr
 `aal`, so enabling it in the dashboard alone protects nothing. Enforcing it for platform administrators means: an
 enrollment and a code screen in the interface, and one check of the `aal` claim in `staff_dep`. A small change, but
 a product decision: with no recovery path, an admin who loses the phone is locked out (keep a second admin, or a second factor enrolled). To decide by the team; nothing is implemented.
+
+## Reviewing the members
+
+Steps to play by hand (the code gives the list, a person decides): the first time, then every quarter and
+whenever a client says someone left.
+
+1. In Supabase (Authentication > Providers > Email), check that *Allow new users to sign up* is **off**.
+   Without it anyone holding the public anon key can create an account (without access to any organization,
+   but it should not exist).
+2. In Nyra, Back office > Comptes: the table "administrateurs d'organisation" gives, per organization, each
+   administrator's e-mail, the date they joined and their last sign-in. Ask the client to confirm the list;
+   remove (« Retirer ») whoever should not be there, or switch them to « Lecture et validation ».
+3. Back office > Platform admins: the list of the Nyra team; remove anyone who left.
+4. In Supabase (Authentication > Users), look for accounts nobody invited (unknown e-mail, recent creation
+   date) and delete them.
+
+## Client data: activity log, export, erasure, backups
+
+Clients trust Nyra with licensed visuals and with their decisions. Four guarantees, and what each one needs
+from a person. **Only the code parts have been run (tests on a throwaway Postgres, fake Storage, fake Auth
+admin). Nothing below that touches the real Supabase, the real Storage or a backup target has been played:
+the procedures are to be rehearsed by the team, and the first rehearsal is also the first timing.**
+
+### Who can do what
+
+| Action | Who | How |
+|---|---|---|
+| Read the activity log of an organization | Its administrators; the Nyra team (platform admins) | Réglages > Journal d'activité; back office > Organisations > Journal d'activité; `GET /api/orgs/{org_id}/audit`, `GET /api/staff/organizations/{org_id}/audit` |
+| Export an organization's data | The operator (access to the server and `.env`) | `nyra cloud-export-org` |
+| Erase an organization | The operator, after the client's written request | `nyra cloud-delete-org` |
+| Run the backups and the restore | The operator | the commands below |
+| Brands: create and delete | Platform admins (unchanged) | interface |
+
+The operator is whoever can run `docker compose run --rm web nyra …` on the server: today, the Nyra team.
+No route of the API exports or erases a whole organization; a client asks, the operator acts.
+
+### Activity log
+
+Table `audit_log` (migration `20261020000031`): one row per action of a person that changes something, with the
+organization, the brand, the author (account id; the e-mail is read from Auth when the log is shown), a stable
+action code (`library.delete`, `exclusion.add`, `review.set`, `member.remove`, `job.crawl`…), the object
+(type and identifier) and a small `detail` of counters and codes. **No content**: no request body, no file name,
+no address, no reason typed by a person. `audit.record` refuses anything but numbers, flags and short codes.
+
+- Written by the route itself, in the same database transaction as the change. If the row cannot be written, the
+  change is rolled back and the person gets an error (HTTP 500, « Erreur interne du serveur »): an action that
+  leaves no trace does not happen. One exception by construction: an upload or an adoption writes one row per
+  file, with that file's reference; if the row fails that file is reported as refused to the person (the file
+  already sent to Storage stays as a harmless orphan). Decision recorded in `backend/nyra/cloud/audit.py`.
+- Covered: library (upload, edit, delete, expiry, tags, CSV import, adoption of site images, collections),
+  decisions (`review.set`, `visual.replaced`), exclusions, settings, logos, labels, team (invite, role,
+  removal), jobs started or cancelled by a person, brands, addresses, organization creation. Not covered, on
+  purpose: reads; jobs the system queues by itself after a change (the change carries the cause); the platform
+  admin list is traced too, with no organization (`org_id` null, `staff.add` / `staff.remove`; readable in SQL
+  only). `test_audit.py` lists every route that changes something and fails for one without an audit call on the
+  connection of its action (read from the syntax tree), so a new route cannot forget it.
+- **Retention: 12 months.** `audit.purge` deletes older rows in batches of 1,000 (one transaction each). The
+  worker runs it once a day; by hand: `nyra cloud-purge-audit [--months 12]`.
+- The platform admin who acts as an administrator of a client organization appears under their own e-mail.
+- An export writes an `organization.export` row first; an erasure removes the log with the organization (the
+  trace of the erasure itself is below).
+
+### Exporting an organization
+
+```bash
+mkdir -p exports
+docker compose run --rm -v "$PWD/exports:/exports" web nyra cloud-export-org client-slug --out /exports/client-slug-2026-10-20
+```
+
+Writes, one row or one file at a time (memory does not grow with the organization):
+
+- CSV (UTF-8 with BOM, accents readable in a spreadsheet): `marques`, `sites`, `references` (brand, file, collection,
+  expiry date, unlimited rights, credit, notes, tags, date added, path of the original), `decisions`, `exclusions`,
+  `rapports`, `membres` (e-mail, role), `journal`;
+- `files/refs/…` (the original of each reference) and `files/reports/…` (the three files of each report);
+- `manifeste.json`: format and Nyra versions, date, operator, rows per CSV, files copied, failures, `complete`.
+
+Not included, and listed in the manifest (`not_exported`): the images read on the sites, thumbnails and working copies,
+labels, the collection tree, the organization's settings, job logs, brand logos. Two files whose names differ only by case
+are reported as a failure (they would overwrite each other on a Mac or Windows disk). A file larger than `--max-file-mb` (200) is a failure (its size is read from Storage's listing before any download); the copy stops with an error at
+`--max-total-gb` (50). A file that cannot be downloaded is listed in the manifest and in the exit code
+(`complete: false`, exit 1): run the **same command again on the same folder**, files already there are kept.
+Check `complete: true` before telling the client. The folder holds personal data (e-mails) and licensed images:
+encrypt it (`age`, `gpg`) before it leaves the server, hand it over through a channel agreed with the client, and
+delete the local copy.
+
+### Erasing an organization
+
+```bash
+docker compose run --rm web nyra cloud-delete-org client-slug --dry-run     # lists, deletes nothing
+docker compose run --rm web nyra cloud-delete-org client-slug               # asks to type the exact name
+```
+
+1. Export first if the client wants its data, and keep the written request.
+2. `--dry-run` prints the report: rows per table, files per bucket, the accounts that would go. Read it.
+3. The real run takes the organization's **exact slug** (not its normalized form: `ACME!!` does not find `acme`) and
+   its **exact name** (typed at the prompt, or `--confirm-name`). `--operator` is a short identifier
+   (`[A-Za-z0-9._-]`, 40 characters), never an e-mail address: it is kept in the trace.
+4. It works in four steps, each able to resume after a failure:
+   1. one short transaction **closes** the organization: row locked, refused if a task is queued or running, the
+      trace written once (`deleted_organizations`, with the ids of the accounts to delete), and **every
+      membership removed**, so nobody can upload or start anything any more (an upload is answered 403);
+   2. the Storage files under `{org_id}/` in `refs`, `site-images` and `reports` (batches of 100, checked empty);
+   3. the organization row, every other table following through `on delete cascade`, then a check that no row of the
+      organization is left (otherwise this step is rolled back); a last sweep of the files for a request that was
+      already under way at step 1;
+   4. the Auth accounts noted at step 1, **checked again just before**: one that has joined another organization
+      or the Nyra team in the meantime is kept.
+5. After a failure at any step the message says so and prints what was done: **run the same command again**. A
+   closed organization (alive, no member) or one already gone (only its trace left) is recognised and accepted, the
+   trace is not duplicated. The report is printed at the end; an account that could not be deleted exits 1 (the
+   next run retries it, or delete it in Supabase > Authentication).
+6. **Trace**: a log line `ORGANIZATION DELETED {json}` (identifier, name, slug, operator, counts; no e-mail) and
+   one row in `deleted_organizations` (identifier, name, slug, date, operator, counts, ids of the accounts). Its
+   **retention is to be decided by the team** (nothing purges it today). The organization's own activity log goes
+   with it. Keep the logs long enough to answer an audit and give the client the date and the report.
+
+A request that was already under way when the organization was closed could still send a file after the last
+sweep: if you must be certain, check `rclone ls`/the Storage browser for the prefix `{org_id}/` once the command
+ends. That the cascade covers every table is checked on the catalog by `test_offboarding.py`: a table added
+without it fails the test.
+
+**Not erased by the command**: Supabase's daily database backups, the file copies below, the e-mails the
+provider (Resend) already sent, and the logs. Tell the client the real delay: the data disappears from the
+backups when they expire (**35 days at most with the setup below, plus the Supabase retention, 7 days on the
+Pro plan: check it in Database > Backups**). To erase a client from the file copies sooner:
+`rclone purge "scw-crypt:refs/current/<org_id>"` for each bucket, and
+`rclone delete scw-crypt:refs/deleted --include "/*/<org_id>/**"`.
+
+### Backups
+
+What Supabase does and does not do: Postgres is backed up every day (Pro plan; point-in-time recovery is a paid
+add-on). **Storage files are not backed up** (images, thumbnails, reports): losing a bucket loses them for good.
+Nothing here has been run; set it up, then run the restore drill below.
+
+**1. A copy of the three buckets, every night.** Supabase Storage has an S3 endpoint (Project settings >
+Storage > S3 connection: create an access key there). On a machine that is **not** the production Droplet (a
+second small VPS, or the Droplet if there is nothing else, which protects against a Supabase accident only), with
+`rclone`:
+
+```ini
+# ~/.config/rclone/rclone.conf (0600)
+[supabase]
+type = s3
+provider = Other
+access_key_id = <S3 access key from Supabase>
+secret_access_key = <secret>
+endpoint = https://<project-ref>.storage.supabase.co/storage/v1/s3
+region = <project region>
+
+[scw]
+type = s3
+provider = Scaleway
+access_key_id = <key limited to the backup bucket>
+secret_access_key = <secret>
+endpoint = s3.fr-par.scw.cloud
+region = fr-par
+
+[scw-crypt]
+type = crypt
+remote = scw:nyra-backups
+password = <rclone obscure output>
+password2 = <rclone obscure output>
+```
+
+The `crypt` remote encrypts names and contents before they leave the machine. Keep its two passwords in the
+team's password manager **and** on paper in a safe place: without them the copy is unreadable, and they must not
+live only on the server that is being backed up. Never write these keys in the repository.
+
+```bash
+# nightly: current state, and what was deleted or overwritten kept 35 days
+for b in refs site-images reports; do
+  rclone sync "supabase:$b" "scw-crypt:$b/current" --backup-dir "scw-crypt:$b/deleted/$(date +%F)" --transfers 8 --checksum --fast-list
+  rclone delete "scw-crypt:$b/deleted" --min-age 35d && rclone rmdirs "scw-crypt:$b/deleted" --leave-root
+done
+```
+
+Schedule with a systemd timer (`/etc/systemd/system/nyra-storage-backup.{service,timer}`): the service runs the
+loop above as a dedicated user, `OnCalendar=*-*-* 03:30:00`, `Persistent=true`; `systemctl list-timers` shows
+the last and next run, `journalctl -u nyra-storage-backup` the output. Failure must be seen: add
+`OnFailure=` to a unit that sends an e-mail, or a Better Stack heartbeat call at the end of the script.
+Rotation of the keys: yearly, and at once when someone leaves the team.
+
+**2. A copy of the database we control**, in addition to Supabase's (it is the file the restore below reads):
+
+```bash
+pg_dump "$DATABASE_URL" --format=custom --no-owner -n public -n auth | \
+  rclone rcat "scw-crypt:db/nyra-$(date +%F).dump"
+rclone delete scw-crypt:db --min-age 30d
+```
+
+(`DATABASE_URL` in session mode, port 5432. `-n auth` brings `auth.users`; if Supabase refuses it for your role,
+take `-t auth.users` data only, or export the users with the Dashboard. To settle at the first run.) Weekly is
+enough if a day of loss is acceptable; daily costs a few hundred MB.
+
+**3. Check, weekly and after any change:** `scripts/check-storage-backup.sh` compares number and weight of
+objects in each bucket with the copy and the objects the copy lacks (exit 1 above `MAX_MISSING`). Look at the
+weight of `db/` too (a dump that suddenly shrinks is a problem). Written but **not run**.
+
+**Retention summary** (state it in the client contract): Supabase database backups 7 days (Pro, to verify);
+our database dumps 30 days; deleted or overwritten files 35 days; current files as long as the organization
+exists. So erased data can remain in backups up to 35 days (+ the Supabase delay).
+
+### Restoring one organization
+
+A bucket or table of one client was lost, or an organization was erased by mistake. Tool: a throwaway Postgres
+(pgvector), the dump, the file copy. **Time every step the first time and write the figures in the table at the
+end**; a restore nobody has timed is a guess.
+
+1. **Choose the point in time** and get the dump: ours (`rclone copy scw-crypt:db/nyra-YYYY-MM-DD.dump .`) or
+   Supabase's (Database > Backups > download). The newest dump taken *before* the loss.
+2. **Restore it in a scratch database, never in production:**
+
+   ```bash
+   createdb nyra_restore && psql nyra_restore -c 'create extension if not exists vector; create extension if not exists pgcrypto;'
+   pg_restore --no-owner --no-privileges -d nyra_restore nyra-YYYY-MM-DD.dump   # errors about Supabase-only roles: read them, most are harmless
+   ```
+
+3. **Keep only the organization** (every table follows the cascade, the same one `cloud-delete-org` relies on):
+
+   ```sql
+   delete from organizations where slug <> 'client-slug';
+   delete from jobs where status in ('queued', 'running');   -- the worker must not wake up on restored work
+   select count(*) from reference_images;                     -- compare with what the client expects
+   ```
+
+4. **Organization lost entirely** (erased, or the tables wiped): the accounts of its members changed if they were
+   deleted (a new invitation gives a new id), so drop what points at accounts before copying:
+   `delete from memberships;` and set to `null` the columns referencing `auth.users` (list them with
+   `select conrelid::regclass, a.attname from pg_constraint c join pg_attribute a on a.attrelid = c.conrelid and a.attnum = any(c.conkey) where c.confrelid = 'auth.users'::regclass;`).
+   Then `pg_dump -Fc --data-only -n public nyra_restore | pg_restore --no-owner -d "$DATABASE_URL"` into
+   production (tables empty for this organization; the dump order follows the foreign keys), then re-create the
+   organization's first administrator with `nyra cloud-invite --role admin`.
+   **Organization partly damaged** (a table emptied, a library deleted): copy only those tables, with
+   `COPY … TO` from the scratch database and `COPY` into a staging table of production followed by
+   `insert … on conflict do nothing`; table by table, parents first.
+5. **Files**: for each bucket, `rclone copy "scw-crypt:refs/current/<org_id>" "supabase:refs/<org_id>"` (same for
+   `site-images` and `reports`). A file removed after the dump date is in `scw-crypt:<bucket>/deleted/<date>/`.
+6. **Check**: `rclone check` on the prefix; the row counts of step 3 against production; sign in as the
+   client's administrator and open the library, a visual, a report; write the restore in the log
+   (`insert into audit_log (org_id, action, object_type, detail) values ('<org_id>', 'organization.restore', 'organization', '{}')`).
+7. Drop the scratch database (`dropdb nyra_restore`): it holds client data.
+
+| Rehearsal | Date | Who | Dump + restore | Files | Total | Problems found |
+|---|---|---|---|---|---|---|
+| 1 | _not done_ | | | | | |
+
+Rehearse once before the first client depends on it, then every quarter, on a test organization (create it, load
+images, erase it, restore it). Note what you had to change in this procedure.
 
 ## Vercel (web only)
 
