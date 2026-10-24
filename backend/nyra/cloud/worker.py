@@ -34,8 +34,11 @@ import time
 import traceback
 import uuid
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+import psycopg
 
 from nyra import fetch, netguard, observability
 from nyra import report as report_module
@@ -49,6 +52,7 @@ from . import db as cloud_db
 from . import hostmetrics
 from . import jobs as cloud_jobs
 from . import presence as cloud_presence
+from . import schedule as cloud_schedule
 from . import storage as cloud_storage
 from . import usage as cloud_usage
 from .locate import NotSearchable, locate_reference
@@ -60,6 +64,7 @@ log = logging.getLogger("nyra.worker")
 HEARTBEAT_SECONDS = 30
 PROGRESS_SECONDS = 1.0
 AUDIT_PURGE_SECONDS = 24 * 3600  # retention of the audit log, see `audit.purge`
+SCHEDULE_SECONDS = 300  # how often the monthly reads are looked for, see `schedule.enqueue_due`
 # The longest a job of each kind may run, in minutes, with what the message calls it and what lightens it. A job
 # running longer is taken for hung (a frozen browser keeps the heartbeat thread beating): it is marked failed with that
 # message and the worker exits, so the container restarts. STARTING VALUES, to adjust from the durations in the
@@ -484,6 +489,21 @@ class Worker:
                 log.error("no sign of life for %d s: worker exiting so the container restarts", WATCHDOG_SECONDS)
                 os._exit(70)
 
+    def _enqueue_scheduled(self) -> None:
+        """Queue the monthly reads that are due (not while a job runs: the worker does one at a time)."""
+        if not cloud_schedule.scheduler_enabled():
+            return
+        try:
+            with cloud_db.connect(self.database_url) as conn:
+                queued = cloud_schedule.enqueue_due(conn, datetime.now(timezone.utc))
+            if queued:
+                log.info("monthly reads queued: %d", len(queued))
+        except psycopg.errors.UndefinedTable:
+            if cloud_schedule.once_per_hour("missing-table"):  # a warning an hour, not an event every 5 minutes
+                log.warning("monthly reads are not queued: table brand_schedules is missing, apply migration 20261024000033")
+        except Exception:  # noqa: BLE001 - housekeeping must not stop the worker loop; the brands stay due
+            log.exception("queueing the monthly reads failed")
+
     def run_forever(self) -> None:
         log.info("worker started")
         touch_alive()
@@ -494,7 +514,7 @@ class Worker:
             log.exception("trimming the image cache failed")
         threading.Thread(target=self._publish_metrics, name="metrics", daemon=True).start()
         threading.Thread(target=self._watchdog, name="watchdog", daemon=True).start()
-        last_reap, last_purge = 0.0, -AUDIT_PURGE_SECONDS
+        last_reap, last_purge, last_schedule = 0.0, -AUDIT_PURGE_SECONDS, -SCHEDULE_SECONDS
         while not self._stop.is_set():
             touch_alive()
             if time.monotonic() - last_purge > AUDIT_PURGE_SECONDS:
@@ -514,6 +534,9 @@ class Worker:
                         log.warning("stale jobs: %d put back in the queue, %d marked as failed", requeued, failed)
                 except Exception:  # noqa: BLE001 - housekeeping must not stop the worker loop
                     log.exception("reaping failed")
+            if time.monotonic() - last_schedule >= SCHEDULE_SECONDS:
+                last_schedule = time.monotonic()
+                self._enqueue_scheduled()
             try:
                 ran = self.run_once()
             except Exception:  # noqa: BLE001 - keep the worker alive

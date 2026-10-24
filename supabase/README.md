@@ -36,6 +36,7 @@ supabase/migrations/
   20261020000030_usage_quotas.sql                   compteurs d'usage par organisation (`usage_counters`) et limites propres à une organisation (`organizations.quota_overrides`) (additive ; à appliquer avant le code)
   20261020000031_audit_log.sql                      journal d'audit (`audit_log` : qui a fait quoi, lu par les admins de l'organisation, écrit par le backend, gardé 12 mois) et `deleted_organizations` (trace d'une suppression complète) (additive ; le numéro 030 est pris par une autre migration)
   20261021000032_one_running_job_per_org.sql       un seul job `running` par organisation (remplace l'index par marque de 013) et index `jobs_org_active_idx` (lu par `jobs/current`) ; échoue avec un message clair s'il y a déjà deux jobs `running` d'une même organisation. Ordre : arrêter les workers, vérifier qu'aucun job ne tourne, appliquer la 032, déployer le web, démarrer les nouveaux workers (voir DEPLOYMENT.md)
+  20261024000033_brand_schedules.sql                lecture mensuelle automatique : table `brand_schedules` (par marque : activée, jour du mois, dernière mise en file ; lecture par les membres, écriture par le backend) (additive, vide et inactive au départ : à appliquer avant ou après le déploiement, avant de préférence)
 ```
 
 ## Marques (012 puis 013)

@@ -21,7 +21,7 @@ Rules:
   `www.`), whatever the organization: two customers must not double the load on a third party's site;
 - a job started by hand (`manual`) is refused (`JobConflict`, which carries
   the job in the way) while any job but an `index` is queued or running in
-  the organization; what follows an action (indexing after an upload, a
+  the organization (a scheduled read that only waits does not count: `claim` serves the manual job first); what follows an action (indexing after an upload, a
   comparison after an exclusion, `behind_running`) is queued behind
   instead, and an `index` request joins the one already queued. Without
   `manual`, the only refusal is the same kind already waiting in the brand;
@@ -162,7 +162,10 @@ def holder(row: dict, *, admin: bool) -> dict:
     a member with the `client` role learns that a colleague did, never the colleague's e-mail."""
     job = _row(row)
     queued = job["status"] == "queued"
-    by = (job["author"] or "une tâche automatique ou un compte supprimé") if admin else "un membre de l'équipe"
+    if job["params"].get("scheduled"):  # started by the system (no author): the monthly read, told to everyone alike
+        by = "la lecture mensuelle automatique"
+    else:
+        by = (job["author"] or "une tâche automatique ou un compte supprimé") if admin else "un membre de l'équipe"
     since = _duration(job["since_minutes"], queued)
     text = f"Un passage est {'en attente' if queued else 'déjà en cours'} (marque {job['brand_name']}, lancé par {by}, {since})."
     keys = ("id", "kind", "status", "brand_id", "brand_name", "message", "progress", "created_at", "started_at")
@@ -175,7 +178,7 @@ def enqueue(
     manual: bool = False,
 ) -> dict:
     """Queue a job. `manual` (a person pressed the button): refused while another job but an `index` is waiting or
-    running in the organization. Otherwise (what follows an action) only a job of the same kind still waiting in the
+    running in the organization, except a scheduled read still waiting (`params.scheduled`): `claim` serves it after. Otherwise (what follows an action) only a job of the same kind still waiting in the
     brand is a conflict. `behind_running`: even a running job of the same kind is no conflict, so one can be queued behind
     the one that runs: for a change the running job did not see, which the next one must pick up."""
     if kind not in KINDS:
@@ -193,7 +196,8 @@ def enqueue(
             return _row(waiting)
     else:
         in_the_way = conn.execute(
-            HOLDER + """ WHERE j.status = ANY(%s) AND ((%s AND j.org_id = %s AND j.kind <> 'index')
+            HOLDER + """ WHERE j.status = ANY(%s) AND ((%s AND j.org_id = %s AND j.kind <> 'index'
+                                                      AND NOT (j.status = 'queued' AND j.params @> '{"scheduled": true}'))
                                                     OR (NOT %s AND j.brand_id = %s AND j.kind = %s))
                         ORDER BY (j.status = 'running') DESC, j.created_at LIMIT 1""",
             (list(ACTIVE) if manual or not behind_running else ["queued"], manual, org_id, manual, brand_id, kind),
@@ -213,7 +217,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
     (`_ROOM`: fewer than `NYRA_MAX_HEAVY_JOBS` reads or `NYRA_MAX_MODEL_JOBS` analyses running anywhere), and
     never one that reads a domain a running job reads (`_CAN_START`). The
     organization whose last job started least recently goes first (one that never ran counts as the least recent), then
-    the oldest job; a `locate` after the other kinds."""
+    the oldest job; a `locate` after the other kinds, and a scheduled read (`params.scheduled`) after the jobs started by hand."""
     # The unique index only guards one organization. The global count needs every claim to see the previous one's
     # `running` row, so claims queue on one transaction-level lock, released with the commit that makes that row
     # visible; it is held for a few milliseconds. A count and an UPDATE in one statement would not do: under READ
@@ -226,6 +230,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
             SELECT j.id FROM jobs j
             WHERE j.status = 'queued' AND {_ORG_IDLE} AND {_CAN_START}
             ORDER BY (j.kind = 'locate'),  -- a long search never waits ahead of another kind
+                     j.params @> '{{"scheduled": true}}',  -- the monthly read waits behind what a person asked for
                      {_LAST_STARTED} NULLS FIRST,
                      j.created_at
             FOR UPDATE SKIP LOCKED
