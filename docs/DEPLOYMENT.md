@@ -82,6 +82,26 @@ worker is killed (exit 137), `restart: unless-stopped` starts it again, and its 
 `WORKER_MEM_LIMIT` adjusted. If only Chromium (a child process) is killed, the job fails with the browser's message
 instead of the worker restarting.
 
+**Two global caps on what runs at once** (integers >= 1, default **1** each, read by every worker at each poll; an invalid
+value is logged once as a warning and the default is used; edit `.env` and restart the workers to change them):
+`NYRA_MAX_HEAVY_JOBS` for the jobs that read sites (`crawl` and `check`, which load Chromium, and `locate`), and
+`NYRA_MAX_MODEL_JOBS` for the jobs that analyse images (`index` and `match`, which load the CLIP model and the
+library's vectors). A job only takes a place of its own kind, so a long crawl does not hold back another customer's
+indexing; `report` has no cap. The excess stays queued (nothing is refused or lost) and starts when a place frees up,
+the customer who started a job least recently first. Only a running job whose heartbeat is less than 3 minutes old
+holds a place: the row a dead worker leaves behind frees it. **Keep 1 until the peak is measured**: record the worker's
+memory (`docker stats`) during a crawl, and during an indexing or a comparison of the largest library, then check that
+N times that peak (not the 2560 MiB limit times N) fits in the machine.
+
+**The caps change nothing with a single worker.** A worker process runs ONE job at a time (`run_once`), and
+`docker-compose.yml` starts one `worker` container. While it runs a 12-hour crawl for one customer, no other job
+starts, indexing included, whatever the caps say. Another customer's indexing only moves during a crawl when at least
+two workers run (`--scale worker=2`), and the 4 GB Droplet (worker limited to 2560 MiB, about 3.2 GiB of limits in
+all) probably cannot host a second one without changing size. The caps are what keeps two workers from reading the same
+sites or loading the model twice, once a second worker exists; until then jobs simply wait their turn in the queue, the
+customer who started a job least recently first. Independently of the caps nothing is refused, and two jobs never read the same domain (host without `www.`) at the same time, whatever the customers: the second `crawl` or `check` waits for the first to end. `.env.example` should
+list `# NYRA_MAX_HEAVY_JOBS=1` and `# NYRA_MAX_MODEL_JOBS=1`.
+
 ## Supabase setup, once
 
 1. **Migrations**: apply `supabase/migrations/` in order (see
@@ -277,7 +297,8 @@ Complete list (grep of `os.environ` in `backend/nyra`):
 
 Not secrets: `SUPABASE_URL`, `NYRA_PUBLIC_URL`, `NYRA_DOMAIN`, `NYRA_ENV`, `NYRA_RELEASE`, `NYRA_LABELS`,
 `NYRA_LOG_FORMAT`, `NYRA_LOG_LEVEL`, `SENTRY_TRACES_SAMPLE_RATE`, `NYRA_DB_POOL_MAX`, `NYRA_IMAGE_CACHE`,
-`NYRA_IMAGE_CACHE_MB`, `NYRA_WORKER_ALIVE_FILE`, `NYRA_ALLOW_PRIVATE_HOSTS`. Also keep the Droplet's SSH
+`NYRA_IMAGE_CACHE_MB`, `NYRA_WORKER_ALIVE_FILE`, `NYRA_ALLOW_PRIVATE_HOSTS`, `NYRA_RATE_READ_PER_MIN`,
+`NYRA_RATE_WRITE_PER_MIN`. Also keep the Droplet's SSH
 access and the DigitalOcean and GitHub accounts behind 2FA.
 
 ### Rotating a secret, step by step
@@ -369,8 +390,29 @@ Also in *Authentication*: *Attack Protection* (CAPTCHA, Turnstile or hCaptcha, o
 against guessing, it adds a widget to the page, a decision for the team), *Providers > Email* (minimum password length
 8 or more; leaked-password protection on plans that have it), and no sign-up (step 2 of the setup).
 
-**Why Nyra does not add its own per-IP limit.** Evaluated and not built:
-- The only unauthenticated routes are static or cheap probes; the login itself never reaches Nyra.
+**Rate limit of the API (per signed-in user).** `web` refuses a person who sends too many requests in a minute with
+`429` and a `Retry-After` header (a sentence in French in `detail`; the interface shows it like any other error). A token
+bucket per user, in the process's memory, with a burst as large as the minute's allowance:
+
+| Variable | Default | Counts |
+|---|---|---|
+| `NYRA_RATE_READ_PER_MIN` | `300` | `GET`/`HEAD`/`OPTIONS` of one user (the interface polls `jobs/current` every 2 s: 30 a minute) |
+| `NYRA_RATE_WRITE_PER_MIN` | `120` | every other method of one user (launching a job, sending files, editing; an upload sends 8 files per request) |
+
+A value that is not a whole number of 1 or more is ignored with a warning in the log (the default stays). Never limited:
+`GET /api/healthz`, `GET /api/workerz`, `GET /api/auth/config`, the static interface, and any request without a valid token
+(it ends in 401 anyway). The counters live in the memory of each process: with several `web` instances the real limit is
+multiplied by their number, and a restart resets them (at most 10 000 buckets are kept, idle ones are swept every minute).
+The identity is the verified JWT, **never the IP address**, for the reason below. The interface's HTTP client
+(`frontend/src/lib/api.ts`) answers a `429` by waiting `Retry-After` seconds (at most 30, 2 when absent) and sending the
+same request again, up to 3 times, before showing the error: a burst such as excluding 200 images at once is spread
+over time instead of failing. Only a 429 that carries `Retry-After` is replayed (the limiter always sets it; the daily
+invitation limit, also a 429, does not and is final). A 429 is raised before the route code runs, so replaying a `POST`
+cannot do it twice; but FastAPI reads a multipart body before it solves the dependencies, so a refused file upload has
+already been received, and the interface does not replay uploads (`FormData`): they fail with the sentence, to be sent again.
+
+**Why the rate limit is not per IP.** Evaluated and not built:
+- The unauthenticated routes are static or cheap probes; the login itself never reaches Nyra.
 - Behind Caddy the client IP is only known from `X-Forwarded-For`, and uvicorn (`proxy_headers=True`) trusts that header
   only from `127.0.0.1` (its `--forwarded-allow-ips` default). Caddy runs in another container, so uvicorn ignores the header and
   every visitor looks like the Caddy container: a per-IP limit would be **one bucket for the whole world**, one script would lock

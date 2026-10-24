@@ -29,6 +29,8 @@ export type Job = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** Queued, and the organization runs nothing: it only waits for a place on the server. Absent from an older answer. */
+  waiting_for_capacity?: boolean;
 };
 
 /** How long a read would take: per address (null without usable history), then in total. */

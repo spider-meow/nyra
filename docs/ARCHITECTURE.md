@@ -46,6 +46,25 @@ asked by hand joins the one already waiting. Cancelling is never refused (per br
 job). A job that crashes or overruns leaves `running` (`reap_stale`, `fail_running`), which frees the organization. The
 monthly pass (AXE-523) is a launch by the system: it must queue without being refused, to wait for its turn.
 
+**Global caps (AXE-530).** On top of one job per organization, `claim` keeps two caps, all organizations together:
+`NYRA_MAX_HEAVY_JOBS` (default 1) on the jobs that read sites (`crawl`, `check`, `locate`) and `NYRA_MAX_MODEL_JOBS`
+(default 1) on those that analyse images (`index`, `match`: CLIP model); `report` has none. A job takes a place of its
+own kind only, and a running job whose `heartbeat_at` is older than `STALE_AFTER_SECONDS` holds none (a dead worker's
+row). The count and the take are serialized by a transaction-level advisory lock (`jobs:claim`), because the unique
+index cannot see other organizations. The excess stays `queued`: nothing is refused. Among the jobs that may start,
+the organization whose last job started least recently goes first, then the oldest job (a `locate` after the others), so
+an organization with many queued jobs does not push the others back. `jobs/current` marks each queued job of the brand
+`waiting_for_capacity` when its organization runs nothing while its kind has no place: a yes or no, with nothing about
+the other organizations' jobs. A worker process runs one job at a time and one `worker` container is started, so the caps
+only matter with two workers or more (see `DEPLOYMENT.md`).
+
+**One domain at a time (AXE-530).** `claim` also keeps a `crawl` or `check` queued while a running job reads one of
+its domains (host without `www.`, any organization): a `crawl` reads the sites of `params.site_ids`, or all the
+brand's sites when none is given; a `check` reads the sites that are the keys of `params.pages` (`_hosts` in
+`cloud/jobs.py`). The other kinds read no site. When the domain cannot be told (the sites were deleted, odd params),
+the job conflicts with nothing and starts: the worker then fails it with its own message, rather than the job
+waiting for ever. A job held back by a domain is `waiting_for_capacity` like one held back by the cap.
+
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
 queued after every upload, also backfills older rows; an administrator can start it from Réglages > Général > Maintenance, `POST .../jobs/index`), `report`, `locate` (checks one
@@ -122,6 +141,7 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/db.py` | Pooled Postgres access, one query per screen (no N+1). |
 | `cloud/storage.py` | Supabase Storage; signs URLs in batches and remembers a bounded number of them, so an image keeps the same URL while it is valid. |
 | `cloud/auth.py` | JWT verification (HS256 or JWKS) and membership/role checks. |
+| `cloud/ratelimit.py` | Limitation de débit de l'API : un seau à jetons par utilisateur vérifié, lectures et écritures séparées (429 + `Retry-After`), branchée comme dépendance de toute l'application ; les contrôles de santé n'y sont jamais soumis. Valeurs : `NYRA_RATE_READ_PER_MIN` (300), `NYRA_RATE_WRITE_PER_MIN` (120). |
 | `cloud/usage.py` | Quotas and usage per organization: the counters (`usage_counters`, added to by the worker), the usage against the limits of `config.QuotaConfig` (the Nyra team overrides them per organization), the refusal sentences (`check`) and the day's e-mail allowance (`claim_email`). |
 | `cloud/insights.py` | Statistics for the Statistiques page and the back office, from the `insights` views. |
 | `observability.py` | JSON logs tagged with the job in progress, optional Sentry. |
