@@ -223,6 +223,7 @@ def test_enqueue_refuses_a_second_crawl_and_coalesces_index(cloud_database_url, 
 
 def test_claim_runs_one_job_per_organization_at_a_time(cloud_database_url, monkeypatch):
     monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", "10")  # the global cap is not what this test is about
+    monkeypatch.setenv("NYRA_MAX_MODEL_JOBS", "10")
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
         org = cloud_db.create_organization(conn, name="A", slug=f"a-{uuid.uuid4().hex[:8]}")
@@ -271,22 +272,43 @@ def _claim(url):
         return cloud_jobs.claim(conn)
 
 
-def test_claim_runs_at_most_the_global_cap_of_heavy_jobs_and_the_others_wait_their_turn(cloud_database_url, monkeypatch):
+def _finish(url, job_id):
+    with cloud_db.connect(url) as conn:
+        cloud_jobs.finish(conn, job_id, status="done", message="ok")
+
+
+def test_reading_sites_and_analysing_images_have_a_cap_each_and_a_report_has_none(cloud_database_url, monkeypatch):
     monkeypatch.delenv("NYRA_MAX_HEAVY_JOBS", raising=False)  # default: 1
+    monkeypatch.delenv("NYRA_MAX_MODEL_JOBS", raising=False)  # default: 1
     with cloud_db.connect(cloud_database_url) as conn:
-        first, second, third, light = _orgs_with_a_job(conn, ["crawl", "match", "locate", "report"])
-    running = _claim(cloud_database_url)
-    assert running["id"] == first
-    # Another organization's heavy job waits; a report is not heavy and is not held back by the cap.
-    assert _claim(cloud_database_url)["id"] == light
+        crawl, locate, index, match, light = _orgs_with_a_job(conn, ["crawl", "locate", "index", "match", "report"])
+    assert _claim(cloud_database_url)["id"] == crawl
+    # A long read does not hold back another customer's indexing: each kind of work has its own places.
+    assert _claim(cloud_database_url)["id"] == index
+    assert _claim(cloud_database_url)["id"] == light  # no cap on a report
+    assert _claim(cloud_database_url) is None  # the second analysis and the second reading wait
+    _finish(cloud_database_url, index)
+    assert _claim(cloud_database_url)["id"] == match  # a place of its own kind freed up, none for the other kind
     assert _claim(cloud_database_url) is None
-    order = [first]
-    for _ in range(2):  # each time a heavy job ends, the next one starts; none is lost
-        with cloud_db.connect(cloud_database_url) as conn:
-            cloud_jobs.finish(conn, order[-1], status="done", message="ok")
-        order.append(_claim(cloud_database_url)["id"])
-        assert _claim(cloud_database_url) is None
-    assert order == [first, second, third]
+    _finish(cloud_database_url, crawl)
+    assert _claim(cloud_database_url)["id"] == locate  # none lost
+
+
+def test_a_running_job_whose_worker_stopped_reporting_holds_no_place(cloud_database_url, monkeypatch):
+    monkeypatch.delenv("NYRA_MAX_HEAVY_JOBS", raising=False)
+    with cloud_db.connect(cloud_database_url) as conn:
+        dead, waiting = _orgs_with_a_job(conn, ["crawl", "crawl"])
+    assert _claim(cloud_database_url)["id"] == dead
+    assert _claim(cloud_database_url) is None  # its heartbeat is fresh: the place is taken
+    with cloud_db.connect(cloud_database_url) as conn:
+        org = conn.execute("SELECT org_id FROM jobs WHERE id = %s", (waiting,)).fetchone()["org_id"]
+        brand = _brand(conn, org)
+        assert cloud_jobs.current(conn, org, brand, admin=True)["active"][0]["waiting_for_capacity"] is True
+        conn.execute("UPDATE jobs SET heartbeat_at = now() - make_interval(secs => %s) WHERE id = %s",
+                     (cloud_jobs.STALE_AFTER_SECONDS + 5, dead))
+        # The worker is gone: the place is free (and the queued job is no longer said to wait for one).
+        assert cloud_jobs.current(conn, org, brand, admin=True)["active"][0]["waiting_for_capacity"] is False
+    assert _claim(cloud_database_url)["id"] == waiting
 
 
 def test_workers_claiming_at_the_same_moment_never_pass_the_cap(cloud_database_url, monkeypatch):
@@ -357,21 +379,39 @@ def test_a_check_reads_the_domains_of_its_pages_and_a_job_without_a_known_domain
     assert _claim(cloud_database_url)["id"] == check
 
 
-def test_the_cap_is_set_by_an_environment_variable(cloud_database_url, monkeypatch):
-    monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", "2")
+def test_a_dead_worker_does_not_keep_its_domain_busy(cloud_database_url, monkeypatch):
+    monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", "10")
     with cloud_db.connect(cloud_database_url) as conn:
-        ids = _orgs_with_a_job(conn, ["crawl", "crawl", "crawl"])
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        org_a, brand_a, [site_a] = _org_with_sites(conn, "https://dead.example.net/")
+        org_b, brand_b, [site_b] = _org_with_sites(conn, "https://dead.example.net/")
+        dead = _queue(conn, org_id=org_a, brand_id=brand_a, kind="crawl", params={"site_ids": [str(site_a)]})
+        waiting = _queue(conn, org_id=org_b, brand_id=brand_b, kind="crawl", params={"site_ids": [str(site_b)]})
+    assert _claim(cloud_database_url)["id"] == dead
+    assert _claim(cloud_database_url) is None  # fresh heartbeat: the domain is being read
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET heartbeat_at = now() - make_interval(secs => %s) WHERE id = %s",
+                     (cloud_jobs.STALE_AFTER_SECONDS + 5, dead))
+    assert _claim(cloud_database_url)["id"] == waiting
+
+
+@pytest.mark.parametrize("variable, kind", [("NYRA_MAX_HEAVY_JOBS", "crawl"), ("NYRA_MAX_MODEL_JOBS", "index")])
+def test_each_cap_is_set_by_its_environment_variable(cloud_database_url, monkeypatch, variable, kind):
+    monkeypatch.setenv(variable, "2")
+    with cloud_db.connect(cloud_database_url) as conn:
+        ids = _orgs_with_a_job(conn, [kind, kind, kind])
     assert [_claim(cloud_database_url)["id"] for _ in range(2)] == ids[:2]
     assert _claim(cloud_database_url) is None
 
 
+@pytest.mark.parametrize("variable", ["NYRA_MAX_HEAVY_JOBS", "NYRA_MAX_MODEL_JOBS"])
 @pytest.mark.parametrize("value", ["abc", "0", "-3", "1.5", ""])
-def test_an_invalid_cap_falls_back_to_one_and_says_so(value, monkeypatch, caplog):
-    monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", value)
+def test_an_invalid_cap_falls_back_to_one_and_says_so(variable, value, monkeypatch, caplog):
+    monkeypatch.setenv(variable, value)
     cloud_jobs._cap_from.cache_clear()
     with caplog.at_level("WARNING", logger="nyra.cloud.jobs"):
-        assert cloud_jobs._max_heavy_jobs() == 1
-    assert ("NYRA_MAX_HEAVY_JOBS" in caplog.text) == (value != "")  # an empty value is "not set", not a mistake
+        assert cloud_jobs._cap(variable) == 1
+    assert (variable in caplog.text) == (value != "")  # an empty value is "not set", not a mistake
     cloud_jobs._cap_from.cache_clear()
 
 
