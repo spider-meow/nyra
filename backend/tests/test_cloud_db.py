@@ -221,7 +221,8 @@ def test_enqueue_refuses_a_second_crawl_and_coalesces_index(cloud_database_url, 
     assert [job["id"] for job in current["organization"]] == [queued_for_other["id"]]
 
 
-def test_claim_runs_one_job_per_organization_at_a_time(cloud_database_url):
+def test_claim_runs_one_job_per_organization_at_a_time(cloud_database_url, monkeypatch):
+    monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", "10")  # the global cap is not what this test is about
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
         org = cloud_db.create_organization(conn, name="A", slug=f"a-{uuid.uuid4().hex[:8]}")
@@ -244,6 +245,125 @@ def test_claim_runs_one_job_per_organization_at_a_time(cloud_database_url):
         assert cloud_jobs.claim(conn) is None
         cloud_jobs.finish(conn, a2["id"], status="done", message="ok")
         assert cloud_jobs.claim(conn)["id"] == b1["id"]
+
+
+def _orgs_with_a_job(conn, kinds):
+    """A fresh organization per kind, each with one queued job of that kind (nothing else waits or runs anywhere):
+    the list of job ids, oldest first."""
+    conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+    jobs = []
+    for kind in kinds:
+        org = cloud_db.create_organization(conn, name="O", slug=f"o-{uuid.uuid4().hex[:8]}")
+        jobs.append(cloud_jobs.enqueue(conn, org_id=org, brand_id=_brand(conn, org), kind=kind)["id"])
+    return jobs
+
+
+def _claim(url):
+    with cloud_db.connect(url) as conn:
+        return cloud_jobs.claim(conn)
+
+
+def test_claim_runs_at_most_the_global_cap_of_heavy_jobs_and_the_others_wait_their_turn(cloud_database_url, monkeypatch):
+    monkeypatch.delenv("NYRA_MAX_HEAVY_JOBS", raising=False)  # default: 1
+    with cloud_db.connect(cloud_database_url) as conn:
+        first, second, third, light = _orgs_with_a_job(conn, ["crawl", "match", "locate", "report"])
+    running = _claim(cloud_database_url)
+    assert running["id"] == first
+    # Another organization's heavy job waits; a report is not heavy and is not held back by the cap.
+    assert _claim(cloud_database_url)["id"] == light
+    assert _claim(cloud_database_url) is None
+    order = [first]
+    for _ in range(2):  # each time a heavy job ends, the next one starts; none is lost
+        with cloud_db.connect(cloud_database_url) as conn:
+            cloud_jobs.finish(conn, order[-1], status="done", message="ok")
+        order.append(_claim(cloud_database_url)["id"])
+        assert _claim(cloud_database_url) is None
+    assert order == [first, second, third]
+
+
+def test_workers_claiming_at_the_same_moment_never_pass_the_cap(cloud_database_url, monkeypatch):
+    monkeypatch.delenv("NYRA_MAX_HEAVY_JOBS", raising=False)
+    with cloud_db.connect(cloud_database_url) as conn:
+        _orgs_with_a_job(conn, ["crawl"] * 8)
+    start, claimed = threading.Barrier(8), []
+
+    def worker():
+        start.wait()
+        claimed.append(_claim(cloud_database_url))
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    assert len([job for job in claimed if job]) == 1 and len(claimed) == 8
+
+
+def test_the_cap_is_set_by_an_environment_variable(cloud_database_url, monkeypatch):
+    monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", "2")
+    with cloud_db.connect(cloud_database_url) as conn:
+        ids = _orgs_with_a_job(conn, ["crawl", "crawl", "crawl"])
+    assert [_claim(cloud_database_url)["id"] for _ in range(2)] == ids[:2]
+    assert _claim(cloud_database_url) is None
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-3", "1.5", ""])
+def test_an_invalid_cap_falls_back_to_one_and_says_so(value, monkeypatch, caplog):
+    monkeypatch.setenv("NYRA_MAX_HEAVY_JOBS", value)
+    cloud_jobs._cap_from.cache_clear()
+    with caplog.at_level("WARNING", logger="nyra.cloud.jobs"):
+        assert cloud_jobs._max_heavy_jobs() == 1
+    assert ("NYRA_MAX_HEAVY_JOBS" in caplog.text) == (value != "")  # an empty value is "not set", not a mistake
+    cloud_jobs._cap_from.cache_clear()
+
+
+def test_the_organization_that_started_a_job_least_recently_goes_first(cloud_database_url, monkeypatch):
+    monkeypatch.delenv("NYRA_MAX_HEAVY_JOBS", raising=False)
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        busy = cloud_db.create_organization(conn, name="B", slug=f"b-{uuid.uuid4().hex[:8]}")
+        other = cloud_db.create_organization(conn, name="C", slug=f"c-{uuid.uuid4().hex[:8]}")
+        busy_brand, other_brand = _brand(conn, busy), _brand(conn, other)
+        # `busy` queued four, `other` queued one afterwards: first come first served would run all of `busy` first.
+        mine = [cloud_jobs.enqueue(conn, org_id=busy, brand_id=busy_brand, kind=kind)["id"]
+                for kind in ("crawl", "match", "index", "check")]
+        theirs = cloud_jobs.enqueue(conn, org_id=other, brand_id=other_brand, kind="crawl")["id"]
+    order = []
+    for _ in range(3):
+        order.append(_claim(cloud_database_url)["id"])
+        with cloud_db.connect(cloud_database_url) as conn:
+            cloud_jobs.finish(conn, order[-1], status="done", message="ok")
+    assert order == [mine[0], theirs, mine[1]]
+
+
+def test_a_long_search_still_waits_behind_the_other_kinds(cloud_database_url, monkeypatch):
+    monkeypatch.delenv("NYRA_MAX_HEAVY_JOBS", raising=False)
+    with cloud_db.connect(cloud_database_url) as conn:
+        search, crawl = _orgs_with_a_job(conn, ["locate", "crawl"])
+    assert _claim(cloud_database_url)["id"] == crawl
+
+
+def test_a_job_is_told_to_wait_for_a_place_only_when_its_organization_is_idle_and_the_server_is_full(cloud_database_url, monkeypatch):
+    monkeypatch.delenv("NYRA_MAX_HEAVY_JOBS", raising=False)
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        org_a = cloud_db.create_organization(conn, name="A", slug=f"a-{uuid.uuid4().hex[:8]}")
+        org_b = cloud_db.create_organization(conn, name="B", slug=f"b-{uuid.uuid4().hex[:8]}")
+        brand_a, brand_b = _brand(conn, org_a), _brand(conn, org_b)
+        brand_a2 = cloud_db.create_brand(conn, org_id=org_a, name="A2", slug="a2")
+        cloud_jobs.enqueue(conn, org_id=org_a, brand_id=brand_a, kind="crawl")
+        waiting = cloud_jobs.enqueue(conn, org_id=org_b, brand_id=brand_b, kind="crawl")
+        sibling = cloud_jobs.enqueue(conn, org_id=org_a, brand_id=brand_a2, kind="match")
+        assert cloud_jobs.current(conn, org_b, brand_b, admin=True)["active"][0]["waiting_for_capacity"] is False  # room: not yet
+        running = cloud_jobs.claim(conn)
+        assert running["org_id"] == str(org_a)
+        mine = cloud_jobs.current(conn, org_b, brand_b, admin=True)
+        assert [(job["id"], job["waiting_for_capacity"]) for job in mine["active"]] == [(waiting["id"], True)]
+        assert mine["organization"] == []  # nothing of the other organization leaks
+        # The organization that runs something is waiting for itself, not for a place.
+        own = cloud_jobs.current(conn, org_a, brand_a2, admin=True)
+        assert [(job["id"], job["waiting_for_capacity"]) for job in own["active"]] == [(sibling["id"], False)]
+        assert cloud_jobs.current(conn, org_a, brand_a, admin=True)["active"][0]["waiting_for_capacity"] is False
 
 
 def test_cancel_queued_is_immediate_and_running_is_flagged(cloud_database_url):
@@ -366,7 +486,7 @@ def test_a_second_worker_claiming_in_the_same_organization_gets_nothing_and_no_e
         assert cloud_jobs.claim(conn)["id"] == first_job["id"]  # not committed yet: the other worker cannot see it
         worker = threading.Thread(target=second_worker)
         worker.start()
-        time.sleep(0.5)  # it picks the other brand's job and waits on the unique index
+        time.sleep(0.5)  # it waits for the first one to commit, then finds the organization busy
     worker.join(timeout=30)
     assert answers == [None]
 

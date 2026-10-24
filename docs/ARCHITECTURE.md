@@ -46,6 +46,16 @@ asked by hand joins the one already waiting. Cancelling is never refused (per br
 job). A job that crashes or overruns leaves `running` (`reap_stale`, `fail_running`), which frees the organization. The
 monthly pass (AXE-523) is a launch by the system: it must queue without being refused, to wait for its turn.
 
+**A global cap on heavy jobs (AXE-530).** On top of one job per organization, `claim` lets at most
+`NYRA_MAX_HEAVY_JOBS` (default 1, see `DEPLOYMENT.md`) heavy jobs run at once, all organizations together: every
+kind but `report`, since `crawl` and `check` load Chromium and `index`, `match` and `locate` load the CLIP model.
+The count and the take are serialized by a transaction-level advisory lock (`jobs:claim`), because the unique index
+cannot see other organizations. The excess stays `queued`: nothing is refused. Among the jobs that may start, the
+organization whose last job started least recently goes first, then the oldest job (a `locate` after the others), so
+an organization with many queued jobs does not push the others back. `jobs/current` marks each queued job of the brand
+`waiting_for_capacity` when its organization runs nothing while the cap is reached: a yes or no, with nothing about
+the other organizations' jobs.
+
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
 queued after every upload, also backfills older rows; an administrator can start it from Réglages > Général > Maintenance, `POST .../jobs/index`), `report`, `locate` (checks one

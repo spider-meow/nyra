@@ -82,6 +82,17 @@ worker is killed (exit 137), `restart: unless-stopped` starts it again, and its 
 `WORKER_MEM_LIMIT` adjusted. If only Chromium (a child process) is killed, the job fails with the browser's message
 instead of the worker restarting.
 
+**Global cap on heavy jobs: `NYRA_MAX_HEAVY_JOBS`** (integer >= 1, default **1**, read by every worker at each poll;
+an invalid value is logged once as a warning and the default is used). It is the number of heavy jobs running at the
+same time, all customers together; the others stay queued (nothing is refused or lost) and start when a place frees
+up, the customer who started a job least recently first. Heavy: every kind but `report` (`crawl` and `check` load
+Chromium; `index`, `match` and `locate` load the CLIP model and the library's vectors). **Keep 1 until the peak is
+measured**: raise it only after recording the worker's memory (`docker stats`) during a crawl, and during an
+indexing or a comparison of the largest library, then check that N times that peak (not the 2560 MiB limit
+times N) fits in the machine. The cap is global, so with `--scale worker=2` and a cap of 1 the second worker
+idles unless a `report` is waiting. To change it, edit `.env` and restart the workers. `.env.example` does not
+list it yet (that file could not be edited in this change): add `NYRA_MAX_HEAVY_JOBS=1` there.
+
 ## Supabase setup, once
 
 1. **Migrations**: apply `supabase/migrations/` in order (see
