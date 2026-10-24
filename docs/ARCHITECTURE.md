@@ -83,6 +83,31 @@ between organizations). Each launch writes one `schedule.run` row in the audit l
 *Switch:* `NYRA_SCHEDULER=0|false|off` stops it. *Limit:* the worker looks every 5 minutes but not during a job (it runs
 one at a time), so a read can start a few hours late; it could not have started before the running job ended anyway.
 
+**Monthly e-mail (AXE-523, `cloud/digest.py`).** ONE e-mail per organization and per month, to its administrators (role
+`admin`, at most 10, addresses read as the members list does), sent by the worker through `mailer.send` (Resend). *It says:*
+(1) « Nouveaux visuels à traiter »: matches found since the last e-mail sent to the organization (35 days if none) on a visual
+whose rights have expired (unlimited rights excluded) and with no decision yet. A match is dated by the later of the site
+image's `first_seen` and the reference's `created_at`, not by `matches.created_at`, which every pass that rewrites a match sets
+again (a re-indexed reference, a new threshold); (2) the visuals of the library expiring within 30 days, and (3) in 31 to 90
+days (`SOON_DAYS`, `LATER_DAYS`: the only place of the two thresholds; a visual is in one list at most; expired ones are in
+neither); (4) one sentence per brand whose last read looks incomplete (`crawl_runs.suspect`: nothing is marked removed), was
+stopped by the month's page limit (`result.quota_reached` of the scheduled `crawl`) or is not finished (its scheduled read
+is not `done`, or still due). Each list shows 20 lines per brand at most, then « et N autres », and a link to the page
+(`NYRA_PUBLIC_URL` + `/o/<org>/b/<brand>/review` or `/library`). Every name is escaped in the HTML; no word on billing.
+*When:* at least one brand has the monthly read on, the date of the latest brand has passed, and no scheduled read of the
+organization waits or runs, or 48 hours have passed since that date (the alert does not depend on the read: if it failed,
+the mail says so); never twice a month. It leaves only if there is something to say; else the month is `skipped`.
+*Once:* `claim` is one `INSERT ... ON CONFLICT DO UPDATE ... WHERE status = 'sending' AND <30 minutes old> AND attempts < 5
+RETURNING`: two workers cannot both send. A claim left `sending` (worker dead, or a refusal) is taken again after 30 minutes,
+5 attempts at most, always with the idempotency key `monthly:<org_id>:<YYYY-MM>`, so Resend never sends twice even if the
+worker died between the send and the mark. After 5 attempts the worker gives up and warns once a day. Without
+`RESEND_API_KEY` + `NYRA_MAIL_FROM` nothing is claimed or marked and one warning an hour is logged. *Audit:* `digest.sent`
+(counters only), `digest.skipped`, `digest.failed` (error type and attempt). *Switch:* `NYRA_SCHEDULER` (the same as the reads).
+*Limits:* the first month an organization switches the read on, the date has often passed already, so its first e-mail leaves
+at the next pass; a visual that expires while already online appears in the 30-day list of the e-mail before, not as « new »;
+if a retry rebuilds a different content under the same key, Resend refuses (409) and the attempts run out: the first mail
+had left.
+
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
 queued after every upload, also backfills older rows; an administrator can start it from Réglages > Général > Maintenance, `POST .../jobs/index`), `report`, `locate` (checks one
@@ -156,6 +181,7 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/worker.py` | The job runner. |
 | `cloud/jobs.py` | The queue (enqueue, claim, heartbeat, cancel, reap). |
 | `cloud/schedule.py` | The monthly read (`brand_schedules`): `is_due` (pure), `enable` / `disable`, `enqueue_due` (called by the worker every 5 minutes), the `NYRA_SCHEDULER` switch. |
+| `cloud/digest.py` | The monthly e-mail (`monthly_digests`): `gather` (reads), `build` (pure: subject, HTML, text), `due_orgs` / `is_ready` (when), `claim` (atomic), `run` (called by the worker right after `enqueue_due`). |
 | `cloud/store.py` | Postgres + Storage behind the store interfaces. |
 | `cloud/db.py` | Pooled Postgres access, one query per screen (no N+1). |
 | `cloud/storage.py` | Supabase Storage; signs URLs in batches and remembers a bounded number of them, so an image keeps the same URL while it is valid. |

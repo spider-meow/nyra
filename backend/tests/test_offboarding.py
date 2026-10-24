@@ -56,6 +56,7 @@ def _seed(conn, name: str):
     cloud_db.set_overrides(conn, org_id, {"match": {"phash_threshold": 5}}, sole)
     cloud_db.set_match_signature(conn, org_id, brand_id, "sig")
     schedule.enable(conn, brand_id, org_id, 10)
+    conn.execute("INSERT INTO monthly_digests (org_id, month, status, attempts, sent_at) VALUES (%s, '2026-10-01', 'sent', 1, now())", (org_id,))
     cloud_audit.record(conn, org_id, sole, "library.upload", "reference", brand_id=brand_id, saved=1)
     return org_id, brand_id, sole, shared
 
@@ -105,7 +106,7 @@ def test_every_table_is_covered_by_the_erasure_and_nothing_can_block_it(cloud_da
     assert tables == by_org | set(offboarding.INDIRECT) | offboarding.GLOBAL, tables - by_org - set(offboarding.INDIRECT) - offboarding.GLOBAL
     assert not blocking, "a foreign key without ON DELETE CASCADE/SET NULL would stop the deletion of an organization"
     assert not no_cascade and not indirect_cascade, (no_cascade, indirect_cascade)
-    assert {"audit_log", "brand_schedules", "reference_images", "reviews", "excluded_hashes", "jobs"} <= by_org
+    assert {"audit_log", "brand_schedules", "monthly_digests", "reference_images", "reviews", "excluded_hashes", "jobs"} <= by_org
 
 
 def test_dry_run_changes_nothing_and_a_wrong_name_is_refused(cloud_database_url, fake_storage_client, two_organizations):
@@ -116,6 +117,7 @@ def test_dry_run_changes_nothing_and_a_wrong_name_is_refused(cloud_database_url,
     assert report["dry_run"] and report["files"] == {"refs": 4, "site-images": 3, "reports": 3}
     assert report["rows"]["reference_images"] == 1 and report["rows"]["organizations"] == 1 and report["rows"]["image_pages"] == 1
     assert report["rows"]["brand_schedules"] == 1  # the monthly schedule is part of the organization's data
+    assert report["rows"]["monthly_digests"] == 1  # so is the record of its monthly e-mails
     assert len(report["users"]) == 1  # the member of nothing else; not the one on the Nyra team
     assert fake_storage_client.store == before and fake_storage_client.deleted_users == []
     for wrong in (None, "leaving", row["name"] + " "):

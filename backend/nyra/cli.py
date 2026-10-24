@@ -264,11 +264,13 @@ def worker_cmd(
     import signal
 
     from nyra.cloud import storage as cloud_storage
+    from nyra.cloud.api import settings_from_env
     from nyra.cloud.worker import Worker, configure_logging
 
     env = _cloud_env()
     configure_logging()
     worker = Worker(
+        mail_settings=settings_from_env(config),  # RESEND_API_KEY, NYRA_MAIL_FROM and NYRA_PUBLIC_URL, for the monthly e-mails
         database_url=env["DATABASE_URL"],
         storage_client_factory=lambda: cloud_storage.get_client(env["SUPABASE_URL"], env["SUPABASE_SERVICE_ROLE_KEY"]),
         config_path=config, poll_seconds=poll_seconds,
