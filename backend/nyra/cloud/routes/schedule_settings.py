@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt
@@ -17,7 +18,7 @@ router = APIRouter()
 class ScheduleBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
     enabled: StrictBool
-    day_of_month: StrictInt
+    day_of_month: Optional[StrictInt] = None  # needed (1 to 28) to switch on; ignored when switching off
 
 
 def _state(conn, scope: BrandScope) -> dict:
@@ -47,13 +48,17 @@ def get_schedule(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depen
 
 @router.put(f"{BRAND}/schedule")
 def put_schedule(body: ScheduleBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    if not 1 <= body.day_of_month <= 28:
+    day = body.day_of_month
+    if (day is None and body.enabled) or (day is not None and not 1 <= day <= 28):
         raise HTTPException(status_code=400, detail="Le jour du mois doit être compris entre 1 et 28.")
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        if body.enabled:
-            schedule.enable(conn, scope.brand_id, scope.org_id, body.day_of_month)
-        else:
+        row = conn.execute("SELECT enabled, day_of_month FROM brand_schedules WHERE brand_id = %s FOR UPDATE",
+                           (scope.brand_id,)).fetchone()
+        if body.enabled and not (row and row["enabled"] and row["day_of_month"] == day):
+            schedule.enable(conn, scope.brand_id, scope.org_id, day)
+            scope.audit(conn, "schedule.enable", "brand_schedule", scope.brand_id, day_of_month=day)
+        elif not body.enabled and row and row["enabled"]:
             schedule.disable(conn, scope.brand_id)
-        scope.audit(conn, "schedule.enable" if body.enabled else "schedule.disable", "brand_schedule", scope.brand_id,
-                    day_of_month=body.day_of_month)
+            scope.audit(conn, "schedule.disable", "brand_schedule", scope.brand_id)
+        # Anything else asks for what already is: nothing changes, so there is nothing to trace.
         return _state(conn, scope)

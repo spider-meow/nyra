@@ -596,7 +596,7 @@ export function useSetSchedule() {
   const { apiPath } = useOrg();
   const invalidate = useInvalidate();
   return useMutation({
-    mutationFn: (input: { enabled: boolean; day_of_month: number }) => api.put<BrandSchedule>(apiPath("/schedule"), input),
+    mutationFn: (input: { enabled: boolean; day_of_month?: number }) => api.put<BrandSchedule>(apiPath("/schedule"), input),
     onSuccess: () => invalidate("schedule"),
   });
 }

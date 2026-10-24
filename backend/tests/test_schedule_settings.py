@@ -99,7 +99,7 @@ def test_only_an_administrator_changes_it_and_it_is_traced_in_the_same_transacti
     [enabled] = _audit_rows(cloud_database_url, org_id, "schedule.enable")
     [disabled] = _audit_rows(cloud_database_url, org_id, "schedule.disable")
     assert enabled["user_id"] == admin_id and enabled["brand_id"] == cloud_brand and enabled["object_id"] == str(cloud_brand)
-    assert enabled["detail"] == {"day_of_month": 12} and disabled["detail"] == {"day_of_month": 12}
+    assert enabled["detail"] == {"day_of_month": 12} and disabled["detail"] == {}
 
 
 def test_the_body_is_validated_with_a_sentence_and_nothing_is_written(client, org_with_users, cloud_database_url):
@@ -109,14 +109,41 @@ def test_the_body_is_validated_with_a_sentence_and_nothing_is_written(client, or
         answer = client.put(f"{base}/schedule", headers=headers, json={"enabled": True, "day_of_month": day})
         assert answer.status_code == 400 and answer.json()["detail"] == "Le jour du mois doit être compris entre 1 et 28."
     for bad in ({"enabled": True, "day_of_month": "5"}, {"enabled": True, "day_of_month": 5.5}, {"enabled": True, "day_of_month": True},
-                {"enabled": "yes", "day_of_month": 5}, {"enabled": True}, {"day_of_month": 5},
+                {"enabled": "yes", "day_of_month": 5}, {"day_of_month": 5}, {"enabled": False, "day_of_month": "5"},
                 {"enabled": True, "day_of_month": 5, "org_id": str(uuid.uuid4())}):
         assert client.put(f"{base}/schedule", headers=headers, json=bad).status_code == 422, bad
+    for incomplete in ({"enabled": True}, {"enabled": True, "day_of_month": None}):  # a day is needed to switch on
+        answer = client.put(f"{base}/schedule", headers=headers, json=incomplete)
+        assert answer.status_code == 400 and answer.json()["detail"] == "Le jour du mois doit être compris entre 1 et 28."
+    assert client.put(f"{base}/schedule", headers=headers, json={"enabled": False, "day_of_month": 29}).status_code == 400
     for edge in (1, 28):
         assert client.put(f"{base}/schedule", headers=headers, json={"enabled": True, "day_of_month": edge}).status_code == 200
+    off = client.put(f"{base}/schedule", headers=headers, json={"enabled": False})  # no day needed to switch off
+    assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["day_of_month"] == 28
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT count(*) AS n FROM audit_log WHERE org_id = %s AND action LIKE 'schedule.%%'",
-                            (org_id,)).fetchone()["n"] == 2  # only the two valid calls
+                            (org_id,)).fetchone()["n"] == 3  # only the valid calls that changed something
+
+
+def test_a_put_that_changes_nothing_writes_no_trace(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, _, _ = org_with_users
+    headers = _headers(admin_id)
+    put = lambda **body: client.put(f"{base}/schedule", headers=headers, json=body)  # noqa: E731
+    count = lambda action: len(_audit_rows(cloud_database_url, org_id, action))  # noqa: E731
+    first = put(enabled=False)  # a brand with no row, switched off: nothing to do
+    assert first.status_code == 200 and first.json()["enabled"] is False and count("schedule.disable") == 0
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM brand_schedules WHERE brand_id = %s", (cloud_brand,)).fetchone()["n"] == 0
+    on = put(enabled=True, day_of_month=9)
+    assert on.status_code == 200 and put(enabled=True, day_of_month=9).json() == on.json() and count("schedule.enable") == 1
+    assert put(enabled=True, day_of_month=15).json()["day_of_month"] == 15  # only the day changes: one more trace, the new day
+    assert [row["detail"] for row in _audit_rows(cloud_database_url, org_id, "schedule.enable")].count({"day_of_month": 15}) == 1
+    assert count("schedule.enable") == 2
+    off = put(enabled=False)
+    assert off.status_code == 200 and off.json()["day_of_month"] == 15 and put(enabled=False).json() == off.json()
+    assert put(enabled=False, day_of_month=3).json() == off.json()  # a day sent with the switch off changes nothing
+    assert count("schedule.disable") == 1
+    assert put(enabled=True, day_of_month=15).status_code == 200 and count("schedule.enable") == 3  # on again: a change
 
 
 def test_putting_twice_is_the_same_and_it_agrees_with_enable(client, org_with_users, cloud_brand, cloud_database_url):

@@ -13,9 +13,9 @@ function frenchDay(iso: string): string {
   return Number.isNaN(date.getTime()) ? iso : dayFormat.format(date);
 }
 
-/** « le 3 novembre 2026, dans la nuit »; a date already past means the read goes at the next pass of the robot. */
+/** « le 3 novembre 2026, tôt le matin »; a date already past means the read goes at the next pass of the robot. */
 function nextText(iso: string): string {
-  return new Date(iso).getTime() > Date.now() ? `le ${frenchDay(iso)}, dans la nuit` : "très prochainement";
+  return new Date(iso).getTime() > Date.now() ? `le ${frenchDay(iso)}, tôt le matin` : "très prochainement";
 }
 
 /** The brand's monthly read: everyone sees it, the administrators change it. */
@@ -36,9 +36,9 @@ export function Schedule() {
         <Checkbox
           checked={data.enabled}
           disabled={locked}
-          onChange={(enabled) => save.mutate({ enabled, day_of_month: data.day_of_month })}
+          onChange={(enabled) => save.mutate(enabled ? { enabled, day_of_month: data.day_of_month } : { enabled })}
           label="Lire les sites de cette marque chaque mois"
-          hint="Nyra relit les sites de la marque une fois par mois, la nuit, puis envoie aux administrateurs un e-mail de résumé : nouveaux visuels à traiter et visuels qui expirent dans 30 et 90 jours."
+          hint="Nyra relit les sites de la marque une fois par mois, tôt le matin, puis envoie aux administrateurs un e-mail de résumé : nouveaux visuels à traiter et visuels qui expirent dans 30 et 90 jours."
         />
         {admin ? null : <p className="text-[13px] text-muted">Seuls les administrateurs peuvent modifier ce réglage.</p>}
         {save.error ? <p role="alert" className="text-sm text-terracotta">{errorMessage(save.error)}</p> : null}
