@@ -17,7 +17,7 @@ An organization holds **brands** (Rémy Martin, Louis XIII...). A brand
 owns its library, its sites (one per market: US, INT, UK, FR) and
 everything derived from them: its references are only compared with
 images crawled on its own sites. Exclusions, reports, the match
-signature and the job queue are per brand; settings and memberships stay
+signature are per brand (jobs carry a brand, but only one runs per organization); settings and memberships stay
 per organization. Tables that belong to one brand carry `brand_id`, with
 a composite foreign key `(brand_id, org_id)` so a row can't point at
 another organization's brand; pages, site images, matches, reviews and
@@ -39,10 +39,11 @@ before September 26, 2026 still point at their original.
 
 | Table | Purpose | Key columns |
 |---|---|---|
-| `organizations` | Clients | `slug` (lowercase, hyphens, unique) |
+| `organizations` | Clients | `slug` (lowercase, hyphens, unique), `quota_overrides` (jsonb: the limits the Nyra team changed for this organization, keys of `QuotaConfig`; empty = the defaults of `config.yaml`; written by the back office only) |
 | `memberships` | User ↔ organization | `role` ∈ {admin, client} |
 | `brands` | Brands of an organization | `slug` (unique per org), `created_by` (the platform admin who created it: the billing record), `set_aside_logos` (setting, off by default: the site images recognised as logos stay out of the comparison and out of "Droits non vérifiés") |
 | `brand_logos` | A brand's logo, shrunk by the API to a 128 px PNG and kept as a data URI (it travels with the list of brands) | `brand_id` (primary key, deleted with the brand), `data_uri` |
+| `usage_counters` | What an organization used: `kind` ∈ {pages_read, images_new, bytes_downloaded} per month (`period` = first day of the month) and `emails` (invitations) per day; added to by the worker (crawls and page checks, at most a few seconds late) and the API, read by the cap, the client's Usage page and the back office | `org_id` + `period` + `kind` (key), `amount` |
 | `org_settings` | Per-organization overrides of `config.yaml`, shared by its brands | `overrides` jsonb (whitelisted keys only) |
 | `sites` | A brand's addresses | `brand_id`, `url` (canonical, unique per org: an address belongs to one brand), `label` (US, FR...) |
 | `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `unlimited_rights` (never expires; excludes a date: a check forbids both), `collection_id` (its folder, null = unfiled), `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |
@@ -62,6 +63,8 @@ before September 26, 2026 still point at their original.
 | `crawl_runs` | Crawl history, one per address read | counters, `errors`, `job_id` |
 | `reports` | Generated reports, per brand | `brand_id`, Storage paths of the three files, `stats` |
 | `platform_staff` | Nyra team members who see the back office | `user_id` (service role only, no RLS policy) |
+| `audit_log` | What people did, per organization: one row per action that changes something | `org_id` (deleted with the organization; null for the Nyra team's own `staff.add` / `staff.remove`), `brand_id` (no foreign key: survives the brand), `user_id` (set to null if the Auth account is deleted), `action` (stable code: `library.delete`, `exclusion.add`, `member.remove`, `job.crawl`…), `object_type` + `object_id`, `detail` jsonb (counters and codes only, never content; 2 KB at most), `created_at`. Indexes `(org_id, created_at desc)` and `(created_at)` (the purge). RLS: read by the organization's admins; written by the backend, in the transaction of the change it traces. Kept 12 months (`audit.purge`) |
+| `deleted_organizations` | The trace of a complete erasure (`nyra cloud-delete-org`); outlives the organization | `org_id` (no foreign key), `name`, `slug`, `deleted_at`, `operator`, `report` jsonb (row and file counts: no content, no e-mail; ids of the accounts to delete). Service role only, no RLS policy. Retention: to be decided by the team (nothing purges it) |
 
 `crawl_runs.metrics` (jsonb) holds each crawl's timings and byte counts.
 `crawl_runs` also keeps the health of a full read (`pages_ok`, `error_share`,
@@ -76,6 +79,17 @@ original's: only a JPEG working copy is stored) and `stored_bytes`
 (working copy + thumbnail); `reference_images.byte_size` is the uploaded
 original's weight.
 
+### Erasing an organization
+
+Every table holding an organization's data reaches `organizations` through `on delete cascade`: directly by an
+`org_id` column, or through its parent (`image_pages` through `pages`, `brand_logos` through `brands`). So
+`delete from organizations where id = …` removes every row, which `nyra cloud-delete-org` does after the Storage
+files. The tables that are not an organization's are `platform_staff`, `service_metrics` and
+`deleted_organizations`. `backend/tests/test_offboarding.py` reads the catalog: a new table must carry an
+`org_id` with the cascade (or be listed in `offboarding.INDIRECT` / `GLOBAL`), and no foreign key may be
+`no action`/`restrict`, or the test fails. Foreign keys to `auth.users` are `set null` (or `cascade` for
+`memberships` and `platform_staff`): deleting an account never blocks.
+
 ### The `insights` schema
 
 Read-only views for the statistics pages and Grafana (see
@@ -89,12 +103,18 @@ only.
 
 ### The job queue
 
-- `jobs_one_running_per_brand` (partial unique index on `brand_id` where
-  `status = 'running'`) guarantees one running job per brand; two brands
-  of one organization run side by side.
+- `jobs_one_running_per_org` (partial unique index on `org_id` where
+  `status = 'running'`, migration 032) guarantees one running job per
+  organization: the brands of an organization take turns (the per-brand
+  index of 013 is dropped). The migration stops with a clear message if an
+  organization has two running jobs when it is applied: apply it when no
+  job runs (see DEPLOYMENT.md for the order). `jobs_org_active_idx` (partial,
+  `org_id` where queued or running) serves `jobs/current`.
 - Claiming is `UPDATE ... WHERE id = (SELECT ... FOR UPDATE SKIP LOCKED)`.
-- Enqueuing takes a per-brand advisory lock, refuses a second
-  crawl/match/report of the same kind, and merges `index` requests.
+- Enqueuing takes a per-organization advisory lock. A job started by hand is
+  refused while another job but an `index` waits or runs in the organization;
+  what follows an action only refuses a second job of the same kind waiting
+  in the brand. `index` requests merge.
 - A running job whose `heartbeat_at` is older than 3 minutes is marked
   `error` by the next worker, and its crawl run too.
 

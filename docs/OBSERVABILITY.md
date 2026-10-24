@@ -60,7 +60,9 @@ Read from inside each container, with no Docker socket: the cgroup counters (`/s
 (`backend/nyra/cloud/hostmetrics.py`). CPU is a share of one core (100 % = one core). The web process is read
 live; each worker publishes every 15 s into `service_metrics` (a busy worker cannot be asked), and the page
 marks one silent after a minute. Rows older than a day are deleted. Without cgroup v2 (a laptop) the figures
-fall back to the process's own.
+fall back to the process's own. The page opens with the supervision alerts (no worker, a job waiting for nothing, a
+full disk, a worker near its memory limit); the thresholds and their settings are in `DEPLOYMENT.md` (« Supervision
+alerts »). Nothing is sent from them yet.
 
 ## Sentry (exceptions and slow requests)
 

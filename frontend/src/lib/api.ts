@@ -19,13 +19,21 @@ export function bindSession(provider: TokenProvider, unauthorized: () => void): 
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
-  const token = await tokenProvider();
-  if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json");
+  let token: string | null;
+  let response: Response;
+  for (let left = 3; ; left--) {
+    const headers = new Headers(init.headers);
+    token = await tokenProvider(); // read again for each try: it may expire during the waits
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (typeof init.body === "string") headers.set("Content-Type", "application/json"); // `api` sends JSON text or FormData only
+    response = await fetch(`/api${path}`, { ...init, headers });
+    // Only the rate limiter (cloud/ratelimit.py) is replayed: it refuses with 429 and always sets Retry-After, before the
+    // route runs, so nothing was done and replaying is safe. Another 429 (the daily invitation limit) has no Retry-After
+    // and is final. A file upload (FormData) is not replayed: the server has read the whole body when it refuses, so each try would resend the files.
+    const seconds = Number(response.headers.get("Retry-After"));
+    if (response.status !== 429 || !(seconds > 0) || init.body instanceof FormData || !left) break;
+    await new Promise((resume) => setTimeout(resume, Math.min(seconds * 1000, 3e4)));
   }
-  const response = await fetch(`/api${path}`, { ...init, headers });
   const text = await response.text();
   let data: unknown = null;
   if (text) {

@@ -29,6 +29,8 @@ export type Job = {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  /** Queued, and the organization runs nothing: it only waits for a place on the server. Absent from an older answer. */
+  waiting_for_capacity?: boolean;
 };
 
 /** How long a read would take: per address (null without usable history), then in total. */
@@ -51,7 +53,10 @@ export type Occurrences = {
   pages_crawled: number;
 };
 
-export type CurrentJobs = { active: Job[]; last: Job | null };
+/** A job of another brand of the organization that holds the queue: `by` is an e-mail for an administrator, « un membre de l'équipe » for a client; `text` is the sentence to show. Absent from an older answer. */
+export type OrgJob = Pick<Job, "id" | "kind" | "status" | "message" | "progress" | "created_at" | "started_at"> & { brand_id: string; brand_name: string; by: string; since: string; text: string };
+
+export type CurrentJobs = { active: Job[]; last: Job | null; organization?: OrgJob[] };
 
 export type Upcoming = { reference_id: string; filename: string; expiry_date: string; days_left: number; online: boolean };
 
@@ -514,9 +519,25 @@ export type StaffUser = {
   email: string;
   last_sign_in_at: string | null;
   staff: boolean;
-  memberships: { org_id: string; org_name: string; role: Member["role"] }[];
+  memberships: { org_id: string; org_name: string; role: Member["role"]; since: string }[];
+};
+/** One line of usage against a limit (`GET /orgs/{id}/usage`): `level` turns to warning from 80 %. Storage is in bytes. */
+export type UsageItem = { key: string; label: string; used: number; limit: number; level: "ok" | "warning" | "reached" };
+export type OrgUsage = { month: string; items: UsageItem[]; counters: { images_new: number; bytes_downloaded: number } };
+/** `GET /staff/usage`: every organization's usage, its own limits and the defaults of config.yaml. */
+export type StaffUsage = {
+  month: string;
+  defaults: Record<string, number>;
+  /** More organizations exist than the list holds. */
+  truncated: boolean;
+  organizations: { id: string; name: string; slug: string; overrides: Record<string, number>; items: UsageItem[]; counters: OrgUsage["counters"] }[];
 };
 export type StaffAdmin = { user_id: string; email: string; you: boolean };
+
+/** One alarm of the supervision thresholds (`cloud/alerts.py`), in French. */
+export type SupervisionAlert = { code: string; severity: "warning" | "critical"; message: string; /** The container it is about, when there are several. */ instance?: string };
+/** `GET /staff/server`: the containers' readings and the alarms on right now. */
+export type ServerUsage = { services: ServiceReading[]; alerts: SupervisionAlert[] };
 
 /** One container's reading (`GET /staff/server`): CPU as % of one core, as in `docker stats`. */
 export type ServiceReading = {
@@ -532,3 +553,18 @@ export type ServiceReading = {
     host: { cpus: number; load: number[]; memory_total: number | null; memory_available: number | null; disk_total: number; disk_used: number };
   };
 };
+
+/** One line of the activity log (what a person did); `detail` holds counters and codes, never content. */
+export type AuditEvent = {
+  id: number;
+  at: string;
+  action: string;
+  object_type: string;
+  object_id: string | null;
+  brand_id: string | null;
+  brand: string;
+  user_id: string | null;
+  email: string;
+  detail: Record<string, string | number | boolean | null>;
+};
+export type AuditPage = { events: AuditEvent[]; has_more: boolean };

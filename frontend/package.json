@@ -10,7 +10,8 @@
     "check:scrub": "node scripts/check-scrub.mjs",
     "check:rows": "node scripts/check-rows.mjs",
     "check:paths": "node scripts/check-paths.mjs",
-    "check:remember": "node scripts/check-remember.mjs"
+    "check:remember": "node scripts/check-remember.mjs",
+    "check:retry": "node scripts/check-retry.mjs"
   },
   "dependencies": {
     "@sentry/react": "11.2.0",

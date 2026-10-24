@@ -100,6 +100,9 @@ def review(body: ReviewBody, scope: BrandScope = Depends(brand_member_dep), ctx:
             conn, brand_id=scope.brand_id, reference_id=body.reference_id, site_image_ids=body.site_image_ids,
             decision=body.decision, reviewed_by=scope.member.user_id,
         )
+        if touched:
+            scope.audit(conn, "review.set", "reference", body.reference_id, decision=body.decision or "cleared", count=touched,
+                        site_image_id=body.site_image_ids[0] if len(body.site_image_ids) == 1 else None)
     if body.decision and not touched:
         raise HTTPException(status_code=404, detail="Correspondance introuvable.")
     return {"ok": True, "updated": touched}
@@ -155,4 +158,5 @@ def mark_replaced(reference_id: uuid.UUID, body: ReplacedBody, scope: BrandScope
         if set(pages) != set(urls):
             raise HTTPException(status_code=400, detail="Une des pages ne montre pas ce visuel.")
         cloud_presence.set_replaced(conn, scope.org_id, reference_id, list(pages.values()), replaced=body.replaced, user_id=scope.member.user_id)
+        scope.audit(conn, "visual.replaced", "reference", reference_id, replaced=body.replaced, pages=len(pages))
     return {"ok": True, "pages": len(pages)}

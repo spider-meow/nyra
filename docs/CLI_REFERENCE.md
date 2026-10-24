@@ -77,6 +77,32 @@ nyra cloud-staff --email arthur@example.com
 nyra cloud-staff --email arthur@example.com --remove
 ```
 
+### `cloud-export-org`
+
+Writes an organization's data to a folder: CSV (brands, sites, references, decisions, exclusions, reports, members,
+activity log), the originals of the library and the reports, and `manifeste.json`. Streams; files already in the folder
+are kept, so a stopped export is finished by running the same command again. Exits 1 when a file is missing.
+
+```bash
+nyra cloud-export-org remy-martin --out exports/remy-martin [--max-file-mb 200] [--max-total-gb 50] [--operator name]
+```
+
+### `cloud-delete-org`
+
+Erases an organization for good: rows, Storage files of the three buckets, and the Auth accounts that belong to
+nothing else. Asks for the exact name of the organization (or `--confirm-name`); `--dry-run` lists and deletes
+nothing; refuses while a task is queued or running. Prints a JSON report and leaves a trace (log line and
+`deleted_organizations`).
+
+```bash
+nyra cloud-delete-org remy-martin --dry-run
+nyra cloud-delete-org remy-martin
+```
+
+### `cloud-purge-audit`
+
+Deletes activity-log rows older than `--months` (12 by default), in batches. The worker runs it daily.
+
 ### `cloud-calibrate`
 
 Threshold sweep using the decisions already recorded in the interface as

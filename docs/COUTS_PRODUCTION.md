@@ -12,7 +12,7 @@ fin septembre 2026, en euros HT, avec 1 $ ≈ 0,86 €.
   **Aucune migration SQLite → Postgres à chiffrer.**
 - **Multi-tenant.** Déjà en place : `org_id` sur toutes les tables, RLS
   (`20260920000005_row_level_security.sql`), rôles admin/client, objets
-  Storage préfixés par `{org_id}/`, un seul job actif par marque (pas par organisation : voir AXE-529).
+  Storage préfixés par `{org_id}/`, un seul job actif par organisation (AXE-529).
   Une marque correspond à une organisation. Un groupe qui gère plusieurs
   marques peut aussi n'avoir qu'une organisation avec plusieurs sites.
   **Aucun développement multi-tenant à chiffrer.**
@@ -59,6 +59,16 @@ coûterait plus cher à démarrer que le calcul lui-même.
 | Monitoring | Offres gratuites (Sentry Developer, Better Stack uptime) | Sentry Team ≈ 26 $ | Surveiller les jobs en échec et le healthcheck `/api/healthz`. |
 | Sauvegarde des fichiers Storage | — | Copie vers Scaleway Object Storage ≈ 1 € | Les sauvegardes Supabase couvrent la base, pas les fichiers. |
 | Nom de domaine | ≈ 1 € | ≈ 1 € | |
+
+### Sauvegarde des fichiers (AXE-535)
+
+Supabase sauvegarde la base, pas les fichiers de Storage : la copie nocturne des trois buckets vers un stockage objet
+externe chiffré (procédure dans `DEPLOYMENT.md`) est le seul coût ajouté. Son volume est celui des buckets (15 à 65 Go
+estimés, voir plus bas) plus 35 jours de fichiers supprimés ou remplacés, soit quelques dizaines de Go de plus :
+de l'ordre de **1 à 3 €/mois** chez Scaleway Object Storage, déjà compté dans la ligne « Sauvegarde Storage + domaine ».
+Le premier passage lit tout le bucket une fois (sortie Supabase comptée dans les 250 Go d'egress inclus), les suivants
+ne lisent que les nouveautés. Les dumps de la base (30 jours) pèsent quelques centaines de Mo. À confirmer à la
+première sauvegarde réelle, qui n'a pas encore été jouée.
 
 ## Ce qui tourne réellement (18 octobre 2026)
 
@@ -126,6 +136,61 @@ il tourne autour de **0,5 € par marque et par mois**. Le vrai coût
 marginal d'une marque est humain (onboarding, bibliothèque de
 références, revue), pas l'infrastructure.
 
+## Garde-fous : quotas par organisation (AXE-532)
+
+Le coût ci-dessus suppose un usage raisonnable. Depuis la migration `20261020000030`, le code l'impose : chaque
+organisation a des limites et un compteur d'usage. **Les valeurs de départ ci-dessous sont des propositions, à valider
+par l'équipe** (`quota` dans `config.yaml`, bornes dans `QUOTA_BOUNDS` de `backend/nyra/config.py`).
+
+| Limite | Départ | Ce qui se passe au plafond |
+|---|---|---|
+| Pages lues par mois (lectures et vérifications de pages, de toutes les marques) | 5 000 | Une lecture qui atteindrait le plafond lit ce qui reste, puis s'arrête avec un message ; un nouveau lancement est refusé (403). Le stockage plein arrête aussi une lecture, avant chaque site |
+| Marques | 10 | Création refusée (réservée à l'équipe Nyra) |
+| Adresses par marque | 10 | Ajout refusé |
+| Visuels dans la bibliothèque (toutes marques) | 5 000 | Envoi ou ajout depuis les images en ligne refusé ; remplacer un visuel du même nom reste permis |
+| Stockage, Go (originaux de la bibliothèque + copies de travail et vignettes des images lues) | 20 | Envoi, ajout depuis les images en ligne et lancement d'une lecture refusés |
+| Membres | 50 | Invitation refusée |
+| Invitations par jour | 20 | Refusée jusqu'au lendemain (429) |
+
+Pourquoi ces ordres de grandeur : 300 pages par marque et par passage hebdomadaire font environ 1 300 pages par mois et
+par marque ; 5 000 pages couvrent trois à quatre marques lues chaque semaine, avec de la marge pour des relectures.
+20 Go est un cinquième des 100 Go inclus dans Supabase Pro, avec 5 marques à 1,2 – 5,5 Go chacune. 20 invitations par
+jour et par organisation laissent cinq organisations sous les 100 e-mails par jour du plan gratuit de Resend.
+
+- **Réglage par organisation.** Seule l'équipe Nyra relève ou baisse une limite, dans le back office (page Usage,
+  `PUT /api/staff/organizations/{id}/quotas`, colonne `organizations.quota_overrides`). Une organisation ne le peut pas :
+  ces clés ne sont pas dans `ORG_OVERRIDABLE`.
+- **Compteur.** Table `usage_counters` : le worker y ajoute les pages lues, les images nouvelles et les octets
+  téléchargés du mois (au plus 5 s de retard, une panne perd au plus ces secondes) ; l'API compte les invitations du
+  jour. Une table dédiée plutôt qu'une somme sur `crawl_runs`, parce qu'une vérification de pages n'enregistre pas de
+  lecture et que le plafond, la page du client et le back office lisent ainsi un seul chiffre. Les autres lignes
+  (marques, adresses, visuels, stockage, membres) sont comptées dans les tables au moment de la lecture : elles ne
+  peuvent pas dériver. Le stockage est une estimation : les copies de travail et vignettes des références ne sont pas
+  mesurées, seulement leur original.
+- **Avertissement à 80 %** : sur la page Réglages > Usage du client, dans le back office, et dans le message de fin
+  d'une lecture.
+- **Limites connues** :
+  - Pas de verrou. Les tâches de plusieurs marques d'une même organisation tournent en parallèle et chacune prend
+    `min(limite d'une lecture, pages restantes)` au début de chaque site : le mois peut être dépassé d'au plus
+    (tâches simultanées − 1) × `crawl.max_pages_limit` pages. De même, deux créations simultanées (marque, adresse,
+    visuel, invitation) peuvent passer ensemble la vérification avant l'écriture et dépasser la limite de peu.
+  - Le stockage est relu avant chaque site, pas pendant : un site lu peut le dépasser (1,3 Go au plus pour 2 000 pages).
+    Il est estimé : `byte_size` manque sur certaines anciennes lignes, et les copies de travail et vignettes des
+    références ne sont pas comptées.
+  - Le compteur est écrit par le rappel de progression, au plus toutes les 5 s : un plantage du worker perd ces
+    secondes, et un site lu en entier qui échoue juste après reste compté.
+  - Les membres `client` peuvent lire les compteurs de leur organisation directement par PostgREST (politique RLS en
+    lecture pour les membres) ; ils ne contiennent ni prix ni donnée d'un autre client. L'écriture est réservée au
+    backend.
+  - La liste du back office s'arrête à 200 organisations (un avertissement s'affiche au-delà).
+  - Il n'y a pas de limite de requêtes à l'API.
+  - Qui a changé une limite et quand : journal du web (`nyra.usage`, identifiant de la personne, valeurs avant et après).
+- **E-mails.** Le code Nyra n'envoie qu'une sorte d'e-mail : l'invitation, par Supabase Auth (Resend en SMTP). Elle est
+  plafonnée par jour et par organisation (`usage.claim_email`). Les résumés et alertes d'AXE-523 n'existent pas
+  encore : ils devront appeler `claim_email` avant chaque envoi et garder le message en attente quand elle répond
+  non, pour l'envoyer le lendemain. Les invitations faites par l'équipe Nyra elle-même (back office, CLI) ne sont pas
+  plafonnées.
+
 ## Développement restant (coût ponctuel, distinct de l'infra)
 
 | Sujet | État dans le code | Estimation |
@@ -133,7 +198,7 @@ références, revue), pas l'infrastructure.
 | Migration SQLite → Postgres/pgvector | Fait (`supabase/migrations/`) | 0 j |
 | Multi-tenant (RLS, `org_id`) | Fait | 0 j |
 | Run hebdomadaire automatique | **Absent.** Les crawls ne partent que depuis l'interface ou l'API. À ajouter : un réglage par organisation et un déclencheur (pg_cron, inclus dans Supabase, qui insère un job `crawl`). **Attention :** le job doit passer `fresh: true`. Sinon le mode reprise saute toutes les pages déjà visitées (`crawl.py`, `discover`) et le passage hebdomadaire ne revérifie rien. Les images déjà connues ne sont de toute façon pas retéléchargées. | 1,5 – 2 j |
-| E-mails d'alerte | **Absent** (seuls les e-mails d'invitation Supabase existent). À ajouter : destinataires par organisation, envoi après le passage de comparaison (nouveaux matchs, expirations proches), gabarit, intégration Resend. | 2 – 3 j |
+| E-mails d'alerte | **Absent** (seuls les e-mails d'invitation Supabase existent, plafonnés par jour : voir « Garde-fous »). À ajouter : destinataires par organisation, envoi après le passage de comparaison (nouveaux matchs, expirations proches), gabarit, intégration Resend. | 2 – 3 j |
 | SMTP personnalisé pour Supabase Auth | Configuration seulement | 0,5 j |
 | Alerting sur jobs en échec + purge des images disparues du site | Absent, optionnel pour le pilote | 1 – 2 j |
 | **Total** | | **≈ 4 – 7,5 j** |

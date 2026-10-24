@@ -21,12 +21,14 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 
 from nyra.config import Config, load_config
 
+from . import ratelimit
 from . import storage as cloud_storage
 from .routes import (
+    audit,
     brands,
     collections,
     interface,
@@ -41,6 +43,7 @@ from .routes import (
     session,
     site_images,
     staff,
+    usage,
 )
 from .routes.common import Ctx
 
@@ -107,15 +110,28 @@ def settings_from_env(config_path: Optional[Path] = None) -> CloudSettings:
     )
 
 
+def _limiter_dependency(ctx: Ctx):
+    """The rate limit, counted per verified user (see cloud/ratelimit.py); read from the environment when the app is built."""
+
+    def identify(token: str) -> Optional[str]:
+        try:
+            return str(ctx.user(token).user_id)
+        except (HTTPException, ValueError):  # not valid: the route itself answers 401 as before
+            return None
+
+    return Depends(ratelimit.enforce(ratelimit.RateLimiter(ratelimit.limits_from_env(os.environ)), identify))
+
+
 def create_app(settings: CloudSettings) -> FastAPI:
-    app = FastAPI(title="Nyra", docs_url=None, redoc_url=None, openapi_url=None)
-    app.state.ctx = Ctx(settings)
+    ctx = Ctx(settings)
+    app = FastAPI(title="Nyra", docs_url=None, redoc_url=None, openapi_url=None, dependencies=[_limiter_dependency(ctx)])
+    app.state.ctx = ctx
     dist = frontend_dir() / "dist"
     # The order is the behavior: middleware and handlers first, `/assets`, then the API routes
     # (the order of `/library/export-csv` against `/library/{filename}` matters), the catch-all page last.
     interface.add_security(app, settings.supabase_url, settings.sentry_browser_dsn)
     interface.mount_assets(app, dist)
-    for module in (session, staff, brands, members, collections, library, occurrences, jobs, matches, site_images, logos, reports_settings):
+    for module in (session, staff, audit, brands, members, collections, library, occurrences, jobs, matches, site_images, logos, reports_settings, usage):
         app.include_router(module.router)
     if os.environ.get("NYRA_LABELS") == "1":  # labels (types and contents) are switched off until they are calibrated
         app.include_router(labels.router)

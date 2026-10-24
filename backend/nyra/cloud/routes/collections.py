@@ -64,6 +64,7 @@ def add_collection(body: CollectionBody, scope: BrandScope = Depends(brand_admin
             row = cloud_db.add_collection(conn, scope.org_id, scope.brand_id, body.parent_id, name)
         except psycopg.errors.UniqueViolation as exc:
             raise _taken() from exc
+        scope.audit(conn, "collection.create", "collection", row["id"])
     return {"collection": collection_json(row)}
 
 
@@ -76,6 +77,8 @@ def rename_collection(collection_id: uuid.UUID, body: CollectionBody, scope: Bra
             found = cloud_db.rename_collection(conn, scope.brand_id, collection_id, name)
         except psycopg.errors.UniqueViolation as exc:
             raise _taken() from exc
+        if found:
+            scope.audit(conn, "collection.rename", "collection", collection_id)
     if not found:
         raise HTTPException(status_code=404, detail="Collection introuvable.")
     return {"ok": True}
@@ -99,6 +102,8 @@ def move_collection(collection_id: uuid.UUID, body: MoveBody, scope: BrandScope 
             moved = cloud_db.move_collection(conn, scope.brand_id, collection_id, body.parent_id)
         except psycopg.errors.UniqueViolation as exc:
             raise _taken() from exc
+        if moved:
+            scope.audit(conn, "collection.move", "collection", collection_id)
     if not moved:
         raise HTTPException(status_code=404, detail="Collection introuvable.")
     return {"ok": True}
@@ -110,6 +115,7 @@ def delete_collection(collection_id: uuid.UUID, scope: BrandScope = Depends(bran
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if not cloud_db.delete_collection(conn, scope.brand_id, collection_id):
             raise HTTPException(status_code=404, detail="Collection introuvable.")
+        scope.audit(conn, "collection.delete", "collection", collection_id)
     return {"ok": True}
 
 
@@ -120,4 +126,6 @@ def file_references(body: FileBody, scope: BrandScope = Depends(brand_admin_dep)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if body.collection_id:
             require_collection(conn, scope.brand_id, body.collection_id)
-        return {"updated": cloud_db.set_reference_collection(conn, scope.brand_id, names, body.collection_id)}
+        updated = cloud_db.set_reference_collection(conn, scope.brand_id, names, body.collection_id)
+        scope.audit(conn, "library.collection", "collection", body.collection_id, count=updated)
+        return {"updated": updated}

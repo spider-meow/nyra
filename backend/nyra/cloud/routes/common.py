@@ -24,12 +24,14 @@ from nyra import match as match_module
 from nyra.config import Config, with_overrides
 from nyra.refs import RefValidationError, parse_expiry, reference_features
 
+from .. import audit as cloud_audit
 from .. import auth as cloud_auth
 from .. import db as cloud_db
 from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
 from .. import logos as cloud_logos
 from .. import storage as cloud_storage
+from .. import usage as cloud_usage
 
 if TYPE_CHECKING:
     from ..api import CloudSettings
@@ -76,6 +78,11 @@ class BrandScope:
     org_id: uuid.UUID
     brand_id: uuid.UUID
     name: str
+
+    def audit(self, conn, action: str, object_type: str, object_id=None, **detail) -> None:
+        """Trace an action of this person on this brand, on the connection (and transaction) of the change itself."""
+        cloud_audit.record(conn, self.org_id, self.member.user_id, action, object_type, object_id,
+                           brand_id=self.brand_id, **detail)
 
 
 async def get_ctx(request: Request) -> Ctx:
@@ -213,6 +220,14 @@ def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename
     )
 
 
+def enforce(ctx: Ctx, org_id: uuid.UUID, key: str, adding: int = 1, brand_id: Optional[uuid.UUID] = None) -> None:
+    """Refuse (403, with a sentence the person can read) what would take the organization past a limit of its quota."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        refusal = cloud_usage.check(conn, ctx.settings.base_config().quota, org_id, key, adding, brand_id)
+    if refusal:
+        raise HTTPException(status_code=403, detail=refusal)
+
+
 def active_jobs(conn, brand_id: uuid.UUID, kinds: tuple[str, ...], statuses: tuple[str, ...] = cloud_jobs.ACTIVE) -> bool:
     return bool(conn.execute(
         "SELECT 1 FROM jobs WHERE brand_id = %s AND kind = ANY(%s) AND status = ANY(%s) LIMIT 1",
@@ -221,14 +236,21 @@ def active_jobs(conn, brand_id: uuid.UUID, kinds: tuple[str, ...], statuses: tup
 
 
 def enqueue(ctx: Ctx, scope: BrandScope, kind: str, params: dict) -> dict:
+    """A job started by hand. Refused (409) while another job but an `index` waits or runs in the organization: the
+    answer says which one, in which brand and since when (and who started it: see `cloud_jobs.holder`)."""
     try:
         with cloud_db.connect(ctx.settings.database_url) as conn:
-            return {"job": cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind=kind,
-                                              params=params, created_by=scope.member.user_id)}
+            job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind=kind, params=params,
+                                     created_by=scope.member.user_id, manual=True)
+            scope.audit(conn, f"job.{kind}", "job", job["id"])
+            return {"job": job}
     except cloud_jobs.JobConflict as exc:
-        labels = {"crawl": "Une lecture", "match": "Une comparaison", "report": "Un rapport", "locate": "Une recherche d'image", "check": "Une vérification de pages"}
-        label = labels.get(kind, "Une tâche")
-        raise HTTPException(status_code=409, detail=f"{label} est déjà en cours ou en attente.") from exc
+        held = cloud_jobs.holder(exc.job, admin=scope.member.role == "admin")
+        detail = held["text"]
+        if held["brand_id"] == str(scope.brand_id):  # this brand's own job: no need to name the brand
+            labels = {"crawl": "Une lecture", "match": "Une comparaison", "report": "Un rapport", "locate": "Une recherche d'image", "check": "Une vérification de pages"}
+            detail = f"{labels.get(held['kind'], 'Une tâche')} est déjà en cours ou en attente (lancé par {held['by']}, {held['since']})."
+        raise HTTPException(status_code=409, detail=detail) from exc
 
 
 def group_rows(shown: list[dict]) -> list[dict]:
