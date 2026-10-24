@@ -10,12 +10,13 @@ Rules:
 - one running job per ORGANIZATION (unique partial index, and `claim`
   skips an organization that has one): the brands of an organization take
   turns, organizations run in parallel across workers;
-- a global cap on the HEAVY jobs running at once, all organizations together (`NYRA_MAX_HEAVY_JOBS`, 1 until the
-  peak memory is measured on the server): the others stay `queued` and start as soon as a place frees up. Every
-  kind but `report` is heavy: `crawl` and `check` load Chromium, and `index`, `match` and `locate` load the CLIP model
-  (torch) and hold the library's vectors. Among the jobs that may start, the organization whose last job started
-  least recently goes first, then first come first served, so an organization with twenty queued jobs does not
-  push the others back;
+- two global caps, all organizations together, on what runs at once: reading sites (`crawl`, `check`, `locate`:
+  `NYRA_MAX_HEAVY_JOBS`) and analysing images (`index`, `match`, which load the CLIP model: `NYRA_MAX_MODEL_JOBS`),
+  1 each until the peak memory is measured on the server. A job only takes a place of its own kind, so a long read
+  never holds back another customer's analysis; `report` has no cap. The others stay `queued` and start as soon as
+  a place frees up. Only a running job whose heartbeat is recent holds a place: the row a dead worker leaves behind
+  frees it. Among the jobs that may start, the organization whose last job started least recently goes first, then
+  first come first served, so an organization with twenty queued jobs does not push the others back;
 - a job started by hand (`manual`) is refused (`JobConflict`, which carries
   the job in the way) while any job but an `index` is queued or running in
   the organization; what follows an action (indexing after an upload, a
@@ -40,9 +41,13 @@ import psycopg
 log = logging.getLogger("nyra.cloud.jobs")
 
 KINDS = {"crawl", "match", "index", "report", "locate", "check"}
-# The only kind that loads neither Chromium nor the CLIP model: it is never held back by the global cap.
+# Each group has its own global cap (an environment variable), 1 until the worker's peak memory is measured; `report`
+# loads neither Chromium nor the CLIP model and has none. `locate` is counted with the reads: it holds the library's
+# vectors and every stored site image for a long time.
+SITE_KINDS = ("crawl", "check", "locate")
+MODEL_KINDS = ("index", "match")
 LIGHT_KINDS = ("report",)
-DEFAULT_MAX_HEAVY_JOBS = 1
+DEFAULT_CAP = 1
 ACTIVE = ("queued", "running")
 STALE_AFTER_SECONDS = 180
 # A job whose worker died goes back to the queue this many times before it is marked failed.
@@ -63,24 +68,38 @@ HOLDER = """SELECT j.*, b.name AS brand_name, u.email AS author,
             FROM jobs j JOIN brands b ON b.id = j.brand_id LEFT JOIN auth.users u ON u.id = j.created_by"""
 
 
-@lru_cache(maxsize=8)
-def _cap_from(raw: str) -> int:
-    """The cap written in `NYRA_MAX_HEAVY_JOBS`; the default when it is empty, and with a warning when it is not an
-    integer >= 1. Cached by value: the worker polls every few seconds and a bad value is told once, not at each poll."""
+@lru_cache(maxsize=16)
+def _cap_from(name: str, raw: str) -> int:
+    """The cap written in the environment variable `name`; the default when it is empty, and with a warning when it is
+    not an integer >= 1. Cached by value: the worker polls every few seconds and a bad value is told once, not at each poll."""
     if not raw.strip():
-        return DEFAULT_MAX_HEAVY_JOBS
+        return DEFAULT_CAP
     try:
         cap = int(raw)
     except ValueError:
         cap = 0
     if cap < 1:
-        log.warning("NYRA_MAX_HEAVY_JOBS=%r is not an integer >= 1: using %d", raw, DEFAULT_MAX_HEAVY_JOBS)
-        return DEFAULT_MAX_HEAVY_JOBS
+        log.warning("%s=%r is not an integer >= 1: using %d", name, raw, DEFAULT_CAP)
+        return DEFAULT_CAP
     return cap
 
 
-def _max_heavy_jobs() -> int:
-    return _cap_from(os.environ.get("NYRA_MAX_HEAVY_JOBS", ""))
+def _cap(name: str) -> int:
+    return _cap_from(name, os.environ.get(name, ""))
+
+
+# A running job holds a place only while its worker reports: the row of a dead worker stays `running` until `reap_stale`.
+_FRESH = f"r.heartbeat_at > now() - interval '{STALE_AFTER_SECONDS} seconds'"
+_ORG_IDLE = "NOT EXISTS (SELECT 1 FROM jobs r WHERE r.org_id = j.org_id AND r.status = 'running')"
+# Whether queued job `j` has a place of its own kind (placeholders, see `_room_params`).
+_ROOM = f"""(j.kind = ANY(%s)
+    OR (j.kind = ANY(%s) AND (SELECT count(*) FROM jobs r WHERE r.status = 'running' AND {_FRESH} AND r.kind = ANY(%s)) < %s)
+    OR (j.kind = ANY(%s) AND (SELECT count(*) FROM jobs r WHERE r.status = 'running' AND {_FRESH} AND r.kind = ANY(%s)) < %s))"""
+
+
+def _room_params() -> tuple:
+    site, model = list(SITE_KINDS), list(MODEL_KINDS)
+    return list(LIGHT_KINDS), site, site, _cap("NYRA_MAX_HEAVY_JOBS"), model, model, _cap("NYRA_MAX_MODEL_JOBS")
 
 
 def _row(row: Optional[dict]) -> Optional[dict]:
@@ -156,23 +175,21 @@ def enqueue(
 
 
 def claim(conn: psycopg.Connection) -> Optional[dict]:
-    """Take the next queued job: of an organization that has nothing running, and, for a heavy kind, only while fewer
-    than `NYRA_MAX_HEAVY_JOBS` heavy jobs run anywhere. The organization whose last job started least recently goes
-    first (one that never ran counts as the least recent), then the oldest job; a `locate` after the other kinds."""
+    """Take the next queued job: of an organization that has nothing running, and only while its kind has a place
+    (`_ROOM`: fewer than `NYRA_MAX_HEAVY_JOBS` reads or `NYRA_MAX_MODEL_JOBS` analyses running anywhere). The
+    organization whose last job started least recently goes first (one that never ran counts as the least recent), then
+    the oldest job; a `locate` after the other kinds."""
     # The unique index only guards one organization. The global count needs every claim to see the previous one's
     # `running` row, so claims queue on one transaction-level lock, released with the commit that makes that row
     # visible; it is held for a few milliseconds. A count and an UPDATE in one statement would not do: under READ
     # COMMITTED, two concurrent statements both count the same running jobs and both pass.
     conn.execute("SELECT pg_advisory_xact_lock(hashtext('jobs:claim'))")
     row = conn.execute(
-        """
+        f"""
         UPDATE jobs SET status = 'running', started_at = now(), heartbeat_at = now(), message = 'Démarrage…'
         WHERE id = (
             SELECT j.id FROM jobs j
-            WHERE j.status = 'queued'
-              AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.org_id = j.org_id AND r.status = 'running')
-              AND (j.kind = ANY(%s)
-                   OR (SELECT count(*) FROM jobs r WHERE r.status = 'running' AND r.kind <> ALL(%s)) < %s)
+            WHERE j.status = 'queued' AND {_ORG_IDLE} AND {_ROOM}
             ORDER BY (j.kind = 'locate'),  -- a long search never waits ahead of another kind
                      (SELECT max(s.started_at) FROM jobs s WHERE s.org_id = j.org_id) NULLS FIRST,
                      j.created_at
@@ -181,7 +198,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
         )
         RETURNING *
         """,
-        (list(LIGHT_KINDS), list(LIGHT_KINDS), _max_heavy_jobs()),
+        _room_params(),
     ).fetchone()
     return _row(row)
 
@@ -315,21 +332,19 @@ def current(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, *,
                      ORDER BY (j.status = 'running') DESC, j.created_at""",
         (org_id, brand_id, list(ACTIVE)),
     ).fetchall()
-    full = _server_is_full(conn, org_id)
-    jobs = [_row(row) | {"waiting_for_capacity": full and row["status"] == "queued" and row["kind"] not in LIGHT_KINDS}
-            for row in active]
+    waiting = _waiting_for_capacity(conn, [row["id"] for row in active if row["status"] == "queued"])
+    jobs = [_row(row) | {"waiting_for_capacity": row["id"] in waiting} for row in active]
     return {"active": jobs, "last": _row(last), "organization": [holder(row, admin=admin) for row in others]}
 
 
-def _server_is_full(conn: psycopg.Connection, org_id: uuid.UUID) -> bool:
-    """Whether the organization has nothing running while the global cap of heavy jobs is reached: its queued heavy
-    jobs then wait for a place on the server. A yes or no only, nothing about the jobs of the other organizations."""
-    row = conn.execute(
-        """SELECT count(*) FILTER (WHERE kind <> ALL(%s)) AS heavy, count(*) FILTER (WHERE org_id = %s) AS mine
-           FROM jobs WHERE status = 'running'""",
-        (list(LIGHT_KINDS), org_id),
-    ).fetchone()
-    return row["mine"] == 0 and row["heavy"] >= _max_heavy_jobs()
+def _waiting_for_capacity(conn: psycopg.Connection, queued_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+    """Those of these queued jobs whose organization runs nothing but whose kind has no place left on the server.
+    A yes or no per job, nothing about the jobs of the other organizations."""
+    rows = conn.execute(
+        f"SELECT j.id FROM jobs j WHERE j.id = ANY(%s) AND {_ORG_IDLE} AND NOT {_ROOM}",
+        [queued_ids, *_room_params()],
+    ).fetchall()
+    return {row["id"] for row in rows}
 
 
 def recent(conn: psycopg.Connection, brand_id: uuid.UUID, limit: int = 20) -> list[dict]:
