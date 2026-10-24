@@ -361,7 +361,10 @@ A value that is not a whole number of 1 or more is ignored with a warning in the
 `GET /api/healthz`, `GET /api/workerz`, `GET /api/auth/config`, the static interface, and any request without a valid token
 (it ends in 401 anyway). The counters live in the memory of each process: with several `web` instances the real limit is
 multiplied by their number, and a restart resets them (at most 10 000 buckets are kept, idle ones are swept every minute).
-The identity is the verified JWT, **never the IP address**, for the reason below.
+The identity is the verified JWT, **never the IP address**, for the reason below. The interface's HTTP client
+(`frontend/src/lib/api.ts`) answers a `429` by waiting `Retry-After` seconds (at most 30, 2 when absent) and sending the
+same request again, up to 3 times, before showing the error: a burst such as excluding 200 images at once is spread
+over time instead of failing. A 429 is raised before the route runs, so replaying a `POST` cannot do it twice.
 
 **Why the rate limit is not per IP.** Evaluated and not built:
 - The unauthenticated routes are static or cheap probes; the login itself never reaches Nyra.

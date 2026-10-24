@@ -25,7 +25,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const response = await fetch(`/api${path}`, { ...init, headers });
+  let response: Response;
+  for (let retry = 0; ; retry++) {
+    response = await fetch(`/api${path}`, { ...init, headers });
+    // The API's rate limit answers 429 before the route runs (cloud/ratelimit.py, an app-wide dependency): nothing was
+    // done, so replaying is safe for a POST too. Waiting spreads a burst (many images excluded at once) over time.
+    if (response.status !== 429 || retry === 3) break;
+    const seconds = Number(response.headers.get("Retry-After")); // at most 30 s; 2 s when absent or not a positive number
+    await new Promise((resume) => setTimeout(resume, Math.min(seconds > 0 ? seconds : 2, 30) * 1000));
+    init.signal?.throwIfAborted(); // cancelled during the wait: stop before any new call
+  }
   const text = await response.text();
   let data: unknown = null;
   if (text) {
@@ -45,7 +54,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  get: <T>(path: string) => request<T>(path),
+  get: <T>(path: string, init?: RequestInit) => request<T>(path, init),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
   put: <T>(path: string, body: unknown) =>

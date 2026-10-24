@@ -94,7 +94,10 @@ class RateLimiter:
 
 
 def enforce(limiter: RateLimiter, identify: Callable[[str], Optional[str]]):
-    """An app-wide FastAPI dependency. `identify(token)` returns who a bearer token belongs to, or None when it is not valid."""
+    """An app-wide FastAPI dependency. `identify(token)` returns who a bearer token belongs to, or None when it is not valid.
+
+    App-level dependencies run before the route's own, so a 429 is raised before the route (or its body, or the
+    database) is touched: a refused request has done nothing, and the interface may safely replay it, POST included."""
 
     def dependency(request: Request) -> None:
         path = request.url.path
