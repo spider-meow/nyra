@@ -7,6 +7,7 @@ import { useOrg } from "../lib/org";
 import { useSettings } from "../lib/queries";
 import type { Settings as SettingsData } from "../types";
 import { Account } from "./settings/Account";
+import { Audit } from "./settings/Audit";
 import { Collections } from "./settings/Collections";
 import { DangerZone } from "./settings/DangerZone";
 import { Detection } from "./settings/Detection";
@@ -16,6 +17,7 @@ import { Logos } from "./settings/Logos";
 import { Profile } from "./settings/Profile";
 import { Reading } from "./settings/Reading";
 import { Team } from "./settings/Team";
+import { Usage } from "./settings/Usage";
 
 /** What a section is about: the brand on screen, the whole organization, or the signed-in person. */
 type Group = "marque" | "organisation" | "moi";
@@ -41,7 +43,9 @@ const SECTIONS: Section[] = [
   { id: "general", label: "Général", icon: "idBadge", group: "marque", render: () => <General /> },
   { id: "collections", label: "Collections", icon: "folders", group: "marque", adminOnly: true, render: () => <Collections /> },
   { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Team /> },
+  { id: "audit", label: "Journal d'activité", icon: "eye", group: "organisation", adminOnly: true, render: () => <Audit /> },
   { id: "detection", label: "Détection", icon: "radar", group: "organisation", adminOnly: true, render: (data) => <Detection data={data} /> },
+  { id: "usage", label: "Usage", icon: "stats", group: "organisation", adminOnly: true, render: () => <Usage /> },
   { id: "reading", label: "Lecture des sites", icon: "worldSearch", group: "organisation", adminOnly: true, render: (data) => <Reading data={data} /> },
 ];
 

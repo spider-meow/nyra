@@ -101,6 +101,7 @@ def test_pipeline_end_to_end(tmp_path: Path):
     assert not_found_csv_path.exists()
 
     html_content = html_path.read_text(encoding="utf-8")
+    assert "Réglages de détection" in html_content and "écart de 8 / 8 bits" in html_content
     assert "bottle.jpg" in html_content
     assert "https://example.com/products/bottle" in html_content
     # unrelated.jpg was checked and found nowhere on the site -> flagged, not silently dropped

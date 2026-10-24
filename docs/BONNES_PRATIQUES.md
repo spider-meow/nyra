@@ -98,6 +98,7 @@ cd frontend && npm run size        # budget de taille du premier chargement
 cd frontend && npm run check:scrub # le masquage des données client dans Sentry
 cd frontend && npm run check:rows  # le regroupement par photo de « À traiter »
 cd frontend && npm run check:paths # les adresses de l'interface et la redirection des anciennes
+cd frontend && npm run check:retry # le rejeu des requêtes refusées par la limite de débit (429)
 pytest -q                          # sans warning non justifié
 ```
 
@@ -112,6 +113,21 @@ Conformément à `ponytail` : la logique non triviale laisse **un** test
 exécutable, le plus petit qui échoue si la logique casse. Pas de framework
 ajouté, pas de jeu de données lourd. Une fonction d'une ligne n'en a pas
 besoin.
+
+## Garde-fous de détection
+
+- **Un seuil se mesure sur de vraies images avant de changer.** `backend/tests/test_calibration.py` n'écarte que les
+  valeurs ABSURDES (hachage à 0, 2, 3 ou 64 bits, zéro point clé) sur des images générées ; des seuils de hachage de 4 à
+  16 bits y passent. Il ne remplace pas la mesure (voir `docs/MATCHING.md`) et on ne l'assouplit pas pour le faire
+  passer. Chaque rapport dit avec quels seuils, quel modèle et quelle date
+  de lecture il a été produit.
+- **Une fonction à seuil reste derrière un drapeau, ou un réglage par marque désactivé par défaut, tant que la
+  précision et le rappel n'ont pas été mesurés sur de vraies images.** La liste et l'état de chacune sont dans
+  `docs/MATCHING.md`; toute nouvelle fonction à seuil s'y ajoute.
+- **L'algorithme propose, une personne décide.** Aucune suppression, aucun retrait, aucune conclusion définitive n'est
+  posée par un job : une décision (`reviews`, `excluded_hashes`, logos remis, étiquettes, pages marquées remplacées)
+  n'est écrite que sur requête d'une personne (le SQL est dans la couche base de données, appelée seulement par les
+  routes de l'API). Deux tests le gardent (voir `docs/MATCHING.md`) ; une nouvelle fonction automatique s'ajoute au premier.
 
 ## Dette connue (mesurée le 2 octobre 2026)
 
@@ -133,7 +149,12 @@ pas l'existant d'un bloc : on corrige ce qu'on touche (règle du scout).
 - **CLI hors ligne** : le pipeline SQLite sert au débogage et aux tests, pas au
   produit. Une base locale ancienne garde ses résultats « à vérifier » tant
   qu'un recalcul complet n'est pas forcé ; on ne l'enrichit plus.
-- **Limites non traitées** : aucune limitation de débit sur l'API ; Supabase
+- **Limitation de débit** (`cloud/ratelimit.py`) : par utilisateur connecté
+  (jamais par adresse IP, voir `DEPLOYMENT.md`), en mémoire du processus. Avec
+  plusieurs processus web la limite réelle est multipliée par leur nombre, et un
+  redémarrage remet les compteurs à zéro. Les requêtes sans jeton valide ne sont
+  pas comptées (elles finissent en 401).
+- **Limites non traitées** : Supabase
   reste dans le premier chargement (mesuré : le charger plus tard ralentit la
   connexion) ; une vignette dont le fichier est absent est remplacée par
   l'image de travail, puis l'original, puis un pictogramme.

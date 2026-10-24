@@ -38,3 +38,14 @@ match:
 
 report:
   default_within_days: 90
+
+# What one organization may use. Starting values, to be confirmed by the team. An organization cannot change
+# them; the Nyra team can, for one organization, in the back office (page Usage). Bounds: QUOTA_BOUNDS in config.py.
+quota:
+  pages_per_month: 5000   # pages read per calendar month (UTC), crawls and page checks together
+  brands: 10
+  sites_per_brand: 10
+  references: 5000        # visuals in the libraries of all its brands
+  storage_gb: 20          # library originals + working copies and thumbnails of the images read
+  members: 50
+  emails_per_day: 20      # invitation e-mails a day (the free mail plan: 100 a day for everyone)
