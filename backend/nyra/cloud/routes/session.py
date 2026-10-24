@@ -2,25 +2,17 @@
 
 from __future__ import annotations
 
-import logging
-from typing import Optional
-
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from ... import observability
+from .. import alerts as cloud_alerts
 from .. import auth as cloud_auth
 from .. import db as cloud_db
-from .. import hostmetrics
 from .. import insights as cloud_insights
-from .. import jobs as cloud_jobs
 from .common import Ctx, brand_json, get_ctx, staff_dep, user_dep
 
-log = logging.getLogger(__name__)
 router = APIRouter()
-
-# A queued job waiting this long with no job running anywhere: nobody is working (a worker polls every 2 s).
-WORKER_STALL_SECONDS = 300
 
 
 @router.get("/api/healthz")
@@ -31,21 +23,15 @@ def healthz(ctx: Ctx = Depends(get_ctx)) -> dict:
 
 @router.get("/api/workerz")
 def workerz(ctx: Ctx = Depends(get_ctx)) -> JSONResponse:
-    """For an uptime monitor: 503 when a queued job has waited over `WORKER_STALL_SECONDS` with nothing running,
-    which means no worker is alive, or when the machine's disk is `DISK_ALERT` full."""
+    """For an uptime monitor: 503 while a critical alert is on (`cloud/alerts.py`: a worker silent for 5 min, a job waiting
+    for nothing, a full disk), `status` and `problems` in the historical words ("no worker", "disk almost full").
+    `alerts` lists them all with their severity; it holds no organization, brand or user."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        waited = cloud_jobs.stalled_seconds(conn)
-    try:
-        disk: Optional[float] = hostmetrics.disk_ratio()
-    except OSError:
-        log.exception("reading the disk failed")  # the probe must still answer about the worker
-        disk = None
-    problems = ["no worker"] if waited > WORKER_STALL_SECONDS else []
-    if disk is not None and disk >= hostmetrics.DISK_ALERT:
-        problems.append("disk almost full")
-    return JSONResponse({"status": problems[0] if problems else "ok", "problems": problems,
-                         "queued_wait_seconds": round(waited), "disk_percent": None if disk is None else round(disk * 100)},
-                        status_code=503 if problems else 200)
+        state = cloud_alerts.current(conn)
+    critical = cloud_alerts.probe_problems(state["alerts"])
+    return JSONResponse({"status": critical[0] if critical else "ok", "problems": critical,
+                         **state, "alerts": cloud_alerts.public(state["alerts"])},
+                        status_code=503 if critical else 200)
 
 
 @router.get("/api/auth/config")

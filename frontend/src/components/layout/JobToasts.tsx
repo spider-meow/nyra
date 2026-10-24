@@ -3,7 +3,7 @@ import { errorMessage } from "../../lib/api";
 import { approxDuration, jobLabel } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { refreshAfter, useCancelJob, useInvalidate, useJobs } from "../../lib/queries";
-import type { Job } from "../../types";
+import type { CurrentJobs, Job } from "../../types";
 import { useToast, type ToastInput, type Toaster } from "../feedback";
 
 /**
@@ -34,8 +34,9 @@ export function JobToasts() {
     }
     seen.current = activeIds;
 
-    // An index job still queued is no news: it starts by itself once a worker is there (no toast, no worker warning).
-    const rows = toastRows(data.active).filter((row) => row[0].kind !== "index" || row[0].status !== "queued");
+    // A queued job is no news when it only waits its turn (an index, or no place free on the server): it starts by
+    // itself, and its progress toast appears then. No toast, no worker warning.
+    const rows = toastRows(data.active.filter((job) => !quietlyQueued(job)));
     const leads = new Set(rows.map((row) => row[0].id));
     for (const [id, toastId] of toastFor.current) {
       if (!leads.has(id)) {
@@ -44,7 +45,7 @@ export function JobToasts() {
       }
     }
     for (const row of rows) {
-      const input = describe(row, data.active, admin, stopping, () => void stop(row));
+      const input = describe(row, data, admin, stopping, () => void stop(row));
       const existing = toastFor.current.get(row[0].id);
       if (existing !== undefined) toast.update(existing, input);
       else toastFor.current.set(row[0].id, toast.show(input));
@@ -108,6 +109,10 @@ function showOutcome(toast: Toaster, toastFor: Map<string, number>, id: string, 
   else toast.show(outcome);
 }
 
+function quietlyQueued(job: Job): boolean {
+  return job.status === "queued" && (job.kind === "index" || job.waiting_for_capacity === true);
+}
+
 /** Running jobs one row each; queued ones of the same kind share one. */
 function toastRows(active: Job[]): Job[][] {
   const rows: Job[][] = [];
@@ -119,9 +124,10 @@ function toastRows(active: Job[]): Job[][] {
   return rows;
 }
 
-function describe(row: Job[], active: Job[], admin: boolean, stopping: Set<string>, onStop: () => void): ToastInput {
+function describe(row: Job[], data: CurrentJobs, admin: boolean, stopping: Set<string>, onStop: () => void): ToastInput {
+  const { active } = data;
   const job = row[0];
-  const queued = job.status === "queued" ? queuedText(job, active, admin) : null;
+  const queued = job.status === "queued" ? queuedText(job, data, admin) : null;
   const total = Number(job.progress.total || 0);
   const done = Number(job.progress.done || 0);
   return {
@@ -159,9 +165,11 @@ function groupLine(count: number, active: Job[]): string {
 }
 
 /** A queued job in plain words: behind another task, about to start, or waiting for a worker nobody started. */
-function queuedText(job: Job, active: Job[], admin: boolean): { line: string; hint?: string } {
-  const running = active.find((other) => other.status === "running");
+function queuedText(job: Job, data: CurrentJobs, admin: boolean): { line: string; hint?: string } {
+  const running = data.active.find((other) => other.status === "running");
   if (running) return { line: `en file d'attente, démarre après « ${jobLabel[running.kind]} »` };
+  // Another brand's task holds the queue: a worker is there, nothing to warn about.
+  if (data.organization?.some((other) => other.status === "running")) return { line: "en file d'attente" };
   const waitedSeconds = (Date.now() - new Date(job.created_at).getTime()) / 1000;
   if (waitedSeconds < 60) return { line: "démarre dans un instant" };
   return {

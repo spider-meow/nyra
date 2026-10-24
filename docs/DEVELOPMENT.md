@@ -81,7 +81,7 @@ share of its budget) and exits 1 naming the chunk that went over.
 | Budget (gzip KB, 1 KB = 1000 bytes) | Limit | Measured on 1 Oct 2026 |
 |---|---|---|
 | `firstLoadGzipKB`: every chunk of `index.html` | 210 | 196.1 (17 Oct) |
-| `entryGzipKB`: the entry chunk alone | 27 | 26.7 (17 Oct) |
+| `entryGzipKB`: the entry chunk alone | 27.5 | 27.04 (24 Oct, AXE-530) |
 | `lazyChunkGzipKB`: the largest page chunk | 15 | 14.3 (17 Oct) |
 | `sentryGzipKB`: the Sentry chunk (lazy, off the critical path) | 68 | 61.7 |
 | `passwordMeterGzipKB`: the password strength meter (zxcvbn-ts, lazy, loaded only on the choose-a-password page) | 260 | 235.3 (13 Oct) |
