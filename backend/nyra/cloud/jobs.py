@@ -120,6 +120,17 @@ _CAN_START = f"""{_ROOM}
     AND NOT EXISTS (SELECT 1 FROM jobs r WHERE r.status = 'running' AND {_FRESH} AND {_hosts('r')} && {_hosts('j')})"""
 
 
+# When the organization last started a job: the start of its most recently CREATED job that did start. Not
+# `max(started_at)`, which reads the organization's whole history for every queued candidate at every poll (200 000
+# jobs over 20 organizations: 103 ms and 14 000 buffers against 0.3 ms and 370, no new index needed): this reads
+# `jobs_org_created_idx` backwards and stops at the first hit. The approximation: a job created earlier but started
+# later (it waited in the queue) is not seen as the last one, so the date can be older than the true last start by up
+# to the time a job waited. It only orders organizations that are all waiting now; "least recently served first"
+# stays true to within that wait, which is enough for fairness.
+_LAST_STARTED = ("(SELECT s.started_at FROM jobs s WHERE s.org_id = j.org_id AND s.started_at IS NOT NULL "
+                 "ORDER BY s.created_at DESC LIMIT 1)")
+
+
 def _room_params() -> tuple:
     site, model = list(SITE_KINDS), list(MODEL_KINDS)
     return list(LIGHT_KINDS), site, site, _cap("NYRA_MAX_HEAVY_JOBS"), model, model, _cap("NYRA_MAX_MODEL_JOBS")
@@ -215,7 +226,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
             SELECT j.id FROM jobs j
             WHERE j.status = 'queued' AND {_ORG_IDLE} AND {_CAN_START}
             ORDER BY (j.kind = 'locate'),  -- a long search never waits ahead of another kind
-                     (SELECT max(s.started_at) FROM jobs s WHERE s.org_id = j.org_id) NULLS FIRST,
+                     {_LAST_STARTED} NULLS FIRST,
                      j.created_at
             FOR UPDATE SKIP LOCKED
             LIMIT 1
