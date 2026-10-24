@@ -223,6 +223,15 @@ export type ImportRow = {
   message: string;
 };
 
+/** The monthly read of a brand. `next_run_at` is null when it is off; in the past, the read goes at the next pass of the worker. */
+export type BrandSchedule = {
+  enabled: boolean;
+  day_of_month: number;
+  default_day: number;
+  next_run_at: string | null;
+  last_read_at: string | null;
+};
+
 export type Exclusion = { id: string; reason: string; site_url: string; thumb_url: string; created_at: string };
 
 /** One file of a photo (a crop or a size of it), and where it was read: site version and page. */

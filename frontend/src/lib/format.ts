@@ -36,6 +36,11 @@ export const jobLabel: Record<JobKind, string> = {
   check: "Vérification de pages",
 };
 
+/** The name of a task: the monthly read, started by the system (`params.scheduled`), is not a read someone asked for. */
+export function jobTitle(job: { kind: JobKind; params: Record<string, unknown> }): string {
+  return job.kind === "crawl" && job.params.scheduled === true ? "Lecture mensuelle automatique" : jobLabel[job.kind];
+}
+
 const dateFormat = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "short", year: "numeric" });
 const dateTimeFormat = new Intl.DateTimeFormat("fr-FR", {
   day: "numeric",
