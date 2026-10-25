@@ -40,7 +40,7 @@ before September 26, 2026 still point at their original.
 | Table | Purpose | Key columns |
 |---|---|---|
 | `organizations` | Clients | `slug` (lowercase, hyphens, unique), `quota_overrides` (jsonb: the limits the Nyra team changed for this organization, keys of `QuotaConfig`; empty = the defaults of `config.yaml`; written by the back office only) |
-| `memberships` | User ↔ organization | `role` ∈ {admin, client} |
+| `memberships` | User ↔ organization | `role` ∈ {admin, client}; `monthly_email_allowed` (the Nyra team's switch) and `monthly_email_wanted` (the person's), both `true` by default: the monthly e-mail goes to an administrator with both on; a trigger keeps the public API from changing them |
 | `brands` | Brands of an organization | `slug` (unique per org), `created_by` (the platform admin who created it: the billing record), `set_aside_logos` (setting, off by default: the site images recognised as logos stay out of the comparison and out of "Droits non vérifiés") |
 | `brand_logos` | A brand's logo, shrunk by the API to a 128 px PNG and kept as a data URI (it travels with the list of brands) | `brand_id` (primary key, deleted with the brand), `data_uri` |
 | `usage_counters` | What an organization used: `kind` ∈ {pages_read, images_new, bytes_downloaded} per month (`period` = first day of the month) and `emails` (invitations) per day; added to by the worker (crawls and page checks, at most a few seconds late) and the API, read by the cap, the client's Usage page and the back office | `org_id` + `period` + `kind` (key), `amount` |

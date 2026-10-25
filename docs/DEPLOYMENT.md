@@ -123,6 +123,12 @@ worker: it logs an error « NYRA_MAIL_FROM invalide : les e-mails mensuels sont 
 keep running; fix the variable and restart the worker. Without `NYRA_PUBLIC_URL` the e-mails leave without links, with one warning an hour). Without them nothing is sent, nothing is marked sent, and the worker logs one warning an hour; set them and restart
 the worker and the month's e-mail leaves at the next pass. `NYRA_SCHEDULER=0` also stops it. A refused or failed send is tried
 again after 30 minutes, 5 times a month at most, then abandoned with one warning a day (`abandoned after 5 attempts`).
+*Who receives it:* administrators whom the Nyra team allows (back office > Comptes, box « Autorisé ») and who want it
+(Réglages > Notifications), both on by default. *Before deploying:* apply migration `20261025000035_member_notifications.sql`
+on Supabase (two columns on `memberships`, a trigger; idempotent, nothing changes for anyone until a box is unticked). It must
+come BEFORE the code: without the columns the worker logs one warning an hour (« columns monthly_email_allowed / monthly_email_wanted
+of memberships are missing, apply migration 20261025000035 »), claims and marks nothing and sends nothing (the mails leave at the next pass once
+it is applied), the back office list of accounts (`/api/staff/users`) and the notification routes answer 500.
 To check the sending by hand, from a Python prompt on the server (the key typed at the prompt, never in a command line):
 `from nyra.cloud import mailer; mailer.deliver(key, sender, ["you@example.com"], "Test", "<p>Test</p>", "Test")`. To resend a
 month's e-mail after fixing a cause, delete its row (`delete from monthly_digests where org_id = '...' and month = '2026-11-01'`);

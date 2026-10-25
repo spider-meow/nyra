@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Select } from "../../components/Dropdown";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Section } from "../../components/insights";
-import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton } from "../../components/ui";
+import { Button, Checkbox, EmptyState, FieldLabel, Input, PageHeader, Skeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDate, formatDateTime } from "../../lib/format";
 import { useStaffMutations, useStaffOrgs, useStaffUsers } from "../../lib/staff";
@@ -109,22 +109,25 @@ function UserRow(props: { user: StaffUser }) {
 
 /** The administrators of every organization, for the periodic check: who, since when, last sign-in. */
 function OrgAdmins(props: { users: StaffUser[] | undefined; loading: boolean; error: unknown }) {
+  const { setMonthlyEmail } = useStaffMutations();
+  const toast = useToast();
   const rows = (props.users ?? [])
     .flatMap((user) => user.memberships.filter((m) => m.role === "admin").map((m) => ({ ...m, user })))
     .sort((a, b) => a.org_name.localeCompare(b.org_name) || a.user.email.localeCompare(b.user.email));
   if (props.loading) return <Skeleton className="h-40" />;
   if (props.error) return <EmptyState title="Impossible de charger les administrateurs" body={errorMessage(props.error)} />;
   return (
-    <Section title={`${rows.length} ${rows.length > 1 ? "administrateurs" : "administrateur"} d'organisation`} description="Contrôle périodique : chaque personne doit être connue de l'organisation et toujours y travailler. « Retirer » est dans la liste des comptes ci-dessous.">
+    <Section title={`${rows.length} ${rows.length > 1 ? "administrateurs" : "administrateur"} d'organisation`} description="Contrôle périodique : chaque personne doit être connue de l'organisation et toujours y travailler. « Retirer » est dans la liste des comptes ci-dessous. La case « E-mail mensuel » autorise ou bloque le résumé mensuel pour cette personne.">
       {rows.length === 0 ? <EmptyState title="Aucun administrateur d'organisation" body="Chaque organisation devrait en avoir au moins un." /> : null}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[560px] text-sm">
+        <table className="w-full min-w-[680px] text-sm">
           <thead>
             <tr className="border-b border-line text-left text-xs text-muted">
               <th className="py-2 pr-2 font-medium" scope="col">Organisation</th>
               <th className="px-2 py-2 font-medium" scope="col">E-mail</th>
               <th className="px-2 py-2 font-medium" scope="col">Membre depuis</th>
-              <th className="py-2 pl-2 font-medium" scope="col">Dernière connexion</th>
+              <th className="px-2 py-2 font-medium" scope="col">Dernière connexion</th>
+              <th className="py-2 pl-2 font-medium" scope="col">E-mail mensuel</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
@@ -133,7 +136,16 @@ function OrgAdmins(props: { users: StaffUser[] | undefined; loading: boolean; er
                 <td className="py-2 pr-2 font-medium">{row.org_name}</td>
                 <td className="px-2 py-2">{row.user.email || "(sans e-mail)"}</td>
                 <td className="px-2 py-2 text-muted">{formatDate(row.since)}</td>
-                <td className="py-2 pl-2 text-muted">{row.user.last_sign_in_at ? formatDateTime(row.user.last_sign_in_at) : "jamais"}</td>
+                <td className="px-2 py-2 text-muted">{row.user.last_sign_in_at ? formatDateTime(row.user.last_sign_in_at) : "jamais"}</td>
+                <td className="py-2 pl-2">
+                  <Checkbox
+                    checked={row.monthly_email_allowed}
+                    disabled={setMonthlyEmail.isPending}
+                    onChange={(allowed) => setMonthlyEmail.mutate({ orgId: row.org_id, userId: row.user.user_id, allowed }, { onError: (error) => toast.show({ tone: "error", message: "L'envoi n'a pas été modifié", description: errorMessage(error) }) })}
+                    label="Autorisé"
+                    hint={row.monthly_email_wanted ? undefined : "a choisi de ne plus le recevoir"}
+                  />
+                </td>
               </tr>
             ))}
           </tbody>

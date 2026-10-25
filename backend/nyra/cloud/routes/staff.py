@@ -98,7 +98,8 @@ def list_users(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
         users, memberships, staff = cloud_db.users_overview(conn)
     by_user = defaultdict(list)
     for m in memberships:
-        by_user[m["user_id"]].append({"org_id": str(m["org_id"]), "org_name": m["org_name"], "role": m["role"], "since": iso(m["since"])})
+        by_user[m["user_id"]].append({"org_id": str(m["org_id"]), "org_name": m["org_name"], "role": m["role"], "since": iso(m["since"]),
+                                      "monthly_email_allowed": m["monthly_email_allowed"], "monthly_email_wanted": m["monthly_email_wanted"]})
     return {"users": [
         {"user_id": str(u["id"]), "email": u["email"] or "", "last_sign_in_at": iso(u["last_sign_in_at"]),
          "staff": u["id"] in staff, "memberships": by_user[u["id"]]}

@@ -371,15 +371,116 @@ def test_a_brand_due_but_never_queued_counts_as_not_finished_and_a_brand_without
     assert flags == {"Maison Test": True, "Marque 2": False}
 
 
+def test_a_member_receives_the_monthly_mail_if_and_only_if_administrator_allowed_by_the_team_and_wanted():
+    for role in ("admin", "client"):
+        for allowed in (True, False):
+            for wanted in (True, False):
+                assert digest.receives_monthly(role, allowed, wanted) == (role == "admin" and allowed and wanted), (role, allowed, wanted)
+
+
 def test_the_recipients_are_the_administrators_only_at_most_ten(url):
     with cloud_db.connect(url) as conn:
         org, _, admins, clients = make_org(conn, admins=12, clients=3)
         nobody = uuid.uuid4()
         conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, NULL)", (nobody,))
         cloud_db.add_membership(conn, user_id=nobody, org_id=org, role="admin")
-        found = digest.admin_addresses(conn, org)
-    assert digest.MAX_ADMINS == 10 and sorted(found) == sorted(admins) and not set(found) & set(clients)
+        total, found = digest.recipients(conn, org)
+    assert digest.MAX_ADMINS == 10 and total == 12 and sorted(found) == sorted(admins) and not set(found) & set(clients)
     assert found == sorted(found)
+
+
+def switch(url, org, address, **columns):
+    """Set `monthly_email_allowed` / `monthly_email_wanted` of the member with this address."""
+    with cloud_db.connect(url) as conn:
+        for column, value in columns.items():
+            conn.execute(f"UPDATE memberships SET {column} = %s WHERE org_id = %s AND user_id = (SELECT id FROM auth.users WHERE email = %s)",
+                         (value, org, address))
+
+
+def test_the_team_s_block_and_a_person_s_refusal_each_leave_that_administrator_out_and_the_counters_stay_right(url):
+    org, _, admins, clients = org_with_something_to_say(url, admins=4, clients=2)
+    blocked, quiet, kept_a, kept_b = sorted(admins)
+    switch(url, org, blocked, monthly_email_allowed=False)
+    switch(url, org, quiet, monthly_email_wanted=False)
+    switch(url, org, clients[0], monthly_email_allowed=True, monthly_email_wanted=True)   # a client never receives it
+    t = transport()
+    assert run(url, t) == 1
+    assert sorted(json.loads(t.seen[0].content)["to"]) == [kept_a, kept_b]
+    detail = audit_rows(url, org, "digest.sent")[0]["detail"]
+    assert (detail["recipients"], detail["admins"]) == (2, 4)
+
+
+def test_an_administrator_blocked_by_the_team_who_also_refused_stays_out_and_defaults_are_yes(url):
+    org, _, admins, _ = org_with_something_to_say(url, admins=2, clients=0)
+    with cloud_db.connect(url) as conn:
+        assert {tuple(r.values()) for r in conn.execute("SELECT monthly_email_allowed, monthly_email_wanted FROM memberships WHERE org_id = %s",
+                                                        (org,)).fetchall()} == {(True, True)}
+    switch(url, org, admins[0], monthly_email_allowed=False, monthly_email_wanted=False)
+    t = transport()
+    assert run(url, t) == 1 and json.loads(t.seen[0].content)["to"] == [admins[1]]
+
+
+@pytest.mark.parametrize("column", ["monthly_email_allowed", "monthly_email_wanted"])
+def test_when_nobody_receives_the_month_is_skipped_with_its_own_reason_and_nothing_leaves(url, column):
+    org, _, admins, _ = org_with_something_to_say(url, admins=2, clients=1)
+    for address in admins:
+        switch(url, org, address, **{column: False})
+    t = transport()
+    assert run(url, t) == 0 and run(url, t) == 0 and not t.seen
+    (row,) = digests(url, org)
+    assert (row["status"], row["sent_at"]) == ("skipped", None)
+    (event,) = audit_rows(url, org, "digest.skipped")
+    assert event["detail"] == {"reason": "no_recipient"} and not audit_rows(url, org, "digest.sent") and not audit_rows(url, org, "digest.failed")
+
+
+def test_the_reason_no_recipient_is_not_no_admin_and_nothing_to_say_comes_first(url):
+    quiet, *_ = org_with_something_to_say(url, admins=1, clients=1)
+    switch(url, quiet, [a for a in digest_addresses(url, quiet)][0], monthly_email_wanted=False)
+    with cloud_db.connect(url) as conn:
+        empty, *_ = make_org(conn, admins=1)           # nothing to say, and nobody receives: "nothing"
+        conn.execute("UPDATE memberships SET monthly_email_allowed = false WHERE org_id = %s AND role = 'admin'", (empty,))
+    t = transport()
+    run(url, t)
+    assert audit_rows(url, quiet, "digest.skipped")[0]["detail"]["reason"] == "no_recipient"
+    assert audit_rows(url, empty, "digest.skipped")[0]["detail"]["reason"] == "nothing"
+    assert not t.seen
+
+
+def digest_addresses(url, org):
+    with cloud_db.connect(url) as conn:
+        return [r["email"] for r in cloud_db.list_members(conn, org) if r["role"] == "admin"]
+
+
+def test_the_mail_ends_with_the_way_to_stop_it_and_a_link_to_the_settings_when_the_address_is_known():
+    mail = build(brand(soon=[soon_item("a.jpg")], soon_total=1))
+    sentence = "Vous pouvez choisir de ne plus recevoir ce message dans Réglages > Notifications."
+    assert sentence in mail.text and "Réglages &gt; Notifications" in mail.html
+    assert "https://nyra.test/o/maison-test/b/marque-a/settings?section=notifications" in mail.text
+    assert 'href="https://nyra.test/o/maison-test/b/marque-a/settings?section=notifications"' in mail.html
+    bare = build(brand(soon=[soon_item("a.jpg")], soon_total=1), url="")
+    assert sentence in bare.text and "http" not in bare.text and "href" not in bare.html
+
+
+def test_columns_missing_stops_the_pass_before_anything_is_claimed_and_the_worker_names_the_migration_once_an_hour(url, monkeypatch, caplog):
+    org, *_ = org_with_something_to_say(url)
+    with cloud_db.connect(url) as conn:
+        conn.execute("ALTER TABLE memberships RENAME COLUMN monthly_email_wanted TO monthly_email_wanted_off")
+    try:
+        t = transport()
+        with pytest.raises(psycopg.errors.UndefinedColumn):
+            run(url, t)
+        assert not t.seen and not digests(url, org) and not audit_rows(url, org, "digest.skipped")   # nothing claimed, nothing marked
+        schedule._LAST_TOLD.clear()
+        worker = a_worker(url, mail_settings=settings(url))
+        real = digest.run
+        monkeypatch.setattr(digest, "run", lambda *a, **k: real(*a, transport=t, sleep=NO_SLEEP, **k))
+        with caplog.at_level(logging.WARNING, logger="nyra.worker"):
+            worker._send_digests(), worker._send_digests()
+        missing = [r for r in caplog.records if "20261025000035" in r.getMessage()]
+        assert len(missing) == 1 and not missing[0].exc_info and not digests(url, org) and not t.seen
+    finally:
+        with cloud_db.connect(url) as conn:
+            conn.execute("ALTER TABLE memberships RENAME COLUMN monthly_email_wanted_off TO monthly_email_wanted")
 
 
 def test_more_than_ten_administrators_get_ten_copies_and_the_audit_and_the_log_say_so(url, caplog):
