@@ -100,6 +100,7 @@ const router = createBrowserRouter([
               { path: "usage", lazy: lazyPage(() => import("./pages/backoffice/Usage").then((module) => module.Usage)), handle: { title: "Usage" } },
               { path: "billing", lazy: lazyPage(() => import("./pages/backoffice/Billing").then((module) => module.Billing)), handle: { title: "Facturation" } },
               { path: "accounts", lazy: lazyPage(() => import("./pages/backoffice/Accounts").then((module) => module.Accounts)), handle: { title: "Comptes" } },
+              { path: "emails", lazy: lazyPage(() => import("./pages/backoffice/Emails").then((module) => module.Emails)), handle: { title: "E-mails" } },
               { path: "platform-admins", lazy: lazyPage(() => import("./pages/backoffice/Admins").then((module) => module.Admins)), handle: { title: "Platform admins" } },
             ],
           },

@@ -22,6 +22,8 @@ COPY pyproject.toml README.md ./
 COPY backend/ ./backend/
 RUN pip install ".[observability]" && useradd --create-home --uid 10001 nyra
 COPY config.yaml ./
+# The back office's E-mails page previews the Supabase templates (backend/nyra/cloud/email_registry.py).
+COPY supabase/templates ./supabase/templates
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 USER nyra
 EXPOSE 8000

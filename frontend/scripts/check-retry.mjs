@@ -48,6 +48,13 @@ fakeApi(() => limited(), () => reply(200, {}));
 await assert.rejects(api.post("/x", new FormData()), (error) => error.status === 429);
 assert.equal(calls.length, 1);
 
+// --- a caller that opts out (`replay` false: the test mail of the back office, "come back in 50 minutes") gets the 429 at once ---
+fakeApi(() => limited("3000"), () => reply(200, {}));
+waits.length = 0;
+await assert.rejects(api.post("/x", undefined, false), (error) => error.status === 429);
+assert.equal(calls.length, 1);
+assert.deepEqual(waits, []);
+
 // --- 429 then success: the caller never sees the 429, the request (a POST here) is sent again -----------------------
 fakeApi(() => limited(), () => limited(), () => reply(200, { ok: true }));
 assert.deepEqual(await api.post("/x", { a: 1 }), { ok: true });
@@ -63,4 +70,4 @@ fakeApi(() => reply(500, { detail: "boom" }));
 await assert.rejects(api.get("/x"), (error) => error.status === 500);
 assert.equal(calls.length, 1);
 
-console.log("retry: 429 with Retry-After replayed at most 3 times, capped, never for uploads, other errors untouched");
+console.log("retry: 429 with Retry-After replayed at most 3 times, capped, never for uploads or a caller that opts out, other errors untouched");

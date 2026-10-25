@@ -18,7 +18,8 @@ export function bindSession(provider: TokenProvider, unauthorized: () => void): 
   onUnauthorized = unauthorized;
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** `replay` false: a 429 is final, whatever its Retry-After (an action that says to come back in minutes, not in seconds). */
+async function request<T>(path: string, init: RequestInit = {}, replay = true): Promise<T> {
   let token: string | null;
   let response: Response;
   for (let left = 3; ; left--) {
@@ -31,7 +32,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     // route runs, so nothing was done and replaying is safe. Another 429 (the daily invitation limit) has no Retry-After
     // and is final. A file upload (FormData) is not replayed: the server has read the whole body when it refuses, so each try would resend the files.
     const seconds = Number(response.headers.get("Retry-After"));
-    if (response.status !== 429 || !(seconds > 0) || init.body instanceof FormData || !left) break;
+    if (response.status !== 429 || !(seconds > 0) || init.body instanceof FormData || !replay || !left) break;
     await new Promise((resume) => setTimeout(resume, Math.min(seconds * 1000, 3e4)));
   }
   const text = await response.text();
@@ -54,8 +55,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }),
+  post: <T>(path: string, body?: unknown, replay = true) =>
+    request<T>(path, { method: "POST", body: body instanceof FormData ? body : JSON.stringify(body ?? {}) }, replay),
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PUT", body: body instanceof FormData ? body : JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),

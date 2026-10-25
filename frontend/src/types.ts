@@ -545,6 +545,10 @@ export type StaffUsage = {
   organizations: { id: string; name: string; slug: string; overrides: Record<string, number>; items: UsageItem[]; counters: OrgUsage["counters"] }[];
 };
 export type StaffAdmin = { user_id: string; email: string; you: boolean };
+/** `GET /staff/emails`: the e-mails of the product (`cloud/email_registry.py`) and whether a test can be sent. */
+export type MailEntry = { key: string; label: string; description: string; sender: "nyra" | "supabase"; can_send_test: boolean };
+export type MailList = { configured: boolean; sender: string; emails: MailEntry[] };
+export type MailPreview = { subject: string; html: string; text: string };
 
 /** One alarm of the supervision thresholds (`cloud/alerts.py`), in French. */
 export type SupervisionAlert = { code: string; severity: "warning" | "critical"; message: string; /** The container it is about, when there are several. */ instance?: string };
