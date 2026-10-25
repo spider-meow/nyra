@@ -42,11 +42,11 @@ TELL_EVERY_SECONDS, TELL_MAX_KEYS = 3600, 256
 _LAST_TOLD: dict[str, float] = {}
 
 
-def once_per_hour(key: str) -> bool:
-    """True the first time `key` is asked in an hour (and records it). The memory is bounded: when full it is emptied,
-    which at worst tells one more time."""
+def once_per_hour(key: str, every: float = TELL_EVERY_SECONDS) -> bool:
+    """True the first time `key` is asked in an hour (`every` seconds, for what is told once a day) and records it. The
+    memory is bounded: when full it is emptied, which at worst tells one more time."""
     now = time.monotonic()
-    if now - _LAST_TOLD.get(key, -TELL_EVERY_SECONDS) < TELL_EVERY_SECONDS:
+    if now - _LAST_TOLD.get(key, -every) < every:
         return False
     if len(_LAST_TOLD) >= TELL_MAX_KEYS:
         _LAST_TOLD.clear()

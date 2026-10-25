@@ -49,6 +49,7 @@ from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashe
 
 from . import audit as cloud_audit
 from . import db as cloud_db
+from . import digest as cloud_digest
 from . import hostmetrics
 from . import jobs as cloud_jobs
 from . import presence as cloud_presence
@@ -91,6 +92,18 @@ TEMP_LEFTOVER_AGE_SECONDS = 600
 CLEAN_SCAN_LIMIT = 20_000
 # Touched while the worker lives, idle or busy; the container's health check reads its age.
 ALIVE_FILE = Path(os.environ.get("NYRA_WORKER_ALIVE_FILE") or Path(tempfile.gettempdir()) / "nyra-worker-alive")
+
+
+def mail_settings_or_none(config_path: Optional[Path]) -> Any:
+    """The e-mail settings of the worker. A wrong NYRA_MAIL_FROM stops the web process, but must not stop the worker (no more
+    jobs, restart loop): it is logged as an error and the worker starts without e-mail (the monthly mails then warn once an hour)."""
+    from .api import settings_from_env
+
+    try:
+        return settings_from_env(config_path)
+    except RuntimeError as exc:
+        log.error("NYRA_MAIL_FROM invalide : les e-mails mensuels sont désactivés jusqu'à sa correction (%s)", str(exc)[:200])
+        return None
 
 
 def touch_alive() -> None:
@@ -454,8 +467,9 @@ class _IndexRun:
 
 class Worker:
     def __init__(self, *, database_url: str, storage_client_factory: Callable[[], Any],
-                 config_path: Optional[Path] = None, poll_seconds: float = 2.0):
+                 config_path: Optional[Path] = None, poll_seconds: float = 2.0, mail_settings: Any = None):
         self.database_url = database_url
+        self.mail_settings = mail_settings  # the sender's settings (`CloudSettings`); None: no monthly e-mail can leave
         self.storage_client_factory = storage_client_factory
         self.config_path = config_path
         self.poll_seconds = poll_seconds
@@ -504,6 +518,21 @@ class Worker:
         except Exception:  # noqa: BLE001 - housekeeping must not stop the worker loop; the brands stay due
             log.exception("queueing the monthly reads failed")
 
+    def _send_digests(self) -> None:
+        """Send the monthly e-mails that are due, right after the reads are queued (same switch, same protections)."""
+        if not cloud_schedule.scheduler_enabled():
+            return
+        try:
+            sent = cloud_digest.run(self.mail_settings, datetime.now(timezone.utc), database_url=self.database_url)
+            if sent:
+                log.info("monthly e-mails sent: %d", sent)
+        except psycopg.errors.UndefinedTable:
+            if cloud_schedule.once_per_hour("missing-digest-table"):  # a warning an hour, not an event every 5 minutes
+                log.warning("monthly e-mails are not sent: table monthly_digests or brand_schedules is missing, apply migrations "
+                            "20261024000033 and 20261025000034")
+        except Exception:  # noqa: BLE001 - housekeeping must not stop the worker loop; the mails stay due
+            log.exception("sending the monthly e-mails failed")
+
     def run_forever(self) -> None:
         log.info("worker started")
         touch_alive()
@@ -537,6 +566,7 @@ class Worker:
             if time.monotonic() - last_schedule >= SCHEDULE_SECONDS:
                 last_schedule = time.monotonic()
                 self._enqueue_scheduled()
+                self._send_digests()
             try:
                 ran = self.run_once()
             except Exception:  # noqa: BLE001 - keep the worker alive

@@ -218,9 +218,19 @@ def test_a_concurrent_idempotent_request_is_retried_then_fails_explicitly():
 
 def test_another_409_is_not_retried():
     transport = _transport((409, {"name": "invalid_idempotent_request", "message": "different payload"}))
-    with pytest.raises(mailer.MailError, match="different payload"):
+    with pytest.raises(mailer.MailError, match="different payload") as caught:
         _deliver(transport)
     assert len(transport.seen) == 1
+    assert caught.value.code == "invalid_idempotent_request" and FAKE_SENDING_VALUE not in repr(caught.value.code)
+
+
+def test_the_error_code_is_exposed_cut_short_and_empty_when_resend_gave_none():
+    with pytest.raises(mailer.MailError) as caught:
+        _deliver(_transport((422, {"name": "x" * 500, "message": "m"})))
+    assert caught.value.code == "x" * 64
+    with pytest.raises(mailer.MailError) as caught:
+        _deliver(_transport(httpx.ReadTimeout("slow")))
+    assert caught.value.code == ""
 
 
 def _drip(chunks, pause):
