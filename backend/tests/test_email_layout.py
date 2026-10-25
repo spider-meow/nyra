@@ -19,7 +19,7 @@ def sample(url="https://nyra.test/o/x/b/y/review"):
     items = [L.Item("affiche.jpg", "3 images en ligne", "expiré le 13/10/2026"), L.Item("banniere.jpg", None, "expire le 14/11/2026\ndans 20 jours")]
     return [L.Paragraph("Bonjour, voici le point."),
             L.Stats([("2", "À traiter", "red"), ("5", "Expirent sous 30 jours", "orange"), ("7", "Sous 31 à 90 jours", "yellow")]),
-            L.Notice("La lecture de la marque « Alpha » semble incomplète.", "yellow"),
+            L.Notice("La lecture de la marque « Alpha » semble incomplète."),
             L.Section("Nouveaux visuels", "Ils sont en ligne.", [L.Group("Alpha", items, L.Button("Ouvrir À traiter", url), more=4)], "red")]
 
 
@@ -31,20 +31,25 @@ def mail(blocks=None, **kw):
 
 @pytest.mark.parametrize("trap", TRAPS)
 def test_every_outside_field_is_escaped_in_the_html_and_plain_in_the_text(trap):
-    blocks = [L.Paragraph(trap), L.Stats([(trap, trap, "red"), ("1", "x", "green")]), L.Notice(trap, "yellow"),
-              L.Section(trap, trap, [L.Item(trap, trap, trap), L.Group(trap, [L.Item(trap, trap, trap)], L.Button(trap, "https://a.test/"))], "orange")]
+    blocks = [L.Paragraph(trap), L.Stats([(trap, trap, "red"), ("1", "x", "neutral")]), L.Notice(trap),
+              L.Section(trap, trap, [L.Group(trap, [L.Item(trap, trap, trap)], L.Button(trap, "https://a.test/"))], "orange")]
     html, text = L.compose(trap, trap, blocks, banner=trap, footer=L.Footer(trap, trap, "https://a.test/s"))
     low = html.lower()
     assert "<img" not in low and "<script" not in low and "<b>gras" not in low and "onerror=alert(1)>" not in low
     assert "&lt;" in html and trap in text
 
 
+def button_blocks(url):
+    return [L.Paragraph("p"), L.Section("Titre", "intro", [L.Group("Marque", [L.Item("a.jpg", None, "expire")], L.Button("Cliquez", url))], "red")]
+
+
 def test_only_http_and_https_addresses_make_a_button():
     for bad in ("javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,x", "//evil.test/x", "evil.test/x", "", " https://a.test", "https://",
                 "ftp://a.test", "javascript://a.test/%0Aalert(1)", "https://a.test/x y", "https://a.test/\n"):
-        html, text = mail([L.Paragraph("p"), L.Button("Cliquez", bad)])
-        assert "href" not in html and "Cliquez" not in html and "Cliquez" not in text, repr(bad)
-    html, text = mail([L.Button("Cliquez", 'http://a.test/p?x=1&y="2"')])
+        html, text = mail(button_blocks(bad))
+        assert "href" not in html and "Cliquez" not in html and "Cliquez" not in text and "\n\n\n" not in text, repr(bad)
+        assert "\n\n\n" not in text and "Marque\n\n" not in text
+    html, text = mail(button_blocks('http://a.test/p?x=1&y="2"'))
     assert 'href="http://a.test/p?x=1&amp;y=&quot;2&quot;"' in html and 'http://a.test/p?x=1&y="2"' in text
 
 
@@ -160,7 +165,7 @@ def ratio(a: str, b: str) -> float:
     return (hi + 0.05) / (lo + 0.05)
 
 
-TEXT_PAIRS = [("ink", "page"), ("ink", "card"), ("ink", "sect"), ("second", "card"), ("muted", "card"), ("muted", "page"), ("muted", "sect"),
+TEXT_PAIRS = [("ink", "page"), ("ink", "card"), ("ink", "sect"), ("muted", "card"), ("muted", "page"), ("muted", "sect"),
               ("faint", "page"), ("btn_ink", "btn")]
 
 
@@ -172,7 +177,7 @@ def test_every_text_and_background_pair_of_the_palette_is_readable(palette):
 
 
 def test_every_tone_is_readable_in_light_and_dark():
-    assert set(L.TONES) == {"red", "orange", "yellow", "green", "neutral"}
+    assert set(L.TONES) == {"red", "orange", "yellow", "neutral"}
     for name, (fg, bg, dark_fg, dark_bg) in L.TONES.items():
         assert ratio(fg, bg) >= 4.5, ("light", name, ratio(fg, bg))
         assert ratio(dark_fg, dark_bg) >= 4.5, ("dark", name, ratio(dark_fg, dark_bg))
@@ -200,3 +205,17 @@ def test_an_oversized_mail_cuts_its_lists_with_and_n_others_instead_of_growing()
     assert len(html.encode()) < L.MAX_HTML_BYTES and len(text.encode()) < L.MAX_HTML_BYTES
     assert re.search(r"et \d+ autres", html) and re.search(r"et \d+ autres", text)
     assert "Section 2" in html  # every section survives, the lists are what shrinks
+    assert re.search(r"et \d+ autres marques", html) and re.search(r"et \d+ autres marques", text)  # brands left out are not « visuels »
+    assert "et 1 autre marque" not in html
+
+
+def test_one_cut_brand_is_told_in_the_singular():
+    html, _ = mail([L.Section("S", "i", [L.Group("A", [], more=0)], "red", more=1)])
+    assert "et 1 autre marque<" in html
+
+
+def test_what_the_layout_cannot_cut_is_logged_not_hidden(caplog):
+    notices = [L.Notice("Une phrase de lecture assez longue pour peser dans le courrier. " * 3)] * 600
+    with caplog.at_level("WARNING", logger="nyra.cloud.email_layout"):
+        html, _ = mail(notices)
+    assert len(html.encode()) >= L.MAX_HTML_BYTES and "Gmail may clip it" in caplog.text

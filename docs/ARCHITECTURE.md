@@ -94,7 +94,7 @@ again (a re-indexed reference, a new threshold); (2) the visuals of the library 
 days (`SOON_DAYS`, `LATER_DAYS`: the only place of the two thresholds; a visual is in one list at most; expired ones are in
 neither); (4) one sentence per brand whose last read looks incomplete (`crawl_runs.suspect`: nothing is marked removed), was
 stopped by the month's page limit (`result.quota_reached` of the scheduled `crawl`) or is not finished (its scheduled read
-is not `done`, or still due). Each list shows 20 lines per brand at most, then « et N autres », and a link to the page
+is not `done`, or still due). Each list shows 20 lines per brand at most (10, 5, 3, 1 or 0 when the mail grows past the layout's 90 KB), then « et N autres », and a link to the page
 (`NYRA_PUBLIC_URL` + `/o/<org>/b/<brand>/review` or `/library`). Every name is escaped in the HTML; no word on billing.
 *When:* at least one brand has the monthly read on, the date of the latest brand has passed (a brand counts only if its
 `brand_schedules` row existed before this month's date: `created_at`, which a switch off and on does not change; one switched
@@ -167,13 +167,13 @@ traced in a second row, `email.test` with `result` = `sent` or `failed` (no orga
 with « Aperçu » (the HTML in an `<iframe sandbox="">`: no script, no active link, plus the text version) and « M'envoyer un test » (not replayed on a 429).
 
 **The layout of every e-mail (`cloud/email_layout.py`).** Never write an e-mail's HTML by hand: `compose(title, preheader, blocks, *, banner=None, footer=None)` gives `(html, text)` from
-blocks that are plain dataclasses: `Paragraph(text)`, `Stats([(value, label, tone)])` (2 to 4 figures in one row), `Notice(text, tone)` (a warning band, yellow by default), `Section(title, intro,
-items, tone, button=None)` (a card with a tone dot) holding `Group(title, [Item(primary, secondary, right)], Button(label, url), more=N)` (a brand and its lines; `right` puts its second line after a
-newline; `more` says « et N autres ») and `Button(label, url)`. Tones: `red` (to treat / expired), `orange` (urgent), `yellow` (soon), `green`, `neutral`. Everything from outside is escaped; a
+blocks that are plain dataclasses: `Paragraph(text)`, `Stats([(value, label, tone)])` (2 to 4 figures in one row), `Notice(text)` (a yellow warning band), `Section(title, intro,
+groups, tone, more=0)` (a card with a tone dot) holding `Group(title, [Item(primary, secondary, right)], Button(label, url), more=N)` (a brand and its lines; `right` puts its second line after a
+newline; `more` says « et N autres »; a `Section`'s `more` says « et N autres marques »; the `Button` lives in a `Group`). Tones: `red` (to treat / expired), `orange` (urgent), `yellow` (soon), `neutral` (add `green` the day an e-mail needs it). Everything from outside is escaped; a
 button or footer link whose address is not `http(s)://host` is left out. *Constraints of mail clients, all held by the layout and tested in `test_email_layout.py`:* tables with `role="presentation"`
 and styles written in the tags (the `<style>` block only holds dark mode and small screens); no image, font or sheet from outside; 600 px wide, one column on a phone; every text/background pair of the palette
-(the application's: text `#1a3300`, fond `#fdfcf8`, carte `#fff`, jaune `#f6e27f`; dark `#12170d` / `#1c2415`) at 4.5:1 or more; HTML under 90 KB (Gmail clips near 102 KB: past the limit the lists are cut with « et N autres », the
-sections stay); the text version comes from the same blocks. The test mails of the back office pass `banner=` (a line above the title). The Supabase templates are the only HTML written by hand.
+(the application's: text `#1a3300`, fond `#fdfcf8`, carte `#fff`, jaune `#f6e27f`; dark `#12170d` / `#1c2415`) at 4.5:1 or more; HTML under 90 KB (Gmail clips near 102 KB: past the limit the lists go from 20 lines per brand to 10, 5, 3, 1, 0, then fewer brands, with « et N autres » / « et N autres marques »; the
+sections stay; if what cannot be cut, such as the notices, still passes the limit, a warning is logged); the text version comes from the same blocks. The test mails of the back office pass `banner=` (a line above the title). The Supabase templates are the only HTML written by hand.
 
 **Ajouter un e-mail.** (1) Write the render function (pure, tested on invented data): it builds blocks and calls `email_layout.compose`; give it an optional `banner` it passes on. (2) Add an `Entry` to `ENTRIES` in `cloud/email_registry.py`:
 a short unique `key` (`[a-z_]+`), `label`, `description`, `sender` and a `sample()` that calls the render function on invented data (never a client's).

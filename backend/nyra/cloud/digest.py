@@ -9,6 +9,8 @@ rights have expired, with no decision yet), the visuals that **expire within 30 
 days**, and whether the brand's last read looks incomplete (`crawl_runs.suspect`), was stopped by the month's page limit, or
 is not finished. `build` turns that into the subject, the HTML and the text (blocks composed by `email_layout`); it reads nothing and is tested on made-up data.
 Unlimited rights are left out everywhere. Each list shows 20 lines at most and says how many more there are.
+When the HTML would pass `email_layout.MAX_HTML_BYTES` (Gmail clips long mails), the layout shortens the lists to 10, 5, 3, 1 or 0 lines
+per brand, then keeps fewer brands (« et N autres marques »): the text of such a mail is shortened the same way.
 
 *When a match is "new".* `matches.created_at` cannot tell: a pass that rewrites a match (a re-indexed reference, a new
 threshold) sets it again. A match cannot exist before both of its images do, so it is dated by the later of the site
@@ -86,11 +88,6 @@ def _fr(day: date) -> str:
 
 def _when(left: int) -> str:
     return "aujourd'hui" if left == 0 else "demain" if left == 1 else f"dans {left} jours"
-
-
-def _more(items: Sequence, total: int) -> str:
-    left = total - len(items[:LIST_MAX])
-    return f"et {left} {_plural(left, 'autre', 'autres')}"
 
 
 def _facts(counts: dict) -> list[str]:
