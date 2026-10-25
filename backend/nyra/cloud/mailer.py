@@ -143,10 +143,12 @@ def _post_once(client: httpx.Client, api_key: str, payload: dict, idempotency_ke
         return None, type(exc).__name__
 
 
-def deliver(api_key: str, sender: str, to: Sequence[str], subject: str, html: str, text: str, *, idempotency_key: Optional[str] = None,
+def deliver(api_key: str, sender: str, to: Sequence[str], subject: str, html: str, text: str, *, kind: str, idempotency_key: Optional[str] = None,
             deadline_seconds: float = DEADLINE_SECONDS, transport: Optional[httpx.BaseTransport] = None,
             sleep: Callable[[float], None] = time.sleep) -> str:
     """Post the mail to Resend; returns its id. ValueError on bad input (nothing is sent), MailError on failure.
+
+    `kind` names the e-mail in `email_registry.py` (it only reaches the logs; a test refuses a call whose kind is not registered).
 
     Retries (network error, 5xx, 429, 409 "still running") reuse the same Idempotency-Key. Callers that may call again
     after a MailError (a timeout where Resend had accepted the mail) pass their own stable `idempotency_key`
@@ -168,12 +170,12 @@ def deliver(api_key: str, sender: str, to: Sequence[str], subject: str, html: st
             if answer is not None:
                 status, body = answer
                 if status < 300:
-                    log.info("mail sent to %s", shown)
+                    log.info("mail %s sent to %s", kind, shown)
                     return str(_json(body).get("id", ""))
                 why = f"Resend answered {status}"
                 if not _retryable(status, body):
                     raise MailError(f"{why}: {_refusal(body, api_key)}", code=str(_json(body).get("name") or "")[:MAX_CODE_CHARS])
-            log.warning("mail to %s not sent (try %d of %d): %s", shown, attempt + 1, ATTEMPTS, why)
+            log.warning("mail %s to %s not sent (try %d of %d): %s", kind, shown, attempt + 1, ATTEMPTS, why)
             wait = RETRY_WAIT_SECONDS * (attempt + 1)
             if attempt + 1 == ATTEMPTS or time.monotonic() + wait >= deadline:
                 break
@@ -181,9 +183,9 @@ def deliver(api_key: str, sender: str, to: Sequence[str], subject: str, html: st
     raise MailError(f"The mail could not be sent after {attempt + 1} tries ({why}).")
 
 
-def send(settings, org_id: uuid.UUID, to: Sequence[str], subject: str, html: str, text: str, *, idempotency_key: Optional[str] = None,
+def send(settings, org_id: uuid.UUID, to: Sequence[str], subject: str, html: str, text: str, *, kind: str, idempotency_key: Optional[str] = None,
          transport: Optional[httpx.BaseTransport] = None, sleep: Callable[[float], None] = time.sleep) -> str:
-    """Send one mail for an organization; returns Resend's id (`deliver` explains `idempotency_key`).
+    """Send one mail for an organization; returns Resend's id (`deliver` explains `kind` and `idempotency_key`).
 
     MailNotConfigured without a key or sender, ValueError on bad input, EmailLimit when the organization's
     day is used up (nothing is sent: keep the message and try again), MailError when it did not leave.
@@ -201,7 +203,7 @@ def send(settings, org_id: uuid.UUID, to: Sequence[str], subject: str, html: str
     sent = False
     try:
         result = deliver(settings.resend_api_key, settings.mail_from, recipients, subject, html, text,
-                         idempotency_key=idempotency_key, transport=transport, sleep=sleep)
+                         kind=kind, idempotency_key=idempotency_key, transport=transport, sleep=sleep)
         sent = True
         return result
     finally:

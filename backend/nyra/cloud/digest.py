@@ -353,7 +353,7 @@ def _send(settings, org_id: uuid.UUID, month: date, now: datetime, mail: Mail, t
     key, recovered, cut = f"monthly:{org_id}:{month:%Y-%m}", False, to[:MAX_ADMINS]
     try:
         # MailNotConfigured cannot come out of here: `run` checked the settings before claiming anything.
-        mailer.send(settings, org_id, cut, mail.subject, mail.html, mail.text, idempotency_key=key, transport=transport, sleep=sleep)
+        mailer.send(settings, org_id, cut, mail.subject, mail.html, mail.text, kind="monthly_digest", idempotency_key=key, transport=transport, sleep=sleep)
     except mailer.MailError as exc:
         if exc.code != ALREADY_SENT:
             return _failed(settings.database_url, org_id, attempt, exc)
