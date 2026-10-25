@@ -94,7 +94,7 @@ again (a re-indexed reference, a new threshold); (2) the visuals of the library 
 days (`SOON_DAYS`, `LATER_DAYS`: the only place of the two thresholds; a visual is in one list at most; expired ones are in
 neither); (4) one sentence per brand whose last read looks incomplete (`crawl_runs.suspect`: nothing is marked removed), was
 stopped by the month's page limit (`result.quota_reached` of the scheduled `crawl`) or is not finished (its scheduled read
-is not `done`, or still due). Each list shows 20 lines per brand at most, then « et N autres », and a link to the page
+is not `done`, or still due). Each list shows 20 lines per brand at most (10, 5, 3, 1 or 0 when the mail grows past the layout's 90 KB), then « et N autres », and a link to the page
 (`NYRA_PUBLIC_URL` + `/o/<org>/b/<brand>/review` or `/library`). Every name is escaped in the HTML; no word on billing.
 *When:* at least one brand has the monthly read on, the date of the latest brand has passed (a brand counts only if its
 `brand_schedules` row existed before this month's date: `created_at`, which a switch off and on does not change; one switched
@@ -151,14 +151,14 @@ cannot be switched off); back office > Comptes, « administrateurs d'organisatio
 
 **E-mails page of the back office (`cloud/email_registry.py`, `cloud/routes/staff_emails.py`).** `email_registry.ENTRIES` lists every e-mail of the
 product: `key`, `label`, `description`, `sender` (`nyra`: sent by `mailer`; `supabase`: sent by Supabase Auth from `supabase/templates/`, never by Nyra) and
-`sample()` giving `(subject, html, text)` from invented data (« Maison Exemple »). The monthly e-mail's sample is the real `digest.build` on made-up
+`sample(banner=None)` giving `(subject, html, text)` from invented data (« Maison Exemple »). The monthly e-mail's sample is the real `digest.build` on made-up
 data; the two Supabase samples are the template files with their `{{ .Variable }}` replaced by example values (the web image copies `supabase/templates`).
 *Rule:* `mailer.send` and `mailer.deliver` take a required keyword `kind`, a key of the registry; `test_every_mail_kind_is_registered` reads the
 syntax tree of every module and fails for a call whose `kind=` is not a literal key of the registry (or the `.key` of an entry taken from it), and for a
 registered `nyra` e-mail that no code sends. *Routes* (platform admins only; the tests of `test_email_registry.py`): `GET /api/staff/emails`
 (`configured` = key AND valid sender, `sender`, the entries with `can_send_test`; never the key), `GET /api/staff/emails/{key}/preview` (`subject`, `html`,
 `text`; works when sending is not configured; 404 for an unknown key), `POST /api/staff/emails/{key}/test` (body empty or `{}`, any field is a 422): sends the sample, with
-`[TEST]` in the subject and a banner above the body, to the address of the signed-in account ONLY, through `mailer.deliver` (no organization, so no client's daily
+`[TEST]` in the subject and a banner above the title (the layout's `banner=`), to the address of the signed-in account ONLY, through `mailer.deliver` (no organization, so no client's daily
 allowance is used). 400: Supabase e-mail or an account without an address; 503: not configured; 502: Resend's refusal or a timeout (message cut at 200 characters, no key);
 429 with `Retry-After`: 10 tests already attempted in the last hour by the account. Counting and writing the attempt's `email.test` row (`result` = `started`) are one short
 transaction under a per-account advisory lock (`pg_advisory_xact_lock`), so simultaneous requests cannot exceed the limit (tested with 30 at once: 10 sent, 20 refused); an attempt counts
@@ -166,7 +166,16 @@ even if the network or the code fails after it, and only `started` rows are coun
 traced in a second row, `email.test` with `result` = `sent` or `failed` (no organization; `kind` and `result`, never an address or a content). The page (`/back-office/emails`) shows each e-mail
 with « Aperçu » (the HTML in an `<iframe sandbox="">`: no script, no active link, plus the text version) and « M'envoyer un test » (not replayed on a 429).
 
-**Ajouter un e-mail.** (1) Write the render function (pure, escaped, tested on invented data). (2) Add an `Entry` to `ENTRIES` in `cloud/email_registry.py`:
+**The layout of every e-mail (`cloud/email_layout.py`).** Never write an e-mail's HTML by hand: `compose(title, preheader, blocks, *, banner=None, footer=None)` gives `(html, text)` from
+blocks that are plain dataclasses: `Paragraph(text)`, `Stats([(value, label, tone)])` (2 to 4 figures in one row), `Notice(text)` (a yellow warning band), `Section(title, intro,
+groups, tone, more=0)` (a card with a tone dot) holding `Group(title, [Item(primary, secondary, right)], Button(label, url), more=N)` (a brand and its lines; `right` puts its second line after a
+newline; `more` says « et N autres »; a `Section`'s `more` says « et N autres marques »; the `Button` lives in a `Group`). Tones: `red` (to treat / expired), `orange` (urgent), `yellow` (soon), `neutral` (add `green` the day an e-mail needs it). Everything from outside is escaped; a
+button or footer link whose address is not `http(s)://host` is left out. *Constraints of mail clients, all held by the layout and tested in `test_email_layout.py`:* tables with `role="presentation"`
+and styles written in the tags (the `<style>` block only holds dark mode and small screens); no image, font or sheet from outside; 600 px wide, one column on a phone; every text/background pair of the palette
+(the application's: text `#1a3300`, fond `#fdfcf8`, carte `#fff`, jaune `#f6e27f`; dark `#12170d` / `#1c2415`) at 4.5:1 or more; HTML under 90 KB (Gmail clips near 102 KB: past the limit the lists go from 20 lines per brand to 10, 5, 3, 1, 0, then fewer brands, with « et N autres » / « et N autres marques »; the
+sections stay; if what cannot be cut, such as the notices, still passes the limit, a warning is logged); the text version comes from the same blocks. The test mails of the back office pass `banner=` (a line above the title). The Supabase templates are the only HTML written by hand.
+
+**Ajouter un e-mail.** (1) Write the render function (pure, tested on invented data): it builds blocks and calls `email_layout.compose`; give it an optional `banner` it passes on. (2) Add an `Entry` to `ENTRIES` in `cloud/email_registry.py`:
 a short unique `key` (`[a-z_]+`), `label`, `description`, `sender` and a `sample()` that calls the render function on invented data (never a client's).
 (3) Send it with `mailer.send(..., kind="<key>")` (an organization's mail, counted against its daily allowance) or `mailer.deliver(..., kind="<key>")`.
 (4) Run `pytest backend/tests/test_email_registry.py`: without step 2 it fails, naming the file and the line. (5) The page « E-mails » of the back office shows it
@@ -246,6 +255,7 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/jobs.py` | The queue (enqueue, claim, heartbeat, cancel, reap). |
 | `cloud/schedule.py` | The monthly read (`brand_schedules`): `is_due` (pure), `enable` / `disable`, `enqueue_due` (called by the worker every 5 minutes), the `NYRA_SCHEDULER` switch. |
 | `cloud/email_registry.py` | Every e-mail of the product with a sample of invented data (preview and test mail of the back office), and the `kind` every `mailer` call must name. |
+| `cloud/email_layout.py` | The one layout of Nyra's e-mails: blocks (`Stats`, `Section`, `Item`, `Notice`, `Button`...) to `(html, text)`, escaped, dark mode, under 90 KB. |
 | `cloud/digest.py` | The monthly e-mail (`monthly_digests`): `gather` (reads), `build` (pure: subject, HTML, text), `due_orgs` / `is_ready` (when), `claim` (atomic), `run` (called by the worker right after `enqueue_due`). |
 | `cloud/store.py` | Postgres + Storage behind the store interfaces. |
 | `cloud/db.py` | Pooled Postgres access, one query per screen (no N+1). |

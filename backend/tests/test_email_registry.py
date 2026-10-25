@@ -253,7 +253,8 @@ def test_a_test_goes_to_the_signed_in_account_only_with_the_test_marks(make_clie
     sent = json.loads(request.content)
     assert sent["to"] == ["alice@client.fr"] and sent["from"] == SENDER
     assert sent["subject"].startswith("[TEST] Nyra · Maison Exemple")
-    assert BANNER in sent["html"] and sent["html"].index(BANNER) < sent["html"].index("Maison Exemple")
+    body = sent["html"][sent["html"].index("<body"):]  # (the <title> already names the organization)
+    assert BANNER in body and body.index(BANNER) < body.index("Maison Exemple")
     assert sent["text"].startswith(BANNER) and "Maison Exemple" in sent["text"]
     assert request.headers["authorization"] == f"Bearer {KEY}"
 

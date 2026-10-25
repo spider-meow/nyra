@@ -13,7 +13,6 @@ result (`sent` / `failed`) is a second row written after. Only `started` rows ar
 from __future__ import annotations
 
 import math
-import re
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -29,7 +28,6 @@ router = APIRouter()
 
 TEST_LIMIT = 10  # tests per account and per hour
 BANNER = "E-mail de test : données fictives, envoyé depuis le back office."
-_BANNER_HTML = f'<p style="margin:0 0 16px;padding:8px 12px;background:#f1f1ec;color:#555;font:13px Arial,sans-serif">{BANNER}</p>'
 _RECENT = """SELECT created_at + interval '1 hour' - now() AS wait FROM audit_log
              WHERE user_id = %s AND action = 'email.test' AND detail->>'result' = 'started' AND created_at > now() - interval '1 hour'
              ORDER BY created_at DESC LIMIT %s"""
@@ -47,9 +45,9 @@ def _entry(key: str) -> email_registry.Entry:
     return entry
 
 
-def _sample(entry: email_registry.Entry) -> tuple[str, str, str]:
+def _sample(entry: email_registry.Entry, banner: Optional[str] = None) -> tuple[str, str, str]:
     try:
-        return entry.sample()
+        return entry.sample(banner)
     except OSError as exc:  # a template file the server does not have
         raise HTTPException(status_code=503, detail="Le gabarit de cet e-mail est introuvable sur le serveur.") from exc
 
@@ -66,12 +64,6 @@ def list_emails(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
 def preview_email(key: str, claims=Depends(staff_dep)) -> dict:
     subject, html, text = _sample(_entry(key))
     return {"subject": subject, "html": html, "text": text}
-
-
-def _marked(subject: str, html: str, text: str) -> tuple[str, str, str]:
-    """The sample as a test mail: "[TEST]" in the subject and the banner above the body, in the HTML and in the text."""
-    marked, found = re.subn(r"<body[^>]*>", lambda tag: tag.group(0) + _BANNER_HTML, html, count=1)
-    return f"[TEST] {subject}", marked if found else _BANNER_HTML + html, f"{BANNER}\n\n{text}"
 
 
 def _reserve(database_url: str, claims: cloud_auth.Claims, entry: email_registry.Entry) -> None:
@@ -107,7 +99,8 @@ def send_test(key: str, body: Optional[NoBody] = None, claims=Depends(staff_dep)
     missing = [name for name, value in (("RESEND_API_KEY", s.resend_api_key), ("NYRA_MAIL_FROM", s.mail_from)) if not value]
     if missing:
         raise HTTPException(status_code=503, detail=f"L'envoi d'e-mails n'est pas configuré : ajoutez {' et '.join(missing)} au serveur.")
-    subject, html, text = _marked(*_sample(entry))
+    subject, html, text = _sample(entry, BANNER)  # the layout puts the banner above the title, in the HTML and in the text
+    subject = f"[TEST] {subject}"
     _reserve(s.database_url, claims, entry)
     failure: Optional[HTTPException] = None
     try:
