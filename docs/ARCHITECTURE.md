@@ -85,8 +85,8 @@ one at a time), so a read can start a few hours late; it could not have started 
 
 *Setting (`cloud/routes/schedule_settings.py`):* `GET .../brands/{brand_id}/schedule` (any member) gives `{enabled, day_of_month, default_day, next_run_at, last_read_at}`; a brand without a row reads as off, with its default day. `PUT` (administrators) takes `{enabled, day_of_month}` (nothing else accepted; the day, 1 to 28, is required to switch on and ignored to switch off), calls `schedule.enable` / `disable` and writes `schedule.enable` (with the day) / `schedule.disable` in the audit log in the same transaction, then answers like the `GET`. A `PUT` that asks for what already is (same state, same day) changes nothing and so writes no trace; one that only changes the day writes one `schedule.enable` with the new day. The text shown to the person says « tôt le matin » (the slots, 02:00 to 04:45 UTC, are 03:00 to 05:45 in winter and 04:00 to 06:45 in summer in Paris). `next_run_at` comes from `schedule.next_run` (pure, same rule as `is_due`): this month's date for a brand not read this month (already past = it goes at the next pass of the worker), next month's otherwise; null when off. `last_read_at` is NOT `brand_schedules.last_run_at` (that column is the due rule and is also a mark set by `enable` on a never-read brand): it is the `finished_at` of the latest `crawl` job with `params.scheduled` and status `done` of the brand (null if none; a manual, failed or cancelled read does not count). The audit screen shows `schedule.*` and `digest.*` with no author as « Lecture automatique ».
 
-**Monthly e-mail (AXE-523, `cloud/digest.py`).** ONE e-mail per organization and per month, to its administrators (role
-`admin`, at most 10, addresses read as the members list does), sent by the worker through `mailer.send` (Resend). *It says:*
+**Monthly e-mail (AXE-523, `cloud/digest.py`).** ONE e-mail per organization and per month, to its administrators who are allowed and want it (see « Who receives
+it » below; at most 10), sent by the worker through `mailer.send` (Resend). *It says:*
 (1) « Nouveaux visuels à traiter »: matches found since the last e-mail sent to the organization (35 days if none) on a visual
 whose rights have expired (unlimited rights excluded) and with no decision yet. A match is dated by the later of the site
 image's `first_seen` and the reference's `created_at`, not by `matches.created_at`, which every pass that rewrites a match sets
@@ -111,11 +111,43 @@ filters in SQL by organization (the latest day of the month of its active brands
 `org_id` order, 5 pages at most per pass, and reads an organization whole. *Recovery:* if Resend answers 409
 `invalid_idempotent_request` (same key, other body: an earlier attempt sent the mail and died before marking it, and the
 content changed since), the mail has left: the month is marked `sent`, `digest.sent` carries `recovered: 1`.
-More than 10 administrators: the first 10 (sorted) get it; `digest.sent` holds `recipients` and `admins`, and a warning is logged. *Audit:* `digest.sent`
-(counters only), `digest.skipped`, `digest.failed` (error type and attempt). *Switch:* `NYRA_SCHEDULER` (the same as the reads).
+More than 10 recipients: the first 10 (sorted) get it; `digest.sent` holds `recipients` (those who receive it) and `admins` (all the administrators), and a warning is logged. *Audit:* `digest.sent`
+(counters only), `digest.skipped` (`reason`: `nothing`, `no_admin`, `no_recipient`), `digest.failed` (error type and attempt). *Switch:* `NYRA_SCHEDULER` (the same as the reads).
 *Limits:* a reimport of the library gives the visuals new ids with no `reviews`: a visual already decided is « new » again; after
 more than 24 hours spent in `sending` (the worker down for a day between a successful send and its mark) Resend's idempotency
 key (valid 24 hours) no longer protects: the mail could leave twice; a visual that expires while already online appears in the 30-day list of the e-mail before, not as « new ».
+
+**Who receives the monthly e-mail, and the notification settings (AXE-523, `cloud/routes/notifications.py`).** Two switches on
+`memberships` (migration `20261025000035`), both `true` by default, for existing and new members: `monthly_email_allowed`
+(the Nyra team's, per person and organization) and `monthly_email_wanted` (the person's own). ONE pure rule,
+`digest.receives_monthly(role, allowed, wanted)`: role `admin` AND allowed AND wanted. A `client` never receives it,
+whatever the switches. `digest.recipients` reads the members once and gives (administrators, sorted recipient addresses); the
+read happens BEFORE the month is claimed. If nobody receives it the month is `skipped` with the reason `no_recipient`
+(`no_admin` when the organization has no administrator at all; `nothing` comes first when there is nothing to say), without
+an error. Without the migration the columns are missing: `recipients` raises `UndefinedColumn`, `digest.run` lets it through,
+NOTHING is claimed or marked, and the worker logs one warning an hour naming migration `20261025000035`; apply it and the
+month's e-mail leaves at the next pass. *Routes:* `GET /api/orgs/{org_id}/me/notifications` (any member) gives
+`{monthly_email: {wanted, allowed, eligible}}` (`eligible`: the role is `admin`; `allowed` is shown, never changed, by the
+person). `PUT` (the caller's own line only: the member is the session's, there is no member identifier in the path or the body)
+takes `{monthly_email: bool}` (nothing else, 422) and writes `notifications.update` (`monthly_email`) in the same transaction,
+only if the value changes (the same value: 200, no trace). `PUT /api/staff/organizations/{org_id}/members/{user_id}/notifications`
+(platform admins only; the person must be a member of that organization, else 404) takes `{monthly_email_allowed: bool}` and
+writes `notifications.staff_update` (the person as object, `monthly_email_allowed`), again only on a change. The back
+office reads both flags in `GET /api/staff/users` (memberships). *Row level security:* `memberships` has an « org admins
+manage memberships » policy (all commands), so an administrator could change their own row through Supabase's public API; the
+trigger `guard_member_notifications` refuses, for the roles `anon` and `authenticated`, any change of
+`monthly_email_allowed`, any change of another person's `monthly_email_wanted`, and a new row that does not start with both
+on; the backend (service role / owner) is not touched; the function pins `search_path = ''`. *Known limit:* the trigger covers
+neither `DELETE` nor `TRUNCATE`: an administrator of an organization (role `authenticated`, through Supabase's public API) can
+delete a co-administrator's row that the team blocked and recreate it with the defaults, which lifts the block. They must be an
+administrator of the SAME organization, the interface does not do it, and it is not access across organizations; to improve:
+move the two booleans to a table without a « FOR ALL » policy, or cover `DELETE`. *Before the migration,* `GET /api/staff/users`
+still works (`users_overview` reads both columns through `to_jsonb` with `true` as the default). *Screens:* Réglages > Notifications (a section of « Mon compte »; the
+list of e-mails a person can switch off, one for now: « Résumé mensuel »; boxes disabled with a sentence for a non-administrator
+and for « bloqué par l'équipe Nyra »; a sentence says the service e-mails, invitation and new password, are Supabase Auth's and
+cannot be switched off); back office > Comptes, « administrateurs d'organisation »: a box « Autorisé » per person, and
+« a choisi de ne plus le recevoir » when the person said no. The mail ends with the way to stop it, with a link to
+`/o/<org>/b/<first brand>/settings?section=notifications` when `NYRA_PUBLIC_URL` is set.
 
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
@@ -184,7 +216,7 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/routes/common.py` | What the route modules share: the request context (`Ctx`), the auth and brand dependencies, small helpers. |
 | `cloud/audit.py` | The activity log (`audit_log`): `record` (called by each route that changes something, in the transaction of the change), `events` (reading, filtered and bounded), `purge` (12 months, batches). |
 | `cloud/offboarding.py` | A client leaving: `delete_organization` (files, rows, accounts, trace) and `export_organization` (CSV, originals, manifest), behind `nyra cloud-delete-org` / `cloud-export-org`. Operator only, no route. |
-| `cloud/routes/` (`session`, `audit`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `logos`, `reports_settings`, `schedule_settings`) | The API routes, one module per domain, each exposing a `router`. |
+| `cloud/routes/` (`session`, `audit`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `logos`, `reports_settings`, `schedule_settings`, `notifications`) | The API routes, one module per domain, each exposing a `router`. |
 | `cloud/routes/interface.py` | The built interface (single-page app), gzip and security headers, error handlers. |
 | `cloud/presence.py` | Where a visual is still online, page by page: `still` (seen by the last finished read of the site), `gone` (the page was read again with success and the image was not on it), `unknown` (the page was not read again, or not since `image_pages.last_seen` and `pages.links_tracked` exist). Counts per site version and section, and the pages; `GET .../visuals/{reference_id}/presence`. Images and links are never deleted when they disappear from a site, so nothing is stored: the state comes from the dates. While the last finished read of a site is **suspect** (`crawl_runs.suspect`, set when the read ends, see `MATCHING.md`), no page of it is `gone`. `replaced_references` lists the visuals replaced, which the home screen and the report leave out of "expired and online". |
 | `cloud/worker.py` | The job runner. |

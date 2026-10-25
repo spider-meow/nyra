@@ -1,4 +1,8 @@
-"""The monthly e-mail: ONE per organization and per month, to its administrators (AXE-523).
+"""The monthly e-mail: ONE per organization and per month, to its administrators who are allowed and want it (AXE-523).
+
+*Who receives it* (`receives_monthly`, the one rule): a member whose role is `admin`, AND whom the Nyra team allows
+(`memberships.monthly_email_allowed`), AND who wants it (`monthly_email_wanted`). Both switches are on by default. When nobody
+receives it the month is marked `skipped` with the reason `no_recipient` (`no_admin`: the organization has no administrator).
 
 *What it says.* `gather` reads, per brand: the **new visuals to treat** (a match found since the last e-mail on a visual whose
 rights have expired, with no decision yet), the visuals that **expire within 30 days** and those that expire in **31 to 90
@@ -33,6 +37,7 @@ from typing import Any, Callable, Optional, Sequence
 from urllib.parse import quote
 
 import httpx
+import psycopg
 
 from . import audit, mailer, schedule
 from . import db as cloud_db
@@ -126,7 +131,11 @@ def _blocks(data: dict, public_url: str, counts: dict) -> list:
              link("library", "Ouvrir la bibliothèque"), expiring)
     _section(blocks, f"Visuels qui expirent dans {SOON_DAYS + 1} à {LATER_DAYS} jours", "À prévoir.", brands, "later",
              link("library", "Ouvrir la bibliothèque"), expiring)
-    return blocks + [("p", "Ce message est envoyé une fois par mois aux administrateurs de l'organisation.")]
+    # The settings are a page of a brand (`/o/<org>/b/<brand>/settings`): the first brand's, no link when the address is unknown.
+    settings_link = f"{base}/o/{quote(data['org_slug'], safe='')}/b/{quote(brands[0]['slug'], safe='')}/settings?section=notifications" if base and brands else None
+    return blocks + [("p", "Ce message est envoyé une fois par mois aux administrateurs de l'organisation."),
+                     ("p", "Vous pouvez choisir de ne plus recevoir ce message dans Réglages > Notifications."),
+                     ("a", "Ouvrir les réglages de notification", settings_link)]
 
 
 def _render(blocks: list) -> tuple[str, str]:
@@ -203,9 +212,20 @@ def period_start(conn, org_id: uuid.UUID, now: datetime) -> datetime:
     return row["at"] or now - timedelta(days=PERIOD_DAYS)
 
 
-def admin_addresses(conn, org_id: uuid.UUID) -> list[str]:
-    """All the administrators' addresses, sorted (read as the members list does); the mail goes to the first `MAX_ADMINS`."""
-    return sorted({m["email"].strip().lower() for m in cloud_db.list_members(conn, org_id) if m["role"] == "admin" and m["email"]})
+def receives_monthly(role: str, allowed: bool, wanted: bool) -> bool:
+    """Pure: the monthly e-mail goes to an administrator the Nyra team allows and who wants it."""
+    return role == "admin" and allowed and wanted
+
+
+def recipients(conn, org_id: uuid.UUID) -> tuple[int, list[str]]:
+    """(how many administrators the organization has, the sorted addresses of those who receive the mail, by `receives_monthly`).
+    The mail goes to the first `MAX_ADMINS`. Raises `UndefinedColumn` while migration 20261025000035 is not applied."""
+    rows = conn.execute(
+        """SELECT m.role, m.monthly_email_allowed AS allowed, m.monthly_email_wanted AS wanted, u.email
+           FROM memberships m JOIN auth.users u ON u.id = m.user_id WHERE m.org_id = %s""", (org_id,)).fetchall()
+    admins = {r["email"].strip().lower() for r in rows if r["role"] == "admin" and r["email"]}
+    to = {r["email"].strip().lower() for r in rows if r["email"] and receives_monthly(r["role"], r["allowed"], r["wanted"])}
+    return len(admins), sorted(to)
 
 
 def gather(conn, org_id: uuid.UUID, since: datetime, now: datetime, schedules: Sequence[dict]) -> dict:
@@ -330,11 +350,10 @@ def _close_as_sent(database_url: str, org_id: uuid.UUID, month: date, now: datet
 
 def _send(settings, org_id: uuid.UUID, month: date, now: datetime, mail: Mail, to: list[str], admins: int, attempt: int,
           transport: Optional[httpx.BaseTransport], sleep: Callable[[float], None]) -> int:
-    key = f"monthly:{org_id}:{month:%Y-%m}"
-    recovered = False
+    key, recovered, cut = f"monthly:{org_id}:{month:%Y-%m}", False, to[:MAX_ADMINS]
     try:
         # MailNotConfigured cannot come out of here: `run` checked the settings before claiming anything.
-        mailer.send(settings, org_id, to, mail.subject, mail.html, mail.text, idempotency_key=key, transport=transport, sleep=sleep)
+        mailer.send(settings, org_id, cut, mail.subject, mail.html, mail.text, idempotency_key=key, transport=transport, sleep=sleep)
     except mailer.MailError as exc:
         if exc.code != ALREADY_SENT:
             return _failed(settings.database_url, org_id, attempt, exc)
@@ -344,10 +363,10 @@ def _send(settings, org_id: uuid.UUID, month: date, now: datetime, mail: Mail, t
         log.info("monthly e-mail of organization %s had already left (the content changed since): marked as sent", org_id)
     except (EmailLimit, ValueError) as exc:
         return _failed(settings.database_url, org_id, attempt, exc)
-    _close_as_sent(settings.database_url, org_id, month, now, mail, len(to), admins, recovered)
-    if admins > len(to):
-        log.warning("monthly e-mail of organization %s: %d administrators, sent to the first %d only", org_id, admins, len(to))
-    log.info("monthly e-mail of organization %s sent to %d administrator(s)", org_id, len(to))
+    _close_as_sent(settings.database_url, org_id, month, now, mail, len(cut), admins, recovered)
+    if len(to) > len(cut):
+        log.warning("monthly e-mail of organization %s: %d administrators receive it, sent to the first %d only", org_id, len(to), len(cut))
+    log.info("monthly e-mail of organization %s sent to %d administrator(s)", org_id, len(cut))
     return 1
 
 
@@ -361,18 +380,19 @@ def _failed(database_url: str, org_id: uuid.UUID, attempt: int, exc: BaseExcepti
 def _handle(settings, org: dict, month: date, now: datetime, transport: Optional[httpx.BaseTransport],
             sleep: Callable[[float], None]) -> int:
     org_id = org["org_id"]
+    with cloud_db.connect(settings.database_url) as conn:  # before the claim: without the columns of migration 35, nothing is claimed
+        admins, to = recipients(conn, org_id)
     with cloud_db.connect(settings.database_url) as conn:  # committed at once: the other workers see the claim
         attempt = claim(conn, org_id, month)
     if attempt is None:
         return 0
     with cloud_db.connect(settings.database_url) as conn:
         data = gather(conn, org_id, period_start(conn, org_id, now), now, org["schedules"])
-        admins = admin_addresses(conn, org_id)
     mail = build(data, settings.public_url)
-    if mail is None or not admins:
-        _skip(settings.database_url, org_id, month, now, "nothing" if mail is None else "no_admin")
+    if mail is None or not to:
+        _skip(settings.database_url, org_id, month, now, "nothing" if mail is None else "no_admin" if not admins else "no_recipient")
         return 0
-    return _send(settings, org_id, month, now, mail, admins[:MAX_ADMINS], len(admins), attempt, transport, sleep)
+    return _send(settings, org_id, month, now, mail, to, admins, attempt, transport, sleep)
 
 
 def _report_given_up(conn, month: date) -> None:
@@ -405,7 +425,9 @@ def run(settings: Any, now: Optional[datetime] = None, *, database_url: Optional
     for org in ready:
         try:
             sent += _handle(settings, org, month, now, transport, sleep)
-        except Exception:  # noqa: BLE001 - one organization's failure must not stop the others; its claim is taken again later
+        except Exception as exc:  # noqa: BLE001 - one organization's failure must not stop the others; its claim is taken again later
+            if isinstance(exc, psycopg.errors.UndefinedColumn) and "monthly_email" in str(exc):
+                raise  # migration 35 is not applied: every organization would fail the same way, the worker says so once an hour
             if schedule.once_per_hour(f"digest-fail:{org['org_id']}"):
                 log.exception("monthly e-mail of organization %s failed; it will be tried again", org["org_id"])
             else:

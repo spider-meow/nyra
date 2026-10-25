@@ -15,6 +15,7 @@ import type {
   LibraryItem,
   Matches,
   Member,
+  Notifications,
   Occurrences,
   OrgInsights,
   Overview,
@@ -585,6 +586,20 @@ export function useMemberMutations() {
     }),
     remove: useMutation({ mutationFn: (userId: string) => api.del(orgApiPath(`/members/${userId}`)), onSuccess: done }),
   };
+}
+
+export function useNotifications() {
+  const { orgApiPath, org } = useOrg();
+  return useQuery({ queryKey: ["notifications", org.org_id], queryFn: () => api.get<Notifications>(orgApiPath("/me/notifications")) });
+}
+
+export function useSetNotifications() {
+  const { orgApiPath, org } = useOrg();
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { monthly_email: boolean }) => api.put<Notifications>(orgApiPath("/me/notifications"), input),
+    onSuccess: (data) => client.setQueryData(["notifications", org.org_id], data),
+  });
 }
 
 export function useSchedule() {

@@ -210,6 +210,9 @@ export type Settings = {
 
 export type Member = { user_id: string; email: string; role: "admin" | "client"; you: boolean };
 
+/** `GET /orgs/{id}/me/notifications`: `wanted` is the person's choice, `allowed` the Nyra team's, `eligible` whether the role receives it. */
+export type Notifications = { monthly_email: { wanted: boolean; allowed: boolean; eligible: boolean } };
+
 export type ImportRow = {
   line: number;
   filename: string;
@@ -528,7 +531,7 @@ export type StaffUser = {
   email: string;
   last_sign_in_at: string | null;
   staff: boolean;
-  memberships: { org_id: string; org_name: string; role: Member["role"]; since: string }[];
+  memberships: { org_id: string; org_name: string; role: Member["role"]; since: string; monthly_email_allowed: boolean; monthly_email_wanted: boolean }[];
 };
 /** One line of usage against a limit (`GET /orgs/{id}/usage`): `level` turns to warning from 80 %. Storage is in bytes. */
 export type UsageItem = { key: string; label: string; used: number; limit: number; level: "ok" | "warning" | "reached" };

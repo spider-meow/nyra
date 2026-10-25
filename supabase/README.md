@@ -38,6 +38,7 @@ supabase/migrations/
   20261021000032_one_running_job_per_org.sql       un seul job `running` par organisation (remplace l'index par marque de 013) et index `jobs_org_active_idx` (lu par `jobs/current`) ; échoue avec un message clair s'il y a déjà deux jobs `running` d'une même organisation. Ordre : arrêter les workers, vérifier qu'aucun job ne tourne, appliquer la 032, déployer le web, démarrer les nouveaux workers (voir DEPLOYMENT.md)
   20261024000033_brand_schedules.sql                lecture mensuelle automatique : table `brand_schedules` (par marque : activée, jour du mois, dernière mise en file ; lecture par les membres, écriture par le backend) (additive, vide et inactive au départ : à appliquer avant ou après le déploiement, avant de préférence)
   20261025000034_monthly_digests.sql                e-mail mensuel : table `monthly_digests` (une ligne par organisation et par mois : en cours, envoyé ou sans objet, tentatives ; lecture par les administrateurs, écriture par le backend) (additive et vide au départ : à appliquer avant le déploiement, de préférence)
+  20261025000035_member_notifications.sql           e-mails de Nyra : colonnes `monthly_email_allowed` (équipe Nyra) et `monthly_email_wanted` (la personne) sur `memberships`, vraies par défaut, et un déclencheur qui empêche l'API publique de les contourner (additive, idempotente : à appliquer AVANT le déploiement du code, qui attend les colonnes)
 ```
 
 ## Marques (012 puis 013)

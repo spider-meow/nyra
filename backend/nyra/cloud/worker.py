@@ -530,8 +530,13 @@ class Worker:
             if cloud_schedule.once_per_hour("missing-digest-table"):  # a warning an hour, not an event every 5 minutes
                 log.warning("monthly e-mails are not sent: table monthly_digests or brand_schedules is missing, apply migrations "
                             "20261024000033 and 20261025000034")
-        except Exception:  # noqa: BLE001 - housekeeping must not stop the worker loop; the mails stay due
-            log.exception("sending the monthly e-mails failed")
+        except Exception as exc:  # noqa: BLE001 - housekeeping must not stop the worker loop; the mails stay due
+            if isinstance(exc, psycopg.errors.UndefinedColumn) and "monthly_email" in str(exc):
+                if cloud_schedule.once_per_hour("missing-digest-columns"):  # nothing was claimed or marked: the mails stay due
+                    log.warning("monthly e-mails are not sent: columns monthly_email_allowed / monthly_email_wanted of memberships are "
+                                "missing, apply migration 20261025000035")
+            else:
+                log.exception("sending the monthly e-mails failed")
 
     def run_forever(self) -> None:
         log.info("worker started")

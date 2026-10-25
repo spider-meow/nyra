@@ -14,6 +14,7 @@ import { Detection } from "./settings/Detection";
 import { Exclusions } from "./settings/Exclusions";
 import { Indexation } from "./settings/Indexation";
 import { Logos } from "./settings/Logos";
+import { Notifications } from "./settings/Notifications";
 import { Profile } from "./settings/Profile";
 import { Reading } from "./settings/Reading";
 import { Schedule } from "./settings/Schedule";
@@ -42,6 +43,7 @@ function General() {
 
 const SECTIONS: Section[] = [
   { id: "account", label: "Profil et sécurité", icon: "user", group: "moi", render: () => <Account /> },
+  { id: "notifications", label: "Notifications", icon: "bell", group: "moi", render: () => <Notifications /> },
   { id: "general", label: "Général", icon: "idBadge", group: "marque", render: () => <General /> },
   { id: "collections", label: "Collections", icon: "folders", group: "marque", adminOnly: true, render: () => <Collections /> },
   { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Team /> },

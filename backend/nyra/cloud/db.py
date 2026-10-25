@@ -176,8 +176,12 @@ def users_overview(conn: psycopg.Connection) -> tuple[list[Row], list[Row], set[
     users = conn.execute(
         "SELECT u.id, u.email, (to_jsonb(u) ->> 'last_sign_in_at')::timestamptz AS last_sign_in_at FROM auth.users u ORDER BY lower(u.email)"
     ).fetchall()
+    # The two e-mail switches are read through `to_jsonb` too (migration 35): before it is applied the page still works, with "yes".
     memberships = conn.execute(
-        "SELECT m.user_id, m.org_id, m.role, m.created_at AS since, o.name AS org_name FROM memberships m JOIN organizations o ON o.id = m.org_id ORDER BY lower(o.name)"
+        "SELECT m.user_id, m.org_id, m.role, m.created_at AS since, "
+        "coalesce((to_jsonb(m) ->> 'monthly_email_allowed')::boolean, true) AS monthly_email_allowed, "
+        "coalesce((to_jsonb(m) ->> 'monthly_email_wanted')::boolean, true) AS monthly_email_wanted, "
+        "o.name AS org_name FROM memberships m JOIN organizations o ON o.id = m.org_id ORDER BY lower(o.name)"
     ).fetchall()
     staff = {row["user_id"] for row in conn.execute("SELECT user_id FROM platform_staff").fetchall()}
     return users, memberships, staff

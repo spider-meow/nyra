@@ -57,8 +57,10 @@ const ACTION_LABEL: Record<string, string> = {
   "schedule.enable": "Lecture mensuelle activée",
   "schedule.disable": "Lecture mensuelle désactivée",
   "digest.sent": "E-mail mensuel envoyé",
-  "digest.skipped": "E-mail mensuel non envoyé : rien à signaler",
+  "digest.skipped": "E-mail mensuel non envoyé",
   "digest.failed": "E-mail mensuel : échec d'envoi",
+  "notifications.update": "Préférence d'e-mail modifiée",
+  "notifications.staff_update": "Envoi d'e-mail modifié par l'équipe Nyra",
 };
 
 const actionLabel = (code: string) => ACTION_LABEL[code] ?? code;
@@ -67,6 +69,8 @@ const actionLabel = (code: string) => ACTION_LABEL[code] ?? code;
 const DECISION_WORD: Record<string, string> = { ...decisionLabel, cleared: "Décision annulée", yes: "Étiquette posée", no: "Étiquette refusée", clear: "Étiquette retirée" };
 /** Why a monthly read queued nothing (`reason` of `schedule.run`). */
 const RUN_REASON: Record<string, string> = { no_site: "aucune adresse à lire", waiting: "une lecture était déjà prévue" };
+/** Why a monthly e-mail was not sent (`reason` of `digest.skipped`). */
+const SKIP_REASON: Record<string, string> = { nothing: "rien à signaler", no_admin: "aucun administrateur", no_recipient: "aucun destinataire" };
 const ROLE_WORD: Record<string, string> = { admin: "Administrateur", client: "Lecture et validation" };
 /** The API refuses an offset past this (`MAX_OFFSET`); the interface stops offering more before that. */
 const MAX_OFFSET = 50_000;
@@ -79,6 +83,7 @@ function summary(event: AuditEvent): string {
   if (typeof role === "string") parts.push(ROLE_WORD[role] ?? role);
   if (typeof count === "number") parts.push(plural(count, "élément"));
   if (event.action === "schedule.run" && typeof reason === "string" && reason) parts.push(RUN_REASON[reason] ?? reason);
+  if (event.action === "digest.skipped" && typeof reason === "string" && reason) parts.push(SKIP_REASON[reason] ?? reason);
   if (replaced === true) parts.push("remplace un visuel du même nom");
   return parts.join(" · ");
 }
