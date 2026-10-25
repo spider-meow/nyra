@@ -225,19 +225,14 @@ def serve_cmd(
     import uvicorn
 
     from nyra import observability
-    from nyra.cloud.api import CloudSettings, create_app
+    from nyra.cloud.api import create_app, settings_from_env
 
-    env = _cloud_env()
+    env = _cloud_env()  # fails with a clear message when a required variable is missing
     observability.configure_logging("web")
     observability.init_sentry("web")
     if not env["SUPABASE_ANON_KEY"]:
         typer.secho("SUPABASE_ANON_KEY is missing — the interface cannot open a session.", fg=typer.colors.YELLOW)
-    settings = CloudSettings(
-        database_url=env["DATABASE_URL"], supabase_url=env["SUPABASE_URL"],
-        service_role_key=env["SUPABASE_SERVICE_ROLE_KEY"], jwt_secret=env["SUPABASE_JWT_SECRET"] or None,
-        anon_key=env["SUPABASE_ANON_KEY"], sentry_browser_dsn=env["SENTRY_BROWSER_DSN"],
-        public_url=env["NYRA_PUBLIC_URL"], config_path=config,
-    )
+    settings = settings_from_env(config)  # the one place that reads every setting (e-mail included), as the worker does
     typer.secho(f"Nyra  ->  http://{host}:{port}", fg=typer.colors.GREEN)
     stop = threading.Event()
     watcher = None
