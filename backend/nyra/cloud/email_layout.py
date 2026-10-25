@@ -155,8 +155,8 @@ def _stats(b: Stats) -> tuple[str, str]:
         fg, bg = TONES[tone][:2]
         pad = f"0 {0 if i == last else 3}px 0 {0 if i == 0 else 3}px"
         cells.append(f'<td width="{100 // len(b.figures)}%" valign="top" style="padding:{pad}"><div class="t-{tone}" style="background:{bg};color:{fg};'
-                     f'border-radius:10px;padding:14px 6px;text-align:center"><div class="fig" style="font-family:{SERIF};font-size:30px;font-weight:800;'
-                     f'line-height:1.1">{_e(value)}</div><div style="margin-top:4px;font-size:12px;line-height:1.35">{_e(label)}</div></div></td>')
+                     f'border-radius:10px;padding:14px 6px;text-align:center"><div class="fig" style="font-family:{SERIF};font-size:32px;font-weight:800;'
+                     f'line-height:1.1">{_e(value)}</div><div style="margin-top:4px;font-size:13px;line-height:1.35">{_e(label)}</div></div></td>')
     html = f'<table {_TABLE} class="stats" style="margin:0 0 20px"><tr>{"".join(cells)}</tr></table>'
     return html, "\n".join(f"{_line(label)} : {_line(value)}" for value, label, _ in b.figures)
 
@@ -165,7 +165,7 @@ def _button(b: Optional[Button]) -> tuple[str, str]:
     url = _url(b.url) if b else None
     if not b or not url:
         return "", ""
-    a = (f'<a href="{_e(url)}" class="btn" style="display:inline-block;padding:12px 24px;font-size:15px;font-weight:600;color:{_L["btn_ink"]};'
+    a = (f'<a href="{_e(url)}" class="btn" style="display:inline-block;padding:12px 24px;border-radius:8px;font-size:15px;font-weight:600;color:{_L["btn_ink"]};'
          f'text-decoration:none">{_e(b.label)}</a>')
     html = (f'<table role="presentation" cellpadding="0" cellspacing="0" style="margin:14px 0 4px"><tr><td class="btn" bgcolor="{_L["btn"]}" '
             f'style="background:{_L["btn"]};border-radius:8px">{a}</td></tr></table>')
@@ -178,7 +178,7 @@ def _row(item: Item) -> tuple[str, str]:
     sec = f'<br><span class="muted" style="font-size:13px;color:{_L["muted"]}">{_e(item.secondary)}</span>' if item.secondary else ""
     left = f'<td {cell};word-break:break-word"{"" if item.right else " colspan=2"}><b>{_e(item.primary)}</b>{sec}</td>'
     sub = f'<br><span class="muted" style="color:{_L["muted"]}">{_e(second)}</span>' if second else ""
-    right = f'<td {cell};padding-left:12px;font-size:13px;white-space:nowrap" align="right"><b>{_e(first)}</b>{sub}</td>' if item.right else ""
+    right = f'<td {cell};padding:12px 0 10px 12px;font-size:13px;white-space:nowrap" align="right"><b>{_e(first)}</b>{sub}</td>' if item.right else ""
     text = _line(item.primary) + (f" : {_line(first)}" + (f" ({_line(second)})" if second else "") if item.right else "")
     return f"<tr>{left}{right}</tr>", f"- {text}" + (f", {_line(item.secondary)}" if item.secondary else "")
 
