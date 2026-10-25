@@ -86,6 +86,16 @@ def is_due(row: dict, now: datetime) -> bool:
     return row["last_run_at"] is None or row["last_run_at"] < _month_start(now)
 
 
+def next_run(brand_id: uuid.UUID, day: int, last_run_at: Optional[datetime], now: datetime) -> datetime:
+    """Pure: when a brand whose schedule is on is read next. A brand not read this month gets this month's date (already
+    past if it is late: it then goes at the next pass of the worker, see `is_due`); one read this month gets next month's."""
+    now = now.astimezone(timezone.utc)
+    if last_run_at is None or last_run_at < _month_start(now):
+        return due_date(brand_id, day, now.year, now.month)
+    year, month = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
+    return due_date(brand_id, day, year, month)
+
+
 def _check_day(day: int) -> int:
     if not isinstance(day, int) or isinstance(day, bool) or not 1 <= day <= 28:
         raise ValueError(f"day of the month must be from 1 to 28: {day!r}")

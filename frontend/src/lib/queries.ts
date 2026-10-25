@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useToast } from "../components/feedback";
 import type {
   Brand,
+  BrandSchedule,
   CrawlEstimate,
   CurrentJobs,
   Decision,
@@ -584,6 +585,20 @@ export function useMemberMutations() {
     }),
     remove: useMutation({ mutationFn: (userId: string) => api.del(orgApiPath(`/members/${userId}`)), onSuccess: done }),
   };
+}
+
+export function useSchedule() {
+  const { apiPath, brand } = useOrg();
+  return useQuery({ queryKey: ["schedule", brand.id], queryFn: () => api.get<BrandSchedule>(apiPath("/schedule")) });
+}
+
+export function useSetSchedule() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (input: { enabled: boolean; day_of_month?: number }) => api.put<BrandSchedule>(apiPath("/schedule"), input),
+    onSuccess: () => invalidate("schedule"),
+  });
 }
 
 export function useExclusions() {
