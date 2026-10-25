@@ -27,7 +27,7 @@ class Entry:
     label: str
     description: str
     sender: str  # "nyra" or "supabase"
-    sample: Callable[[], tuple[str, str, str]]  # (subject, html, text), invented data only
+    sample: Callable[..., tuple[str, str, str]]  # sample(banner=None) -> (subject, html, text), invented data only; the banner goes above the title
 
 
 def digest_data(today: date) -> dict:
@@ -35,14 +35,16 @@ def digest_data(today: date) -> dict:
     def soon(name: str, days: int) -> dict:
         return {"filename": name, "expiry_date": today + timedelta(days=days), "days": days}
 
-    brand = {"name": "Maison Exemple", "slug": "maison-exemple", "suspect": True, "capped": False, "unfinished": False,
+    # Every block of the layout shows: figures, two warnings, the three sections with their lines and buttons.
+    brand = {"name": "Maison Exemple", "slug": "maison-exemple", "suspect": True, "capped": True, "unfinished": False,
              "new": [{"filename": "affiche-printemps.jpg", "expiry_date": today - timedelta(days=12), "images": 3}], "new_total": 1,
-             "soon": [soon("banniere-ete.jpg", 20)], "soon_total": 1, "later": [soon("photo-equipe.jpg", 60)], "later_total": 1}
+             "soon": [soon("banniere-ete.jpg", 20), soon("vitrine-juin.jpg", 1)], "soon_total": 2,
+             "later": [soon("photo-equipe.jpg", 60), soon("catalogue-automne.jpg", 85)], "later_total": 2}
     return {"org_name": "Maison Exemple", "org_slug": "maison-exemple", "brands": [brand]}
 
 
-def _digest_sample() -> tuple[str, str, str]:
-    mail = digest.build(digest_data(date.today()), EXAMPLE_URL)
+def _digest_sample(banner: Optional[str] = None) -> tuple[str, str, str]:
+    mail = digest.build(digest_data(date.today()), EXAMPLE_URL, banner)
     if mail is None:  # the invented data always has something to say
         raise RuntimeError("the sample of the monthly e-mail has nothing to say")
     return mail.subject, mail.html, mail.text
@@ -56,8 +58,8 @@ def _templates_dir() -> Path:
     raise FileNotFoundError("supabase/templates")
 
 
-def _supabase_sample(subject: str, template: str) -> Callable[[], tuple[str, str, str]]:
-    def sample() -> tuple[str, str, str]:
+def _supabase_sample(subject: str, template: str) -> Callable[..., tuple[str, str, str]]:
+    def sample(banner: Optional[str] = None) -> tuple[str, str, str]:  # the banner is for the mails Nyra sends: never asked of these
         raw = (_templates_dir() / template).read_text(encoding="utf-8")
         html = re.sub(r"\{\{\s*\.(\w+)\s*\}\}", lambda found: _VARIABLES[found.group(1)], raw)  # KeyError: a variable to add above
         return subject, html, "Supabase envoie cet e-mail en HTML seulement : il n'a pas de version texte."

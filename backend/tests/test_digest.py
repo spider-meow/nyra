@@ -76,7 +76,8 @@ def test_a_mail_holds_the_three_lists_per_brand_and_counts_them():
 
 def test_an_empty_section_is_left_out():
     mail = build(brand(soon=[soon_item("a.jpg")], soon_total=1))
-    assert "Nouveaux visuels" not in mail.text and "31 à 90" not in mail.text and "dans 30 jours" in mail.text
+    # (the row of figures keeps its three labels, even at 0: only the sections are left out)
+    assert "Nouveaux visuels" not in mail.text and "expirent dans 31 à 90" not in mail.text and "dans 30 jours" in mail.text
 
 
 def test_the_two_thresholds_are_named_constants_in_one_place():

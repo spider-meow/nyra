@@ -183,8 +183,10 @@ def test_every_tone_is_readable_in_light_and_dark():
 
 def heavy(brands, sections=1, lines=20):
     name = "visuel-campagne-ete-tres-long-nom-de-fichier-"
-    group = lambda b: L.Group(f"Marque {b}", [L.Item(f"{name}{i}.jpg", "3 images en ligne", "expiré le 13/10/2026\ndans 20 jours") for i in range(lines)],
-                              L.Button("Voir la bibliothèque", f"https://nyra.test/o/org/b/marque-{b}/library"), more=5)
+    def group(b):
+        items = [L.Item(f"{name}{i}.jpg", "3 images en ligne", "expiré le 13/10/2026\ndans 20 jours") for i in range(lines)]
+        return L.Group(f"Marque {b}", items, L.Button("Voir la bibliothèque", f"https://nyra.test/o/org/b/marque-{b}/library"), more=5)
+
     return [L.Section(f"Section {s}", "intro", [group(b) for b in range(brands)], "red") for s in range(sections)]
 
 

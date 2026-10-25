@@ -7,7 +7,7 @@ receives it the month is marked `skipped` with the reason `no_recipient` (`no_ad
 *What it says.* `gather` reads, per brand: the **new visuals to treat** (a match found since the last e-mail on a visual whose
 rights have expired, with no decision yet), the visuals that **expire within 30 days** and those that expire in **31 to 90
 days**, and whether the brand's last read looks incomplete (`crawl_runs.suspect`), was stopped by the month's page limit, or
-is not finished. `build` turns that into the subject, the HTML and the text; it reads nothing and is tested on made-up data.
+is not finished. `build` turns that into the subject, the HTML and the text (blocks composed by `email_layout`); it reads nothing and is tested on made-up data.
 Unlimited rights are left out everywhere. Each list shows 20 lines at most and says how many more there are.
 
 *When a match is "new".* `matches.created_at` cannot tell: a pass that rewrites a match (a re-indexed reference, a new
@@ -27,7 +27,6 @@ whatever happens between the send and the mark. After 5 attempts the worker give
 
 from __future__ import annotations
 
-import html as html_lib
 import logging
 import time
 import uuid
@@ -41,6 +40,7 @@ import psycopg
 
 from . import audit, mailer, schedule
 from . import db as cloud_db
+from . import email_layout as layout
 from .routes.members import EmailLimit
 
 log = logging.getLogger("nyra.cloud.digest")
@@ -93,79 +93,71 @@ def _more(items: Sequence, total: int) -> str:
     return f"et {left} {_plural(left, 'autre', 'autres')}"
 
 
-def _subject(org_name: str, counts: dict) -> str:
+def _facts(counts: dict) -> list[str]:
     facts = [f"{counts['new']} {_plural(counts['new'], 'visuel', 'visuels')} à traiter"] if counts["new"] else []
     if counts["soon"]:
         facts.append(f"{counts['soon']} {_plural(counts['soon'], 'expire', 'expirent')} sous {SOON_DAYS} jours")
     if counts["later"]:
         facts.append(f"{counts['later']} {_plural(counts['later'], 'expire', 'expirent')} d'ici {LATER_DAYS} jours")
-    subject = f"Nyra · {' '.join(org_name.split())[:30]} : {', '.join(facts) or 'lecture à vérifier'}"
+    return facts
+
+
+def _subject(org_name: str, counts: dict) -> str:
+    subject = f"Nyra · {' '.join(org_name.split())[:30]} : {', '.join(_facts(counts)) or 'lecture à vérifier'}"
     return subject if len(subject) <= 100 else subject[:99] + "…"
 
 
-def _section(blocks: list, title: str, intro: str, brands: list, key: str, link: Callable[[dict], tuple], line: Callable[[dict], str]) -> None:
-    shown = [b for b in brands if b[key + "_total"]]
-    if not shown:
-        return
-    blocks += [("h2", title), ("p", intro)]
-    for b in shown:
-        items = b[key][:LIST_MAX]
-        blocks += [("h3", b["name"]), ("ul", [line(item) for item in items] + ([_more(b[key], b[key + "_total"])] if b[key + "_total"] > len(items) else [])),
-                   ("a", *link(b))]
+def _section(title: str, intro: str, tone: str, brands: list, key: str, button: str, page_url: Callable[[dict], Optional[str]],
+             line: Callable[[dict], layout.Item]) -> list:
+    """The section of one kind of list (none when no brand has any), one group per brand."""
+    groups = []
+    for b in (b for b in brands if b[key + "_total"]):
+        items = [line(item) for item in b[key][:LIST_MAX]]
+        groups.append(layout.Group(b["name"], items, layout.Button(button, page_url(b)), more=b[key + "_total"] - len(items)))
+    return [layout.Section(title, intro, groups, tone)] if groups else []
 
 
-def _blocks(data: dict, public_url: str, counts: dict) -> list:
+def _stats(counts: dict) -> list:
+    """The row of figures (none when every figure is 0); a 0 is shown calm, not in alarm colors."""
+    figures = [(counts["new"], "À traiter", "red"), (counts["soon"], f"Expirent sous {SOON_DAYS} jours", "orange"),
+               (counts["later"], f"Sous {SOON_DAYS + 1} à {LATER_DAYS} jours", "yellow")]
+    return [layout.Stats([(n, label, tone if n else "neutral") for n, label, tone in figures])] if counts["new"] + counts["soon"] + counts["later"] else []
+
+
+def _blocks(data: dict, public_url: str, counts: dict) -> tuple[list, layout.Footer]:
     brands, base = data["brands"], public_url.rstrip("/")
 
-    def link(page: str, label: str) -> Callable[[dict], tuple]:
-        return lambda b: (label, f"{base}/o/{quote(data['org_slug'], safe='')}/b/{quote(b['slug'], safe='')}/{page}" if base else None)
+    def page_url(page: str) -> Callable[[dict], Optional[str]]:
+        return lambda b: f"{base}/o/{quote(data['org_slug'], safe='')}/b/{quote(b['slug'], safe='')}/{page}" if base else None
 
-    blocks: list = [("h1", f"Nyra : le point du mois pour {data['org_name']}"),
-                    ("p", "Bonjour, voici ce qu'il faut savoir ce mois-ci sur les visuels de votre bibliothèque.")]
-    blocks += [("p", sentence.format(b["name"])) for key, sentence in _SENTENCES.items() for b in brands if b[key]]
-    _section(blocks, "Nouveaux visuels à traiter", "Ces visuels ont des droits expirés et ont été retrouvés en ligne depuis le dernier e-mail. "
-             "Aucune décision n'a encore été prise.", brands, "new", link("review", "Ouvrir la page À traiter"),
-             lambda i: f"{i['filename']} : expiré le {_fr(i['expiry_date'])}, {i['images']} {_plural(i['images'], 'image', 'images')} en ligne")
-    expiring = lambda i: f"{i['filename']} : expire le {_fr(i['expiry_date'])} ({_when(i['days'])})"  # noqa: E731
-    _section(blocks, f"Visuels qui expirent dans {SOON_DAYS} jours", "Pensez à les renouveler ou à les remplacer.", brands, "soon",
-             link("library", "Ouvrir la bibliothèque"), expiring)
-    _section(blocks, f"Visuels qui expirent dans {SOON_DAYS + 1} à {LATER_DAYS} jours", "À prévoir.", brands, "later",
-             link("library", "Ouvrir la bibliothèque"), expiring)
+    blocks: list = [layout.Paragraph("Bonjour, voici ce qu'il faut savoir ce mois-ci sur les visuels de votre bibliothèque.")] + _stats(counts)
+    blocks += [layout.Notice(sentence.format(b["name"])) for key, sentence in _SENTENCES.items() for b in brands if b[key]]
+    blocks += _section("Nouveaux visuels à traiter", "Ces visuels ont des droits expirés et ont été retrouvés en ligne depuis le dernier e-mail. "
+                       "Aucune décision n'a encore été prise.", "red", brands, "new", "Ouvrir À traiter", page_url("review"),
+                       lambda i: layout.Item(i["filename"], f"{i['images']} {_plural(i['images'], 'image', 'images')} en ligne", f"expiré le {_fr(i['expiry_date'])}"))
+    expiring = lambda i: layout.Item(i["filename"], None, f"expire le {_fr(i['expiry_date'])}\n{_when(i['days'])}")  # noqa: E731
+    blocks += _section(f"Visuels qui expirent dans {SOON_DAYS} jours", "Pensez à les renouveler ou à les remplacer.", "orange", brands, "soon",
+                       "Voir la bibliothèque", page_url("library"), expiring)
+    blocks += _section(f"Visuels qui expirent dans {SOON_DAYS + 1} à {LATER_DAYS} jours", "À prévoir.", "yellow", brands, "later",
+                       "Voir la bibliothèque", page_url("library"), expiring)
     # The settings are a page of a brand (`/o/<org>/b/<brand>/settings`): the first brand's, no link when the address is unknown.
     settings_link = f"{base}/o/{quote(data['org_slug'], safe='')}/b/{quote(brands[0]['slug'], safe='')}/settings?section=notifications" if base and brands else None
-    return blocks + [("p", "Ce message est envoyé une fois par mois aux administrateurs de l'organisation."),
-                     ("p", "Vous pouvez choisir de ne plus recevoir ce message dans Réglages > Notifications."),
-                     ("a", "Ouvrir les réglages de notification", settings_link)]
+    return blocks, layout.Footer("Ce message est envoyé une fois par mois aux administrateurs de l'organisation. "
+                                 "Vous pouvez choisir de ne plus recevoir ce message dans Réglages > Notifications.",
+                                 "Choisir les e-mails que vous recevez", settings_link)
 
 
-def _render(blocks: list) -> tuple[str, str]:
-    esc = html_lib.escape
-    html_parts, text_parts = [], []
-    for kind, *args in blocks:
-        if kind == "ul":
-            html_parts.append("<ul>" + "".join(f"<li>{esc(line)}</li>" for line in args[0]) + "</ul>")
-            text_parts.append("\n".join(f"- {line}" for line in args[0]))
-        elif kind == "a":
-            label, href = args
-            if href:
-                html_parts.append(f'<p><a href="{esc(href, quote=True)}">{esc(label)}</a></p>')
-                text_parts.append(f"{label} : {href}")
-        else:
-            html_parts.append(f"<{kind}>{esc(args[0])}</{kind}>")
-            text_parts.append(args[0])
-    html = ('<!doctype html><html lang="fr"><body style="font-family:Arial,sans-serif;color:#1a1a1a;max-width:640px">'
-            + "".join(html_parts) + "</body></html>")
-    return html, "\n\n".join(text_parts)
-
-
-def build(data: dict, public_url: str) -> Optional[Mail]:
-    """The mail for `gather`'s data, or None when there is nothing to say. Pure: every value is escaped in the HTML."""
+def build(data: dict, public_url: str, banner: Optional[str] = None) -> Optional[Mail]:
+    """The mail for `gather`'s data, or None when there is nothing to say. Pure: every value is escaped in the HTML.
+    `banner` is a line above the title (the back office's test mails)."""
     brands = data["brands"]
     counts = {key: sum(b[key + "_total"] for b in brands) for key in ("new", "soon", "later")}
     counts["brands"] = sum(1 for b in brands if b["new_total"] or b["soon_total"] or b["later_total"])
     if not (counts["new"] or counts["soon"] or counts["later"] or any(b[key] for b in brands for key in _SENTENCES)):
         return None
-    html, text = _render(_blocks(data, public_url, counts))
+    blocks, footer = _blocks(data, public_url, counts)
+    html, text = layout.compose(f"Nyra : le point du mois pour {data['org_name']}", ", ".join(_facts(counts)) or "Lecture à vérifier", blocks,
+                                banner=banner, footer=footer)
     return Mail(_subject(data["org_name"], counts), html, text, counts)
 
 
