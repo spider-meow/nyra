@@ -160,9 +160,10 @@ registered `nyra` e-mail that no code sends. *Routes* (platform admins only; the
 `text`; works when sending is not configured; 404 for an unknown key), `POST /api/staff/emails/{key}/test` (body empty or `{}`, any field is a 422): sends the sample, with
 `[TEST]` in the subject and a banner above the body, to the address of the signed-in account ONLY, through `mailer.deliver` (no organization, so no client's daily
 allowance is used). 400: Supabase e-mail or an account without an address; 503: not configured; 502: Resend's refusal or a timeout (message cut at 200 characters, no key);
-429 with `Retry-After`: more than 10 tests in the last hour for the account (counted from its `email.test` audit rows, one bounded query; two tests started at the same
-instant can pass together, by a few). The network call is made with no transaction open; the result is traced after it in its own short transaction:
-`email.test` (no organization; `kind` and `result` = `sent` or `failed`, never an address or a content). The page (`/back-office/emails`) shows each e-mail
+429 with `Retry-After`: 10 tests already attempted in the last hour by the account. Counting and writing the attempt's `email.test` row (`result` = `started`) are one short
+transaction under a per-account advisory lock (`pg_advisory_xact_lock`), so simultaneous requests cannot exceed the limit (tested with 30 at once: 10 sent, 20 refused); an attempt counts
+even if the network or the code fails after it, and only `started` rows are counted. The lock is released BEFORE the network call (no transaction is open during it); its result is then
+traced in a second row, `email.test` with `result` = `sent` or `failed` (no organization; `kind` and `result`, never an address or a content). The page (`/back-office/emails`) shows each e-mail
 with « Aperçu » (the HTML in an `<iframe sandbox="">`: no script, no active link, plus the text version) and « M'envoyer un test » (not replayed on a 429).
 
 **Ajouter un e-mail.** (1) Write the render function (pure, escaped, tested on invented data). (2) Add an `Entry` to `ENTRIES` in `cloud/email_registry.py`:
