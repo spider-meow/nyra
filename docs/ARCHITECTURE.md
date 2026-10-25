@@ -149,6 +149,28 @@ cannot be switched off); back office > Comptes, « administrateurs d'organisatio
 « a choisi de ne plus le recevoir » when the person said no. The mail ends with the way to stop it, with a link to
 `/o/<org>/b/<first brand>/settings?section=notifications` when `NYRA_PUBLIC_URL` is set.
 
+**E-mails page of the back office (`cloud/email_registry.py`, `cloud/routes/staff_emails.py`).** `email_registry.ENTRIES` lists every e-mail of the
+product: `key`, `label`, `description`, `sender` (`nyra`: sent by `mailer`; `supabase`: sent by Supabase Auth from `supabase/templates/`, never by Nyra) and
+`sample()` giving `(subject, html, text)` from invented data (« Maison Exemple »). The monthly e-mail's sample is the real `digest.build` on made-up
+data; the two Supabase samples are the template files with their `{{ .Variable }}` replaced by example values (the web image copies `supabase/templates`).
+*Rule:* `mailer.send` and `mailer.deliver` take a required keyword `kind`, a key of the registry; `test_every_mail_kind_is_registered` reads the
+syntax tree of every module and fails for a call whose `kind=` is not a literal key of the registry (or the `.key` of an entry taken from it), and for a
+registered `nyra` e-mail that no code sends. *Routes* (platform admins only; the tests of `test_email_registry.py`): `GET /api/staff/emails`
+(`configured` = key AND valid sender, `sender`, the entries with `can_send_test`; never the key), `GET /api/staff/emails/{key}/preview` (`subject`, `html`,
+`text`; works when sending is not configured; 404 for an unknown key), `POST /api/staff/emails/{key}/test` (body empty or `{}`, any field is a 422): sends the sample, with
+`[TEST]` in the subject and a banner above the body, to the address of the signed-in account ONLY, through `mailer.deliver` (no organization, so no client's daily
+allowance is used). 400: Supabase e-mail or an account without an address; 503: not configured; 502: Resend's refusal or a timeout (message cut at 200 characters, no key);
+429 with `Retry-After`: more than 10 tests in the last hour for the account (counted from its `email.test` audit rows, one bounded query; two tests started at the same
+instant can pass together, by a few). The network call is made with no transaction open; the result is traced after it in its own short transaction:
+`email.test` (no organization; `kind` and `result` = `sent` or `failed`, never an address or a content). The page (`/back-office/emails`) shows each e-mail
+with « Aperçu » (the HTML in an `<iframe sandbox="">`: no script, no active link, plus the text version) and « M'envoyer un test » (not replayed on a 429).
+
+**Ajouter un e-mail.** (1) Write the render function (pure, escaped, tested on invented data). (2) Add an `Entry` to `ENTRIES` in `cloud/email_registry.py`:
+a short unique `key` (`[a-z_]+`), `label`, `description`, `sender` and a `sample()` that calls the render function on invented data (never a client's).
+(3) Send it with `mailer.send(..., kind="<key>")` (an organization's mail, counted against its daily allowance) or `mailer.deliver(..., kind="<key>")`.
+(4) Run `pytest backend/tests/test_email_registry.py`: without step 2 it fails, naming the file and the line. (5) The page « E-mails » of the back office shows it
+with no further change; if Supabase sends it, `sender="supabase"` (preview only) and the template goes in `supabase/templates/`.
+
 Job kinds: `crawl` (the chosen addresses of a brand, then compare),
 `match`, `index` (fill in embeddings, mirror hashes and thumbnails —
 queued after every upload, also backfills older rows; an administrator can start it from Réglages > Général > Maintenance, `POST .../jobs/index`), `report`, `locate` (checks one
@@ -216,12 +238,13 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/routes/common.py` | What the route modules share: the request context (`Ctx`), the auth and brand dependencies, small helpers. |
 | `cloud/audit.py` | The activity log (`audit_log`): `record` (called by each route that changes something, in the transaction of the change), `events` (reading, filtered and bounded), `purge` (12 months, batches). |
 | `cloud/offboarding.py` | A client leaving: `delete_organization` (files, rows, accounts, trace) and `export_organization` (CSV, originals, manifest), behind `nyra cloud-delete-org` / `cloud-export-org`. Operator only, no route. |
-| `cloud/routes/` (`session`, `audit`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `logos`, `reports_settings`, `schedule_settings`, `notifications`) | The API routes, one module per domain, each exposing a `router`. |
+| `cloud/routes/` (`session`, `audit`, `brands`, `members`, `library`, `collections`, `labels`, `occurrences`, `jobs`, `matches`, `site_images`, `logos`, `reports_settings`, `schedule_settings`, `notifications`, `staff_emails`) | The API routes, one module per domain, each exposing a `router`. |
 | `cloud/routes/interface.py` | The built interface (single-page app), gzip and security headers, error handlers. |
 | `cloud/presence.py` | Where a visual is still online, page by page: `still` (seen by the last finished read of the site), `gone` (the page was read again with success and the image was not on it), `unknown` (the page was not read again, or not since `image_pages.last_seen` and `pages.links_tracked` exist). Counts per site version and section, and the pages; `GET .../visuals/{reference_id}/presence`. Images and links are never deleted when they disappear from a site, so nothing is stored: the state comes from the dates. While the last finished read of a site is **suspect** (`crawl_runs.suspect`, set when the read ends, see `MATCHING.md`), no page of it is `gone`. `replaced_references` lists the visuals replaced, which the home screen and the report leave out of "expired and online". |
 | `cloud/worker.py` | The job runner. |
 | `cloud/jobs.py` | The queue (enqueue, claim, heartbeat, cancel, reap). |
 | `cloud/schedule.py` | The monthly read (`brand_schedules`): `is_due` (pure), `enable` / `disable`, `enqueue_due` (called by the worker every 5 minutes), the `NYRA_SCHEDULER` switch. |
+| `cloud/email_registry.py` | Every e-mail of the product with a sample of invented data (preview and test mail of the back office), and the `kind` every `mailer` call must name. |
 | `cloud/digest.py` | The monthly e-mail (`monthly_digests`): `gather` (reads), `build` (pure: subject, HTML, text), `due_orgs` / `is_ready` (when), `claim` (atomic), `run` (called by the worker right after `enqueue_due`). |
 | `cloud/store.py` | Postgres + Storage behind the store interfaces. |
 | `cloud/db.py` | Pooled Postgres access, one query per screen (no N+1). |

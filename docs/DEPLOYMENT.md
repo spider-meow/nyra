@@ -130,8 +130,9 @@ come BEFORE the code: without the columns the worker logs one warning an hour (�
 of memberships are missing, apply migration 20261025000035 »), claims and marks nothing and sends nothing (the mails leave at the next pass once
 it is applied) and the notification routes (`/me/notifications`, the team's route) answer 500: only the Réglages > Notifications section fails.
 The back office list of accounts (`/api/staff/users`) keeps working (it reads the two columns with « yes » as the default); `list_members` and the other routes do not read them.
-To check the sending by hand, from a Python prompt on the server (the key typed at the prompt, never in a command line):
-`from nyra.cloud import mailer; mailer.deliver(key, sender, ["you@example.com"], "Test", "<p>Test</p>", "Test")`. To resend a
+To check the sending, open back office > E-mails and click « M'envoyer un test » (it goes to your own address, 10 a hour at most). Fallback if the page is not
+reachable: from a Python prompt on the server (the key typed at the prompt, never in a command line)
+`from nyra.cloud import mailer; mailer.deliver(key, sender, ["you@example.com"], "Test", "<p>Test</p>", "Test", kind="monthly_digest")`. To resend a
 month's e-mail after fixing a cause, delete its row (`delete from monthly_digests where org_id = '...' and month = '2026-11-01'`);
 within 24 hours of a first send Resend treats the same key as the same mail and does not send it again, so wait a day or change nothing.
 
@@ -397,8 +398,9 @@ Emails > SMTP Settings* (password), send yourself a password-reset e-mail from t
 
 **6. Resend key for Nyra's own e-mails.** Resend > *API Keys*: create a second key limited to sending (one key per use,
 so that revoking one does not break the other), put it in `RESEND_API_KEY` in `.env` **together with** `NYRA_MAIL_FROM` (an address of a domain verified in Resend; without it mail stays off and the server logs a warning), restart `web` and `worker`, then
-send yourself a test mail from a Python prompt on the server (`from nyra.cloud import mailer; mailer.deliver(key, sender, ["you@example.com"], "Test", "<p>Test</p>", "Test")`,
-typed at the prompt, not in a command line) and check it arrives; then delete the old key in Resend. Every mail
+send yourself a test mail: back office > **E-mails** > « M'envoyer un test » on « Résumé mensuel » (the preview works even before; the test mail carries `[TEST]` and a banner),
+and check it arrives. Fallback: a Python prompt on the server (`from nyra.cloud import mailer; mailer.deliver(key, sender, ["you@example.com"], "Test", "<p>Test</p>", "Test", kind="monthly_digest")`,
+typed at the prompt, not in a command line); then delete the old key in Resend. Every mail
 counts against the organization's `quota.emails_per_day`, and a failed send gives its place back. A caller that may retry after a failure (the monthly summary) passes `idempotency_key="monthly:<org_id>:<YYYY-MM>"`, so Resend never sends the same mail twice within 24 hours.
 
 *Not yet done:* this procedure has been written from the code and the product documentation, not played. The team
