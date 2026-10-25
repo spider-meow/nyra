@@ -139,11 +139,11 @@ function OrgAdmins(props: { users: StaffUser[] | undefined; loading: boolean; er
                 <td className="px-2 py-2 text-muted">{row.user.last_sign_in_at ? formatDateTime(row.user.last_sign_in_at) : "jamais"}</td>
                 <td className="py-2 pl-2">
                   <Checkbox
-                    checked={row.monthly_email_allowed}
+                    checked={row.monthly_email_allowed !== false}
                     disabled={setMonthlyEmail.isPending}
                     onChange={(allowed) => setMonthlyEmail.mutate({ orgId: row.org_id, userId: row.user.user_id, allowed }, { onError: (error) => toast.show({ tone: "error", message: "L'envoi n'a pas été modifié", description: errorMessage(error) }) })}
                     label="Autorisé"
-                    hint={row.monthly_email_wanted ? undefined : "a choisi de ne plus le recevoir"}
+                    hint={row.monthly_email_wanted !== false ? undefined : "a choisi de ne plus le recevoir"}
                   />
                 </td>
               </tr>

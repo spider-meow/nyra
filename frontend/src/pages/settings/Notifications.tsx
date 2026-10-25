@@ -15,8 +15,8 @@ const EMAILS = [
 
 /** Why the box cannot be ticked, if it cannot: the role does not receive this e-mail, or the Nyra team stopped it. */
 function lockedReason(state: NotificationsData["monthly_email"]): string | null {
-  if (!state.eligible) return "Ce message est réservé aux administrateurs de l'organisation.";
-  return state.allowed ? null : "L'équipe Nyra a désactivé cet envoi pour votre compte.";
+  if (state.eligible !== true) return "Ce message est réservé aux administrateurs de l'organisation.";
+  return state.allowed !== false ? null : "L'équipe Nyra a désactivé cet envoi pour votre compte.";
 }
 
 /** The signed-in person's choice of the e-mails Nyra sends them. The service e-mails (invitation, password) are not listed. */
@@ -25,7 +25,7 @@ export function Notifications() {
   const save = useSetNotifications();
 
   if (query.isLoading) return <Skeleton className="h-40" />;
-  if (query.error || !query.data) {
+  if (query.error || !query.data?.monthly_email) {  // an answer without the field is an error, not a crash
     return (
       <div role="alert">
         <EmptyState title="Notifications indisponibles" body={errorMessage(query.error)} action={<Button size="sm" onClick={() => void query.refetch()}>Réessayer</Button>} />
@@ -40,7 +40,7 @@ export function Notifications() {
         {EMAILS.map((email) => (
           <div key={email.key} className="grid gap-1.5">
             <Checkbox
-              checked={state.eligible && state.allowed && state.wanted}
+              checked={state.eligible === true && state.allowed !== false && state.wanted !== false}
               disabled={reason !== null || save.isPending}
               onChange={(value) => save.mutate({ [email.key]: value })}
               label={email.label}

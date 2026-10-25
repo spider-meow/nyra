@@ -231,3 +231,28 @@ def test_the_migration_can_be_applied_twice_and_keeps_the_choices(org_with_users
     assert columns == {"monthly_email_allowed": ("boolean", "NO", "true"), "monthly_email_wanted": ("boolean", "NO", "true")}
     assert len(comments) == 2 and all(r["c"] for r in comments)
     assert flags(cloud_database_url, org_id, client_id) == (False, False)
+
+
+def test_the_back_office_list_of_accounts_still_works_before_the_migration_with_both_flags_on(client, org_with_users, cloud_database_url):
+    """Code deployed before migration 35: the columns are missing, the page of accounts must not fall (value « yes », same contract)."""
+    org_id, _, staff_id, client_id, _ = org_with_users
+    assert client.put(theirs(org_id, client_id), headers=_headers(staff_id), json={"monthly_email_allowed": False}).status_code == 200
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("ALTER TABLE memberships RENAME COLUMN monthly_email_allowed TO monthly_email_allowed_off")
+        conn.execute("ALTER TABLE memberships RENAME COLUMN monthly_email_wanted TO monthly_email_wanted_off")
+    try:
+        answer = client.get("/api/staff/users", headers=_headers(staff_id))
+        assert answer.status_code == 200
+        users = {u["user_id"]: u for u in answer.json()["users"]}
+        [membership] = [m for m in users[str(client_id)]["memberships"] if m["org_id"] == str(org_id)]
+        assert (membership["monthly_email_allowed"], membership["monthly_email_wanted"]) == (True, True)
+    finally:
+        with cloud_db.connect(cloud_database_url) as conn:
+            conn.execute("ALTER TABLE memberships RENAME COLUMN monthly_email_allowed_off TO monthly_email_allowed")
+            conn.execute("ALTER TABLE memberships RENAME COLUMN monthly_email_wanted_off TO monthly_email_wanted")
+
+
+def test_the_trigger_function_has_a_pinned_search_path(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        config = conn.execute("SELECT proconfig FROM pg_proc WHERE proname = 'guard_member_notifications'").fetchone()["proconfig"]
+    assert config and any(item.startswith("search_path=") for item in config)

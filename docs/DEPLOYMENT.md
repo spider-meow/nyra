@@ -128,7 +128,8 @@ again after 30 minutes, 5 times a month at most, then abandoned with one warning
 on Supabase (two columns on `memberships`, a trigger; idempotent, nothing changes for anyone until a box is unticked). It must
 come BEFORE the code: without the columns the worker logs one warning an hour (« columns monthly_email_allowed / monthly_email_wanted
 of memberships are missing, apply migration 20261025000035 »), claims and marks nothing and sends nothing (the mails leave at the next pass once
-it is applied), the back office list of accounts (`/api/staff/users`) and the notification routes answer 500.
+it is applied) and the notification routes (`/me/notifications`, the team's route) answer 500: only the Réglages > Notifications section fails.
+The back office list of accounts (`/api/staff/users`) keeps working (it reads the two columns with « yes » as the default); `list_members` and the other routes do not read them.
 To check the sending by hand, from a Python prompt on the server (the key typed at the prompt, never in a command line):
 `from nyra.cloud import mailer; mailer.deliver(key, sender, ["you@example.com"], "Test", "<p>Test</p>", "Test")`. To resend a
 month's e-mail after fixing a cause, delete its row (`delete from monthly_digests where org_id = '...' and month = '2026-11-01'`);

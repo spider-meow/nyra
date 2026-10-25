@@ -14,9 +14,16 @@
 -- `authenticated`) : l'autorisation n'est modifiable que par le backend ; le souhait d'une personne que par elle-même ; une
 -- ligne créée par l'API publique commence avec les deux à « vrai ». Le rôle de service et le propriétaire ne sont pas touchés.
 --
+-- Limite connue : le déclencheur ne couvre ni DELETE ni TRUNCATE. Un administrateur d'une organisation (rôle `authenticated`,
+-- par l'API publique de Supabase) peut supprimer la ligne d'un co-administrateur bloqué par l'équipe, puis la recréer avec les
+-- valeurs par défaut : le blocage est levé. Il faut être administrateur de la MÊME organisation, l'interface ne le fait pas, et
+-- ce n'est pas un accès entre organisations. Amélioration possible : déplacer les deux booléens dans une table sans politique
+-- « FOR ALL », ou couvrir DELETE.
+--
 -- Additive et idempotente. À appliquer AVANT le déploiement du code : sans ces colonnes, l'envoi de l'e-mail mensuel s'arrête
--- (un avertissement par heure dans le journal du worker, rien n'est marqué ni envoyé) et la page des comptes du back office
--- n'affiche rien ; les routes de réglages des notifications répondent 500.
+-- (un avertissement par heure dans le journal du worker, rien n'est marqué ni envoyé) et les routes de réglages des
+-- notifications répondent 500 (une seule section de Réglages tombe en erreur). La page des comptes du back office continue de
+-- marcher : elle lit les deux colonnes avec « vrai » à défaut.
 
 alter table public.memberships add column if not exists monthly_email_allowed boolean not null default true;
 alter table public.memberships add column if not exists monthly_email_wanted boolean not null default true;
@@ -29,6 +36,7 @@ comment on column public.memberships.monthly_email_wanted is
 create or replace function public.guard_member_notifications()
 returns trigger
 language plpgsql
+set search_path = ''
 as $$
 begin
     if current_user in ('anon', 'authenticated') then
