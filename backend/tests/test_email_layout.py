@@ -41,7 +41,7 @@ def test_every_outside_field_is_escaped_in_the_html_and_plain_in_the_text(trap):
 
 def test_only_http_and_https_addresses_make_a_button():
     for bad in ("javascript:alert(1)", "JaVaScRiPt:alert(1)", "data:text/html,x", "//evil.test/x", "evil.test/x", "", " https://a.test", "https://",
-                "ftp://a.test", "https://a.test/x y", "https://a.test/\n"):
+                "ftp://a.test", "javascript://a.test/%0Aalert(1)", "https://a.test/x y", "https://a.test/\n"):
         html, text = mail([L.Paragraph("p"), L.Button("Cliquez", bad)])
         assert "href" not in html and "Cliquez" not in html and "Cliquez" not in text, repr(bad)
     html, text = mail([L.Button("Cliquez", 'http://a.test/p?x=1&y="2"')])
