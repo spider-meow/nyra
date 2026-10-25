@@ -61,6 +61,7 @@ const ACTION_LABEL: Record<string, string> = {
   "digest.failed": "E-mail mensuel : échec d'envoi",
   "notifications.update": "Préférence d'e-mail modifiée",
   "notifications.staff_update": "Envoi d'e-mail modifié par l'équipe Nyra",
+  "email.test": "E-mail de test envoyé",
 };
 
 const actionLabel = (code: string) => ACTION_LABEL[code] ?? code;

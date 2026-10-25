@@ -24,7 +24,8 @@ frontend/node_modules
 
 # Not needed at runtime (README.md stays — pyproject.toml's readme field
 # needs it present at `pip install .` time)
-supabase/
+supabase/*
+!supabase/templates
 docs/
 tests/
 backend/tests/

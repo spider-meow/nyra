@@ -40,7 +40,7 @@ def _transport(*answers):
 
 
 def _deliver(transport, to=("a@b.co",), **kw):
-    return mailer.deliver(FAKE_SENDING_VALUE, SENDER, list(to), "Sujet", "<p>Salut</p>", "Salut", transport=transport, sleep=lambda s: None, **kw)
+    return mailer.deliver(FAKE_SENDING_VALUE, SENDER, list(to), "Sujet", "<p>Salut</p>", "Salut", kind="monthly_digest", transport=transport, sleep=lambda s: None, **kw)
 
 
 def _settings(url="postgresql://x:x@db.invalid/none", key=FAKE_SENDING_VALUE, sender=SENDER):
@@ -49,7 +49,7 @@ def _settings(url="postgresql://x:x@db.invalid/none", key=FAKE_SENDING_VALUE, se
 
 
 def _send(settings, org_id, transport, to=("a@b.co",), **kw):
-    return mailer.send(settings, org_id, list(to), "S", "<p>h</p>", "t", transport=transport, sleep=lambda s: None, **kw)
+    return mailer.send(settings, org_id, list(to), "S", "<p>h</p>", "t", kind="monthly_digest", transport=transport, sleep=lambda s: None, **kw)
 
 
 # --- the request ---------------------------------------------------------------------------
@@ -136,7 +136,7 @@ def test_subject_and_bodies_are_bounded():
     for subject, html, text in (("s" * 201, "h", "t"), ("s", "h" * 200_001, "t"), ("s", "h", "t" * 200_001), ("", "h", "t"), ("a\nb", "h", "t"), ("a\rb", "h", "t")):
         transport = _transport(200)
         with pytest.raises(ValueError):
-            mailer.deliver(FAKE_SENDING_VALUE, SENDER, ["a@b.co"], subject, html, text, transport=transport)
+            mailer.deliver(FAKE_SENDING_VALUE, SENDER, ["a@b.co"], subject, html, text, kind="monthly_digest", transport=transport)
         assert not transport.seen
 
 
@@ -170,14 +170,14 @@ def test_a_key_alone_starts_with_one_warning_and_the_mail_stays_unconfigured(mon
     settings = _env(monkeypatch, FAKE_SENDING_VALUE, "")
     assert settings.mail_from == "" and caplog.text.count("NYRA_MAIL_FROM") == 1 and FAKE_SENDING_VALUE not in caplog.text
     with pytest.raises(mailer.MailNotConfigured):
-        mailer.send(settings, None, ["a@b.co"], "S", "h", "t")
+        mailer.send(settings, None, ["a@b.co"], "S", "h", "t", kind="monthly_digest")
 
 
 def test_a_sender_alone_starts_and_the_mail_stays_unconfigured(monkeypatch):
     settings = _env(monkeypatch, "", SENDER)
     assert settings.resend_api_key == ""
     with pytest.raises(mailer.MailNotConfigured):
-        mailer.send(settings, None, ["a@b.co"], "S", "h", "t")
+        mailer.send(settings, None, ["a@b.co"], "S", "h", "t", kind="monthly_digest")
 
 
 def test_a_mistyped_sender_stops_the_start_with_a_clear_message(monkeypatch):

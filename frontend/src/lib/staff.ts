@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Member, StaffAdmin, StaffOrg, StaffUsage, StaffUser } from "../types";
+import type { MailList, MailPreview, Member, StaffAdmin, StaffOrg, StaffUsage, StaffUser } from "../types";
 import { api } from "./api";
 
 /** The back office's lists and what changes them. Any change refreshes every list, and the sidebar's organizations. */
@@ -17,6 +17,20 @@ export function useStaffAdmins() {
 
 export function useStaffUsage() {
   return useQuery({ queryKey: ["staff", "usage"], queryFn: () => api.get<StaffUsage>("/staff/usage") });
+}
+
+export function useStaffEmails() {
+  return useQuery({ queryKey: ["staff", "emails"], queryFn: () => api.get<MailList>("/staff/emails") });
+}
+
+/** The sample of one e-mail; nothing is asked while `key` is null (no preview open). */
+export function useEmailPreview(key: string | null) {
+  return useQuery({ queryKey: ["staff", "emails", key, "preview"], queryFn: () => api.get<MailPreview>(`/staff/emails/${encodeURIComponent(key ?? "")}/preview`), enabled: key !== null });
+}
+
+/** A test mail to the signed-in account. Never replayed: a refusal for the hour's limit is final. */
+export function useEmailTest() {
+  return useMutation({ mutationFn: (key: string) => api.post<{ sent: boolean; to: string }>(`/staff/emails/${encodeURIComponent(key)}/test`, undefined, false) });
 }
 
 export function useStaffMutations() {
