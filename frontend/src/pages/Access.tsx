@@ -3,7 +3,7 @@ import { Suspense, createContext, lazy, useContext, useState, type FormEvent, ty
 import { Link, Navigate, Outlet, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
 import { Button, Card, Checkbox, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
-import { api, errorMessage } from "../lib/api";
+import { ApiError, api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { OrgProvider, brandLink, useMe, useOrganizations, useStaffOpenedOrganization } from "../lib/org";
 import type { Brand, Organization } from "../types";
@@ -253,8 +253,9 @@ export function OrgShell() {
   const member = orgs.data?.find((item) => item.slug === slug);
   // Not one of the caller's organizations: a platform admin still opens it (they are in no client's team).
   const opened = useStaffOpenedOrganization(slug, !orgs.isLoading && !member && Boolean(me.data?.staff));
-  if (orgs.isLoading || me.isLoading || opened.isLoading) return <Centered title="Un instant"><div className="mt-4"><Spinner /></div></Centered>;
-  if (orgs.error) return <Centered title="Erreur" body={errorMessage(orgs.error)} />;
+  if (orgs.isLoading || (!member && (me.isLoading || opened.isLoading))) return <Centered title="Un instant"><div className="mt-4"><Spinner /></div></Centered>;
+  const failure = orgs.error ?? (member ? null : me.error ?? (opened.error instanceof ApiError && opened.error.status === 404 ? null : opened.error));
+  if (failure) return <Centered title="Erreur" body={errorMessage(failure)} />;
   const org = member ?? opened.data;
   if (!org) return <NotFound message="Cette organisation n'existe pas, ou vous n'y avez pas accès." />;
   // An API from before brands answers without them.

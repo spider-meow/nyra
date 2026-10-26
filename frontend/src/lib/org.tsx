@@ -52,7 +52,7 @@ export function useMe(enabled = true) {
 /** The space of a client opened by a platform admin who is not a member: not in `useOrganizations`, asked by its address. */
 export function useStaffOpenedOrganization(slug: string | undefined, enabled: boolean) {
   return useQuery({
-    queryKey: ["staff", "open", slug],
+    queryKey: ["orgs", "open", slug], // under "orgs": whatever refreshes the organizations (a brand created) refreshes this one
     queryFn: async () => (await api.get<{ organization: Organization }>(`/staff/organizations/open/${encodeURIComponent(slug ?? "")}`)).organization,
     enabled: enabled && Boolean(slug),
     staleTime: 5 * 60_000,
