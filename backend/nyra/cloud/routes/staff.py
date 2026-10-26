@@ -1,7 +1,8 @@
 """The Nyra team's back office: clients and their brands, accounts, and who is a platform admin.
 
 Everything here is for platform admins only (`platform_staff`). The people of one organization are
-managed with the ordinary `/api/orgs/{org_id}/members` routes, which accept a platform admin too.
+managed with the ordinary `/api/orgs/{org_id}/members` routes, which accept a platform admin too (as every
+`/api/orgs/{org_id}/...` route does: they act as an administrator without a membership row).
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from .. import db as cloud_db
 from .. import hostmetrics
 from .. import insights as cloud_insights
 from .. import usage as cloud_usage
-from .common import Ctx, get_ctx, iso, staff_dep
+from .common import Ctx, brand_json, get_ctx, iso, staff_dep
 from .members import find_or_invite_user
 
 router = APIRouter()
@@ -70,6 +71,19 @@ def list_organizations(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -
          "members": org["members"], "brands": by_org[org["id"]]}
         for org in orgs
     ]}
+
+
+@router.get("/api/staff/organizations/open/{slug}")
+def open_organization(slug: str, claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """An organization as `GET /api/orgs` gives it to a member, for a platform admin who is not one: the interface
+    opens the client's space with it (`staff_view`: the banner). No membership is read or written."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        org = cloud_db.get_organization_by_slug(conn, slug)
+        if org is None:
+            raise HTTPException(status_code=404, detail="Organisation introuvable.")
+        brands = cloud_db.list_brands(conn, [org["id"]])
+    return {"organization": {"org_id": str(org["id"]), "name": org["name"], "slug": org["slug"], "role": "admin",
+                             "staff_view": True, "brands": [brand_json(b) for b in brands]}}
 
 
 @router.post("/api/staff/organizations")
