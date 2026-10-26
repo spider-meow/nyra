@@ -6,6 +6,7 @@ import { Button, Card, Checkbox, FieldLabel, Input, PasswordInput, Spinner } fro
 import { ApiError, api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { OrgProvider, brandLink, useMe, useOrganizations, useStaffOpenedOrganization } from "../lib/org";
+import { useStaffOrgs } from "../lib/staff";
 import type { Brand, Organization } from "../types";
 
 const PasswordStrength = lazy(() => import("../components/PasswordStrength"));
@@ -199,31 +200,35 @@ export function SetPassword() {
   );
 }
 
-/** "/" → the only organization, or a picker when there are several. */
+/** "/" → the only organization, or a picker when there are several; a platform admin gets every client. */
 export function OrgHome() {
   const orgs = useOrganizations();
   const auth = useAuth();
   const me = useMe();
-  if (orgs.isLoading || me.isLoading) return <Centered title="Un instant"><div className="mt-4"><Spinner label="Chargement des organisations…" /></div></Centered>;
-  if (orgs.error) return <Centered title="Erreur" body={errorMessage(orgs.error)} />;
-  const list = orgs.data ?? [];
   const staff = Boolean(me.data?.staff);
+  const clients = useStaffOrgs(staff);
+  if (orgs.isLoading || me.isLoading || clients.isLoading) return <Centered title="Un instant"><div className="mt-4"><Spinner label="Chargement des organisations…" /></div></Centered>;
+  const failure = orgs.error ?? clients.error;
+  if (failure) return <Centered title="Erreur" body={errorMessage(failure)} />;
+  const list = orgs.data ?? [];
   if (list.length === 1 && !staff) return <Navigate to={`/o/${list[0].slug}`} replace />;
-  if (list.length === 0 && staff) return <Navigate to="/back-office" replace />;
-  if (list.length === 0) {
+  if (list.length === 0 && !staff) {
     return (
       <Centered title="Aucune organisation" body={`Le compte ${auth.email} n'est rattaché à aucune organisation. Demandez à votre administrateur de vous inviter.`}>
         <Button className="mt-5 w-full" onClick={() => void auth.signOut()}>Se déconnecter</Button>
       </Centered>
     );
   }
+  const choices = staff
+    ? (clients.data?.organizations ?? []).map((org) => ({ key: org.id, name: org.name, slug: org.slug, note: "Espace client, en tant qu'équipe Nyra" }))
+    : list.map((org) => ({ key: org.org_id, name: org.name, slug: org.slug, note: org.role === "admin" ? "Administrateur" : "Lecture et validation" }));
   return (
     <Centered title="Organisations" body="Choisissez l'espace à ouvrir.">
       <div className="mt-5 grid gap-2">
-        {list.map((org) => (
-          <Link key={org.org_id} to={`/o/${org.slug}`} className="rounded-xl border border-ink bg-paper px-4 py-3 text-sm font-medium hover:bg-yellow">
+        {choices.map((org) => (
+          <Link key={org.key} to={`/o/${org.slug}`} className="rounded-xl border border-ink bg-paper px-4 py-3 text-sm font-medium hover:bg-yellow">
             {org.name}
-            <span className="block text-xs font-normal text-muted">{org.role === "admin" ? "Administrateur" : "Lecture et validation"}</span>
+            <span className="block text-xs font-normal text-muted">{org.note}</span>
           </Link>
         ))}
         {staff ? (

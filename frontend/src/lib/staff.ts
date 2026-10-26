@@ -3,8 +3,8 @@ import type { MailList, MailPreview, Member, StaffAdmin, StaffOrg, StaffUsage, S
 import { api } from "./api";
 
 /** The back office's lists and what changes them. Any change refreshes every list, and the sidebar's organizations. */
-export function useStaffOrgs() {
-  return useQuery({ queryKey: ["staff", "orgs"], queryFn: () => api.get<{ organizations: StaffOrg[] }>("/staff/organizations") });
+export function useStaffOrgs(enabled = true) {
+  return useQuery({ queryKey: ["staff", "orgs"], queryFn: () => api.get<{ organizations: StaffOrg[] }>("/staff/organizations"), enabled });
 }
 
 export function useStaffUsers() {
