@@ -549,7 +549,7 @@ no address, no reason typed by a person. `audit.record` refuses anything but num
   connection of its action (read from the syntax tree), so a new route cannot forget it.
 - **Retention: 12 months.** `audit.purge` deletes older rows in batches of 1,000 (one transaction each). The
   worker runs it once a day; by hand: `nyra cloud-purge-audit [--months 12]`.
-- The platform admin who acts as an administrator of a client organization appears under their own e-mail.
+- The platform admin who acts in a client's space without being a member (AXE-573) appears under their own e-mail in the back office's log only (`by_staff`: the client's log does not show the rows). Migration `20261026000036` adds the column; apply it before deploying the code. Rows written before it stay visible to the client.
 - An export writes an `organization.export` row first; an erasure removes the log with the organization (the
   trace of the erasure itself is below).
 

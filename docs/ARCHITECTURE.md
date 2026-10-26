@@ -272,8 +272,23 @@ numbers and the report itself are pure functions over plain dicts in
   people join by invitation. Disable "Allow new users to sign up" in the
   Supabase dashboard too, or anyone holding the public anon key can still
   create an (organization-less, powerless) account.
+- **A platform admin opens every client's space without being a member** (AXE-573). `member_dep` and `admin_dep`
+  (`cloud/routes/common.py`, the two dependencies of every `/api/orgs/{org_id}/...` route) give a platform admin
+  (`platform_staff`) the role `admin` of the organization in the URL (404 if it does not exist), with `Member.staff`
+  set and **no `memberships` row**: the client's team, its seats, the monthly e-mail and the notification settings
+  (`GET /me/notifications` answers « not eligible », nothing to set) never see them. The brand must still belong to the
+  organization of the path (`_scope_for`: 404 otherwise), so access never goes from one client to another; anyone who
+  is not a platform admin keeps their own membership and role (403 otherwise). *Traces:* a platform admin who is not a
+  member of the organization writes their actions in `audit_log` with `by_staff` (computed by `audit.record`): the
+  organization's log (`GET /api/orgs/{org_id}/audit`, and the Supabase read policy) leaves them out, the back office's
+  (`GET /api/staff/organizations/{org_id}/audit`) shows them; a job they start is named « l'équipe Nyra » to the client,
+  never by address (`jobs.holder`). A platform admin who is also a member is a member like any other (their rows are
+  visible; for now they are not hidden from the team page, see AXE-573's open design point). *Interface:* the back
+  office's « Ouvrir l'espace » links to `/o/<slug>`; `OrgShell` asks `GET /api/staff/organizations/open/{slug}` when the
+  slug is not among the caller's organizations (`staff_view: true`), and a banner says whose space it is. Tests:
+  `test_isolation.py` (`test_a_platform_admin_*`).
 - **Every route** under `/api/orgs/{org_id}` verifies the JWT locally and
-  the caller's membership; brand routes then check the brand belongs to
+  the caller's membership (or the platform admin's reach, above); brand routes then check the brand belongs to
   that organization. Admin-only routes (brands, sites, library, crawls,
   settings, reports) check the role. Reviews are open to every member and
   are checked against the brand's own matches.
