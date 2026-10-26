@@ -66,6 +66,8 @@ class JobConflict(Exception):
 
 # A job with the name of its brand and the e-mail of whoever started it: what a person who is refused is told.
 HOLDER = """SELECT j.*, b.name AS brand_name, u.email AS author,
+                   (EXISTS (SELECT 1 FROM platform_staff s WHERE s.user_id = j.created_by)
+                    AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = j.created_by AND m.org_id = j.org_id)) AS author_staff,
                    (EXTRACT(epoch FROM now() - COALESCE(j.started_at, j.created_at)) / 60)::int AS since_minutes
             FROM jobs j JOIN brands b ON b.id = j.brand_id LEFT JOIN auth.users u ON u.id = j.created_by"""
 
@@ -166,6 +168,8 @@ def holder(row: dict, *, admin: bool) -> dict:
         by = "la lecture mensuelle automatique"
     else:
         by = (job["author"] or "une tâche automatique ou un compte supprimé") if admin else "un membre de l'équipe"
+        if job.get("author_staff"):  # a platform admin who is not a member is not one of the client's people: no address, whoever asks
+            by = "l'équipe Nyra"
     since = _duration(job["since_minutes"], queued)
     text = f"Un passage est {'en attente' if queued else 'déjà en cours'} (marque {job['brand_name']}, lancé par {by}, {since})."
     keys = ("id", "kind", "status", "brand_id", "brand_name", "message", "progress", "created_at", "started_at")

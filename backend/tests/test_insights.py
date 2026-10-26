@@ -573,7 +573,7 @@ def test_insights_routes_are_gated(cloud_database_url, cloud_org, cloud_brand, f
     path = f"/api/orgs/{cloud_org}/brands/{cloud_brand}/insights"
     assert client.get(path, headers=headers(admin)).status_code == 200
     assert client.get(path, headers=headers(member)).status_code == 403
-    assert client.get(path, headers=headers(staff)).status_code == 403
+    assert client.get(path, headers=headers(staff)).status_code == 200  # a platform admin opens any space (AXE-573)
     assert client.get(f"/api/orgs/{cloud_org}/brands/{uuid.uuid4()}/insights", headers=headers(admin)).status_code == 404
 
     assert client.get("/api/staff/insights").status_code == 401

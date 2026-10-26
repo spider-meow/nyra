@@ -93,15 +93,6 @@ def user_dep(token: str = Depends(cloud_auth._bearer_token), ctx: Ctx = Depends(
     return ctx.user(token)
 
 
-def member_dep(org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
-               ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
-    return ctx.member(org_id, token)
-
-
-def admin_dep(member: cloud_auth.Member = Depends(member_dep), ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
-    return ctx.admin(member)
-
-
 def staff_dep(claims: cloud_auth.Claims = Depends(user_dep), ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Claims:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if not cloud_insights.is_staff(conn, claims.user_id):
@@ -109,28 +100,29 @@ def staff_dep(claims: cloud_auth.Claims = Depends(user_dep), ctx: Ctx = Depends(
     return claims
 
 
-def _org_member_or_staff(org_id: uuid.UUID, token: str, ctx: Ctx, admin_only: bool) -> cloud_auth.Member:
-    """A platform admin acts as an admin of any organization (to look after its people); anyone else needs their own role."""
+def _org_member(org_id: uuid.UUID, token: str, ctx: Ctx, admin_only: bool) -> cloud_auth.Member:
+    """A platform admin acts as an administrator of any organization, without being one of its members (AXE-573:
+    no `memberships` row, so the client's team never lists them). Anyone else needs their own membership and role."""
     claims = ctx.user(token)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         staff = cloud_insights.is_staff(conn, claims.user_id)
-        known = cloud_db.get_organization(conn, org_id) is not None
+        known = staff and cloud_db.get_organization(conn, org_id) is not None
     if staff:
         if not known:
             raise HTTPException(status_code=404, detail="Organisation introuvable.")
-        return cloud_auth.Member(user_id=claims.user_id, org_id=org_id, role="admin")
+        return cloud_auth.Member(user_id=claims.user_id, org_id=org_id, role="admin", staff=True)
     member = ctx.member(org_id, token)
     return ctx.admin(member) if admin_only else member
 
 
-def member_or_staff_dep(org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
-                        ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
-    return _org_member_or_staff(org_id, token, ctx, admin_only=False)
+def member_dep(org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
+               ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
+    return _org_member(org_id, token, ctx, admin_only=False)
 
 
-def admin_or_staff_dep(org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
-                       ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
-    return _org_member_or_staff(org_id, token, ctx, admin_only=True)
+def admin_dep(org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
+              ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
+    return _org_member(org_id, token, ctx, admin_only=True)
 
 
 def rights_from_body(expiry_date: str, unlimited_rights: bool) -> tuple[Optional[str], bool]:

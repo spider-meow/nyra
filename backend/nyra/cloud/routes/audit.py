@@ -53,5 +53,5 @@ def staff_audit_log(org_id: uuid.UUID, limit: int = Query(50, ge=1, le=cloud_aud
                     action: Optional[str] = Query(None, max_length=64), user_id: Optional[uuid.UUID] = None,
                     since: Optional[datetime] = None, until: Optional[datetime] = None,
                     claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    """The same log for the Nyra team (back office)."""
-    return _page(ctx, org_id, limit, offset, **_filters(brand_id, action, user_id, since, until))
+    """The same log for the Nyra team (back office), with the team's own actions, which the organization's log leaves out."""
+    return _page(ctx, org_id, limit, offset, with_staff=True, **_filters(brand_id, action, user_id, since, until))

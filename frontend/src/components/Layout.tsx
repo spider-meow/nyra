@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Outlet } from "react-router";
+import { Link, Outlet } from "react-router";
 import { useOrg, useOrganizations } from "../lib/org";
 import { Icon } from "./icons";
 import { JobToasts } from "./layout/JobToasts";
@@ -29,6 +29,19 @@ export function Frame(props: { sidebar: (close: () => void) => ReactNode; title:
   );
 }
 
+/** Shown in a client's space opened by the Nyra team (not a member): whose space it is, and the way back. */
+function StaffBanner() {
+  const { org, staffView } = useOrg();
+  if (!staffView) return null;
+  return (
+    <div role="status" className="-mx-4 -mt-6 mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-ink bg-yellow px-4 py-2.5 text-sm md:-mx-14 md:-mt-10 md:px-14">
+      <Icon name="eye" size={16} />
+      <p className="min-w-0 flex-1">Vous consultez l'espace de <strong>{org.name}</strong> en tant qu'équipe Nyra.</p>
+      <Link to="/back-office/organizations" className="font-medium underline">Retour au back office</Link>
+    </div>
+  );
+}
+
 export function Layout() {
   const { org, brand } = useOrg();
   const nav = useNavItems();
@@ -36,6 +49,7 @@ export function Layout() {
 
   return (
     <Frame title={org.brands.length > 1 ? brand.name : org.name} sidebar={(close) => <Sidebar nav={nav} orgs={orgs.data} onNavigate={close} />}>
+      <StaffBanner />
       <JobToasts />
       <Outlet />
     </Frame>

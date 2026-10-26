@@ -2,7 +2,8 @@ export type Role = "admin" | "client";
 
 export type Brand = { id: string; name: string; slug: string; logo?: string | null };
 
-export type Organization = { org_id: string; name: string; slug: string; role: Role; brands: Brand[] };
+/** `staff_view`: a platform admin who opens the space of a client they are not a member of (`GET /staff/organizations/open/{slug}`). */
+export type Organization = { org_id: string; name: string; slug: string; role: Role; brands: Brand[]; staff_view?: boolean };
 
 export type Site = { id: string; url: string; label: string; images: number; last_crawled_at: string | null };
 

@@ -18,9 +18,10 @@ function routePattern(router: Router, pathname: string): string {
   return `/${parts.join("/").split("/").filter(Boolean).join("/")}`;
 }
 
-/** What this client calls its own, from the answers the app already holds (same keys as `useOrganizations` and `useMe` in `org.tsx`). */
+/** What this client calls its own, from the answers the app already holds (same keys as `useOrganizations`, `useStaffOpenedOrganization` and `useMe` in `org.tsx`). */
 function clientNames(queryClient: QueryClient): string[] {
-  const orgs = queryClient.getQueryData<Organization[]>(["orgs"]) ?? [];
+  const opened = queryClient.getQueriesData<Organization>({ queryKey: ["orgs", "open"] }).flatMap(([, org]) => (org ? [org] : []));
+  const orgs = [...(queryClient.getQueryData<Organization[]>(["orgs"]) ?? []), ...opened];
   const me = queryClient.getQueryData<{ email: string | null }>(["me"]);
   return [...orgs.flatMap((org) => [org.name, org.slug, ...org.brands.flatMap((brand) => [brand.name, brand.slug])]), me?.email ?? ""];
 }

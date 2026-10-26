@@ -56,9 +56,10 @@ def record(conn, org_id: Optional[uuid.UUID], user_id: Optional[uuid.UUID], acti
         raise ValueError("audit object_id is an identifier, not content")
     clean = {key: _plain(key, value) for key, value in detail.items()}
     written = conn.execute(
-        """INSERT INTO audit_log (org_id, brand_id, user_id, action, object_type, object_id, detail)
-           VALUES (%s, %s, %s, %s, %s, %s, %s)""",
-        (org_id, brand_id, user_id, action, object_type, None if object_id is None else str(object_id), Jsonb(clean)),
+        """INSERT INTO audit_log (org_id, brand_id, user_id, action, object_type, object_id, detail, by_staff)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, EXISTS (SELECT 1 FROM platform_staff WHERE user_id = %s)
+                   AND NOT EXISTS (SELECT 1 FROM memberships WHERE user_id = %s AND org_id = %s))""",
+        (org_id, brand_id, user_id, action, object_type, None if object_id is None else str(object_id), Jsonb(clean), user_id, user_id, org_id),
     ).rowcount
     if written != 1:
         raise RuntimeError(f"audit row for {action} not written")
@@ -66,11 +67,14 @@ def record(conn, org_id: Optional[uuid.UUID], user_id: Optional[uuid.UUID], acti
 
 def events(conn, org_id: uuid.UUID, *, limit: int = 50, offset: int = 0, brand_id: Optional[uuid.UUID] = None,
            action: Optional[str] = None, user_id: Optional[uuid.UUID] = None, since: Optional[datetime] = None,
-           until: Optional[datetime] = None) -> list[dict]:
+           until: Optional[datetime] = None, with_staff: bool = False) -> list[dict]:
     """The newest rows of an organization first, with the author's e-mail and the brand's name as they are now.
-    `limit` and `offset` are bounded here as well as in the route."""
+    The actions of a platform admin who is not a member (`by_staff`) are for the back office only: `with_staff`. `limit` and `offset` are
+    bounded here as well as in the route."""
     limit, offset = min(max(limit, 1), MAX_PAGE + 1), min(max(offset, 0), MAX_OFFSET)  # the route asks one more to know there is a next page
     where, args = ["a.org_id = %s"], [org_id]
+    if not with_staff:
+        where.append("NOT a.by_staff")
     for clause, value in (("a.brand_id = %s", brand_id), ("a.action = %s", action), ("a.user_id = %s", user_id),
                           ("a.created_at >= %s", since), ("a.created_at < %s", until)):
         if value is not None:

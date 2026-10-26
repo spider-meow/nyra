@@ -49,6 +49,16 @@ export function useMe(enabled = true) {
   });
 }
 
+/** The space of a client opened by a platform admin who is not a member: not in `useOrganizations`, asked by its address. */
+export function useStaffOpenedOrganization(slug: string | undefined, enabled: boolean) {
+  return useQuery({
+    queryKey: ["orgs", "open", slug], // under "orgs": whatever refreshes the organizations (a brand created) refreshes this one
+    queryFn: async () => (await api.get<{ organization: Organization }>(`/staff/organizations/open/${encodeURIComponent(slug ?? "")}`)).organization,
+    enabled: enabled && Boolean(slug),
+    staleTime: 5 * 60_000,
+  });
+}
+
 type OrgState = {
   org: Organization;
   /** The brand on screen: its library, its sites, its matches. */
@@ -56,6 +66,8 @@ type OrgState = {
   admin: boolean;
   /** Nyra team ("Platform admin"): the only accounts that create and delete brands. */
   platformAdmin: boolean;
+  /** Opened by the Nyra team without being a member: a banner says so, and nothing of the person's own account (notifications) applies. */
+  staffView: boolean;
   /** API path under this brand: apiPath("/library") -> /orgs/<id>/brands/<id>/library */
   apiPath: (path: string) => string;
   /** API path under the organization (settings, brands): orgApiPath("/settings") -> /orgs/<id>/settings */
@@ -72,8 +84,9 @@ export function OrgProvider(props: { org: Organization; brand: Brand; children: 
   const value: OrgState = {
     org,
     brand,
-    admin: org.role === "admin",
+    admin: org.role === "admin" || Boolean(me.data?.staff), // the server gives a platform admin the rights of an administrator everywhere
     platformAdmin: Boolean(me.data?.staff),
+    staffView: Boolean(org.staff_view),
     apiPath: (path) => `/orgs/${org.org_id}/brands/${brand.id}${path}`,
     orgApiPath: (path) => `/orgs/${org.org_id}${path}`,
     link: (path = "") => brandLink(org, brand.slug, path),

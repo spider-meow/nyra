@@ -37,6 +37,7 @@ from test_cloud_api import _headers, _upload_bytes  # noqa: E402
 from nyra import netguard  # noqa: E402
 from nyra import report as report_module  # noqa: E402
 from nyra.cloud import db as cloud_db  # noqa: E402
+from nyra.cloud import digest  # noqa: E402
 from nyra.cloud import jobs as cloud_jobs  # noqa: E402
 from nyra.cloud import labels as cloud_labels  # noqa: E402
 from nyra.cloud import storage as cloud_storage  # noqa: E402
@@ -61,7 +62,8 @@ USER_LEVEL = {
     ("GET", "/api/orgs"): "the caller's own memberships (checked below: never an organization of B)",
 }
 # The staff routes (`/api/staff/*`, platform admins only) are refused to every member, whatever the role, with two sets of
-# identifiers. What a platform admin may do in another organization is by design (ARCHITECTURE.md, "Security model").
+# identifiers. What a platform admin may do in another organization is by design (ARCHITECTURE.md, "Security model"):
+# `test_a_platform_admin_opens_any_organization_without_being_a_member`.
 # Their nominal behaviour is tested in test_cloud_api.py, not here.
 
 # Routes whose nominal call is refused to an organization admin: platform admins only (each brand is billed).
@@ -339,7 +341,7 @@ class Run:
         route = f"{method} {template}"
         if template.startswith("/api/staff/"):
             for owner in (self.b, self.a):
-                ids = {"user_id": owner["admin"], "org_id": owner["org"], "key": "monthly_digest"}
+                ids = {"user_id": owner["admin"], "org_id": owner["org"], "key": "monthly_digest", "slug": "any"}
                 self.hit("staff route", method, template, ids, self.a[role], {}, {403})
             return
         if not template.startswith(ORG):
@@ -395,38 +397,89 @@ def test_public_and_user_level_routes_show_nothing_of_another_organization(clien
 
 
 @pytest.fixture()
-def staff_member_of_a(world, cloud_database_url):
-    """A platform admin who is a plain client of A: platform admins reach other organizations only where the code says so."""
-    a, _ = world
+def staff_outsider(world, cloud_database_url):
+    """A platform admin who is a member of no organization (AXE-573): they open any client's space."""
     user = uuid.uuid4()
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (user, f"{user}@nyra.test"))
-        cloud_db.add_membership(conn, user_id=user, org_id=a["org"], role="client")
         conn.execute("INSERT INTO platform_staff (user_id) VALUES (%s)", (user,))
     yield user
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("DELETE FROM platform_staff WHERE user_id = %s", (user,))
 
 
-def test_a_platform_admin_keeps_to_the_routes_where_the_code_lets_them_cross_organizations(client, world, staff_member_of_a,
-                                                                                         cloud_database_url):
+def test_a_platform_admin_opens_any_organization_without_being_a_member(client, world, staff_outsider, cloud_database_url):
     a, b = world
-    staff = _headers(staff_member_of_a)
-    with cloud_db.connect(cloud_database_url) as conn:
-        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = %s", (b["org"],))  # an active job would answer 409 first
-    watch = Watch(cloud_database_url, b)
+    staff = _headers(staff_outsider)
     brand_b_under_a = f"/api/orgs/{a['org']}/brands/{b['brand']}"
-    assert client.delete(brand_b_under_a, headers=staff).status_code == 404
-    assert client.put(brand_b_under_a, headers=staff, json={"name": "Hijacked"}).status_code == 403  # renaming asks for an admin of A
-    # brand routes take the member of the organization in the URL, never the platform admin's reach: not a member of B, not of A's brand B
-    assert client.get(f"/api/orgs/{b['org']}/brands/{b['brand']}/library", headers=staff).status_code == 403
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = ANY(%s)", ([a["org"], b["org"]],))  # an active job would answer 409 first
+    # every organization, every brand of the organization in the URL: they read it, as an administrator would
+    for side in (a, b):
+        assert client.get(f"/api/orgs/{side['org']}/brands/{side['brand']}/library", headers=staff).status_code == 200
+        assert client.get(f"/api/orgs/{side['org']}/audit", headers=staff).status_code == 200
+    # ... but never from one organization to another through the URL: the brand must belong to the organization of the path
     assert client.get(f"{brand_b_under_a}/library", headers=staff).status_code == 404
-    # the people of an organization are the one thing they reach (a platform admin looks after everyone): A's only, by its id
+    assert client.delete(brand_b_under_a, headers=staff).status_code == 404
+    assert client.put(brand_b_under_a, headers=staff, json={"name": "Hijacked"}).status_code == 404
+    assert client.get(f"/api/orgs/{uuid.uuid4()}/brands/{a['brand']}/library", headers=staff).status_code == 404
+    # B's people are B's: A's members, by its id, never list a B address
     members = client.get(f"/api/orgs/{a['org']}/members", headers=staff).json()["members"]
     assert members and not [m for m in members if "canary-b" in m["email"]]
     for method, kwargs in (("PUT", {"json": {"role": "client"}}), ("DELETE", {})):
         assert client.request(method, f"/api/orgs/{a['org']}/members/{b['admin']}", headers=staff, **kwargs).status_code == 404
-    assert not watch.changes([a["org"]])
+
+
+def test_a_platform_admin_who_is_not_a_member_leaves_no_trace_among_the_members(client, world, staff_outsider, cloud_database_url):
+    a, _ = world
+    staff, org = _headers(staff_outsider), a["org"]
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = %s", (org,))
+        before = conn.execute("SELECT count(*) AS n FROM memberships WHERE org_id = %s", (org,)).fetchone()["n"]
+    # they act in the space: read, write, start a job
+    assert client.post(f"/api/orgs/{org}/brands/{a['brand']}/collections", headers=staff, json={"name": "Vu par Nyra"}).status_code == 200
+    assert client.post(f"/api/orgs/{org}/brands/{a['brand']}/jobs/match", headers=staff).status_code == 200
+    assert client.get(f"/api/orgs/{org}/me/notifications", headers=staff).json()["monthly_email"]["eligible"] is False
+    assert client.put(f"/api/orgs/{org}/me/notifications", headers=staff, json={"monthly_email": True}).status_code == 200
+    members = client.get(f"/api/orgs/{org}/members", headers=staff).json()["members"]
+    assert str(staff_outsider) not in [m["user_id"] for m in members] and not [m for m in members if m["you"]]
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT count(*) AS n FROM memberships WHERE org_id = %s", (org,)).fetchone()["n"] == before
+        assert not conn.execute("SELECT 1 FROM memberships WHERE user_id = %s", (staff_outsider,)).fetchone()
+        assert not [a for a in digest.recipients(conn, org)[1] if a.endswith("@nyra.test")]  # the monthly e-mail never reaches them
+    # the client's journal shows nothing of it; the back office's journal shows it, with the platform admin's address
+    own = client.get(f"/api/orgs/{org}/audit", headers=_headers(a["admin"])).json()["events"]
+    assert not [e for e in own if e["user_id"] == str(staff_outsider)]
+    team = client.get(f"/api/staff/organizations/{org}/audit", headers=staff).json()["events"]
+    assert {"job.match", "collection.create"} <= {e["action"] for e in team if e["user_id"] == str(staff_outsider)}
+
+
+def test_a_platform_admin_is_named_to_nobody_as_the_author_of_a_job(client, world, staff_outsider, cloud_database_url):
+    a, _ = world
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = %s", (a["org"],))
+    assert client.post(f"/api/orgs/{a['org']}/brands/{a['brand']}/jobs/match", headers=_headers(staff_outsider)).status_code == 200
+    refused = client.post(f"/api/orgs/{a['org']}/brands/{a['brand']}/jobs/match", headers=_headers(a["admin"]))
+    assert refused.status_code == 409 and "l'équipe Nyra" in refused.json()["detail"] and "@nyra.test" not in refused.json()["detail"]
+
+
+def test_a_member_of_an_organization_stays_a_member_there_and_a_stranger_gets_nothing(client, world, cloud_database_url):
+    a, b = world
+    # a client of A (not a platform admin): A's brand under A is theirs to read, B in any way is a 403
+    assert client.get(f"/api/orgs/{b['org']}/brands/{b['brand']}/library", headers=_headers(a["client"])).status_code == 403
+    assert client.get(f"/api/orgs/{a['org']}/members", headers=_headers(a["client"])).status_code == 200
+    assert client.get(f"/api/orgs/{a['org']}/audit", headers=_headers(a["client"])).status_code == 403
+    assert client.get(f"/api/staff/organizations/open/{uuid.uuid4().hex[:8]}", headers=_headers(a["admin"])).status_code == 403
+
+
+def test_a_platform_admin_opens_an_organization_by_its_slug(client, world, staff_outsider, cloud_database_url):
+    a, _ = world
+    with cloud_db.connect(cloud_database_url) as conn:
+        slug = conn.execute("SELECT slug FROM organizations WHERE id = %s", (a["org"],)).fetchone()["slug"]
+    org = client.get(f"/api/staff/organizations/open/{slug}", headers=_headers(staff_outsider)).json()["organization"]
+    assert org["org_id"] == str(a["org"]) and org["role"] == "admin" and org["staff_view"] is True and org["brands"]
+    assert client.get("/api/staff/organizations/open/nope-nope", headers=_headers(staff_outsider)).status_code == 404
+    assert str(a["org"]) not in [o["org_id"] for o in client.get("/api/orgs", headers=_headers(staff_outsider)).json()["organizations"]]
 
 
 def test_storage_paths_and_signed_urls_never_leave_the_organization(client, world, cloud_database_url, fake_storage_client):

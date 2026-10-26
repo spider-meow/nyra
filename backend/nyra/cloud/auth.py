@@ -49,6 +49,7 @@ class Member:
     user_id: uuid.UUID
     org_id: uuid.UUID
     role: str
+    staff: bool = False  # a platform admin acting in an organization they are not a member of
 
 
 _jwks_clients: dict[str, PyJWKClient] = {}

@@ -37,6 +37,8 @@ def _state(conn, member: cloud_auth.Member) -> dict:
     """`eligible`: only an administrator receives the monthly mail; `allowed` is shown, never changed, by the person."""
     row = conn.execute("SELECT monthly_email_wanted, monthly_email_allowed FROM memberships WHERE user_id = %s AND org_id = %s",
                        (member.user_id, member.org_id)).fetchone()
+    if row is None and member.staff:  # a platform admin has no line to set: nothing to show, nothing sent to them
+        return {"monthly_email": {"wanted": False, "allowed": False, "eligible": False}}
     if row is None:
         raise HTTPException(status_code=404, detail="Vous ne faites pas partie de cette organisation.")
     return {"monthly_email": {"wanted": row["monthly_email_wanted"], "allowed": row["monthly_email_allowed"], "eligible": member.role == "admin"}}
