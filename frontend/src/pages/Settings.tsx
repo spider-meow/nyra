@@ -92,14 +92,15 @@ function Nav(props: { sections: Section[]; activeId: string; onPick: (id: string
 }
 
 export function Settings() {
-  const { admin } = useOrg();
+  const { admin, staffView } = useOrg();
   const settings = useSettings();
   const [params, setParams] = useSearchParams();
 
   if (settings.isLoading) return <Skeleton className="h-96" />;
   if (settings.error || !settings.data) return <EmptyState title="Réglages indisponibles" body={errorMessage(settings.error)} />;
 
-  const visible = SECTIONS.filter((section) => admin || !section.adminOnly);
+  // A platform admin has no membership, so no e-mail of Nyra to switch on or off.
+  const visible = SECTIONS.filter((section) => (admin || !section.adminOnly) && !(staffView && section.id === "notifications"));
   const active = visible.find((section) => section.id === params.get("section")) ?? visible.find((section) => section.id === "general") ?? visible[0];
   return (
     <>

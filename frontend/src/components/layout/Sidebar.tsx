@@ -107,10 +107,10 @@ function BrandSwitcher() {
 
 /** The organization and the role in it, as one quiet line under the email; with several organizations, a list (opening upwards) to switch. */
 function OrgLine(props: { orgs: Organization[] | undefined }) {
-  const { org } = useOrg();
+  const { org, staffView } = useOrg();
   const navigate = useNavigate();
   const { orgs } = props;
-  const line = `${org.name} · ${org.role === "admin" ? "Admin" : "Lecture"}`;
+  const line = `${org.name} · ${staffView ? "Équipe Nyra" : org.role === "admin" ? "Admin" : "Lecture"}`;
   if (!orgs || orgs.length < 2) return <span className="block truncate text-xs text-muted" title={line}>{line}</span>;
   return (
     <Dropdown

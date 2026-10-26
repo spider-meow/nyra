@@ -5,7 +5,7 @@ import { Layout } from "../components/Layout";
 import { Button, Card, Checkbox, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
 import { api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { OrgProvider, brandLink, useMe, useOrganizations } from "../lib/org";
+import { OrgProvider, brandLink, useMe, useOrganizations, useStaffOpenedOrganization } from "../lib/org";
 import type { Brand, Organization } from "../types";
 
 const PasswordStrength = lazy(() => import("../components/PasswordStrength"));
@@ -249,9 +249,13 @@ export function useShellOrg(): Organization {
 export function OrgShell() {
   const { slug } = useParams();
   const orgs = useOrganizations();
-  if (orgs.isLoading) return <Centered title="Un instant"><div className="mt-4"><Spinner /></div></Centered>;
+  const me = useMe();
+  const member = orgs.data?.find((item) => item.slug === slug);
+  // Not one of the caller's organizations: a platform admin still opens it (they are in no client's team).
+  const opened = useStaffOpenedOrganization(slug, !orgs.isLoading && !member && Boolean(me.data?.staff));
+  if (orgs.isLoading || me.isLoading || opened.isLoading) return <Centered title="Un instant"><div className="mt-4"><Spinner /></div></Centered>;
   if (orgs.error) return <Centered title="Erreur" body={errorMessage(orgs.error)} />;
-  const org = orgs.data?.find((item) => item.slug === slug);
+  const org = member ?? opened.data;
   if (!org) return <NotFound message="Cette organisation n'existe pas, ou vous n'y avez pas accès." />;
   // An API from before brands answers without them.
   if (!Array.isArray(org.brands)) {
