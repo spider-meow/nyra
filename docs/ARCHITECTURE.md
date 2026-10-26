@@ -282,7 +282,7 @@ numbers and the report itself are pure functions over plain dicts in
   member of the organization writes their actions in `audit_log` with `by_staff` (computed by `audit.record`): the
   organization's log (`GET /api/orgs/{org_id}/audit`, and the Supabase read policy) leaves them out, the back office's
   (`GET /api/staff/organizations/{org_id}/audit`) shows them; a job they start is named « l'équipe Nyra » to the client,
-  never by address (`jobs.holder`). A platform admin who is also a member is a member like any other (their rows are
+  never by address (`jobs.holder`); the end-of-contract export (`offboarding`) names them « équipe Nyra » and leaves their journal rows out. A platform admin who is also a member is a member like any other (their rows are
   visible; for now they are not hidden from the team page, see AXE-573's open design point). *Interface:* the back
   office's « Ouvrir l'espace » links to `/o/<slug>`; `OrgShell` asks `GET /api/staff/organizations/open/{slug}` when the
   slug is not among the caller's organizations (`staff_view: true`), and a banner says whose space it is. Tests:

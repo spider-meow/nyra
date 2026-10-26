@@ -288,6 +288,26 @@ def test_the_export_holds_the_organization_and_nothing_else(cloud_database_url, 
             assert str(other_id) not in path.read_text(encoding="utf-8", errors="ignore").replace(str(org_id), ""), path
 
 
+def test_the_export_never_names_a_platform_admin_who_is_not_a_member(cloud_database_url, fake_storage_client, two_organizations, tmp_path):
+    """The file handed to the client says « équipe Nyra », and its journal leaves the team's own actions out (like the interface)."""
+    (org_id, *_), _ = two_organizations
+    outsider = uuid.uuid4()
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (outsider, f"{outsider}@nyra.test"))
+        conn.execute("INSERT INTO platform_staff (user_id) VALUES (%s)", (outsider,))
+        conn.execute("UPDATE excluded_hashes SET created_by = %s WHERE org_id = %s", (outsider, org_id))
+        cloud_audit.record(conn, org_id, outsider, "library.delete", "reference")
+    try:
+        offboarding.export_organization(cloud_database_url, fake_storage_client, _slug(cloud_database_url, org_id)["slug"], tmp_path, operator="arthur")
+    finally:
+        with cloud_db.connect(cloud_database_url) as conn:
+            conn.execute("DELETE FROM platform_staff WHERE user_id = %s", (outsider,))
+    every_file = "".join(path.read_text(encoding="utf-8", errors="ignore") for path in tmp_path.glob("*.csv"))
+    assert str(outsider) not in every_file and "@nyra.test" not in every_file
+    assert "équipe Nyra" in (tmp_path / "exclusions.csv").read_text(encoding="utf-8-sig")
+    assert "library.delete" not in (tmp_path / "journal.csv").read_text(encoding="utf-8-sig")
+
+
 def test_an_interrupted_export_resumes_and_a_missing_file_is_reported(cloud_database_url, fake_storage_client, two_organizations, tmp_path):
     (org_id, brand_id, *_), _ = two_organizations
     row = _slug(cloud_database_url, org_id)

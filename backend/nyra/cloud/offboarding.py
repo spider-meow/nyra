@@ -208,6 +208,14 @@ def delete_organization(database_url: str, client, slug: str, *, confirm_name: O
 
 # --- export ----------------------------------------------------------------------------------------------------
 
+def _with_author(sql: str) -> str:
+    """The query with `{author}`: the e-mail of the person who did it, or « équipe Nyra » for a platform admin who is not a
+    member (the client's own log leaves them out: the file handed over names them no more than the interface does)."""
+    return sql.replace("{author}", """CASE WHEN EXISTS (SELECT 1 FROM platform_staff s WHERE s.user_id = u.id)
+                 AND NOT EXISTS (SELECT 1 FROM memberships m WHERE m.user_id = u.id AND m.org_id = %(org)s)
+            THEN 'équipe Nyra' ELSE u.email END""")
+
+
 EXPORTS: tuple[tuple[str, tuple[str, ...], str], ...] = (
     ("marques.csv", ("marque", "identifiant", "créée le"),
      "SELECT name, slug, created_at FROM brands WHERE org_id = %(org)s ORDER BY name"),
@@ -221,26 +229,26 @@ EXPORTS: tuple[tuple[str, tuple[str, ...], str], ...] = (
         FROM reference_images r JOIN brands b ON b.id = r.brand_id LEFT JOIN collections c ON c.id = r.collection_id
         WHERE r.org_id = %(org)s ORDER BY b.name, r.filename"""),
     ("decisions.csv", ("marque", "référence", "image du site", "décision", "par", "le"),
-     """SELECT b.name, r.filename, si.url, v.decision, u.email, v.updated_at
+     _with_author("""SELECT b.name, r.filename, si.url, v.decision, {author}, v.updated_at
         FROM reviews v JOIN reference_images r ON r.id = v.reference_id JOIN brands b ON b.id = r.brand_id
         JOIN site_images si ON si.id = v.site_image_id LEFT JOIN auth.users u ON u.id = v.reviewed_by
-        WHERE v.org_id = %(org)s ORDER BY b.name, v.updated_at"""),
+        WHERE v.org_id = %(org)s ORDER BY b.name, v.updated_at""")),
     ("exclusions.csv", ("marque", "adresse de l'image", "raison", "empreinte", "valeur", "par", "le"),
-     """SELECT b.name, e.site_url, e.reason, e.hash_type, e.hash, u.email, e.created_at
+     _with_author("""SELECT b.name, e.site_url, e.reason, e.hash_type, e.hash, {author}, e.created_at
         FROM excluded_hashes e JOIN brands b ON b.id = e.brand_id LEFT JOIN auth.users u ON u.id = e.created_by
-        WHERE e.org_id = %(org)s ORDER BY b.name, e.created_at"""),
+        WHERE e.org_id = %(org)s ORDER BY b.name, e.created_at""")),
     ("rapports.csv", ("marque", "généré le", "période (jours)", "par", "rapport", "correspondances", "non trouvées", "chiffres"),
-     """SELECT b.name, p.generated_at, p.within_days, u.email, 'files/reports/' || p.storage_path_html,
+     _with_author("""SELECT b.name, p.generated_at, p.within_days, {author}, 'files/reports/' || p.storage_path_html,
                'files/reports/' || p.storage_path_csv, 'files/reports/' || p.storage_path_not_found_csv, p.stats::text
         FROM reports p JOIN brands b ON b.id = p.brand_id LEFT JOIN auth.users u ON u.id = p.generated_by
-        WHERE p.org_id = %(org)s ORDER BY p.generated_at"""),
+        WHERE p.org_id = %(org)s ORDER BY p.generated_at""")),
     ("membres.csv", ("e-mail", "rôle", "depuis le"),
      """SELECT u.email, m.role, m.created_at FROM memberships m JOIN auth.users u ON u.id = m.user_id
         WHERE m.org_id = %(org)s ORDER BY lower(u.email)"""),
     ("journal.csv", ("date", "marque", "par", "action", "objet", "identifiant", "détail"),
-     """SELECT a.created_at, b.name, u.email, a.action, a.object_type, a.object_id, a.detail::text
+     _with_author("""SELECT a.created_at, b.name, {author}, a.action, a.object_type, a.object_id, a.detail::text
         FROM audit_log a LEFT JOIN brands b ON b.id = a.brand_id LEFT JOIN auth.users u ON u.id = a.user_id
-        WHERE a.org_id = %(org)s ORDER BY a.created_at, a.id"""),
+        WHERE a.org_id = %(org)s AND NOT a.by_staff ORDER BY a.created_at, a.id""")),
 )
 
 # Paths to copy, a batch at a time after the last one seen (a short transaction each: nothing stays open while files download).

@@ -106,7 +106,7 @@ def _org_member(org_id: uuid.UUID, token: str, ctx: Ctx, admin_only: bool) -> cl
     claims = ctx.user(token)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         staff = cloud_insights.is_staff(conn, claims.user_id)
-        known = cloud_db.get_organization(conn, org_id) is not None
+        known = staff and cloud_db.get_organization(conn, org_id) is not None
     if staff:
         if not known:
             raise HTTPException(status_code=404, detail="Organisation introuvable.")
