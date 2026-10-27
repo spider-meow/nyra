@@ -12,7 +12,9 @@ WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
-RUN npm run build
+# The source maps (vite.config.ts, "hidden") are for Sentry only: out of dist/, so no image serves them. They stay in this
+# stage, in /app/sourcemaps, for the deploy step that uploads them (`docker build --target frontend-builder`).
+RUN npm run build && mkdir /app/sourcemaps && find dist -name '*.map' -exec mv {} /app/sourcemaps/ \; && ! find dist -name '*.map' | grep -q .
 
 # --- web -------------------------------------------------------------------------
 FROM python:3.12-slim AS web
