@@ -47,7 +47,11 @@ pytest
   `conftest.py` stubs the bits of Supabase's `auth`/`storage` schemas the
   migrations reference, applies any migration not yet applied, and gives
   tests an in-memory fake Storage. Never point `TEST_DATABASE_URL` at a
-  real project.
+  real project. After each test an autouse fixture deletes the organizations and
+  accounts the test added (the rest of an organization follows by cascade), so the
+  same database can be used for any number of runs, whole or file by file. What it
+  does not clean: the audit rows of the Nyra team's own actions (no organization),
+  `deleted_organizations` and `service_metrics`, which no test depends on.
 
 - `test_isolation.py` (cloud, same Postgres) calls every route as a member of
   one organization with the identifiers of another, and with its own, and fails on an
