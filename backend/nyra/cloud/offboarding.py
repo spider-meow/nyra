@@ -47,7 +47,7 @@ INDIRECT = {
     "brand_logos": "brand_id IN (SELECT id FROM brands WHERE org_id = %(org)s)",
     "image_pages": "page_id IN (SELECT id FROM pages WHERE org_id = %(org)s)",
 }
-GLOBAL = {"_test_migrations", "platform_staff", "service_metrics", "deleted_organizations"}  # shared, or outliving the organization
+GLOBAL = {"_test_migrations", "platform_staff", "service_metrics", "deleted_organizations", "rate_buckets"}  # shared, or outliving the organization
 
 FETCH_BATCH = 500
 MAX_FILE_BYTES = 200_000_000
