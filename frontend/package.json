@@ -16,7 +16,7 @@
     "check:emails": "node scripts/check-emails.mjs"
   },
   "dependencies": {
-    "@sentry/react": "11.2.0",
+    "@sentry/react": "11.9.0",
     "@supabase/supabase-js": "^2.118.0",
     "@tanstack/react-query": "^5.104.3",
     "@zxcvbn-ts/core": "^4.2.0",
