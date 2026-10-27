@@ -13,6 +13,7 @@ import logging
 import math
 import threading
 import time
+import uuid
 from collections import OrderedDict
 from typing import Callable, Mapping, Optional
 
@@ -27,6 +28,7 @@ ENV_NAMES = {"read": "NYRA_RATE_READ_PER_MIN", "write": "NYRA_RATE_WRITE_PER_MIN
 EXEMPT_PATHS = frozenset({"/api/healthz", "/api/workerz", "/api/auth/config"})
 MAX_KEYS = 10_000  # one entry per person and kind: a few dozen bytes each, well under a megabyte
 PURGE_EVERY = 60.0  # seconds; a bucket idle for a minute is full again, so forgetting it changes nothing
+REPORT_EVERY = 60.0  # seconds; refusals of one person and kind are reported once per period, with their number
 
 
 def limits_from_env(environ: Mapping[str, str]) -> dict[str, int]:
@@ -62,6 +64,7 @@ class RateLimiter:
         self._clock = clock
         self._lock = threading.Lock()
         self._buckets: OrderedDict[tuple[str, str], tuple[float, float]] = OrderedDict()  # key -> (tokens, last seen)
+        self._refusals: OrderedDict[tuple[str, str], tuple[int, float]] = OrderedDict()  # key -> (refused since the last report, last report)
         self._last_purge = clock()
 
     def size(self) -> int:
@@ -83,6 +86,21 @@ class RateLimiter:
                 self._buckets.popitem(last=False)
             return 0.0 if allowed else (1.0 - tokens) / rate
 
+    def refused(self, identity: str, kind: str) -> int:
+        """Counts a refusal. Returns how many refusals to report (those since the last report, this one included) at most
+        once per `REPORT_EVERY` for a person and kind, else 0. ponytail: refusals counted after the last report of a
+        person who then stops are never reported (the entry is forgotten after a period); same cap as the buckets."""
+        with self._lock:
+            now = self._clock()
+            key = (identity, kind)
+            count, reported = self._refusals.pop(key, (0, None))
+            count += 1
+            due = reported is None or now - reported >= REPORT_EVERY
+            self._refusals[key] = (0, now) if due else (count, reported)
+            while len(self._refusals) > self._max_keys:
+                self._refusals.popitem(last=False)
+            return count if due else 0
+
     def _purge(self, now: float) -> None:
         if now - self._last_purge < PURGE_EVERY:
             return
@@ -91,6 +109,16 @@ class RateLimiter:
                 if tokens + (now - seen) * self._limits[key[1]] / 60.0 >= self._limits[key[1]]]
         for key in full:
             del self._buckets[key]
+        for key in [key for key, (_, reported) in self._refusals.items() if now - reported >= REPORT_EVERY]:
+            del self._refusals[key]
+
+
+def _in_org(request: Request) -> str:
+    """' in organization <uuid>' when the path names one (anything else is left out of the log)."""
+    try:
+        return f" in organization {uuid.UUID(str(request.path_params.get('org_id')))}"
+    except ValueError:
+        return ""
 
 
 def enforce(limiter: RateLimiter, identify: Callable[[str], Optional[str]]):
@@ -109,8 +137,12 @@ def enforce(limiter: RateLimiter, identify: Callable[[str], Optional[str]]):
         who = identify(header.removeprefix("Bearer ").strip())
         if who is None:
             return
-        wait = limiter.wait(who, "read" if request.method in ("GET", "HEAD", "OPTIONS") else "write")
+        kind = "read" if request.method in ("GET", "HEAD", "OPTIONS") else "write"
+        wait = limiter.wait(who, kind)
         if wait > 0:
+            reported = limiter.refused(who, kind)
+            if reported:
+                log.warning("rate limit: %d %s request(s) refused for user %s%s", reported, kind, who, _in_org(request))
             seconds = max(1, math.ceil(wait))
             raise HTTPException(
                 status_code=429,
