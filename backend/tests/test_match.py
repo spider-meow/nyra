@@ -354,11 +354,9 @@ def test_run_matching_threshold_change_forces_a_full_recompute(tmp_path):
         assert db.get_unmatched_references(conn)[0]["compared_at"] is not None
 
 
-# --- CLIP end-to-end (skipped unless open_clip/torch are installed) --------
+# --- CLIP end-to-end (skipped unless open_clip/torch are installed, an error on CI) --------
 
-def test_clip_embedding_end_to_end(base_image, config):
-    pytest.importorskip("torch")
-    pytest.importorskip("open_clip")
+def test_clip_embedding_end_to_end(base_image, config, require_clip):
     from nyra.match import compute_clip_embedding
 
     emb_a = compute_clip_embedding(base_image, config)

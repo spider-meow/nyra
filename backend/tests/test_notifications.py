@@ -256,3 +256,22 @@ def test_the_trigger_function_has_a_pinned_search_path(cloud_database_url):
     with cloud_db.connect(cloud_database_url) as conn:
         config = conn.execute("SELECT proconfig FROM pg_proc WHERE proname = 'guard_member_notifications'").fetchone()["proconfig"]
     assert config and any(item.startswith("search_path=") for item in config)
+
+
+def test_the_public_api_cannot_delete_a_membership_the_team_blocked_nor_recreate_it(api_role, client, org_with_users, second_admin, cloud_database_url):
+    """AXE-578: delete then recreate with the defaults used to lift the Nyra team's block."""
+    org_id, _, admin_id, client_id, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        # the earlier test that applies migration 35 twice leaves its insert/update-only trigger: start from the current one
+        conn.execute((MIGRATIONS_DIR / "20261027000037_member_delete_guard.sql").read_text(encoding="utf-8"))
+        conn.execute((MIGRATIONS_DIR / "20261027000037_member_delete_guard.sql").read_text(encoding="utf-8"))  # twice: idempotent
+        conn.execute("UPDATE memberships SET monthly_email_allowed = false WHERE org_id = %s AND user_id = %s", (org_id, second_admin))
+    delete = "DELETE FROM public.memberships WHERE org_id = %s AND user_id = %s"
+    for actor in (admin_id, second_admin):  # a co-administrator, and the blocked person themselves
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            as_user(cloud_database_url, actor, delete, (org_id, second_admin))
+    assert flags(cloud_database_url, org_id, second_admin) == (False, True)
+    # an unblocked membership is still removed by an administrator through the public API, as before
+    assert as_user(cloud_database_url, admin_id, delete, (org_id, client_id)) == 1
+    # the backend (service role) still removes a blocked member
+    assert client.delete(f"/api/orgs/{org_id}/members/{second_admin}", headers=_headers(admin_id)).status_code == 200

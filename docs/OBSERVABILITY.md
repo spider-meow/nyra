@@ -219,6 +219,13 @@ On the server, the Grafana agent (Alloy) reads the Docker logs and sends
 them to Loki; query them by brand with
 `{container="nyra-worker-1"} | json | org_id="…"`.
 
+**Rate-limit refusals (429).** The web process writes one warning per person and kind (read or write) and per minute
+at most, whatever the number of refused requests: `rate limit: 500 read request(s) refused for user <uuid> in
+organization <uuid>` (the organization is left out when the path names none). It holds identifiers and the count,
+never an address or a token. Query: `{container="nyra-web-1"} | json | message=~"rate limit:.*"`. A person who stops
+before the next report leaves their last refusals uncounted. Read it to see whether `NYRA_RATE_READ_PER_MIN` /
+`NYRA_RATE_WRITE_PER_MIN` are too low for a real customer.
+
 ## Grafana
 
 Grafana Cloud's free tier covers this volume (metrics, logs and alerting,

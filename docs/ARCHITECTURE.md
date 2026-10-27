@@ -137,11 +137,9 @@ office reads both flags in `GET /api/staff/users` (memberships). *Row level secu
 manage memberships » policy (all commands), so an administrator could change their own row through Supabase's public API; the
 trigger `guard_member_notifications` refuses, for the roles `anon` and `authenticated`, any change of
 `monthly_email_allowed`, any change of another person's `monthly_email_wanted`, and a new row that does not start with both
-on; the backend (service role / owner) is not touched; the function pins `search_path = ''`. *Known limit:* the trigger covers
-neither `DELETE` nor `TRUNCATE`: an administrator of an organization (role `authenticated`, through Supabase's public API) can
-delete a co-administrator's row that the team blocked and recreate it with the defaults, which lifts the block. They must be an
-administrator of the SAME organization, the interface does not do it, and it is not access across organizations; to improve:
-move the two booleans to a table without a « FOR ALL » policy, or cover `DELETE`. *Before the migration,* `GET /api/staff/users`
+on; the backend (service role / owner) is not touched; the function pins `search_path = ''`. *Delete* (migration `20261027000037`, AXE-578): the same trigger refuses, for those roles, the `DELETE` of a row the team
+blocked (`monthly_email_allowed = false`), so an administrator can no longer delete a co-administrator's row and recreate it with the
+defaults; the backend's removal of a member is not touched. `TRUNCATE` is not covered (no route of the public API exposes it). *Before migration 35,* `GET /api/staff/users`
 still works (`users_overview` reads both columns through `to_jsonb` with `true` as the default). *Screens:* Réglages > Notifications (a section of « Mon compte »; the
 list of e-mails a person can switch off, one for now: « Résumé mensuel »; boxes disabled with a sentence for a non-administrator
 and for « bloqué par l'équipe Nyra »; a sentence says the service e-mails, invitation and new password, are Supabase Auth's and
