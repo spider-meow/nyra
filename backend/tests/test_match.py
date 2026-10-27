@@ -12,7 +12,7 @@ import io
 
 import numpy as np
 import pytest
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageEnhance
 
 from nyra.config import MatchConfig
 from nyra.match import (
@@ -383,6 +383,55 @@ def test_clip_embeddings_of_a_batch_equal_those_of_each_image_alone_in_the_same_
             assert np.allclose(single, in_batch, atol=1e-3), (size, index)
             neighbour = batched[(index + 1) % len(images)]
             assert not np.allclose(single, neighbour, atol=1e-3), (size, index)  # the images are told apart: an inverted batch fails
+
+
+def _sunset(size: int = 256) -> Image.Image:
+    img = Image.new("RGB", (size, size))
+    draw = ImageDraw.Draw(img)
+    for y in range(size):
+        draw.line([(0, y), (size, y)], fill=(255, int(200 - y * 0.6), int(80 + y * 0.2)))
+    draw.ellipse([size // 2 - 30, size // 2 - 30, size // 2 + 30, size // 2 + 30], fill=(255, 240, 200))
+    draw.polygon([(0, size), (size // 3, size * 2 // 3), (size * 2 // 3, size * 3 // 4), (size, size)], fill=(30, 20, 40))
+    return img
+
+
+def _chessboard(size: int = 256) -> Image.Image:
+    img = Image.new("RGB", (size, size))
+    draw = ImageDraw.Draw(img)
+    for i in range(8):
+        for j in range(8):
+            draw.rectangle([i * size // 8, j * size // 8, (i + 1) * size // 8, (j + 1) * size // 8], fill=(240, 240, 240) if (i + j) % 2 else (30, 30, 30))
+    draw.ellipse([size // 3, size // 3, size * 2 // 3, size * 2 // 3], fill=(200, 30, 30))
+    return img
+
+
+def _stripes(size: int = 256) -> Image.Image:
+    img = Image.new("RGB", (size, size), (240, 230, 200))
+    draw = ImageDraw.Draw(img)
+    for x in range(0, size, 32):
+        draw.rectangle([x, 0, x + 16, size], fill=(20, 90, 160))
+    draw.rectangle([size // 4, size // 4, size * 3 // 4, size * 3 // 4], fill=(250, 200, 40))
+    return img
+
+
+def test_clip_ranks_a_retouched_copy_above_every_other_image_with_a_margin(config, require_clip):
+    """Regression guard for the model and its preprocessing, not a measure of recall (that needs a real library, `nyra calibrate`).
+    Synthetic photos built here (no file, no licence). Measured with the current model: own copy 0.85 to 1.00, any other
+    photo 0.60 to 0.75, margin 0.19 at the least."""
+    from nyra.match import compute_clip_embeddings
+
+    photos = [make_base_image(), make_different_image(), _sunset(), _chessboard(), _stripes()]
+    retouches = {"crop": lambda p: crop(p, 0.15), "half size": lambda p: resize(p, 0.5), "colour": lambda p: ImageEnhance.Color(p).enhance(1.6),
+                 "jpeg": lambda p: recompress_jpeg(p, 30), "banner": add_text_overlay}
+    originals = compute_clip_embeddings(photos, config)
+    for name, retouch in retouches.items():
+        copies = compute_clip_embeddings([retouch(photo) for photo in photos], config)
+        for index, copy in enumerate(copies):
+            own = cosine_similarity(originals[index], copy)
+            others = [cosine_similarity(original, copy) for other, original in enumerate(originals) if other != index]
+            assert own >= config.clip_similarity_floor, (name, index, own)  # a copy is proposed
+            assert max(others) < config.clip_similarity_floor, (name, index, max(others))  # another photo is not
+            assert own - max(others) >= 0.10, (name, index, own, max(others))
 
 
 def test_site_images_set_aside_are_left_out_and_changing_the_set_forces_a_full_pass(tmp_path):
