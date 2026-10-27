@@ -154,3 +154,43 @@ def test_a_forwarded_header_cannot_pick_another_bucket(app_client):
     for n in range(3):
         app_client.get("/api/me", headers={**headers, "X-Forwarded-For": f"10.0.0.{n}"})
     assert app_client.get("/api/me", headers={**headers, "X-Forwarded-For": "10.9.9.9"}).status_code == 429
+
+
+def test_refusals_are_reported_once_a_minute_with_their_number():
+    limiter, clock = _limiter(read=1)
+    assert limiter.refused("a", "read") == 1  # the first one is reported at once
+    assert [limiter.refused("a", "read") for _ in range(499)] == [0] * 499
+    assert limiter.refused("b", "read") == 1  # another person has their own count
+    clock.now += 60
+    assert limiter.refused("a", "read") == 500  # 499 counted in silence + this one
+    assert limiter.refused("a", "read") == 0
+
+
+def test_forgotten_refusal_counts_are_purged_and_capped():
+    limiter, clock = _limiter(read=1, max_keys=3)
+    for who in "abcd":
+        limiter.refused(who, "read")
+    assert len(limiter._refusals) == 3
+    clock.now += 120
+    limiter.wait("z", "read")  # a purge runs inside wait
+    assert len(limiter._refusals) == 0
+
+
+def test_the_app_logs_one_warning_a_minute_for_a_person_over_the_limit(app_client, caplog):
+    headers, org = _bearer(), uuid.uuid4()
+    with caplog.at_level(logging.WARNING, logger="nyra.api"):
+        for _ in range(503):
+            app_client.get(f"/api/orgs/{org}/members", headers=headers)
+    messages = [r.getMessage() for r in caplog.records if "rate limit" in r.getMessage()]
+    assert len(messages) == 1
+    assert f"in organization {org}" in messages[0] and "read" in messages[0]
+    assert headers["Authorization"].split()[-1] not in messages[0]
+
+
+def test_a_path_that_is_not_an_organization_id_stays_out_of_the_log(app_client, caplog):
+    headers = _bearer()
+    with caplog.at_level(logging.WARNING, logger="nyra.api"):
+        for _ in range(5):
+            app_client.get("/api/orgs/not-an-id-forged/members", headers=headers)
+    messages = [r.getMessage() for r in caplog.records if "rate limit" in r.getMessage()]
+    assert len(messages) == 1 and "organization" not in messages[0] and "forged" not in messages[0]
