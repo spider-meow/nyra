@@ -162,9 +162,11 @@ pas l'existant d'un bloc : on corrige ce qu'on touche (règle du scout).
 - **Avertissements de tests** : aucun. Celui du client de test (httpx) est
   filtré nommément dans `pyproject.toml`.
 - **Couverture** : le contrôle de points clés (OpenCV) tourne dans les tests,
-  mais pas les embeddings CLIP (torch absent en CI, un test est ignoré) ; les
-  pages du front ne sont vérifiées que par des scénarios de navigateur écrits à
-  la main, pas par des tests automatiques.
+  les embeddings CLIP aussi (torch CPU est installé en CI, le modèle est
+  téléchargé à chaque exécution). Sur CI, un torch ou un open_clip absent fait
+  échouer les tests CLIP (fixture `require_clip`) ; en local sans torch ils sont
+  ignorés. Les pages du front ne sont vérifiées que par des scénarios de
+  navigateur écrits à la main, pas par des tests automatiques.
 
 ## Sous-agents : déléguer et se challenger
 
