@@ -1107,9 +1107,12 @@ def test_a_time_out_exits_even_when_the_database_does_not_answer(worker, cloud_d
     job = _claimed_check(cloud_database_url, cloud_org, cloud_brand)
     ctx = worker_module.JobContext(cloud_database_url, job)
     ctx.close()
-    threading.Thread(target=ctx._time_out, daemon=True).start()
+    thread = threading.Thread(target=ctx._time_out, daemon=True)
+    thread.start()
     assert exited.wait(3)  # the timer left the process while the write was still blocked
     release.set()
+    thread.join(5)  # it ends with its own exit: it must be over before `monkeypatch` gives the real `os._exit` back (AXE-611)
+    assert not thread.is_alive()
 
 
 def test_the_main_thread_stops_the_heartbeat_before_it_writes_the_outcome(worker, cloud_database_url, cloud_org,
