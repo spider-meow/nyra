@@ -17,6 +17,7 @@ import uuid
 from collections import OrderedDict
 from typing import Callable, Mapping, Optional
 
+import psycopg
 from fastapi import HTTPException, Request
 
 log = logging.getLogger("nyra.api")
@@ -25,6 +26,9 @@ log = logging.getLogger("nyra.api")
 # several tabs and screens. Writes (launching a job, sending files, editing) are fewer by nature.
 DEFAULTS = {"read": 300, "write": 120}
 ENV_NAMES = {"read": "NYRA_RATE_READ_PER_MIN", "write": "NYRA_RATE_WRITE_PER_MIN"}
+BACKENDS = ("memory", "database")
+DB_TIMEOUT = 1.0  # seconds to get a pooled connection for one bucket; a database that does not answer must not hold every request
+DB_RETRY_AFTER = 30.0  # seconds a failed database is left alone: the process's own buckets limit meanwhile
 EXEMPT_PATHS = frozenset({"/api/healthz", "/api/workerz", "/api/auth/config"})
 MAX_KEYS = 10_000  # one entry per person and kind: a few dozen bytes each, well under a megabyte
 PURGE_EVERY = 60.0  # seconds; a bucket idle for a minute is full again, so forgetting it changes nothing
@@ -47,6 +51,16 @@ def limits_from_env(environ: Mapping[str, str]) -> dict[str, int]:
             continue
         limits[kind] = value
     return limits
+
+
+def backend_from_env(environ: Mapping[str, str]) -> str:
+    """`NYRA_RATE_BACKEND`: where the buckets live. `memory` (default) or `database`; any other value logs a warning and keeps `memory`."""
+    raw = environ.get("NYRA_RATE_BACKEND", "").strip().lower()
+    if raw in BACKENDS:
+        return raw
+    if raw:
+        log.warning("NYRA_RATE_BACKEND=%r is not one of %s; keeping memory.", raw, ", ".join(BACKENDS))
+    return "memory"
 
 
 class RateLimiter:
@@ -119,6 +133,42 @@ def _in_org(request: Request) -> str:
         return f" in organization {uuid.UUID(str(request.path_params.get('org_id')))}"
     except ValueError:
         return ""
+
+
+class DatabaseRateLimiter(RateLimiter):
+    """The same buckets kept in Postgres (`take_rate_token`, migration 38), so that every web process shares one limit and a
+    restart forgets nothing. `connect()` gives a pooled connection as a context manager (with a short wait for it).
+
+    If the database fails, the process falls back on its own memory buckets for `DB_RETRY_AFTER` seconds (so the limit is
+    still there, per process, as before) and logs one warning a minute at most; requests are never refused because of it.
+    ponytail: one database round trip per limited request (measured in docs/DEPLOYMENT.md); batching per person and minute
+    in memory would remove it but lets a person overshoot by the batch size."""
+
+    def __init__(self, limits: Mapping[str, int], connect: Callable, **kwargs):
+        super().__init__(limits, **kwargs)
+        self._connect = connect
+        self._down_until = 0.0
+        self._last_warning = -math.inf
+        self._last_db_purge = self._clock()
+
+    def wait(self, identity: str, kind: str) -> float:
+        now = self._clock()
+        if now < self._down_until:
+            return super().wait(identity, kind)
+        try:
+            with self._connect() as conn:
+                wait = conn.execute("SELECT public.take_rate_token(%s, %s, %s) AS wait", (identity, kind, self._limits[kind])).fetchone()["wait"]
+                if now - self._last_db_purge >= PURGE_EVERY:
+                    self._last_db_purge = now
+                    conn.execute("SELECT public.purge_rate_buckets()")
+            return wait
+        except psycopg.Error as error:  # includes the pool's timeout: logged, and the memory buckets take over for a while
+            self._down_until = now + DB_RETRY_AFTER
+            if now - self._last_warning >= PURGE_EVERY:
+                self._last_warning = now
+                log.warning("rate limit: the database did not answer (%s); using this process's own limit for %d seconds.",
+                            type(error).__name__, DB_RETRY_AFTER)
+            return super().wait(identity, kind)
 
 
 def enforce(limiter: RateLimiter, identify: Callable[[str], Optional[str]]):

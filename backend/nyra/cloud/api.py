@@ -25,6 +25,7 @@ from fastapi import Depends, FastAPI, HTTPException
 
 from nyra.config import Config, load_config
 
+from . import db as cloud_db
 from . import mailer, ratelimit
 from . import storage as cloud_storage
 from .routes import (
@@ -120,6 +121,14 @@ def settings_from_env(config_path: Optional[Path] = None) -> CloudSettings:
     )
 
 
+def _limiter(database_url: str) -> ratelimit.RateLimiter:
+    """The buckets in this process's memory, or in Postgres shared by every web process (`NYRA_RATE_BACKEND=database`)."""
+    limits = ratelimit.limits_from_env(os.environ)
+    if ratelimit.backend_from_env(os.environ) == "database":
+        return ratelimit.DatabaseRateLimiter(limits, lambda: cloud_db.pool(database_url).connection(timeout=ratelimit.DB_TIMEOUT))
+    return ratelimit.RateLimiter(limits)
+
+
 def _limiter_dependency(ctx: Ctx):
     """The rate limit, counted per verified user (see cloud/ratelimit.py); read from the environment when the app is built."""
 
@@ -129,7 +138,7 @@ def _limiter_dependency(ctx: Ctx):
         except (HTTPException, ValueError):  # not valid: the route itself answers 401 as before
             return None
 
-    return Depends(ratelimit.enforce(ratelimit.RateLimiter(ratelimit.limits_from_env(os.environ)), identify))
+    return Depends(ratelimit.enforce(_limiter(ctx.settings.database_url), identify))
 
 
 def create_app(settings: CloudSettings) -> FastAPI:

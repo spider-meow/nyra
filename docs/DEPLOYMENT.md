@@ -334,7 +334,7 @@ Not secrets: `NYRA_MAIL_FROM` (the sender, `Nyra <nyra@your-domain.com>` or `nyr
 checked at start: a wrong form stops the server with a clear message. Set it together with `RESEND_API_KEY`: with only one of the two the server starts, a key alone logs one warning, and sending a mail raises `MailNotConfigured`), `SUPABASE_URL`, `NYRA_PUBLIC_URL`, `NYRA_DOMAIN`, `NYRA_ENV`, `NYRA_RELEASE`, `NYRA_LABELS`,
 `NYRA_LOG_FORMAT`, `NYRA_LOG_LEVEL`, `SENTRY_TRACES_SAMPLE_RATE`, `NYRA_DB_POOL_MAX`, `NYRA_IMAGE_CACHE`,
 `NYRA_IMAGE_CACHE_MB`, `NYRA_WORKER_ALIVE_FILE`, `NYRA_ALLOW_PRIVATE_HOSTS`, `NYRA_RATE_READ_PER_MIN`,
-`NYRA_RATE_WRITE_PER_MIN`. Also keep the Droplet's SSH
+`NYRA_RATE_WRITE_PER_MIN`, `NYRA_RATE_BACKEND`. Also keep the Droplet's SSH
 access and the DigitalOcean and GitHub accounts behind 2FA.
 
 ### Rotating a secret, step by step
@@ -435,12 +435,22 @@ against guessing, it adds a widget to the page, a decision for the team), *Provi
 
 **Rate limit of the API (per signed-in user).** `web` refuses a person who sends too many requests in a minute with
 `429` and a `Retry-After` header (a sentence in French in `detail`; the interface shows it like any other error). A token
-bucket per user, in the process's memory, with a burst as large as the minute's allowance:
+bucket per user, in the process's memory by default (or in Postgres, below), with a burst as large as the minute's allowance:
 
 | Variable | Default | Counts |
 |---|---|---|
 | `NYRA_RATE_READ_PER_MIN` | `300` | `GET`/`HEAD`/`OPTIONS` of one user (the interface polls `jobs/current` every 2 s: 30 a minute) |
 | `NYRA_RATE_WRITE_PER_MIN` | `120` | every other method of one user (launching a job, sending files, editing; an upload sends 8 files per request) |
+| `NYRA_RATE_BACKEND` | `memory` | `memory`: one bucket table per web process. `database`: the buckets live in Postgres (`rate_buckets`, migration `20261027000038`), shared by every web process, kept across a restart. Any other value is ignored with a warning |
+
+**Several web processes: switch to `database`.** In memory, N processes allow N times the limit and a restart gives everyone a full bucket. With
+`NYRA_RATE_BACKEND=database` (apply migration `20261027000038_rate_buckets.sql` first, then set the variable and restart `web`),
+each limited request costs one query (`take_rate_token`, atomic: one statement). Measured on a Postgres on the same machine, one
+connection: 0.5 ms on average, 0.6 ms at the 95th percentile, against about 0.001 ms in memory; **not measured against Supabase**, where
+the network adds its own latency to every request of the API: check it before switching on a big instance. If the database does not
+answer (1 second to get a connection), that process falls back on its own memory buckets for 30 seconds and logs one warning a
+minute (`rate limit: the database did not answer`): requests are never refused because of it, and the limit holds per process as
+before. Idle buckets are purged by the same call every minute (`purge_rate_buckets`, buckets idle for 2 minutes).
 
 A value that is not a whole number of 1 or more is ignored with a warning in the log (the default stays). Never limited:
 `GET /api/healthz`, `GET /api/workerz`, `GET /api/auth/config`, the static interface, and any request without a valid token

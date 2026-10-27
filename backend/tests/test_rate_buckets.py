@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 pytest.importorskip("psycopg")
+pytest.importorskip("fastapi")
 
 from conftest import MIGRATIONS_DIR  # noqa: E402
 
@@ -106,3 +107,82 @@ def test_the_migration_can_be_applied_twice_and_keeps_the_buckets(cloud_database
         conn.execute(sql)
         conn.execute(sql)
     assert take(cloud_database_url, person, capacity=1) > 0  # still empty: the table and its rows survived
+
+
+# --- the limiter on top of the buckets (AXE-587) ----------------------------------------------------------------------------
+
+import logging  # noqa: E402
+
+import jwt as pyjwt  # noqa: E402
+import psycopg  # noqa: E402
+from fastapi.testclient import TestClient  # noqa: E402
+
+from nyra.cloud.api import CloudSettings, create_app  # noqa: E402
+from nyra.cloud.ratelimit import DatabaseRateLimiter, backend_from_env  # noqa: E402
+
+SECRET = "test-secret-at-least-32-bytes-long-enough!!"
+
+
+class Clock:
+    now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_the_backend_comes_from_the_environment_and_an_unknown_value_keeps_memory(caplog):
+    assert backend_from_env({}) == "memory" and backend_from_env({"NYRA_RATE_BACKEND": " Database "}) == "database"
+    with caplog.at_level(logging.WARNING, logger="nyra.api"):
+        assert backend_from_env({"NYRA_RATE_BACKEND": "redis"}) == "memory"
+    assert "redis" in caplog.text
+
+
+def _app(url, monkeypatch):
+    monkeypatch.setenv("NYRA_RATE_BACKEND", "database")
+    monkeypatch.setenv("NYRA_RATE_READ_PER_MIN", "3")
+    return TestClient(create_app(CloudSettings(database_url=url, supabase_url="https://x.supabase.co", service_role_key="key", jwt_secret=SECRET)))
+
+
+def test_two_instances_of_the_app_share_one_limit(cloud_database_url, person, monkeypatch):
+    first, second = _app(cloud_database_url, monkeypatch), _app(cloud_database_url, monkeypatch)
+    token = pyjwt.encode({"sub": person, "aud": "authenticated", "exp": int(datetime.now(timezone.utc).timestamp()) + 3600}, SECRET, algorithm="HS256")
+    headers = {"Authorization": f"Bearer {token}"}
+    # 3 reads a minute for the person, whichever instance answers: the fourth is refused (in memory each instance would allow 3)
+    statuses = [(first, second)[i % 2].get("/api/me", headers=headers).status_code for i in range(4)]
+    assert statuses[:3] == [200] * 3 and statuses[3] == 429
+    assert first.get("/api/healthz").status_code == 200  # never limited
+
+
+def test_a_database_that_fails_falls_back_on_the_process_buckets_with_one_warning(caplog):
+    calls, clock = [], Clock()
+
+    def down():
+        calls.append(1)
+        raise psycopg.OperationalError("down")
+
+    limiter = DatabaseRateLimiter({"read": 2, "write": 2}, down, clock=clock)
+    with caplog.at_level(logging.WARNING, logger="nyra.api"):
+        assert [limiter.wait("a", "read") for _ in range(2)] == [0.0, 0.0]
+        assert limiter.wait("a", "read") > 0  # the limit still holds, in this process
+    assert len(calls) == 1  # the database is left alone for a while after a failure
+    assert caplog.text.count("did not answer") == 1
+    clock.now += 31
+    limiter.wait("b", "read")
+    assert len(calls) == 2  # tried again
+
+
+def test_an_unreachable_database_costs_at_most_the_pool_timeout_once(monkeypatch):
+    import time
+
+    from nyra.cloud import ratelimit
+
+    monkeypatch.setattr(ratelimit, "DB_TIMEOUT", 0.3)
+    url = "postgresql://x:x@127.0.0.1:1/none?connect_timeout=1"
+    limiter = DatabaseRateLimiter({"read": 5, "write": 5}, lambda: cloud_db.pool(url).connection(timeout=ratelimit.DB_TIMEOUT))
+    started = time.monotonic()
+    try:
+        assert limiter.wait("a", "read") == 0.0
+        assert limiter.wait("a", "read") == 0.0
+        assert time.monotonic() - started < 2
+    finally:
+        cloud_db.close_pools()  # the pool retries in the background, and would log into a closed stream after the run
