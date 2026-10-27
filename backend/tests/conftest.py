@@ -5,6 +5,7 @@ no external services and doesn't touch anything here.
 
 from __future__ import annotations
 
+import importlib
 import os
 import uuid
 from pathlib import Path
@@ -212,3 +213,14 @@ def client(cloud_database_url, fake_storage_client):
 def labels_on(monkeypatch):
     """Labels are off unless NYRA_LABELS=1; this must come before `client` in a test's arguments (the app reads it when built)."""
     monkeypatch.setenv("NYRA_LABELS", "1")
+
+
+@pytest.fixture(scope="session")
+def require_clip() -> None:
+    """torch and open_clip for the CLIP tests: ignored on a machine without them, an error when `CI` is set
+    (GitHub Actions does), so that a broken install cannot turn the CLIP tests into a silent skip."""
+    for name in ("torch", "open_clip"):
+        if os.environ.get("CI"):
+            importlib.import_module(name)
+        else:
+            pytest.importorskip(name)
