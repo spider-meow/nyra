@@ -28,9 +28,19 @@ jobs:
           cache: pip
       # CPU torch keeps the install small. torchvision comes from the same index:
       # one from PyPI next to this torch fails on import ("torchvision::nms does not exist").
-      # The CLIP end-to-end test downloads the model weights (~600 MB) once per run.
+      # The CLIP tests download the model weights (~600 MB) when they are not in the cache (step below).
       - run: pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2" torchvision
       - run: pip install -e ".[worker,dev]"
+      # The CLIP tests download the model weights (~600 MB): kept from one run to the next, under a key made of the model named
+      # in config.yaml (another model, another key). With no cache, or a miss, the tests download them as before.
+      - id: clip
+        run: |
+          model=$(grep -E '^\s*clip_(model_name|pretrained):' config.yaml | sed -E 's/.*: *"?([^"]*)"?/\1/' | tr '\n' '-')
+          echo "model=$model" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/huggingface
+          key: clip-${{ steps.clip.outputs.model }}
       - run: ruff check backend
       - run: pytest -q
       # Known vulnerabilities in the installed dependencies (PyPI advisory database). pip-audit has no
