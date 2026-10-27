@@ -11,6 +11,9 @@ export default defineConfig({
     },
   },
   build: {
+    // "hidden": the maps are written but never named in the files served (no `sourceMappingURL`), so a browser never asks
+    // for them. The Dockerfile takes them out of dist/ before the web image; they are for Sentry only (docs/OBSERVABILITY.md).
+    sourcemap: "hidden",
     rollupOptions: {
       output: {
         // Libraries change far less often than the app: separate files cache separately.
