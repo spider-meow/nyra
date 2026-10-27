@@ -29,7 +29,7 @@ dependencies = [
 # `nyra worker` and the offline CLI pipeline.
 worker = [
     # torch brings filelock; 3.32.3 has 3 known advisories (pip-audit), fixed in 4.2.1.
-    "filelock>=4.2.1",
+    "filelock>=4.2.4",
     "playwright>=1.44",
     "open_clip_torch>=2.24",
     "torch>=2.14.1",
