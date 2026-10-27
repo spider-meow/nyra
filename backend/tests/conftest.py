@@ -101,6 +101,27 @@ def cloud_database_url() -> str:
     return url
 
 
+@pytest.fixture(autouse=True)
+def _leave_no_rows_behind(request):
+    """The cloud tests share one database: what a test adds to `organizations` (everything of an organization goes with it, by
+    cascade) and to `auth.users` is removed after it. Else a second run on the same database finds 70 organizations from the
+    first, the back office lists are cut off before the test's own, and an organization made through the API (« Hennessy »)
+    already exists (AXE-593)."""
+    if "cloud_database_url" not in request.fixturenames:
+        yield
+        return
+    import psycopg
+
+    url = request.getfixturevalue("cloud_database_url")
+    with psycopg.connect(url, autocommit=True) as conn:
+        orgs = [row[0] for row in conn.execute("SELECT id FROM public.organizations")]
+        users = [row[0] for row in conn.execute("SELECT id FROM auth.users")]
+    yield
+    with psycopg.connect(url, autocommit=True) as conn:
+        conn.execute("DELETE FROM public.organizations WHERE id <> ALL(%s)", (orgs,))
+        conn.execute("DELETE FROM auth.users WHERE id <> ALL(%s)", (users,))
+
+
 @pytest.fixture()
 def cloud_org(cloud_database_url: str):
     """A fresh organization for one test, so tests don't collide."""
