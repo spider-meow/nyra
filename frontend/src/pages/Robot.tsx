@@ -3,7 +3,7 @@ import { Button } from "../components/ui";
 
 // What the robot signs its requests with: keep in step with `crawl.user_agent` in config.yaml.
 const CONTACT = "contact@axelproject.fr";
-const USER_AGENT = `NyraBot/0.1 (+https://github.com/spider-meow/nyra; contact: ${CONTACT})`;
+const USER_AGENT = `NyraBot/0.1 (+https://nyra.axelproject.fr/robot; contact: ${CONTACT})`;
 const ROBOTS_TXT = "User-agent: NyraBot\nDisallow: /";
 const IP_ADDRESS = "188.166.17.130";
 

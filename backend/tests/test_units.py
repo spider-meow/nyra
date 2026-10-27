@@ -432,3 +432,13 @@ def test_quotas_refuse_fractions_of_whole_numbers_and_numbers_too_large_to_read(
     for bad in ({"brands": 3.9}, {"brands": float("inf")}, {"brands": 10**400}, {"storage_gb": float("nan")}, {"storage_gb": float("inf")}):
         with pytest.raises(ValueError):
             validate_quota(bad)
+
+
+def test_the_robot_signature_is_the_same_in_the_config_and_on_its_page_and_points_to_that_page():
+    """Every site the robot visits sees this string: it must send a webmaster to the public /robot page (AXE-594), not to the code."""
+    page = (Path(__file__).resolve().parents[2] / "frontend" / "src" / "pages" / "Robot.tsx").read_text(encoding="utf-8")
+    contact = re.search(r'CONTACT = "([^"]+)"', page).group(1)
+    shown = re.search(r"USER_AGENT = `([^`]+)`", page).group(1).replace("${CONTACT}", contact)
+    signature = load_config().crawl.user_agent
+    assert shown == signature
+    assert "(+https://nyra.axelproject.fr/robot;" in signature and "github.com" not in signature
