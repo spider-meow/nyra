@@ -366,6 +366,25 @@ def test_clip_embedding_end_to_end(base_image, config, require_clip):
     assert similarity > 0.99
 
 
+def test_clip_embeddings_of_a_batch_equal_those_of_each_image_alone_in_the_same_order(config, require_clip):
+    """Indexing and reading sites embed in batches: the vectors must not depend on the batch size, nor change order."""
+    from dataclasses import replace
+
+    from nyra.match import compute_clip_embeddings
+
+    images = [make_base_image(), make_different_image(), Image.new("RGB", (256, 256), (220, 20, 20)),
+              Image.new("RGB", (256, 256), (20, 20, 220)), crop(make_base_image(), 0.3)]
+    alone = [compute_clip_embeddings([image], config)[0] for image in images]
+    for size in (len(images), 2):  # one batch, then batches of 2, 2 and 1
+        batched = compute_clip_embeddings(images, replace(config, embedding_batch_size=size))
+        assert len(batched) == len(images)
+        for index, (single, in_batch) in enumerate(zip(alone, batched)):
+            assert cosine_similarity(single, in_batch) > 0.9999, (size, index)
+            assert np.allclose(single, in_batch, atol=1e-3), (size, index)
+            neighbour = batched[(index + 1) % len(images)]
+            assert not np.allclose(single, neighbour, atol=1e-3), (size, index)  # the images are told apart: an inverted batch fails
+
+
 def test_site_images_set_aside_are_left_out_and_changing_the_set_forces_a_full_pass(tmp_path):
     from nyra import db
     from nyra.match import run_matching, signature
