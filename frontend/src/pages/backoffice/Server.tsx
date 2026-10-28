@@ -6,6 +6,7 @@ import { api, errorMessage } from "../../lib/api";
 import { bytes, duration, num, percent, plural } from "../../lib/format";
 import { toneClass } from "../BackOfficeSections";
 import type { ServerUsage, ServiceReading } from "../../types";
+import { HistorySection } from "./ServerHistory";
 
 /** A worker publishes every 15 s: past a minute without news it is taken for stopped. */
 const SILENT_SECONDS = 60;
@@ -93,6 +94,7 @@ export function Server() {
           <Section title="Conteneurs" description="Mis à jour toutes les 5 s. Un worker publie ses chiffres toutes les 15 s, même pendant une lecture.">
             <Table head={["Service", "État", "CPU", "Mémoire"]} align={["left", "left", "left", "left"]} rows={services.map(serviceRow)} />
           </Section>
+          <HistorySection />
         </>
       ) : null}
     </>

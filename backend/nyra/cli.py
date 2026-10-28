@@ -225,6 +225,7 @@ def serve_cmd(
     import uvicorn
 
     from nyra import observability
+    from nyra.cloud import hostmetrics
     from nyra.cloud.api import create_app, settings_from_env
 
     env = _cloud_env()  # fails with a clear message when a required variable is missing
@@ -242,6 +243,8 @@ def serve_cmd(
         command = [sys.executable, "-m", "nyra.cli", "worker", *(["--config", str(config)] if config else [])]
         watcher = threading.Thread(target=supervise, args=(command, stop), name="worker-supervisor")
         watcher.start()
+    history = threading.Thread(target=hostmetrics.record_web, args=(settings.database_url, stop), name="web-history", daemon=True)
+    history.start()
     try:
         uvicorn.run(create_app(settings), host=host, port=port, log_level="info", proxy_headers=True, log_config=None)
     finally:

@@ -87,7 +87,7 @@ original's weight.
 Every table holding an organization's data reaches `organizations` through `on delete cascade`: directly by an
 `org_id` column, or through its parent (`image_pages` through `pages`, `brand_logos` through `brands`). So
 `delete from organizations where id = …` removes every row, which `nyra cloud-delete-org` does after the Storage
-files. The tables that are not an organization's are `platform_staff`, `service_metrics`, `rate_buckets` and
+files. The tables that are not an organization's are `platform_staff`, `service_metrics`, `service_metrics_history`, `rate_buckets` and
 `deleted_organizations`. `backend/tests/test_offboarding.py` reads the catalog: a new table must carry an
 `org_id` with the cascade (or be listed in `offboarding.INDIRECT` / `GLOBAL`), and no foreign key may be
 `no action`/`restrict`, or the test fails. Foreign keys to `auth.users` are `set null` (or `cascade` for

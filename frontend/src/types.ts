@@ -556,6 +556,19 @@ export type SupervisionAlert = { code: string; severity: "warning" | "critical";
 /** `GET /staff/server`: the containers' readings and the alarms on right now. */
 export type ServerUsage = { services: ServiceReading[]; alerts: SupervisionAlert[] };
 
+/** `GET /staff/server/history`: per container the mean and peak of each step (`t` in epoch seconds), the machine's disk and load, the job queue. */
+export type ServerHistory = {
+  range: "1h" | "24h" | "7d" | "30d";
+  /** Seconds between two points. */
+  step: number;
+  containers: { instance: string; role: "web" | "worker"; t: number; cpu: number | null; cpu_max: number | null; memory: number; memory_max: number; memory_limit: number | null; cpu_limit: number | null }[];
+  host: { t: number; disk: number; load: number }[];
+  /** Jobs that were waiting / running at some moment of the step, and how long (seconds) those that started in it had waited. */
+  queue: { t: number; queued: number; running: number; wait: number | null; wait_max: number | null }[];
+  /** The share (0 to 1) at which the supervision alerts go off. */
+  thresholds: { disk: number; worker_memory: number };
+};
+
 /** One container's reading (`GET /staff/server`): CPU as % of one core, as in `docker stats`. */
 export type ServiceReading = {
   instance: string;

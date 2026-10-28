@@ -397,3 +397,27 @@ def recent(conn: psycopg.Connection, brand_id: uuid.UUID, limit: int = 20) -> li
         "SELECT * FROM jobs WHERE brand_id = %s ORDER BY created_at DESC LIMIT %s", (brand_id, limit)
     ).fetchall()
     return [_row(row) for row in rows]
+
+
+def queue_history(conn: psycopg.Connection, span: int, step: int) -> list[dict]:
+    """The last `span` seconds in steps of `step`, for the Serveur page: per step (`t`, epoch seconds) the jobs that were
+    waiting and the jobs that were running at some moment of it, and how long the jobs that started in it had waited."""
+    return conn.execute(
+        """WITH recent AS (SELECT created_at, started_at, finished_at FROM jobs
+                           WHERE coalesce(finished_at, 'infinity') > now() - make_interval(secs => %(span)s)),
+                waits AS (SELECT date_bin(make_interval(secs => %(step)s), started_at, 'epoch') AS t,
+                                 avg(EXTRACT(EPOCH FROM started_at - created_at)) AS wait,
+                                 max(EXTRACT(EPOCH FROM started_at - created_at)) AS wait_max
+                          FROM recent WHERE started_at >= now() - make_interval(secs => %(span)s) GROUP BY 1),
+                bins AS (SELECT generate_series(date_bin(make_interval(secs => %(step)s), now() - make_interval(secs => %(span)s), 'epoch'),
+                                                now(), make_interval(secs => %(step)s)) AS t)
+           SELECT EXTRACT(EPOCH FROM b.t)::float AS t,
+                  count(j.created_at) FILTER (WHERE coalesce(j.started_at, j.finished_at, 'infinity') > b.t) AS queued,
+                  count(j.started_at) FILTER (WHERE j.started_at < b.t + make_interval(secs => %(step)s)) AS running,
+                  w.wait::float AS wait, w.wait_max::float AS wait_max
+           FROM bins b
+           LEFT JOIN recent j ON j.created_at < b.t + make_interval(secs => %(step)s) AND coalesce(j.finished_at, 'infinity') > b.t
+           LEFT JOIN waits w ON w.t = b.t
+           GROUP BY b.t, w.wait, w.wait_max ORDER BY b.t""",
+        {"span": span, "step": step},
+    ).fetchall()

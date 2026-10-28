@@ -8,8 +8,10 @@ The web process is read live; each worker publishes its reading every `PUBLISH_S
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shutil
+import socket
 import threading
 import time
 from pathlib import Path
@@ -17,10 +19,17 @@ from typing import Optional
 
 import psycopg
 
+log = logging.getLogger(__name__)
+
 PUBLISH_SECONDS = 15
 CGROUP = Path("/sys/fs/cgroup")
 # A published reading older than this is dropped (a worker that was scaled down or replaced leaves its row).
 KEEP_HOURS = 24
+# The history (`service_metrics_history`, the Serveur page's curves): one row per container and minute, kept this long.
+HISTORY_SECONDS = 60
+HISTORY_DAYS = 30
+# What the curves can show: (span, step) in seconds. The step grows with the span, so a series never has more than ~200 points.
+RANGES = {"1h": (3600, 60), "24h": (86400, 600), "7d": (7 * 86400, 3600), "30d": (30 * 86400, 4 * 3600)}
 
 
 
@@ -107,6 +116,34 @@ def publish(conn: psycopg.Connection, instance: str, role: str, reading: dict) -
         (instance, role, json.dumps(reading)),
     )
     conn.execute("DELETE FROM service_metrics WHERE sampled_at < now() - make_interval(hours => %s)", (KEEP_HOURS,))
+    record_history(conn, instance, role, reading)
+
+
+def record_history(conn: psycopg.Connection, instance: str, role: str, reading: dict) -> None:
+    """Keep this reading in the history unless the container already has one for this minute (the worker calls it every 15 s)."""
+    host = reading["host"]
+    conn.execute(
+        """INSERT INTO service_metrics_history
+               (instance, role, sampled_at, cpu_percent, cpu_limit, memory, memory_limit, load1, disk_ratio)
+           VALUES (%s, %s, date_trunc('minute', now()), %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING""",
+        (instance, role, reading["cpu_percent"], reading["cpu_limit"], reading["memory"], reading["memory_limit"],
+         host["load"][0], host["disk_used"] / host["disk_total"]),
+    )
+    conn.execute("DELETE FROM service_metrics_history WHERE sampled_at < now() - make_interval(days => %s)", (HISTORY_DAYS,))
+
+
+def record_web(database_url: str, stop: threading.Event) -> None:
+    """The web process has no `service_metrics` row (the page reads it live): it only writes its history, every minute."""
+    from . import db as cloud_db  # imported here: `db` is not needed by the readings themselves
+
+    sampler, instance = Sampler(), socket.gethostname()
+    sampler.read()  # the CPU share needs a previous reading: the first history row has one
+    while not stop.wait(HISTORY_SECONDS):
+        try:
+            with cloud_db.connect(database_url) as conn:
+                record_history(conn, instance, "web", sampler.read())
+        except Exception:  # noqa: BLE001 - the curves are a convenience; a missed point must not stop the web process
+            log.exception("recording the web history failed")
 
 
 def published(conn: psycopg.Connection) -> list[dict]:
@@ -115,3 +152,25 @@ def published(conn: psycopg.Connection) -> list[dict]:
         """SELECT instance, role, reading, EXTRACT(EPOCH FROM now() - sampled_at)::float AS age_seconds
            FROM service_metrics ORDER BY role, instance"""
     ).fetchall()
+
+
+def history(conn: psycopg.Connection, span: int, step: int) -> dict:
+    """The last `span` seconds in steps of `step`: per container the mean and peak CPU and memory of each step (`t` in epoch
+    seconds), and the machine's disk and load. A step where a container did not write has no point: a gap stays a gap."""
+    params = {"span": span, "step": step}
+    containers = conn.execute(
+        """SELECT instance, role, EXTRACT(EPOCH FROM date_bin(make_interval(secs => %(step)s), sampled_at, 'epoch'))::float AS t,
+                  avg(cpu_percent)::float AS cpu, max(cpu_percent)::float AS cpu_max, avg(memory)::float AS memory,
+                  max(memory)::float AS memory_max, max(memory_limit)::float AS memory_limit, max(cpu_limit)::float AS cpu_limit
+           FROM service_metrics_history WHERE sampled_at >= now() - make_interval(secs => %(span)s)
+           GROUP BY instance, role, t ORDER BY t""",
+        params,
+    ).fetchall()
+    host = conn.execute(
+        """SELECT EXTRACT(EPOCH FROM date_bin(make_interval(secs => %(step)s), sampled_at, 'epoch'))::float AS t,
+                  avg(disk_ratio)::float AS disk, avg(load1)::float AS load
+           FROM service_metrics_history WHERE sampled_at >= now() - make_interval(secs => %(span)s)
+           GROUP BY t ORDER BY t""",
+        params,
+    ).fetchall()
+    return {"containers": containers, "host": host}

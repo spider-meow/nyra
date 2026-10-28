@@ -59,7 +59,7 @@ Read from inside each container, with no Docker socket: the cgroup counters (`/s
 `memory.current`, minus the droppable cache, as `docker stats` does) plus the host's load, memory and disk
 (`backend/nyra/cloud/hostmetrics.py`). CPU is a share of one core (100 % = one core). The web process is read
 live; each worker publishes every 15 s into `service_metrics` (a busy worker cannot be asked), and the page
-marks one silent after a minute. Rows older than a day are deleted. Without cgroup v2 (a laptop) the figures
+marks one silent after a minute. Rows older than a day are deleted. Under the table, « Usage dans le temps » draws CPU, memory, disk and the job queue (waiting, running, time spent waiting) over 1 h, 24 h, 7 d or 30 d, from `service_metrics_history` (migration `20261028000039`): one row per container and minute, the worker writing it with its reading and the web process from its own thread (`hostmetrics.record_web`), kept 30 days; `GET /api/staff/server/history` averages them in steps of 1 min, 10 min, 1 h or 4 h (about 200 points a series). The queue is rebuilt from `jobs`. A hole in a curve means the container wrote nothing. Without cgroup v2 (a laptop) the figures
 fall back to the process's own. The page opens with the supervision alerts (no worker, a job waiting for nothing, a
 full disk, a worker near its memory limit); the thresholds and their settings are in `DEPLOYMENT.md` (« Supervision
 alerts »). Nothing is sent from them yet.

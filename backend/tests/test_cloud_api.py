@@ -173,6 +173,37 @@ def test_the_serveur_page_gets_the_alerts_and_only_platform_admins_may_read_them
     assert sorted(a["instance"] for a in memory) == ["w1", "w2"]
 
 
+def test_the_history_keeps_one_row_per_minute_and_drops_what_is_older_than_30_days(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DELETE FROM service_metrics_history")
+        conn.execute("""INSERT INTO service_metrics_history (instance, role, sampled_at, memory, load1, disk_ratio)
+                        VALUES ('old', 'worker', now() - interval '31 days', 1, 0, 0)""")
+        for _ in range(4):  # a worker publishes every 15 s: one row for the minute, not four
+            _worker_publishes(conn, "w-history")
+        rows = conn.execute("SELECT instance, disk_ratio FROM service_metrics_history").fetchall()
+    assert rows == [{"instance": "w-history", "disk_ratio": 0.1}]
+
+
+def test_the_server_history_is_for_platform_admins_and_has_a_point_per_step(client, org_with_users, cloud_org, cloud_brand, cloud_database_url):
+    _, _, admin_id, client_id, _ = org_with_users
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DELETE FROM service_metrics_history")
+        conn.execute("""INSERT INTO service_metrics_history (instance, role, sampled_at, cpu_percent, memory, load1, disk_ratio)
+                        SELECT 'w1', 'worker', now() - make_interval(mins => m), 10 * m, 1000, 0.5, 0.25 FROM generate_series(1, 20) m""")
+        conn.execute("""INSERT INTO jobs (org_id, brand_id, kind, status, created_at, started_at, finished_at)
+                        VALUES (%s, %s, 'crawl', 'done', now() - interval '30 min', now() - interval '20 min', now() - interval '10 min')""", (cloud_org, cloud_brand))
+    assert client.get("/api/staff/server/history").status_code == 401
+    assert client.get("/api/staff/server/history", headers=_headers(client_id)).status_code == 403
+    assert client.get("/api/staff/server/history?range=2y", headers=_headers(admin_id)).status_code == 422
+    body = client.get("/api/staff/server/history?range=1h", headers=_headers(admin_id)).json()
+    assert body["step"] == 60 and body["thresholds"] == {"disk": 0.8, "worker_memory": 0.85} and len(body["containers"]) == 20 and {c["instance"] for c in body["containers"]} == {"w1"}
+    assert body["host"][0]["disk"] == 0.25 and max(c["cpu"] for c in body["containers"]) == 200.0
+    day = client.get("/api/staff/server/history", headers=_headers(admin_id)).json()  # 10-minute steps: the 20 rows make 3 or 4 points
+    assert day["range"] == "24h" and 2 <= len(day["containers"]) <= 4 and len(day["queue"]) <= 200
+    assert max(point["wait_max"] or 0 for point in body["queue"]) >= 600  # the job waited 10 minutes
+    assert any(point["queued"] >= 1 for point in body["queue"]) and any(point["running"] >= 1 for point in body["queue"])
+
+
 def test_there_is_no_public_signup(client):
     assert client.post("/api/signup", json={"email": "a@b.c", "password": "12345678"}).status_code in {404, 405}
 
