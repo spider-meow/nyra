@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Button, EmptyState, PageHeader, Skeleton, cx } from "../components/ui";
+import { Button, EmptyState, PageHeader, Skeleton } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useOrg } from "../lib/org";
 import { useAssignments, useLabels } from "../lib/labels";
@@ -9,7 +9,7 @@ import { EditReference } from "./library/EditReference";
 import { ImportCsv } from "./library/ImportCsv";
 import { CollectionTree, FolderBar } from "./library/CollectionTree";
 import { LibraryGrid, RecentCards } from "./library/Grid";
-import { SelectionBar, useBulkEdit, useRemoveReferences } from "./library/Selection";
+import { SelectionHeader, useRemoveReferences } from "./library/Selection";
 import { LibraryToolbar } from "./library/Toolbar";
 import { DropZone, LibraryActions, UploadNotices, useUpload } from "./library/Upload";
 import { newest, useLibraryView, type Tab } from "./library/view";
@@ -58,15 +58,19 @@ export function Library() {
   const [editing, setEditing] = useState<LibraryItem | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const changeTab = (next: Tab) => { view.changeTab(next); clear(); };
-  const bulk = useBulkEdit(selected, clear);
+  const pickedItems = useMemo(() => items.filter((item) => selected.has(item.filename)), [items, selected]);
   const { removeNames, removing } = useRemoveReferences((names) => {
     setPicked((current) => new Set([...current].filter((name) => !names.includes(name)))); // keep the picks that were not deleted
     setEditing(null);
   });
 
   return (
-    <div className={cx("relative", admin && selected.size > 0 && "pb-20")}>
-      <PageHeader title="Bibliothèque" actions={<LibraryActions up={up} onImport={() => setImportOpen(true)} />} />
+    <div className="relative">
+      {admin && selected.size > 0 ? (
+        <SelectionHeader items={pickedItems} visibleCount={view.visible.length} folders={view.folders} labels={labels} onSelectAll={() => setPicked(new Set(view.visible.map((item) => item.filename)))} onClear={clear} removing={removing} onRemove={removeNames} />
+      ) : (
+        <PageHeader title="Bibliothèque" actions={<LibraryActions up={up} onImport={() => setImportOpen(true)} />} />
+      )}
       <UploadNotices up={up} indexing={Boolean(library.data?.indexing)} folders={view.folders} current={openFolder} />
 
       {library.isLoading || library.error || !items.length ? (
@@ -79,7 +83,6 @@ export function Library() {
           <div className="min-w-0">
           <FolderBar view={view} />
           <LibraryToolbar view={view} onTab={changeTab} landing={browsing} />
-          {admin && selected.size ? <SelectionBar selected={selected} referenceIds={items.filter((item) => selected.has(item.filename)).map((item) => item.id)} labels={labels} folders={view.folders} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
           {thumbs.failed ? <p role="status" className="mb-3 text-[13px] text-muted">Vignettes indisponibles pour le moment.</p> : null}
           <DropZone up={up} folders={view.folders} current={openFolder}>
             {browsing ? (

@@ -100,6 +100,7 @@ cd frontend && npm run check:rows  # le regroupement par photo de « À traiter 
 cd frontend && npm run check:paths # les adresses de l'interface et la redirection des anciennes
 cd frontend && npm run check:retry # le rejeu des requêtes refusées par la limite de débit (429)
 cd frontend && npm run check:drop  # le dépôt de fichiers sur la page : seuls les fichiers comptent, pas de doublon, le survol se termine
+cd frontend && npm run check:selection # ce que le menu d'actions dit de la sélection (dates, tags, collections)
 cd frontend && npm run check:emails # l'aperçu des e-mails : iframe sandbox="" sans permission, aucun innerHTML
 pytest -q                          # sans warning non justifié
 ```
