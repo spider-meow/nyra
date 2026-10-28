@@ -285,6 +285,12 @@ numbers and the report itself are pure functions over plain dicts in
   office's « Ouvrir l'espace » links to `/o/<slug>`; `OrgShell` asks `GET /api/staff/organizations/open/{slug}` when the
   slug is not among the caller's organizations (`staff_view: true`), and a banner says whose space it is. Tests:
   `test_isolation.py` (`test_a_platform_admin_*`).
+- **The browser writes nothing to the database or to Storage** (AXE-625). `frontend/src` has no `supabase.from`, `rpc` or `storage` call;
+  the Supabase session only signs in. Every write goes through `/api`, where the backend (service role or owner, which bypass RLS) checks
+  the role, the quotas and the organization and writes `audit_log`. The `authenticated` role therefore has **no write policy and no
+  `INSERT`/`UPDATE`/`DELETE` right** (migration `20261028000041`): someone who calls PostgREST or Storage by hand with their session can
+  read what their organization may read, and nothing else. A new table gets reads only (a `SELECT` policy by `org_id`); if the browser ever
+  has to write directly, it needs a function that checks quotas and traces, not a write policy. Tests: `test_rls_writes.py`.
 - **Where an author is kept, and what a client sees of a platform admin who is not a member** (audit AXE-584, 28 October 2026;
   `test_nothing_the_client_reads_names_the_platform_admin_who_acted_in_its_space` writes the author as them everywhere, then reads
   every route below as a client and as an administrator and looks for the address and the identifier in bodies and headers):

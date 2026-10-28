@@ -2,8 +2,9 @@
 
 `test_isolation.py` goes through the backend's routes, which use the service role and never meet the RLS policies. This one does:
 each attempt runs in a savepoint, as the role, and says whether the write went through. The audit of the write policies (AXE-579) is
-this table: `DENIED` rows must stay denied; `ACCEPTED` rows are known and intended; `GAPS` are the holes found, expected to fail
-(`xfail`, strict) until the migration of AXE-625 closes them, and then the test says so.
+this table. Since the migration of AXE-625 (`20261028000041_no_direct_writes.sql`) every one of them is refused: the write policies are
+gone, and so are the `INSERT`/`UPDATE`/`DELETE` rights of `authenticated`. The first scenarios held before (denied by a policy), the rest
+were the holes found (AXE-622, 623, 624) and the writes the backend does through its own routes.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -20,6 +22,8 @@ import psycopg  # noqa: E402
 from psycopg.rows import dict_row  # noqa: E402
 
 from nyra.cloud import db as cloud_db  # noqa: E402
+
+MIGRATIONS = Path(__file__).resolve().parents[2] / "supabase" / "migrations"
 
 
 @dataclass
@@ -98,8 +102,8 @@ DENIED = [
     ("nobody makes themselves a platform admin", "admin", "INSERT INTO platform_staff (user_id) VALUES (%(admin)s)"),
 ]
 
-# Known and intended: the backend lets an admin do the same through its routes.
-ACCEPTED = [
+# Writes that used to go through, and the backend still does through its routes (with its own checks). Directly: refused.
+THROUGH_THE_ROUTES_ONLY = [
     ("an admin promotes a client (as the Members page does)", "admin", "UPDATE memberships SET role = 'admin' WHERE user_id = %(client)s"),
     ("an admin removes a co-member (as the Members page does)", "admin", "DELETE FROM memberships WHERE user_id = %(client)s AND org_id = %(org_a)s"),
     ("an admin writes the settings: read back through `validate_overrides`, which keeps the whitelist and the caps", "admin",
@@ -108,8 +112,8 @@ ACCEPTED = [
      "INSERT INTO sites (org_id, brand_id, url) VALUES (%(org_a)s, %(brand_a)s, 'http://169.254.169.254/')"),
 ]
 
-# The holes found by the audit. Each fails the day the migration of AXE-625 closes it (strict xfail: then remove the mark).
-GAPS = [
+# The holes found by the audit (AXE-579): the issue that found each one.
+CLOSED_GAPS = [
     ("AXE-622", "an admin points a reference at another organization's file", "admin",
      "UPDATE reference_images SET storage_path = %(other_path)s, thumb_path = %(other_path)s WHERE id = %(ref)s"),
     ("AXE-622", "an admin points a site image at another organization's file", "admin",
@@ -140,15 +144,28 @@ def test_these_writes_stay_denied(world, label, who, sql):
     assert not _run(world, who, sql), label
 
 
-@pytest.mark.parametrize("label,who,sql", ACCEPTED, ids=[row[0] for row in ACCEPTED])
-def test_these_writes_are_known_and_intended(world, label, who, sql):
-    assert _run(world, who, sql), label
-
-
-@pytest.mark.parametrize("issue,label,who,sql", GAPS, ids=[f"{row[0]} {row[1]}" for row in GAPS])
-def test_these_writes_must_be_denied_once_the_write_policies_are_gone(world, request, issue, label, who, sql):
-    request.applymarker(pytest.mark.xfail(strict=True, reason=f"{issue}: closed by the migration of AXE-625"))
+@pytest.mark.parametrize("label,who,sql", THROUGH_THE_ROUTES_ONLY, ids=[row[0] for row in THROUGH_THE_ROUTES_ONLY])
+def test_these_writes_go_through_the_routes_only(world, label, who, sql):
     assert not _run(world, who, sql), label
+
+
+@pytest.mark.parametrize("issue,label,who,sql", CLOSED_GAPS, ids=[f"{row[0]} {row[1]}" for row in CLOSED_GAPS])
+def test_the_holes_of_the_audit_are_closed(world, issue, label, who, sql):
+    assert not _run(world, who, sql), f"{issue}: {label}"
+
+
+def test_the_migration_takes_the_write_rights_of_every_table_and_keeps_the_reads(world):
+    """Run on top of Supabase's default rights (all of them given to `authenticated`), the file leaves nobody a write and every read."""
+    world.conn.execute((MIGRATIONS / "20261028000041_no_direct_writes.sql").read_text(encoding="utf-8"))
+    tables = [row["relname"] for row in world.conn.execute(
+        "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relkind = 'r'").fetchall()]
+    assert len(tables) > 20
+    for table in tables:
+        for right in ("INSERT", "UPDATE", "DELETE"):
+            assert not world.conn.execute("SELECT has_table_privilege('authenticated', %s, %s) AS yes", (f"public.{table}", right)).fetchone()["yes"], (table, right)
+        assert world.conn.execute("SELECT has_table_privilege('authenticated', %s, 'SELECT') AS yes", (f"public.{table}",)).fetchone()["yes"], table
+    left = world.conn.execute("SELECT tablename, policyname FROM pg_policies WHERE schemaname IN ('public', 'storage') AND cmd <> 'SELECT'").fetchall()
+    assert left == [], left  # no write policy remains, in public or in Storage
 
 
 def test_a_member_reads_the_organization_and_a_stranger_does_not(world):
