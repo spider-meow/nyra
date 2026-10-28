@@ -119,6 +119,193 @@ export function BarHistory(props: { bars: Bar[]; format: (value: number) => stri
   );
 }
 
+export type LinePoint = { t: number; v: number | null };
+export type LineSeries = { key: string; label: string; color: string; points: LinePoint[]; /** Text next to the label: the values, so the color is never alone. */ summary?: string };
+/** A horizontal reference: a limit or an alert threshold. */
+export type LineMark = { value: number; label: string };
+
+/** The stretches of a series without a hole: two points more than 1.5 steps apart (a silent container) are not joined. */
+function runs(points: LinePoint[], step: number): LinePoint[][] {
+  const out: LinePoint[][] = [];
+  let last: number | null = null;
+  for (const point of points) {
+    if (point.v === null) {
+      last = null;
+      continue;
+    }
+    if (last === null || point.t - last > step * 1.5) out.push([]);
+    out[out.length - 1].push(point);
+    last = point.t;
+  }
+  return out;
+}
+
+type Scale = { x: (t: number) => number; y: (v: number) => number };
+
+/** One series as paths: a line per run, and apart the runs of a single point (a dot, since a lone point draws no line). */
+function seriesPaths(series: LineSeries, step: number, scale: Scale): { line: string; dots: string } {
+  const point = (p: LinePoint) => `${scale.x(p.t).toFixed(1)} ${scale.y(p.v ?? 0).toFixed(1)}`;
+  const all = runs(series.points, step);
+  return {
+    line: all.filter((run) => run.length > 1).map((run) => `M${run.map(point).join("L")}`).join(""),
+    dots: all.filter((run) => run.length === 1).map((run) => `M${point(run[0])}h0`).join(""),
+  };
+}
+
+/** The hover card of the line chart: the time, then each series' value at the nearest point. */
+function LineTooltip(props: { series: LineSeries[]; t: number; at: number; format: (value: number) => string; tFormat: (t: number) => string }) {
+  return (
+    <div
+      className="pointer-events-none absolute top-0 z-10 w-max max-w-64 rounded-lg border border-line bg-paper px-3 py-2 text-xs shadow-lg"
+      style={{ left: `${props.at * 100}%`, transform: props.at > 0.5 ? "translateX(calc(-100% - 8px))" : "translateX(8px)" }}
+      role="status"
+    >
+      <p className="text-muted">{props.tFormat(props.t)}</p>
+      <dl className="mt-1 grid grid-cols-[auto_auto_auto] items-center gap-x-2 gap-y-0.5">
+        {props.series.map((series) => {
+          const value = series.points.find((point) => point.t === props.t)?.v;
+          return (
+            <div key={series.key} className="contents">
+              <span className="h-2 w-2 rounded-full" style={{ background: series.color }} aria-hidden />
+              <dt className="text-muted">{series.label}</dt>
+              <dd className="text-right font-medium text-ink tabular">{value === null || value === undefined ? "—" : props.format(value)}</dd>
+            </div>
+          );
+        })}
+      </dl>
+    </div>
+  );
+}
+
+/** The drawing: grid, reference lines, the series and the vertical rule at the active time. */
+function LineDrawing(props: { series: LineSeries[]; marks: LineMark[]; ticks: number[]; step: number; scale: Scale; height: number; active: number | null }) {
+  const { scale, height } = props;
+  return (
+    <svg className="absolute inset-0 h-full w-full overflow-visible" viewBox={`0 0 1000 ${height}`} preserveAspectRatio="none" aria-hidden>
+      {props.ticks.map((tick) => (
+        <line key={tick} x1={0} x2={1000} y1={scale.y(tick)} y2={scale.y(tick)} stroke={tick === 0 ? "var(--color-line-strong)" : "var(--color-line)"} vectorEffect="non-scaling-stroke" />
+      ))}
+      {props.marks.map((mark) => (
+        <line key={mark.label} x1={0} x2={1000} y1={scale.y(mark.value)} y2={scale.y(mark.value)} stroke="var(--color-expired)" strokeDasharray="4 4" vectorEffect="non-scaling-stroke" />
+      ))}
+      {props.series.map((series) => {
+        const { line, dots } = seriesPaths(series, props.step, scale);
+        return (
+          <g key={series.key} fill="none" stroke={series.color} strokeLinecap="round" strokeLinejoin="round">
+            <path d={line} strokeWidth={2} vectorEffect="non-scaling-stroke" />
+            <path d={dots} strokeWidth={6} vectorEffect="non-scaling-stroke" />
+          </g>
+        );
+      })}
+      {props.active !== null ? <line x1={scale.x(props.active)} x2={scale.x(props.active)} y1={0} y2={height} stroke="var(--color-line-strong)" vectorEffect="non-scaling-stroke" /> : null}
+    </svg>
+  );
+}
+
+/** What is printed under the chart: each series with its values as text, then the reference lines. */
+function LineLegend(props: { series: LineSeries[]; marks: LineMark[] }) {
+  return (
+    <ul className="ml-14 mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      {props.series.map((series) => (
+        <li key={series.key} className="flex items-center gap-1.5">
+          <span className="h-2 w-2 rounded-full" style={{ background: series.color }} aria-hidden />
+          <span className="text-ink-soft">{series.label}</span>
+          {series.summary ? <span className="text-muted tabular">{series.summary}</span> : null}
+        </li>
+      ))}
+      {props.marks.map((mark) => (
+        <li key={mark.label} className="flex items-center gap-1.5 text-muted">
+          <span className="w-3 border-t border-dashed border-expired" aria-hidden />
+          {mark.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** The time of the point nearest to `t` (within two steps), or null. */
+function nearestTime(times: number[], t: number, step: number): number | null {
+  const nearest = times.reduce<number | null>((best, time) => (best === null || Math.abs(time - t) < Math.abs(best - t) ? time : best), null);
+  return nearest !== null && Math.abs(nearest - t) <= step * 2 ? nearest : null;
+}
+
+/**
+ * Several series over time: a line per stretch without a hole, dashed reference lines, a vertical rule and a card at the
+ * nearest point on hover (the arrow keys move it). The legend prints each series' values as text.
+ */
+export function LineHistory(props: {
+  series: LineSeries[];
+  /** Seconds between two points: a longer gap is drawn as a gap. */
+  step: number;
+  /** The window shown, epoch seconds. */
+  domain: [number, number];
+  format: (value: number) => string;
+  /** The y axis ticks, short; `format` by default. */
+  axisFormat?: (value: number) => string;
+  tFormat: (t: number) => string;
+  title: string;
+  /** Top of the y axis; by default the largest value or reference, rounded up. */
+  max?: number;
+  marks?: LineMark[];
+  height?: number;
+}) {
+  const [active, setActive] = useState<number | null>(null);
+  const height = props.height ?? 160;
+  const marks = props.marks ?? [];
+  const [from, to] = props.domain;
+  const times = [...new Set(props.series.flatMap((series) => series.points.filter((point) => point.v !== null).map((point) => point.t)))].sort((a, b) => a - b);
+  const peak = Math.max(0, ...props.series.flatMap((series) => series.points.map((point) => point.v ?? 0)), ...marks.map((mark) => mark.value));
+  const max = props.max ?? niceMax(peak);
+  const scale: Scale = { x: (t) => ((t - from) / (to - from)) * 1000, y: (v) => height - (v / max) * height };
+  const ticks = [0, max / 2, max];
+  const axisFormat = props.axisFormat ?? props.format;
+
+  function onKey(key: string) {
+    const index = active === null ? -1 : times.indexOf(active);
+    if (key === "ArrowLeft") setActive(times[Math.max(0, (index < 0 ? times.length : index) - 1)] ?? null);
+    if (key === "ArrowRight") setActive(times[Math.min(times.length - 1, index + 1)] ?? null);
+    if (key === "Escape") setActive(null);
+  }
+
+  if (!times.length) return <p className="py-8 text-center text-sm text-muted">Pas encore de relevé sur cette période.</p>;
+
+  return (
+    <figure className="m-0 pt-2">
+      <div className="flex gap-2">
+        <div className="relative w-12 shrink-0 text-right text-[11px] text-muted tabular" style={{ height }} aria-hidden>
+          {ticks.map((tick) => (
+            <span key={tick} className="absolute right-0 -translate-y-1/2" style={{ top: `${100 - (tick / max) * 100}%` }}>
+              {tick === 0 ? "0" : axisFormat(tick)}
+            </span>
+          ))}
+        </div>
+        <div
+          className="relative min-w-0 flex-1 outline-none focus-visible:ring-2 focus-visible:ring-focus"
+          style={{ height }}
+          tabIndex={0}
+          role="img"
+          aria-label={props.title}
+          onMouseMove={(event) => {
+            const box = event.currentTarget.getBoundingClientRect();
+            setActive(nearestTime(times, from + ((event.clientX - box.left) / box.width) * (to - from), props.step));
+          }}
+          onMouseLeave={() => setActive(null)}
+          onKeyDown={(event) => onKey(event.key)}
+          onBlur={() => setActive(null)}
+        >
+          <LineDrawing series={props.series} marks={marks} ticks={ticks} step={props.step} scale={scale} height={height} active={active} />
+          {active !== null ? <LineTooltip series={props.series} t={active} at={(active - from) / (to - from)} format={props.format} tFormat={props.tFormat} /> : null}
+        </div>
+      </div>
+      <div className="ml-14 mt-1.5 flex justify-between text-[11px] text-muted" aria-hidden>
+        <span>{props.tFormat(from)}</span>
+        <span>{props.tFormat(to)}</span>
+      </div>
+      <LineLegend series={props.series} marks={marks} />
+    </figure>
+  );
+}
+
 export type Segment = { key: string; label: string; value: number };
 
 /** Parts of a whole on one horizontal bar, with a legend that carries every value as text. */

@@ -41,6 +41,7 @@ supabase/migrations/
   20261025000035_member_notifications.sql           e-mails de Nyra : colonnes `monthly_email_allowed` (équipe Nyra) et `monthly_email_wanted` (la personne) sur `memberships`, vraies par défaut, et un déclencheur qui empêche l'API publique de les contourner (additive, idempotente : à appliquer AVANT le déploiement du code, qui attend les colonnes)
   20261027000037_member_delete_guard.sql            le déclencheur de `memberships` refuse aussi, pour `anon` et `authenticated`, de supprimer une ligne bloquée par l'équipe (`monthly_email_allowed = false`) ; sans effet sur le backend (AXE-578)
   20261027000038_rate_buckets.sql                   limitation de débit partagée : table `rate_buckets` (seaux à jetons par personne et par genre, non journalisée, sans accès pour l'API publique), fonctions `take_rate_token` (atomique) et `purge_rate_buckets` ; sans effet tant que `NYRA_RATE_BACKEND` n'est pas `database` (AXE-586)
+  20261028000039_service_metrics_history.sql        historique de « Back office > Serveur » : table `service_metrics_history` (un relevé par minute et par conteneur, 30 jours, sans accès pour l'API publique) ; additive (AXE-612)
 ```
 
 ## Marques (012 puis 013)

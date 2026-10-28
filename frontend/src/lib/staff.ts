@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { MailList, MailPreview, Member, StaffAdmin, StaffOrg, StaffUsage, StaffUser } from "../types";
+import type { MailList, MailPreview, Member, ServerHistory, StaffAdmin, StaffOrg, StaffUsage, StaffUser } from "../types";
 import { api } from "./api";
 
 /** The back office's lists and what changes them. Any change refreshes every list, and the sidebar's organizations. */
@@ -17,6 +17,11 @@ export function useStaffAdmins() {
 
 export function useStaffUsage() {
   return useQuery({ queryKey: ["staff", "usage"], queryFn: () => api.get<StaffUsage>("/staff/usage") });
+}
+
+/** The Serveur page's curves; one refresh a minute is as often as a point is written. */
+export function useServerHistory(range: ServerHistory["range"]) {
+  return useQuery({ queryKey: ["staff", "server-history", range], queryFn: () => api.get<ServerHistory>(`/staff/server/history?range=${range}`), refetchInterval: 60_000 });
 }
 
 export function useStaffEmails() {

@@ -10,8 +10,9 @@ from __future__ import annotations
 import socket
 import uuid
 from collections import defaultdict
+from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from .. import alerts as cloud_alerts
@@ -19,6 +20,7 @@ from .. import audit as cloud_audit
 from .. import db as cloud_db
 from .. import hostmetrics
 from .. import insights as cloud_insights
+from .. import jobs as cloud_jobs
 from .. import usage as cloud_usage
 from .common import Ctx, brand_json, get_ctx, iso, staff_dep
 from .members import find_or_invite_user
@@ -160,6 +162,19 @@ def server_usage(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict
         state = cloud_alerts.current(conn, workers)
     web = {"instance": socket.gethostname(), "role": "web", "reading": _WEB.read(), "age_seconds": 0.0}
     return {"services": [web, *workers], "alerts": state["alerts"]}
+
+
+@router.get("/api/staff/server/history")
+def server_history(period: Literal["1h", "24h", "7d", "30d"] = Query("24h", alias="range"), claims=Depends(staff_dep),
+                   ctx: Ctx = Depends(get_ctx)) -> dict:
+    """The curves of the Serveur page: what each container used and the machine's disk and load over the period, and the
+    queue of jobs (waiting, running, time spent waiting). At most ~200 points per series, whatever the period."""
+    span, step = hostmetrics.RANGES[period]
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        usage = hostmetrics.history(conn, span, step)
+        queue = cloud_jobs.queue_history(conn, span, step)
+    limits = cloud_alerts.thresholds()
+    return {"range": period, "step": step, **usage, "queue": queue, "thresholds": {"disk": limits.disk, "worker_memory": limits.worker_memory}}
 
 
 class QuotasBody(BaseModel):
