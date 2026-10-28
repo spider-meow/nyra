@@ -74,6 +74,7 @@ jobs:
       - run: npm run check:paths
       - run: npm run check:retry
       - run: npm run check:drop
+      - run: npm run check:order
       - run: npm run check:selection
       - run: npm run check:emails
       - run: npx playwright install --with-deps chromium

@@ -13,6 +13,7 @@ import io
 import itertools
 import time
 import uuid
+from pathlib import Path
 
 import pytest
 from PIL import Image, ImageDraw
@@ -1648,6 +1649,72 @@ def test_collections_move_under_another_within_three_levels(client, org_with_use
     assert move(season, None).status_code == 200  # back to the top
     add("Winter 25-26", hub)
     assert move(season, hub).status_code == 409  # a sibling already has that name
+
+
+def _names(client, base, headers, parent=None):
+    """The names of the collections under one parent, in the order the library gives them."""
+    return [c["name"] for c in client.get(f"{base}/library", headers=headers).json()["collections"] if c["parent_id"] == parent]
+
+
+def test_collections_keep_the_order_chosen_and_new_ones_come_last(client, org_with_users):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    admin, member = _headers(admin_id), _headers(client_id)
+
+    def add(name, parent=None):
+        return client.post(f"{base}/collections", headers=admin, json={"name": name, "parent_id": parent}).json()["collection"]["id"]
+
+    def order(ids, parent=None, headers=admin):
+        return client.put(f"{base}/collections/order", headers=headers, json={"parent_id": parent, "ids": ids})
+
+    zeta, alpha, mid = add("Zeta"), add("Alpha"), add("Mid")
+    assert _names(client, base, member) == ["Zeta", "Alpha", "Mid"]  # the order of creation, no longer the alphabet
+    assert order([mid, zeta, alpha]).status_code == 200
+    assert _names(client, base, member) == ["Mid", "Zeta", "Alpha"]  # for every member
+    sub_b, sub_a = add("B", alpha), add("A", alpha)
+    assert order([sub_a, sub_b], parent=alpha).status_code == 200
+    assert _names(client, base, member, alpha) == ["A", "B"] and _names(client, base, member) == ["Mid", "Zeta", "Alpha"]  # a level at a time
+    assert client.put(f"{base}/collections/{zeta}", headers=admin, json={"name": "Omega"}).status_code == 200
+    assert _names(client, base, member) == ["Mid", "Omega", "Alpha"]  # a rename keeps its place
+    assert client.post(f"{base}/collections/{mid}/move", headers=admin, json={"parent_id": alpha}).status_code == 200
+    assert _names(client, base, member, alpha) == ["A", "B", "Mid"] and _names(client, base, member) == ["Omega", "Alpha"]  # a move lands last
+    assert order([alpha, zeta]).status_code == 200 and _names(client, base, member) == ["Alpha", "Omega"]
+    assert client.get(f"/api/orgs/{org_id}/audit", headers=admin).json()["events"][0]["action"] == "collection.reorder"
+
+
+def test_collections_refuse_an_order_that_is_not_the_whole_level(client, org_with_users):
+    org_id, base, admin_id, client_id, _ = org_with_users
+    admin = _headers(admin_id)
+    ids = [client.post(f"{base}/collections", headers=admin, json={"name": name}).json()["collection"]["id"] for name in ("A", "B", "C")]
+    sub = client.post(f"{base}/collections", headers=admin, json={"name": "S", "parent_id": ids[0]}).json()["collection"]["id"]
+
+    def order(sent, parent=None, headers=admin):
+        return client.put(f"{base}/collections/order", headers=headers, json={"parent_id": parent, "ids": sent})
+
+    assert order(ids[::-1], headers=_headers(client_id)).status_code == 403  # a client does not order
+    for stale in (ids[:2], [*ids, sub], [ids[0], ids[0], ids[1], ids[2]], [*ids[:2], str(uuid.uuid4())]):
+        assert order(stale).status_code == 409, stale  # one missing, one of another level, a repeated one, an unknown one
+    assert order([sub], parent=ids[1]).status_code == 409  # a collection under another parent
+    assert order([sub], parent=str(uuid.uuid4())).status_code == 404 and order([]).status_code == 422
+    assert _names(client, base, admin) == ["A", "B", "C"]  # nothing was written
+    other = client.post(f"/api/orgs/{org_id}/brands", headers=admin, json={"name": "Autre"}).json()["brand"]
+    assert client.put(f"/api/orgs/{org_id}/brands/{other['id']}/collections/order", headers=admin,
+                      json={"ids": ids}).status_code == 409  # another brand's collections are not this brand's level
+
+
+def test_the_migration_ranks_collections_by_name_once_and_never_resets_a_chosen_order(client, org_with_users, cloud_database_url):
+    _, base, admin_id, _, _ = org_with_users
+    admin = _headers(admin_id)
+    ids = {name: client.post(f"{base}/collections", headers=admin, json={"name": name}).json()["collection"]["id"] for name in ("Zeta", "Alpha", "Mid")}
+    sql = (Path(__file__).resolve().parents[2] / "supabase" / "migrations" / "20261028000042_collection_position.sql").read_text(encoding="utf-8")
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("ALTER TABLE collections DROP COLUMN position")  # as it was before the migration (rolled back below)
+        conn.execute(sql)
+        ranked = {row["name"]: row["position"] for row in conn.execute("SELECT name, position FROM collections WHERE id = ANY(%s)", (list(ids.values()),)).fetchall()}
+        assert ranked == {"Alpha": 0, "Mid": 1, "Zeta": 2}  # the alphabet of before
+        conn.execute("UPDATE collections SET position = 7 WHERE id = %s", (ids["Zeta"],))
+        conn.execute(sql)  # again: nothing is ranked a second time
+        assert conn.execute("SELECT position FROM collections WHERE id = %s", (ids["Zeta"],)).fetchone()["position"] == 7
+        conn.rollback()
 
 
 def test_back_office_lists_are_for_platform_admins_who_also_look_after_any_organizations_people(

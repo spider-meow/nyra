@@ -14,7 +14,7 @@ export type Editing = { add: string | null } | { rename: string } | { move: stri
  * needs no call, the library falls back by itself.
  */
 export function useFolderActions(folders: CollectionIndex) {
-  const { addCollection, renameCollection, moveCollection, removeCollection } = useLibraryMutations();
+  const { addCollection, renameCollection, moveCollection, reorderCollections, removeCollection } = useLibraryMutations();
   const toast = useToast();
   const confirm = useConfirm();
   const [editing, setEditing] = useState<Editing>(null);
@@ -35,6 +35,11 @@ export function useFolderActions(folders: CollectionIndex) {
     if (parentId !== undefined) moveCollection.mutate({ id, parent_id: parentId }, { onError: fail });
   }
 
+  /** `ids`: every child of `parentId` (null = the top level) in the order wanted. */
+  function reorder(parentId: string | null, ids: string[]) {
+    reorderCollections.mutate({ parent_id: parentId, ids }, { onError: fail });
+  }
+
   async function remove(collection: Collection) {
     const inside = folders.subtree(collection.id).length > 1;
     const ok = await confirm({
@@ -45,7 +50,7 @@ export function useFolderActions(folders: CollectionIndex) {
     });
     if (ok) removeCollection.mutate(collection.id, { onError: fail });
   }
-  return { editing, setEditing, submit, move, remove };
+  return { editing, setEditing, submit, move, reorder, remove };
 }
 
 const TOP = "top"; // the value of the "Premier niveau" option: a select value cannot be null

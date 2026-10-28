@@ -7,7 +7,7 @@ export function collectionIndex(collections: Collection[]) {
   const byId = new Map(collections.map((collection) => [collection.id, collection]));
   const children = new Map<string | null, Collection[]>();
   for (const collection of collections) children.set(collection.parent_id, [...(children.get(collection.parent_id) ?? []), collection]);
-  for (const list of children.values()) list.sort((a, b) => a.name.localeCompare(b.name, "fr", { numeric: true }));
+  // The order of `collections` is the one chosen (the API sorts by position): children are not sorted again here.
 
   const path = (id: string): string => {
     const collection = byId.get(id);
