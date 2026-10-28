@@ -72,6 +72,11 @@ class BulkExpiryBody(FilenamesBody):
     unlimited_rights: bool = False
 
 
+class BulkCreditBody(FilenamesBody):
+    # Empty clears the credit of every named visual: the interface asks for it explicitly ("Retirer le crédit").
+    credit: str = Field(default="", max_length=500)
+
+
 class BulkTagsBody(FilenamesBody):
     add: list[str] = Field(default_factory=list, max_length=50)
     remove: list[str] = Field(default_factory=list, max_length=50)
@@ -338,6 +343,17 @@ def bulk_expiry(body: BulkExpiryBody, scope: BrandScope = Depends(brand_admin_de
     with cloud_db.connect(ctx.settings.database_url) as conn:
         updated = cloud_db.set_expiry_for(conn, scope.brand_id, names, expiry, unlimited)
         scope.audit(conn, "library.expiry", "reference", count=updated, unlimited_rights=unlimited, has_expiry=bool(expiry))
+    return {"updated": updated}
+
+
+@router.post(f"{BRAND}/library/credit")
+def bulk_credit(body: BulkCreditBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Set the photo credit of several references at once, or clear it (an empty credit)."""
+    credit = body.credit.strip()
+    names = [safe_filename(name) for name in body.filenames]
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        updated = cloud_db.set_credit_for(conn, scope.brand_id, names, credit or None)
+        scope.audit(conn, "library.credit", "reference", count=updated, cleared=not credit)
     return {"updated": updated}
 
 

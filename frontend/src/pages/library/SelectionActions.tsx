@@ -9,13 +9,13 @@ import { LABELS_ENABLED } from "../../lib/labels";
 import { useLibraryMutations } from "../../lib/queries";
 import type { LabelInfo, LibraryItem } from "../../types";
 import type { CollectionIndex } from "./collections";
-import { dateHint, summarize, whereHint } from "./selectionSummary";
+import { creditHint, dateHint, summarize, whereHint } from "./selectionSummary";
 
-type Dialog = "date" | "unlimited" | "tags" | "folder" | "labels";
+type Dialog = "date" | "unlimited" | "tags" | "folder" | "credit" | "labels";
 
 /** The edits applied to the selected visuals. Each one says how many visuals changed, then ends the selection. */
 function useBulkEdit(names: string[], done: () => void) {
-  const { setExpiry, setTags, fileInCollection } = useLibraryMutations();
+  const { setExpiry, setTags, setCredit, fileInCollection } = useLibraryMutations();
   const toast = useToast();
   const options = (message: string) => ({
     onSuccess: (result: { updated: number }) => {
@@ -28,9 +28,10 @@ function useBulkEdit(names: string[], done: () => void) {
     setDate: (date: string) => setExpiry.mutate({ filenames: names, expiry_date: date, unlimited_rights: false }, options(`Échéance fixée au ${formatDate(date)}`)),
     clearDate: () => setExpiry.mutate({ filenames: names, expiry_date: "", unlimited_rights: false }, options("Échéance retirée")),
     unlimited: () => setExpiry.mutate({ filenames: names, expiry_date: "", unlimited_rights: true }, options("Droits illimités")),
+    credit: (credit: string) => setCredit.mutate({ filenames: names, credit }, options(credit ? "Crédit modifié" : "Crédit retiré")),
     tags: (mode: "add" | "remove", tags: string[]) => setTags.mutate({ filenames: names, [mode]: tags }, options(mode === "add" ? "Tags ajoutés" : "Tags retirés")),
     file: (collectionId: string | null) => fileInCollection.mutate({ filenames: names, collection_id: collectionId }, options(collectionId ? "Visuels classés" : "Visuels sortis de leur collection")),
-    busy: setExpiry.isPending || setTags.isPending || fileInCollection.isPending,
+    busy: setExpiry.isPending || setTags.isPending || setCredit.isPending || fileInCollection.isPending,
   };
 }
 
@@ -88,6 +89,7 @@ function Menu(props: { items: LibraryItem[]; labelsOn: boolean; removing: boolea
           <Row icon="infinity" label="Droits illimités…" hint="Jamais expirés, sans alerte" onClick={() => props.onPick("unlimited")} />
           <Row icon="tag" label="Ajouter ou retirer des tags…" hint={sum.tags ? plural(sum.tags, "tag déjà utilisé", "tags déjà utilisés") : "Aucun tag pour l'instant"} onClick={() => props.onPick("tags")} />
           <Row icon="folders" label="Classer dans une collection…" hint={whereHint(sum.unclassified, sum.collections)} onClick={() => props.onPick("folder")} />
+          <Row icon="user" label="Modifier le crédit…" hint={creditHint(sum.count, sum.withCredit)} onClick={() => props.onPick("credit")} />
           {props.labelsOn ? <Row icon="radar" label="Étiquettes de contenu…" onClick={() => props.onPick("labels")} /> : null}
           <li role="separator" className="my-1 border-t border-line" />
           <Row icon="trash" danger disabled={props.removing} label={props.removing ? "Suppression…" : `Supprimer ${plural(sum.count, "visuel", "visuels")}…`} onClick={() => props.onPick("remove")} />
@@ -169,6 +171,31 @@ function TagsDialog(props: { items: LibraryItem[]; bulk: ReturnType<typeof useBu
   );
 }
 
+function CreditDialog(props: { items: LibraryItem[]; bulk: ReturnType<typeof useBulkEdit>; onClose: () => void }) {
+  const [credit, setCredit] = useState("");
+  const sum = summarize(props.items);
+  return (
+    <Modal
+      open
+      onClose={props.onClose}
+      title={`Crédit photo de ${plural(sum.count, "visuel", "visuels")}`}
+      footer={
+        <>
+          {sum.withCredit ? <button type="button" disabled={props.bulk.busy} className="mr-auto text-[13px] text-expired underline underline-offset-2 disabled:opacity-50" onClick={() => props.bulk.credit("")}>Retirer le crédit</button> : null}
+          <Button onClick={props.onClose}>Annuler</Button>
+          <Button variant="primary" disabled={!credit.trim()} loading={props.bulk.busy} onClick={() => props.bulk.credit(credit.trim())}>Fixer le crédit</Button>
+        </>
+      }
+    >
+      <div className="grid gap-3">
+        <Input value={credit} maxLength={500} placeholder="Studio Dupont" aria-label="Crédit photo" data-autofocus onChange={(event) => setCredit(event.target.value)} />
+        {sum.withCredit ? <p className="rounded-lg bg-peach-soft px-3 py-2 text-[13px] text-bark-800">{plural(sum.withCredit, "visuel a déjà un crédit", "visuels ont déjà un crédit")} : il sera remplacé.</p> : null}
+        <p className="text-[13px] text-muted">« Retirer le crédit » efface le crédit de ces visuels sans rien mettre à la place.</p>
+      </div>
+    </Modal>
+  );
+}
+
 function FolderDialog(props: { items: LibraryItem[]; folders: CollectionIndex; bulk: ReturnType<typeof useBulkEdit>; onClose: () => void }) {
   const [choice, setChoice] = useState<string | null | undefined>(undefined); // undefined: nothing chosen yet; null: out of any collection
   const sum = summarize(props.items);
@@ -243,6 +270,7 @@ export function SelectionActions({ open, onClose, items, folders, labels, onDone
       {dialog === "date" ? <DateDialog items={items} bulk={bulk} onClose={close} /> : null}
       {dialog === "unlimited" ? <UnlimitedDialog items={items} bulk={bulk} onClose={close} /> : null}
       {dialog === "tags" ? <TagsDialog items={items} bulk={bulk} onClose={close} /> : null}
+      {dialog === "credit" ? <CreditDialog items={items} bulk={bulk} onClose={close} /> : null}
       {dialog === "folder" ? <FolderDialog items={items} folders={folders} bulk={bulk} onClose={close} /> : null}
       {dialog === "labels" ? (
         <Modal open onClose={close} title="Étiquettes de contenu" footer={<Button onClick={close}>Fermer</Button>}>

@@ -217,6 +217,7 @@ def test_a_day_of_changes_leaves_one_row_each(client, org_with_users, second_adm
         client.put(f"{base}/library/a.jpg", headers=as_admin, json={"credit": "secret credit", "tags": ["x"]}),
         client.post(f"{base}/library/expiry", headers=as_admin, json={"filenames": ["a.jpg"], "unlimited_rights": True}),
         client.post(f"{base}/library/tags", headers=as_admin, json={"filenames": ["a.jpg"], "add": ["y"]}),
+        client.post(f"{base}/library/credit", headers=as_admin, json={"filenames": ["a.jpg"], "credit": "Studio"}),
         client.post(f"{base}/library/import-csv?apply=true", headers=as_admin, files={"file": ("r.csv", b"filename,credit\na.jpg,me\n")}),
         client.post(f"{base}/collections", headers=as_admin, json={"name": "Été"}),
         client.post(f"{base}/sites", headers=as_admin, json={"url": "https://other.test/"}),
@@ -230,7 +231,7 @@ def test_a_day_of_changes_leaves_one_row_each(client, org_with_users, second_adm
     assert [step.status_code for step in steps] == [200] * len(steps), [step.text for step in steps]
     listed = client.get(f"/api/orgs/{org_id}/audit", headers=as_admin, params={"limit": 200}).json()["events"]
     actions = {event["action"] for event in listed}
-    assert actions >= {"library.upload", "library.update", "library.expiry", "library.tags", "library.import_csv", "collection.create",
+    assert actions >= {"library.upload", "library.update", "library.expiry", "library.credit", "library.tags", "library.import_csv", "collection.create",
                        "site.add", "logos.setting", "review.set", "settings.update", "job.index", "member.invite", "library.delete"}
     review = next(event for event in listed if event["action"] == "review.set")
     assert review["email"] == f"{client_id}@x.com" and review["detail"]["decision"] == "ecarte"  # a plain member's decision is traced too

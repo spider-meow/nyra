@@ -464,6 +464,11 @@ export function useLibraryMutations() {
         api.post<{ updated: number }>(apiPath("/library/expiry"), input),
       onSuccess: () => invalidate("library", "overview", "matches"),
     }),
+    setCredit: useMutation({
+      // An empty credit clears it.
+      mutationFn: (input: { filenames: string[]; credit: string }) => api.post<{ updated: number }>(apiPath("/library/credit"), input),
+      onSuccess: () => invalidate("library"),
+    }),
     setTags: useMutation({
       mutationFn: (input: { filenames: string[]; add?: string[]; remove?: string[] }) =>
         api.post<{ updated: number }>(apiPath("/library/tags"), input),

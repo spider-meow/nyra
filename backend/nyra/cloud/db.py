@@ -662,6 +662,13 @@ def set_expiry_for(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: lis
     return result.rowcount
 
 
+def set_credit_for(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str], credit: Optional[str]) -> int:
+    """The photo credit of the named references (None clears it); how many rows were written."""
+    return conn.execute(
+        "UPDATE reference_images SET credit = %s WHERE brand_id = %s AND filename = ANY(%s)", (credit, brand_id, filenames)
+    ).rowcount
+
+
 def delete_references(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str]) -> list[Row]:
     """Delete and return the deleted rows' storage paths, for cleanup in Storage."""
     return conn.execute(
