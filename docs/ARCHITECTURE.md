@@ -356,7 +356,7 @@ numbers and the report itself are pure functions over plain dicts in
   pixel-capped.
 - **Quotas per organization** (`quota` in `config.yaml`, `cloud/usage.py`): pages read per month (a read stops at
   what is left, a new one is refused), brands, addresses, library, storage, members, invitations per day. Set by the
-  Nyra team only; the client sees its usage in Réglages > Usage.
+  Nyra team only. The settings sections Détection, Usage and Lecture des sites are for platform admins only (`platformOnly` in `Settings.tsx`): an organization's administrators do not see them, and an address `?section=usage` lands on Général. This hides them from the interface; the settings routes still answer an administrator of the organization (an organization's own overrides are validated when read, see `with_overrides`). The client learns it is near a limit from the message of the refusal and the end of a read.
 - **Headers:** CSP (no inline scripts, only the Supabase origin for
   connect/img, plus the Sentry ingest origin in connect when
   `SENTRY_BROWSER_DSN` is set and valid), `X-Frame-Options: DENY`, `nosniff`,

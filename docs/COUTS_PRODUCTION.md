@@ -167,7 +167,7 @@ jour et par organisation laissent cinq organisations sous les 100 e-mails par jo
   (marques, adresses, visuels, stockage, membres) sont comptées dans les tables au moment de la lecture : elles ne
   peuvent pas dériver. Le stockage est une estimation : les copies de travail et vignettes des références ne sont pas
   mesurées, seulement leur original.
-- **Avertissement à 80 %** : sur la page Réglages > Usage du client, dans le back office, et dans le message de fin
+- **Avertissement à 80 %** : sur la page Réglages > Usage (réservée aux platform admins depuis le 28 octobre 2026, le client ne la voit plus), dans le back office, et dans le message de fin
   d'une lecture.
 - **Limites connues** :
   - Pas de verrou. Les tâches de plusieurs marques d'une même organisation tournent en parallèle et chacune prend

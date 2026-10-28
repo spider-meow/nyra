@@ -24,7 +24,8 @@ import { Usage } from "./settings/Usage";
 /** What a section is about: the brand on screen, the whole organization, or the signed-in person. */
 type Group = "marque" | "organisation" | "moi";
 
-type Section = { id: string; label: string; icon: IconName; group: Group; adminOnly?: boolean; render: (data: SettingsData) => ReactNode };
+/** `platformOnly`: only the Nyra team (platform admins) sees it, whatever the person's role in the organization. */
+type Section = { id: string; label: string; icon: IconName; group: Group; adminOnly?: boolean; platformOnly?: boolean; render: (data: SettingsData) => ReactNode };
 
 /** The brand's page: its identity, then what is set aside, then the rare actions. */
 function General() {
@@ -48,9 +49,9 @@ const SECTIONS: Section[] = [
   { id: "collections", label: "Collections", icon: "folders", group: "marque", adminOnly: true, render: () => <Collections /> },
   { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Team /> },
   { id: "audit", label: "Journal d'activité", icon: "eye", group: "organisation", adminOnly: true, render: () => <Audit /> },
-  { id: "detection", label: "Détection", icon: "radar", group: "organisation", adminOnly: true, render: (data) => <Detection data={data} /> },
-  { id: "usage", label: "Usage", icon: "stats", group: "organisation", adminOnly: true, render: () => <Usage /> },
-  { id: "reading", label: "Lecture des sites", icon: "worldSearch", group: "organisation", adminOnly: true, render: (data) => <Reading data={data} /> },
+  { id: "detection", label: "Détection", icon: "radar", group: "organisation", platformOnly: true, render: (data) => <Detection data={data} /> },
+  { id: "usage", label: "Usage", icon: "stats", group: "organisation", platformOnly: true, render: () => <Usage /> },
+  { id: "reading", label: "Lecture des sites", icon: "worldSearch", group: "organisation", platformOnly: true, render: (data) => <Reading data={data} /> },
 ];
 
 function SectionLink(props: { section: Section; active: boolean; onPick: () => void }) {
@@ -92,7 +93,7 @@ function Nav(props: { sections: Section[]; activeId: string; onPick: (id: string
 }
 
 export function Settings() {
-  const { admin, staffView } = useOrg();
+  const { admin, platformAdmin, staffView } = useOrg();
   const settings = useSettings();
   const [params, setParams] = useSearchParams();
 
@@ -100,7 +101,8 @@ export function Settings() {
   if (settings.error || !settings.data) return <EmptyState title="Réglages indisponibles" body={errorMessage(settings.error)} />;
 
   // A platform admin has no membership, so no e-mail of Nyra to switch on or off.
-  const visible = SECTIONS.filter((section) => (admin || !section.adminOnly) && !(staffView && section.id === "notifications"));
+  // An address `?section=usage` of someone who may not see it lands on « Général », like an unknown section.
+  const visible = SECTIONS.filter((section) => (admin || !section.adminOnly) && (platformAdmin || !section.platformOnly) && !(staffView && section.id === "notifications"));
   const active = visible.find((section) => section.id === params.get("section")) ?? visible.find((section) => section.id === "general") ?? visible[0];
   return (
     <>
