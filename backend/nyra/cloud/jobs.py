@@ -138,10 +138,14 @@ def _room_params() -> tuple:
     return list(LIGHT_KINDS), site, site, _cap("NYRA_MAX_HEAVY_JOBS"), model, model, _cap("NYRA_MAX_MODEL_JOBS")
 
 
-def _row(row: Optional[dict]) -> Optional[dict]:
+def _row(row: Optional[dict], *, author: bool = False) -> Optional[dict]:
+    """A job as the API shows it. `created_by` (who started it) stays out unless `author`: the worker alone needs it, and a person
+    is never given the identifier of whoever started a job (a platform admin who is not a member is not named to the client)."""
     if row is None:
         return None
     out = dict(row)
+    if not author:
+        out.pop("created_by", None)
     for key in ("id", "org_id", "brand_id", "created_by"):
         if out.get(key) is not None:
             out[key] = str(out[key])
@@ -244,7 +248,7 @@ def claim(conn: psycopg.Connection) -> Optional[dict]:
         """,
         _room_params(),
     ).fetchone()
-    return _row(row)
+    return _row(row, author=True)  # the worker's: it records who started the job in the reads and reports it makes
 
 
 # A heartbeat or a failure write that waits longer than this (a blocked database) is abandoned, not waited for.

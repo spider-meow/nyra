@@ -464,6 +464,40 @@ def test_a_platform_admin_is_named_to_nobody_as_the_author_of_a_job(client, worl
     assert refused.status_code == 409 and "l'équipe Nyra" in refused.json()["detail"] and "@nyra.test" not in refused.json()["detail"]
 
 
+ADMIN_ONLY = {"usage", "insights", "logos"}  # what a member with the `client` role is refused (read here as the admin)
+
+
+def test_nothing_the_client_reads_names_the_platform_admin_who_acted_in_its_space(client, world, staff_outsider, cloud_database_url):
+    """AXE-584: wherever an author can appear (jobs, reviews, exclusions, labels, reports, brand, scans, page marks, the journal),
+    a member or administrator reading afterwards finds neither the address nor the identifier of a platform admin who is no member."""
+    a, _ = world
+    org, brand, staff = a["org"], a["brand"], _headers(staff_outsider)
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = %s", (org,))
+    base = f"/api/orgs/{org}/brands/{brand}"
+    assert client.post(f"{base}/jobs/match", headers=staff).status_code == 200  # a real job and a real journal row, written by them
+    assert client.post(f"{base}/collections", headers=staff, json={"name": "Vu par Nyra"}).status_code == 200
+    with cloud_db.connect(cloud_database_url) as conn:  # every other place an author is kept, written as them
+        conn.execute("UPDATE jobs SET created_by = %s WHERE org_id = %s", (staff_outsider, org))
+        conn.execute("UPDATE excluded_hashes SET created_by = %s WHERE org_id = %s", (staff_outsider, org))
+        conn.execute("UPDATE image_labels SET created_by = %s WHERE org_id = %s", (staff_outsider, org))
+        conn.execute("UPDATE brands SET created_by = %s WHERE id = %s", (staff_outsider, brand))
+        conn.execute("UPDATE crawl_runs SET triggered_by = %s WHERE org_id = %s", (staff_outsider, org))
+        conn.execute("UPDATE reviews SET reviewed_by = %s WHERE org_id = %s", (staff_outsider, org))
+        conn.execute("UPDATE page_replacements SET marked_by = %s WHERE org_id = %s", (staff_outsider, org))
+        cloud_db.create_report(conn, org_id=org, brand_id=brand, within_days=30, storage_path_html="r.html", storage_path_csv="r.csv",
+                               storage_path_not_found_csv="n.csv", stats={}, generated_by=staff_outsider)
+    paths = [f"/api/orgs/{org}/{p}" for p in ("members", "settings", "usage", "me/notifications")] + [
+        f"{base}/{p}" for p in ("sites", "insights", "overview", "jobs", "jobs/current", "scans", "library",
+                                "library/export-csv", "logos", "matches", "visuals", "reports", "schedule", "site-images", "exclusions")]
+    sweep = [(who, path) for who in ("client", "admin") for path in paths] + [("admin", f"/api/orgs/{org}/audit")]
+    for who, path in sweep:
+        answer = client.get(path, headers=_headers(a[who]))
+        assert answer.status_code == (403 if who == "client" and path.rsplit("/", 1)[-1] in ADMIN_ONLY else 200), (who, path, answer.status_code)
+        seen = answer.text + str(dict(answer.headers))
+        assert str(staff_outsider) not in seen and "@nyra.test" not in seen, (who, path)
+
+
 def test_a_member_of_an_organization_stays_a_member_there_and_a_stranger_gets_nothing(client, world, cloud_database_url):
     a, b = world
     # a client of A (not a platform admin): A's brand under A is theirs to read, B in any way is a 403
