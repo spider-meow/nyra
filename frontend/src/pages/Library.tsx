@@ -11,7 +11,7 @@ import { CollectionTree, FolderBar } from "./library/CollectionTree";
 import { LibraryGrid, RecentCards } from "./library/Grid";
 import { SelectionBar, useBulkEdit, useRemoveReferences } from "./library/Selection";
 import { LibraryToolbar } from "./library/Toolbar";
-import { LibraryActions, UploadNotices, useUpload } from "./library/Upload";
+import { DropZone, LibraryActions, UploadNotices, useUpload } from "./library/Upload";
 import { newest, useLibraryView, type Tab } from "./library/view";
 
 const RECENT_CARDS = 4; // one row at the widest layout
@@ -65,15 +65,14 @@ export function Library() {
   });
 
   return (
-    <div
-      {...up.dropProps}
-      className={cx("relative", admin && selected.size > 0 && "pb-20", up.dragging && "after:pointer-events-none after:absolute after:inset-0 after:rounded-xl after:border-2 after:border-dashed after:border-focus after:bg-focus-soft/40")}
-    >
+    <div className={cx("relative", admin && selected.size > 0 && "pb-20")}>
       <PageHeader title="Bibliothèque" actions={<LibraryActions up={up} onImport={() => setImportOpen(true)} />} />
       <UploadNotices up={up} indexing={Boolean(library.data?.indexing)} folders={view.folders} current={openFolder} />
 
       {library.isLoading || library.error || !items.length ? (
-        <LibraryNotice loading={library.isLoading} error={library.error} admin={admin} uploading={up.uploader.uploading} onPick={up.pick} />
+        <DropZone up={up} folders={view.folders} current={openFolder}>
+          <LibraryNotice loading={library.isLoading} error={library.error} admin={admin} uploading={up.uploader.uploading} onPick={up.pick} />
+        </DropZone>
       ) : (
         <div className="lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8">
           <CollectionTree view={view} />
@@ -82,11 +81,13 @@ export function Library() {
           <LibraryToolbar view={view} onTab={changeTab} landing={browsing} />
           {admin && selected.size ? <SelectionBar selected={selected} referenceIds={items.filter((item) => selected.has(item.filename)).map((item) => item.id)} labels={labels} folders={view.folders} bulk={bulk} removing={removing} onRemove={removeNames} onClear={clear} /> : null}
           {thumbs.failed ? <p role="status" className="mb-3 text-[13px] text-muted">Vignettes indisponibles pour le moment.</p> : null}
-          {browsing ? (
-            <RecentCards items={recent} total={view.visible.length} thumbs={thumbs.urls} labelsOf={labelsOf} onEdit={setEditing} onAll={() => setShowAll(true)} />
-          ) : (
-            <LibraryGrid view={view} thumbs={thumbs.urls} labelsOf={labelsOf} selected={selected} setSelected={setPicked} onEdit={setEditing} />
-          )}
+          <DropZone up={up} folders={view.folders} current={openFolder}>
+            {browsing ? (
+              <RecentCards items={recent} total={view.visible.length} thumbs={thumbs.urls} labelsOf={labelsOf} onEdit={setEditing} onAll={() => setShowAll(true)} />
+            ) : (
+              <LibraryGrid view={view} thumbs={thumbs.urls} labelsOf={labelsOf} selected={selected} setSelected={setPicked} onEdit={setEditing} />
+            )}
+          </DropZone>
           </div>
         </div>
       )}

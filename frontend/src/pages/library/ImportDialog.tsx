@@ -38,12 +38,15 @@ export function ImportDialog({ files, folders, current, onCancel, onSend }: Prop
   const [name, setName] = useState("");
   const [openedFor, setOpenedFor] = useState<File[]>([]);
   if (files !== openedFor) {
-    const next = startingPoint(files.length, folders, current);
     setOpenedFor(files);
-    setMode(next.mode); // each import starts from the context, with no common value
-    setExisting(next.existing);
-    setName(next.name);
-    setRights({ expiry: "", unlimited: false });
+    if (!openedFor.length) {
+      // Opening: each import starts from the context, with no common value. Files dropped onto the open dialog keep the choices made.
+      const next = startingPoint(files.length, folders, current);
+      setMode(next.mode);
+      setExisting(next.existing);
+      setName(next.name);
+      setRights({ expiry: "", unlimited: false });
+    }
   }
   const names = files.map((file) => file.name);
   const hasFolders = folders.byId.size > 0;

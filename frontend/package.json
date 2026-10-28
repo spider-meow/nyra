@@ -9,6 +9,7 @@
     "size": "node scripts/check-bundle-size.mjs",
     "check:scrub": "node scripts/check-scrub.mjs",
     "check:rows": "node scripts/check-rows.mjs",
+    "check:drop": "node scripts/check-drop.mjs",
     "check:maps": "node scripts/check-maps.mjs",
     "check:paths": "node scripts/check-paths.mjs",
     "check:remember": "node scripts/check-remember.mjs",

@@ -1,6 +1,8 @@
-import { useRef, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useToast } from "../../components/feedback";
-import { Button, Card } from "../../components/ui";
+import { Icon } from "../../components/icons";
+import { Button, Card, cx } from "../../components/ui";
+import { carriesFiles, dragDepth, mergeFiles } from "../../lib/dropzone";
 import { plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { errorMessage } from "../../lib/api";
@@ -28,6 +30,8 @@ export function useUpload(onFiled: (collectionId: string) => void) {
   const { addCollection } = useLibraryMutations();
   const toast = useToast();
   const fileInput = useRef<HTMLInputElement>(null);
+  // The area of the visuals: the only place where a drop is taken (see the effect below).
+  const zone = useRef<HTMLDivElement>(null);
   const [failures, setFailures] = useState<Failure[]>([]);
   // The refused files themselves, to send them again in one click.
   const [retryable, setRetryable] = useState<File[]>([]);
@@ -38,8 +42,9 @@ export function useUpload(onFiled: (collectionId: string) => void) {
   const [lastRights, setLastRights] = useState<UploadRights>(NO_RIGHTS);
   const [lastCollection, setLastCollection] = useState<string | undefined>();
 
+  // A drop while the dialog is open adds to what it holds: the choices already made stay.
   function stage(files: File[]) {
-    if (admin && files.length) setStaged(files);
+    if (admin && files.length) setStaged((waiting) => mergeFiles(waiting, files));
   }
 
   async function upload(files: File[], rights: UploadRights = lastRights, destination: Destination = { collectionId: lastCollection }) {
@@ -73,25 +78,43 @@ export function useUpload(onFiled: (collectionId: string) => void) {
     });
   }
 
-  // Spread on the page: dropping image files anywhere on it uploads them.
-  const dropProps = {
-    onDragOver: (event: DragEvent) => {
-      if (!admin) return;
-      event.preventDefault();
-      setDragging(true);
-    },
-    onDragLeave: (event: DragEvent) => {
-      if (event.currentTarget === event.target) setDragging(false);
-    },
-    onDrop: (event: DragEvent) => {
-      event.preventDefault();
+  // A drop is taken in the visuals' area (`zone`, tall enough to be a target even when a collection is empty), or anywhere while the
+  // import dialog is open. A file dropped anywhere else is still caught: otherwise the browser opens the image and the app is left.
+  // Only file drags count.
+  const dialogOpen = staged.length > 0;
+  useEffect(() => {
+    let depth = 0;
+    const onDrag = (kind: "enter" | "leave" | "drop") => (event: DragEvent) => {
+      if (!carriesFiles(event.dataTransfer?.types)) return;
+      event.preventDefault(); // without it the browser navigates to the dropped file
+      depth = dragDepth(depth, kind);
+      setDragging(admin && depth > 0);
+      if (kind !== "drop") return;
+      if (dialogOpen || (event.target instanceof Node && zone.current?.contains(event.target))) stage(Array.from(event.dataTransfer?.files ?? []));
+      else if (admin) toast.show({ message: "Déposez les fichiers dans la zone des visuels", description: "Elle s'allume dès que vous glissez des fichiers au-dessus de la page." });
+    };
+    // `dragover` fires all the time while dragging: it only has to keep the drop allowed.
+    const allowDrop = (event: DragEvent) => {
+      if (carriesFiles(event.dataTransfer?.types)) event.preventDefault();
+    };
+    const [enter, leave, drop] = [onDrag("enter"), onDrag("leave"), onDrag("drop")];
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragover", allowDrop);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragover", allowDrop);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", drop);
       setDragging(false);
-      stage(Array.from(event.dataTransfer.files));
-    },
-  };
+    };
+    // The listeners are rebuilt when what they read changes (`stage` only reads `admin`).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admin, dialogOpen]);
 
   return {
-    uploader, fileInput, failures, retryable, replaced, dragging, dropProps, upload, stage, staged,
+    uploader, fileInput, zone, failures, retryable, replaced, dragging, upload, stage, staged,
     cancelStaged: () => setStaged([]),
     pick: () => fileInput.current?.click(),
     closeReplaced: () => setReplaced([]),
@@ -140,15 +163,10 @@ export function LibraryActions({ up, onImport }: { up: Upload; onImport: () => v
 
 /** Banners above the library: drop hint, indexing in progress, replaced visuels, refused files. */
 export function UploadNotices(props: { up: Upload; indexing: boolean; folders: CollectionIndex; current?: string }) {
-  const { brand } = useOrg();
   const { up } = props;
   return (
     <>
-      {up.dragging ? (
-        <p className="pointer-events-none fixed inset-x-0 top-6 z-40 mx-auto w-fit rounded-full border border-line-strong bg-bar px-4 py-2 text-sm text-white shadow-float">
-          Déposez pour ajouter à la bibliothèque de {brand.name}
-        </p>
-      ) : null}
+      {up.dragging && up.staged.length > 0 ? <DropBox fixed target="" adding /> : null}
 
       {props.indexing ? (
         <p className="mb-5 flex items-center gap-2.5 rounded-xl bg-peach-soft px-4 py-3 text-sm text-bark-800">
@@ -161,6 +179,38 @@ export function UploadNotices(props: { up: Upload; indexing: boolean; folders: C
       {up.replaced.length ? <ReplacedNotice names={up.replaced} onClose={up.closeReplaced} /> : null}
       {up.failures.length ? <FailedNotice up={up} /> : null}
     </>
+  );
+}
+
+/** Where dropped files will go: the open collection with its path, else the brand's library. */
+function dropTarget(brandName: string, folders: CollectionIndex, current?: string): string {
+  return current && folders.byId.has(current) ? folders.path(current) : `la bibliothèque de ${brandName}`;
+}
+
+/** The box that appears over the visuals' area while files are dragged over the page; over the whole window when the import dialog is open. */
+function DropBox(props: { target: string; adding: boolean; fixed?: boolean }) {
+  return (
+    <div aria-hidden className={cx("pointer-events-none z-50 grid place-items-center bg-focus-soft/60 p-3 backdrop-blur-[1px]", props.fixed ? "fixed inset-0" : "absolute inset-0 z-10 rounded-xl")}>
+      <div className="absolute inset-2 rounded-xl border-2 border-dashed border-focus" />
+      <div className="relative flex max-w-md flex-col items-center gap-2 rounded-xl bg-paper px-8 py-6 text-center shadow-float">
+        <span className="grid h-12 w-12 place-items-center rounded-full bg-yellow text-ink">
+          <Icon name="upload" size={22} strokeWidth={2} />
+        </span>
+        <p className="font-display text-xl">{props.adding ? "Déposez pour ajouter à cet envoi" : "Déposez vos visuels"}</p>
+        {props.adding ? null : <p className="break-words text-sm text-ink-soft">Ils seront ajoutés à {props.target}.</p>}
+      </div>
+    </div>
+  );
+}
+
+/** The visuals' area, the drop target: tall enough to be hit when it is empty, with the drop box over it while files are dragged. */
+export function DropZone(props: { up: Upload; folders: CollectionIndex; current?: string; children: ReactNode }) {
+  const { brand } = useOrg();
+  return (
+    <div ref={props.up.zone} className="relative min-h-[55vh]">
+      {props.children}
+      {props.up.dragging && !props.up.staged.length ? <DropBox target={dropTarget(brand.name, props.folders, props.current)} adding={false} /> : null}
+    </div>
   );
 }
 
