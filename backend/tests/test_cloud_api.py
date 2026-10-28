@@ -545,6 +545,23 @@ def test_two_uploads_of_one_name_at_the_same_time_keep_both(client, org_with_use
     assert sorted(item["filename"] for item in items) == ["c (1).jpg", "c (2).jpg", "c (3).jpg", "c.jpg"]  # none replaced the other
 
 
+def test_a_tiff_upload_is_kept_as_a_jpeg_and_a_16_bit_grey_one_is_not_white(client, org_with_users, fake_storage_client):
+    import numpy as np
+
+    _, base, admin_id, _, _ = org_with_users
+    ramp = io.BytesIO()
+    Image.fromarray(np.tile(np.linspace(0, 65535, 300).astype("uint16"), (200, 1))).save(ramp, format="TIFF")
+    color = io.BytesIO()
+    Image.new("RGB", (300, 200), (200, 30, 30)).save(color, format="TIFF")
+    sent = client.post(f"{base}/library/upload", headers=_headers(admin_id),
+                       files=[("files", ("scan.tif", ramp.getvalue(), "image/tiff")), ("files", ("couleur.tiff", color.getvalue(), "image/tiff"))])
+    assert sent.status_code == 200 and sent.json()["saved"] == ["scan.tif", "couleur.tiff"] and sent.json()["failed"] == []
+    refs = {path.rsplit("/", 1)[-1]: data for (bucket, path), data in fake_storage_client.store.items() if bucket == "refs"}
+    assert refs["scan.tif"][:2] == b"\xff\xd8" and refs["couleur.tiff"][:2] == b"\xff\xd8"  # JPEG magic: a picture a browser shows
+    shown = Image.open(io.BytesIO(refs["scan.tif"])).convert("L")
+    assert shown.getpixel((2, 100)) < 40 and shown.getpixel((297, 100)) > 215  # the 16-bit ramp is a ramp, not white
+
+
 def test_numbered_names_stay_within_the_length_limit_and_stop_at_the_hundredth():
     from nyra.cloud.routes import library as library_routes
     from nyra.cloud.routes.common import MAX_FILENAME

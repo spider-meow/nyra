@@ -29,7 +29,11 @@ Storage objects live under `{org_id}/...` in three private buckets
 `{org_id}/{brand_id}/`: the original, its thumbnail under `thumbs/` and a
 working copy (JPEG, 1024 px at most, `work_path`) under `work/` that
 indexing, the keypoint check and the comparison screen read instead of the
-original. References uploaded before brands keep their `{org_id}/` path
+original. The "original" is the file as sent when it is light, else a JPEG (PNG with
+transparency) of 2048 px at most; **a TIFF is always converted** (browsers do not display it), with its first
+page. Before any step, 16-bit and float greys are read as 8-bit grey (`fetch.normalize_mode`: a plain
+conversion turned them white) and CMYK as sRGB, through the file's colour profile when it has a usable one.
+References uploaded before brands keep their `{org_id}/` path
 until re-uploaded. Crawled images are stored once per organization, keyed
 by content hash, and only as a working copy (`{org_id}/work/`) and a
 thumbnail (`{org_id}/thumbs/`): the original is on the site. Rows crawled
