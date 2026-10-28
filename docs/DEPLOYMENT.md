@@ -25,8 +25,7 @@ Storage stay on Supabase.
 
 1. Create a Droplet, Ubuntu 24.04 with the Docker image from the Marketplace, **4 GB / 2 vCPU**
    (Basic, $24/month). Add a DNS A record for your domain pointing at it.
-2. Give the Droplet read access to the (private) repository, see "Reading a private repository" below, then
-   `git clone git@github.com:spider-meow/nyra.git`, copy `.env.example` to `.env`, fill it in, set `NYRA_DOMAIN`
+2. `git clone https://github.com/spider-meow/nyra.git`, copy `.env.example` to `.env`, fill it in, set `NYRA_DOMAIN`
    and `NYRA_PUBLIC_URL=https://<NYRA_DOMAIN>`.
 3. `docker compose -f docker-compose.yml -f docker-compose.droplet.yml up -d --build`
    (the first build is long: Chromium, torch and the CLIP weights).
@@ -39,26 +38,8 @@ Storage stay on Supabase.
 Updating a running Droplet: `git pull`, then the same `docker compose … up -d --build`. If `git pull` refuses
 because a file was edited on the Droplet, look at `git diff <file>` first; `git stash` sets the edit aside.
 
-**Reading a private repository.** The repository is private since 27 October 2026: `git clone` and `git pull` over HTTPS
-ask for a GitHub login, and GitHub no longer accepts an account password for git. Never type your account password or paste a
-personal token into a console. Use a **deploy key**: an SSH key that can read this one repository and nothing else.
-
-1. On the Droplet (the private key is made here and never leaves it):
-   `ssh-keygen -t ed25519 -f ~/.ssh/nyra_deploy -N ""` then `cat ~/.ssh/nyra_deploy.pub`.
-2. On GitHub, the repository's Settings > Deploy keys > Add deploy key: paste the public key (one line starting with
-   `ssh-ed25519`), leave **Allow write access** unticked. A deploy key belongs to one repository: GitHub refuses the same key
-   on a second one.
-3. On the Droplet, tell SSH to use it:
-   `printf 'Host github.com\n  IdentityFile ~/.ssh/nyra_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config`.
-4. An existing clone: `git remote set-url origin git@github.com:spider-meow/nyra.git`, then `git pull` (the first
-   connection asks to confirm GitHub's fingerprint: answer `yes`).
-
-If the Droplet is lost or suspected compromised, delete the key in GitHub (Settings > Deploy keys): it opens nothing else,
-and a new Droplet makes a new key. Anything else that reads the repository without a token (a second server, a script)
-needs the same treatment, or it fails the same way.
-
 The Droplet keeps no state (no volume but Caddy's certificates; the database, Auth and files are on
-Supabase), so it is rebuilt from git (with a new deploy key, see above) and `.env`. Weekly backups of the Droplet are optional; keep a copy of
+Supabase), so it is rebuilt from git and `.env`. Weekly backups of the Droplet are optional; keep a copy of
 `.env` elsewhere. A Droplet cannot be resized to a plan with a smaller disk (the 4 GB plan has 80 GB, the
 2 GB plans 50–60 GB): going down means creating a new Droplet, pointing the DNS at it, then deleting the old one.
 
