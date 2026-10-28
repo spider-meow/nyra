@@ -1,71 +1,12 @@
-import { useState } from "react";
+import { Suspense, lazy, useRef, useState } from "react";
 import { useConfirm, useToast } from "../../components/feedback";
-import { ContentTagger } from "../../components/Labels";
+import { Icon } from "../../components/icons";
+import { cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
-import { formatDate, plural, splitTags } from "../../lib/format";
-import { LABELS_ENABLED } from "../../lib/labels";
+import { plural } from "../../lib/format";
 import { useLibraryMutations } from "../../lib/queries";
-import type { LabelInfo } from "../../types";
+import type { LabelInfo, LibraryItem } from "../../types";
 import type { CollectionIndex } from "./collections";
-
-/** Date and tag edits applied to the selected visuals. Lives in the page, not in the bar: the typed values survive a deselection. */
-export function useBulkEdit(selected: Set<string>, clear: () => void) {
-  const { setExpiry, setTags, fileInCollection } = useLibraryMutations();
-  const toast = useToast();
-  const [date, setDate] = useState("");
-  const [tag, setTag] = useState("");
-
-  function applyDate(unlimited = false) {
-    setExpiry.mutate(
-      { filenames: [...selected], expiry_date: unlimited ? "" : date, unlimited_rights: unlimited },
-      {
-        onSuccess: (result) => {
-          toast.show({
-            tone: "success",
-            message: unlimited ? "Droits illimités" : date ? `Échéance fixée au ${formatDate(date)}` : "Échéance retirée",
-            description: plural(result.updated, "visuel mis à jour", "visuels mis à jour"),
-          });
-          clear();
-        },
-        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
-      },
-    );
-  }
-
-  function applyTags(mode: "add" | "remove") {
-    const tags = splitTags(tag);
-    if (!tags.length) return;
-    setTags.mutate(
-      { filenames: [...selected], [mode]: tags },
-      {
-        onSuccess: (result) => {
-          toast.show({
-            tone: "success",
-            message: mode === "add" ? "Tags ajoutés" : "Tags retirés",
-            description: plural(result.updated, "visuel mis à jour", "visuels mis à jour"),
-          });
-          setTag("");
-        },
-        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
-      },
-    );
-  }
-
-  function applyCollection(collectionId: string | null) {
-    fileInCollection.mutate(
-      { filenames: [...selected], collection_id: collectionId },
-      {
-        onSuccess: (result) => {
-          toast.show({ tone: "success", message: collectionId ? "Visuels classés" : "Visuels sortis de leur collection", description: plural(result.updated, "visuel mis à jour", "visuels mis à jour") });
-          clear();
-        },
-        onError: (error) => toast.show({ tone: "error", message: "L'enregistrement n'a pas abouti", description: errorMessage(error) }),
-      },
-    );
-  }
-
-  return { date, setDate, tag, setTag, applyDate, applyTags, applyCollection, collectionBusy: fileInCollection.isPending, dateBusy: setExpiry.isPending, tagsBusy: setTags.isPending };
-}
 
 /** Asks for confirmation, then deletes visuels by filename. `onRemoved` runs once they are gone. */
 export function useRemoveReferences(onRemoved: (names: string[]) => void) {
@@ -99,72 +40,64 @@ export function useRemoveReferences(onRemoved: (names: string[]) => void) {
   return { removeNames, removing: remove.isPending };
 }
 
-type Props = {
-  selected: Set<string>;
-  referenceIds: string[];
-  labels: LabelInfo[];
+/** Loaded when the Actions menu is first opened: the menu and its dialogs are not part of the library page's first load. */
+const SelectionActions = lazy(() => import("./SelectionActions").then((module) => ({ default: module.SelectionActions })));
+
+type HeaderProps = {
+  items: LibraryItem[];
+  /** How many visuals the filters leave: what "Tout sélectionner" takes. */
+  visibleCount: number;
   folders: CollectionIndex;
-  bulk: ReturnType<typeof useBulkEdit>;
+  labels: LabelInfo[];
+  onSelectAll: () => void;
+  onClear: () => void;
   removing: boolean;
   onRemove: (names: string[]) => Promise<void>;
-  onClear: () => void;
 };
 
-/** Floating bar over the selected visuels: deadline, tags, delete. */
-export function SelectionBar({ selected, referenceIds, labels, folders, bulk, removing, onRemove, onClear }: Props) {
+/**
+ * The selection is a mode: this header takes the place of the page title (same height, so nothing moves and nothing floats over the
+ * cards), says how many visuals are ticked, and has one button, Actions, for everything that can be done to them.
+ */
+export function SelectionHeader({ items, visibleCount, folders, labels, onSelectAll, onClear, removing, onRemove }: HeaderProps) {
+  const [menu, setMenu] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const button = useRef<HTMLButtonElement>(null);
+  const closeMenu = () => {
+    setMenu(false);
+    button.current?.focus();
+  };
   return (
-    <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-3xl flex-wrap items-center gap-3 rounded-xl border border-line-strong bg-bar px-4 py-2.5 text-sm text-white shadow-float md:left-[calc(256px+3.5rem)]" role="region" aria-label="Actions sur la sélection">
-      <span className="font-medium">{plural(selected.size, "sélectionné")}</span>
-      <span className="flex items-center gap-2">
-        <label htmlFor="bulk-date" className="text-white/70">Échéance</label>
-        <input id="bulk-date" type="date" value={bulk.date} onChange={(event) => bulk.setDate(event.target.value)} className="h-9 rounded-md border border-white/20 bg-white/10 px-2.5 text-white [color-scheme:dark]" />
-        <button type="button" className="h-9 rounded-md bg-peach px-3.5 text-[13.5px] font-medium text-ink hover:bg-accent-hover disabled:cursor-progress disabled:opacity-60" onClick={() => bulk.applyDate()} disabled={bulk.dateBusy}>
-          {bulk.dateBusy ? "Application…" : "Appliquer"}
-        </button>
-        <button type="button" className="h-9 rounded-md px-3 text-[13.5px] text-white hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" onClick={() => bulk.applyDate(true)} disabled={bulk.dateBusy}>
-          Droits illimités
-        </button>
-      </span>
-      <span className="flex items-center gap-2">
-        <label htmlFor="bulk-tag" className="text-white/70">Tags</label>
-        <input
-          id="bulk-tag"
-          list="library-tags"
-          value={bulk.tag}
-          maxLength={120}
-          placeholder="magnum, classic"
-          onChange={(event) => bulk.setTag(event.target.value)}
-          onKeyDown={(event) => { if (event.key === "Enter") bulk.applyTags("add"); }}
-          className="h-9 w-40 rounded-md border border-white/20 bg-white/10 px-2.5 text-white placeholder:text-white/40"
-        />
-        <button type="button" className="h-9 rounded-md bg-peach px-3.5 text-[13.5px] font-medium text-ink hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={() => bulk.applyTags("add")} disabled={bulk.tagsBusy || !splitTags(bulk.tag).length}>
-          Ajouter
-        </button>
-        <button type="button" className="h-9 rounded-md px-3 text-[13.5px] text-white hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => bulk.applyTags("remove")} disabled={bulk.tagsBusy || !splitTags(bulk.tag).length}>
-          Retirer
-        </button>
-      </span>
-      <span className="flex items-center gap-2">
-        <label htmlFor="bulk-collection" className="text-white/70">Classer dans</label>
-        <select
-          id="bulk-collection"
-          value=""
-          disabled={bulk.collectionBusy}
-          onChange={(event) => bulk.applyCollection(event.target.value === "none" ? null : event.target.value)}
-          className="h-9 max-w-48 rounded-md border border-white/20 bg-white/10 px-2 text-white [color-scheme:dark]"
-        >
-          <option value="" disabled>Choisir…</option>
-          <option value="none">Aucune (non classé)</option>
-          {[...folders.byId.keys()].map((id) => ({ id, path: folders.path(id) })).sort((a, b) => a.path.localeCompare(b.path, "fr", { numeric: true })).map((folder) => (
-            <option key={folder.id} value={folder.id}>{folder.path}</option>
-          ))}
-        </select>
-      </span>
-      {LABELS_ENABLED ? <ContentTagger labels={labels} images={{ referenceIds }} dark /> : null}
-      <button type="button" className="h-9 rounded-md px-3 text-[13.5px] text-[#f4b3a8] hover:bg-white/10 disabled:cursor-progress disabled:opacity-60" disabled={removing} onClick={() => void onRemove([...selected])}>
-        {removing ? "Suppression…" : "Supprimer"}
+    <div className="sticky top-2 z-30 mb-6 flex min-h-16 items-center gap-2 rounded-2xl border border-ink bg-paper px-2 py-2 shadow-lift sm:px-3" role="region" aria-label="Sélection">
+      <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-ink hover:bg-sunk" aria-label="Quitter la sélection" onClick={onClear}>
+        <Icon name="close" size={20} />
       </button>
-      <button type="button" className="ml-auto text-white/70 hover:text-white" onClick={onClear}>Tout désélectionner</button>
+      <div className="min-w-0 flex-1 leading-tight">
+        <p className="truncate font-display text-xl sm:text-2xl" aria-live="polite">{plural(items.length, "sélectionné")}</p>
+        {items.length < visibleCount ? (
+          <button type="button" className="whitespace-nowrap text-[13px] text-ink-soft underline underline-offset-2" onClick={onSelectAll}>Tout sélectionner ({visibleCount.toLocaleString("fr-FR")})</button>
+        ) : null}
+      </div>
+      <div className="relative">
+        <button
+          ref={button}
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={menu}
+          className={cx("flex h-11 items-center gap-2 rounded-xl px-4 text-[14px] font-medium", menu ? "bg-yellow text-ink" : "bg-ink text-white hover:bg-accent-hover")}
+          onClick={() => {
+            setLoaded(true);
+            setMenu(!menu);
+          }}
+        >
+          Actions <Icon name="down" size={16} />
+        </button>
+        {loaded ? (
+          <Suspense fallback={null}>
+            <SelectionActions open={menu} onClose={closeMenu} items={items} folders={folders} labels={labels} onDone={onClear} removing={removing} onRemove={onRemove} />
+          </Suspense>
+        ) : null}
+      </div>
     </div>
   );
 }

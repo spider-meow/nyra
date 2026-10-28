@@ -1,3 +1,4 @@
+import { useEffect, useRef, type PointerEvent } from "react";
 import { Icon } from "../../components/icons";
 import { LabelChips } from "../../components/Labels";
 import { Button, StatusBadge, cx } from "../../components/ui";
@@ -79,6 +80,50 @@ export function RecentCards(props: { items: LibraryItem[]; total: number; thumbs
   );
 }
 
+const LONG_PRESS_MS = 450;
+const MOVE_LIMIT_PX = 10;
+
+/**
+ * A finger held on a card: there is no hover on a phone, so this is how a selection starts. A move past a few pixels (a scroll) or
+ * a lift cancels it. `wasLongPress` is true once after it fired: the click that follows the lift must not also open the card.
+ */
+function useLongPress(onLongPress: () => void) {
+  const timer = useRef<number | undefined>(undefined);
+  const origin = useRef<{ x: number; y: number } | null>(null);
+  const fired = useRef(false);
+  const cancel = () => {
+    window.clearTimeout(timer.current);
+    origin.current = null;
+  };
+  useEffect(() => cancel, []);
+  return {
+    handlers: {
+      onPointerDown: (event: PointerEvent) => {
+        if (event.pointerType !== "touch") return;
+        fired.current = false;
+        origin.current = { x: event.clientX, y: event.clientY };
+        timer.current = window.setTimeout(() => {
+          fired.current = true;
+          onLongPress();
+        }, LONG_PRESS_MS);
+      },
+      onPointerMove: (event: PointerEvent) => {
+        if (origin.current && Math.hypot(event.clientX - origin.current.x, event.clientY - origin.current.y) > MOVE_LIMIT_PX) cancel();
+      },
+      onPointerUp: cancel,
+      onPointerCancel: cancel,
+      onContextMenu: (event: { preventDefault: () => void }) => {
+        if (fired.current || origin.current) event.preventDefault(); // the browser's own menu on a long press
+      },
+    },
+    wasLongPress: () => {
+      const was = fired.current;
+      fired.current = false;
+      return was;
+    },
+  };
+}
+
 type CardProps = {
   item: LibraryItem;
   where: string;
@@ -94,6 +139,14 @@ type CardProps = {
 
 function ReferenceCard({ item, where, labels, thumbUrl, checked = false, anySelected = false, onEdit, onToggle }: CardProps) {
   const { admin } = useOrg();
+  const press = useLongPress(() => onToggle?.(item.filename, !checked));
+  // In selection mode a card is ticked or unticked by a touch or a click; outside it, it opens. A long press starts the selection.
+  const tick = admin && onToggle !== undefined;
+  const open = () => {
+    if (tick && press.wasLongPress()) return;
+    if (tick && anySelected) onToggle(item.filename, !checked);
+    else onEdit(item);
+  };
   return (
     <li
       className={cx(
@@ -101,7 +154,13 @@ function ReferenceCard({ item, where, labels, thumbUrl, checked = false, anySele
         checked ? "border-focus shadow-[0_0_0_3px_var(--color-peach-soft)]" : "border-ink",
       )}
     >
-      <button type="button" onClick={() => onEdit(item)} className="block text-left" aria-label={`${admin ? "Modifier" : "Voir"} ${item.filename}`}>
+      <button
+        type="button"
+        onClick={open}
+        className="block text-left pointer-coarse:select-none pointer-coarse:[-webkit-touch-callout:none]"
+        aria-label={`${admin ? (anySelected ? "Cocher" : "Modifier") : "Voir"} ${item.filename}`}
+        {...(tick ? press.handlers : {})}
+      >
         <span className="block aspect-[4/3] overflow-hidden bg-side">
           {thumbUrl ? (
             <img src={thumbUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
