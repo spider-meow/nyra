@@ -66,7 +66,7 @@ export function ImportDialog({ files, folders, current, onCancel, onSend }: Prop
         </>
       }
     >
-      <form id="import-form" className="grid gap-4" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+      <form id="import-form" className="grid grid-cols-[minmax(0,1fr)] gap-4" onSubmit={(event) => { event.preventDefault(); submit(); }}>
         <p className="break-words text-sm text-ink-soft">
           {names.slice(0, NAMES_SHOWN).join(", ")}
           {names.length > NAMES_SHOWN ? ` et ${plural(names.length - NAMES_SHOWN, "autre")}` : ""}
