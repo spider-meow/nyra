@@ -208,7 +208,7 @@ export const PasswordInput = forwardRef<HTMLInputElement, Omit<InputHTMLAttribut
 
 export function Checkbox(props: { checked: boolean; onChange: (value: boolean) => void; label: ReactNode; disabled?: boolean; hint?: ReactNode }) {
   return (
-    <label className="flex items-start gap-2.5 text-sm">
+    <label className="flex items-start gap-2.5 text-sm pointer-coarse:py-2">
       <input
         type="checkbox"
         className="mt-0.5 h-[18px] w-[18px] shrink-0 accent-ink"
@@ -304,7 +304,7 @@ export function Chip(props: { active: boolean; onClick: () => void; children: Re
 /** A two- or three-way toggle on a sunken track. */
 export function Segmented<T extends string>(props: { value: T; options: { value: T; label: string }[]; onChange: (value: T) => void; label: string }) {
   return (
-    <div className="inline-flex rounded-lg border border-line-strong bg-sunk p-[3px]" role="group" aria-label={props.label}>
+    <div className="inline-flex max-w-full rounded-lg border border-line-strong bg-sunk p-[3px]" role="group" aria-label={props.label}>
       {props.options.map((option) => (
         <button
           key={option.value}
@@ -312,7 +312,7 @@ export function Segmented<T extends string>(props: { value: T; options: { value:
           aria-pressed={props.value === option.value}
           onClick={() => props.onChange(option.value)}
           className={cx(
-            "h-8 rounded-md px-3 text-[13px] whitespace-nowrap",
+            "min-h-8 min-w-0 flex-auto rounded-md px-3 py-1 text-center text-[13px] leading-tight pointer-coarse:min-h-11",
             props.value === option.value ? "bg-yellow font-medium text-ink" : "text-muted hover:text-ink",
           )}
         >

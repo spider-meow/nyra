@@ -206,6 +206,18 @@ export function useToast(): Toaster {
 
 // --- dialogs ---------------------------------------------------------------------
 
+const FOCUSABLE = "a[href], button:not(:disabled), input:not(:disabled):not([type=hidden]), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])";
+
+/** Tab and Shift+Tab go round the dialog's controls instead of reaching the page behind it. */
+function keepFocusInside(event: KeyboardEvent, panel: HTMLElement | null) {
+  const controls = panel ? [...panel.querySelectorAll<HTMLElement>(FOCUSABLE)] : [];
+  if (!controls.length) return;
+  const edge = event.shiftKey ? controls[0] : controls[controls.length - 1];
+  if (document.activeElement !== edge && panel?.contains(document.activeElement)) return;
+  event.preventDefault();
+  (event.shiftKey ? controls[controls.length - 1] : controls[0]).focus();
+}
+
 export function Modal(props: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean; footer?: ReactNode }) {
   const panel = useRef<HTMLDivElement>(null);
 
@@ -218,6 +230,7 @@ export function Modal(props: { open: boolean; onClose: () => void; title: string
     target?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") props.onClose();
+      if (event.key === "Tab") keepFocusInside(event, panel.current);
     };
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
@@ -238,7 +251,7 @@ export function Modal(props: { open: boolean; onClose: () => void; title: string
         role="dialog"
         aria-modal="true"
         aria-label={props.title}
-        className={cx("flex max-h-[90vh] w-full flex-col rounded-xl bg-paper shadow-float", props.wide ? "max-w-3xl" : "max-w-md")}
+        className={cx("flex max-h-[90dvh] w-full flex-col rounded-xl bg-paper shadow-float", props.wide ? "max-w-3xl" : "max-w-md")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-4 px-6 pt-5 pb-3">
@@ -248,7 +261,7 @@ export function Modal(props: { open: boolean; onClose: () => void; title: string
           </button>
         </div>
         <div className="overflow-y-auto px-6 pb-5">{props.children}</div>
-        {props.footer ? <div className="flex justify-end gap-2 border-t border-line bg-sunk px-6 py-3.5 rounded-b-[20px]">{props.footer}</div> : null}
+        {props.footer ? <div className="flex flex-wrap justify-end gap-2 border-t border-line bg-sunk px-6 py-3.5 rounded-b-[20px]">{props.footer}</div> : null}
       </div>
     </div>
   );
