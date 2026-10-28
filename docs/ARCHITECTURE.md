@@ -285,6 +285,20 @@ numbers and the report itself are pure functions over plain dicts in
   office's « Ouvrir l'espace » links to `/o/<slug>`; `OrgShell` asks `GET /api/staff/organizations/open/{slug}` when the
   slug is not among the caller's organizations (`staff_view: true`), and a banner says whose space it is. Tests:
   `test_isolation.py` (`test_a_platform_admin_*`).
+- **Where an author is kept, and what a client sees of a platform admin who is not a member** (audit AXE-584, 28 October 2026;
+  `test_nothing_the_client_reads_names_the_platform_admin_who_acted_in_its_space` writes the author as them everywhere, then reads
+  every route below as a client and as an administrator and looks for the address and the identifier in bodies and headers):
+
+  | Where | Column | What a client sees |
+  |---|---|---|
+  | Journal | `audit_log.user_id`, `by_staff` | Nothing: their rows are left out (`NOT by_staff`) |
+  | Jobs (`/jobs`, `/jobs/current`, `/overview`, the answer of a start or a cancel) | `jobs.created_by` | Nothing since AXE-584 (the identifier used to go out in every job; `jobs._row` drops it, only the worker's `claim` keeps it) |
+  | Job holding the queue, 409 sentence | `jobs.created_by` | « l'équipe Nyra » (`jobs.holder`); an administrator sees an ordinary author's address, a client « un membre de l'équipe » |
+  | Decisions, exclusions, labels, page marks, scans, reports, brand | `reviews.reviewed_by`, `excluded_hashes.created_by`, `image_labels.created_by`, `page_replacements.marked_by`, `crawl_runs.triggered_by`, `reports.generated_by`, `brands.created_by` | Not read by any client route (the routes list the data without its author); `brands.created_by` is in the back office only |
+  | End-of-contract export | the same columns | « équipe Nyra », their journal rows left out (`offboarding`) |
+  | Team page, monthly e-mail | `memberships` | They have no row, so they are neither listed nor written to |
+
+  Not covered by the test: the labels routes (they answered 404 in the test organization) and the e-mails other than the monthly one.
 - **Every route** under `/api/orgs/{org_id}` verifies the JWT locally and
   the caller's membership (or the platform admin's reach, above); brand routes then check the brand belongs to
   that organization. Admin-only routes (brands, sites, library, crawls,
