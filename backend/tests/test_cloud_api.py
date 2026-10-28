@@ -616,6 +616,24 @@ def test_a_common_expiry_applies_to_the_files_of_one_upload_only(client, org_wit
     assert items["b.jpg"]["expiry_date"] == "2027-03-31"
 
 
+def test_bulk_credit_sets_and_clears_the_credit_of_the_named_visuals_only(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg", "b.jpg", "c.jpg")
+
+    def credits():
+        items = client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]
+        return {item["filename"]: item["credit"] for item in items}
+
+    url = f"{base}/library/credit"
+    done = client.post(url, headers=_headers(admin_id), json={"filenames": ["a.jpg", "b.jpg"], "credit": "  Studio Dupont  "})
+    assert done.status_code == 200 and done.json() == {"updated": 2}
+    assert credits() == {"a.jpg": "Studio Dupont", "b.jpg": "Studio Dupont", "c.jpg": ""}  # trimmed; c.jpg untouched
+    assert client.post(url, headers=_headers(admin_id), json={"filenames": ["a.jpg"], "credit": ""}).json() == {"updated": 1}
+    assert credits()["a.jpg"] == "" and credits()["b.jpg"] == "Studio Dupont"  # empty clears, only the named one
+    assert client.post(url, headers=_headers(admin_id), json={"filenames": ["a.jpg"], "credit": "x" * 501}).status_code == 422
+    assert client.post(url, headers=_headers(client_id), json={"filenames": ["a.jpg"], "credit": "Studio"}).status_code == 403
+
+
 def test_unlimited_rights_exclude_a_date_and_go_through_csv_both_ways(client, org_with_users):
     _, base, admin_id, _, _ = org_with_users
     _upload(client, base, admin_id, "a.jpg", "b.jpg")

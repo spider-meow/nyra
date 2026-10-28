@@ -99,6 +99,7 @@ BODIES = {
     ("POST", BR + "/library/delete"): lambda t: {"json": {"filenames": [t["filename"]]}},
     ("POST", BR + "/library/expiry"): lambda t: {"json": {"filenames": [t["filename"]], "expiry_date": "2031-01-01"}},
     ("POST", BR + "/library/tags"): lambda t: {"json": {"filenames": [t["filename"]], "add": ["x"]}},
+    ("POST", BR + "/library/credit"): lambda t: {"json": {"filenames": [t["filename"]], "credit": "Studio"}},
     ("POST", BR + "/library/import-csv"): lambda t: {
         "files": {"file": ("x.csv", f"filename,credit\n{t['filename']},changed\n".encode(), "text/csv")}, "params": {"apply": "true"}},
     ("PUT", ORG + "/me/notifications"): lambda t: {"json": {"monthly_email": False}},

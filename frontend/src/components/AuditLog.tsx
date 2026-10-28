@@ -14,6 +14,7 @@ const ACTION_LABEL: Record<string, string> = {
   "library.update": "Modification d'un visuel",
   "library.delete": "Suppression de visuels",
   "library.expiry": "Changement d'échéance",
+  "library.credit": "Changement de crédit",
   "library.tags": "Changement de tags",
   "library.import_csv": "Import CSV",
   "library.adopt": "Images des sites ajoutées à la bibliothèque",
