@@ -354,6 +354,90 @@ def test_run_matching_threshold_change_forces_a_full_recompute(tmp_path):
         assert db.get_unmatched_references(conn)[0]["compared_at"] is not None
 
 
+# --- twin references: compared once (the flag `group_reference_twins`) ----------------------
+
+class _TwinStore:
+    """The five methods `run_matching` asks of a store, in memory, recording what was saved."""
+
+    def __init__(self, refs, sites, signature=None):
+        self.refs, self.sites, self.sig, self.saved = refs, sites, signature, None
+
+    def load_features(self, use_clip):
+        return self.refs, self.sites
+
+    def get_signature(self):
+        return self.sig
+
+    def load_exclusions(self):
+        return []
+
+    def save_matches(self, *, full, clear_ref_ids, clear_site_ids, hits, signature):
+        self.saved = {"full": full, "clear_refs": clear_ref_ids, "clear_sites": clear_site_ids, "hits": sorted(hits)}
+        self.sig = signature
+        return len(hits)
+
+
+def _row(name, hash_, vector, compared=False):
+    import numpy as np
+
+    flat = np.array(vector, dtype=np.float32)
+    return {"id": name, "phash": hash_, "dhash": hash_, "phash_flip": hash_, "dhash_flip": hash_, "embedding": flat / np.linalg.norm(flat),
+            "compared_at": "then" if compared else None}
+
+
+PICTURE, OTHER = "ffff0000ffff0000", "0123456789abcdef"
+
+
+def _twin_config(on=True):
+    return _config_with_match(group_reference_twins=on)
+
+
+def test_twin_references_are_compared_once_and_share_the_findings():
+    from nyra.match import reference_twins, run_matching
+
+    refs = [_row("a", PICTURE, [1, 0, 0, 0]), _row("b", PICTURE, [1, 0.01, 0, 0]), _row("c", OTHER, [0, 1, 0, 0])]
+    sites = [_row("s", PICTURE, [1, 0, 0, 0])]
+    assert reference_twins(refs) == {"b": "a"}  # c is another picture; the representative is the smallest id
+    stats: dict = {}
+    store = _TwinStore(refs, sites)
+    run_matching(store, _twin_config(), use_clip=True, stats=stats)
+    assert stats["pairs"] == 2 and stats["twins"] == 1  # a and c against the one site: b is not compared
+    assert [hit[:2] for hit in store.saved["hits"]] == [("a", "s"), ("b", "s")] and "b" in store.saved["clear_refs"]
+    off = _TwinStore(refs, sites)
+    run_matching(off, _twin_config(False), use_clip=True, stats=stats)
+    assert stats["pairs"] == 3 and stats["twins"] == 0
+    assert "twins" in store.sig.split("|") and "twins" not in off.sig.split("|")  # a brand that does not use it keeps its results
+
+
+def test_references_that_only_look_alike_are_not_twins():
+    from nyra.match import reference_twins
+
+    base = _row("a", PICTURE, [1, 0, 0, 0])
+    assert reference_twins([base, _row("b", "ffff0000ffff00ff", [1, 0, 0, 0])]) == {}  # 8 bits apart: another text, another crop
+    assert reference_twins([base, _row("b", PICTURE, [1, 0.3, 0, 0])]) == {}  # the same hashes but a CLIP similarity under the bar
+    assert reference_twins([base, {**_row("b", PICTURE, [1, 0, 0, 0]), "embedding": None}]) == {}  # no embedding: never a twin
+
+
+def test_a_new_twin_takes_over_the_findings_of_an_old_representative_and_a_new_image_reaches_both():
+    from nyra.match import run_matching
+
+    config = _twin_config()
+    store = _TwinStore([_row("a", PICTURE, [1, 0, 0, 0])], [_row("s", PICTURE, [1, 0, 0, 0])])
+    run_matching(store, config, use_clip=True)
+    # b arrives, the twin of the old a: a is compared with every image again, and b gets what a gets
+    store.refs = [_row("a", PICTURE, [1, 0, 0, 0], compared=True), _row("b", PICTURE, [1, 0, 0, 0])]
+    store.sites = [_row("s", PICTURE, [1, 0, 0, 0], compared=True)]
+    run_matching(store, config, use_clip=True)
+    assert [hit[:2] for hit in store.saved["hits"]] == [("a", "s"), ("b", "s")] and sorted(store.saved["clear_refs"]) == ["a", "b"]
+    # then a new image: the twins already compared are not cleared, the representative is compared with the new image only
+    store.refs = [_row("a", PICTURE, [1, 0, 0, 0], compared=True), _row("b", PICTURE, [1, 0, 0, 0], compared=True)]
+    store.sites = [_row("s", PICTURE, [1, 0, 0, 0], compared=True), _row("t", PICTURE, [1, 0, 0, 0])]
+    stats: dict = {}
+    run_matching(store, config, use_clip=True, stats=stats)
+    assert stats["pairs"] == 1 and store.saved["clear_refs"] == [] and store.saved["clear_sites"] == ["t"]
+    assert [hit[:2] for hit in store.saved["hits"]] == [("a", "t"), ("b", "t")]
+
+
 # --- CLIP end-to-end (skipped unless open_clip/torch are installed, an error on CI) --------
 
 def test_clip_embedding_end_to_end(base_image, config, require_clip):

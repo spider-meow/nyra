@@ -260,6 +260,7 @@ precision and recall have been measured on real images.** Current state (20 Oct 
 | Keypoint check of CLIP candidates | 20 inliers, 5 % / 20 % | `match.verify_clip_matches` (organization) | **on**; effectively off when OpenCV is missing (the signature then reads "unverified") | 1,057 images of one brand, copies made by us |
 | Labels (types, contents) | 0.82 (`CONTENT_THRESHOLD`) | `NYRA_LABELS=1` (API) and `VITE_LABELS=1` (interface), build-time | **off**: the routes are not registered, the screens not built | no |
 | Logos set aside | 0.95 (`logos.THRESHOLD`) | per brand, `brands.set_aside_logos` (Réglages > Général, administrators) | **off** | 1,716 images of one brand; precision only, recall not counted |
+| Twin references compared once (`reference_twins`) | both hashes within 2 bits and CLIP ≥ 0.985, groups of 40 at most | `match.group_reference_twins` (organization, Réglages > Détection) | **off** | **no** (chosen stricter than every match threshold; to measure on a library before turning it on) |
 | Grouping of crops (`variants`) | CLIP ≥ 0.75 for 5 neighbours, then ≥ 20 inliers and ≥ 20 % of both images | none | **ON for every brand, after every comparison** | **no** (the thresholds were measured for brand-to-site matches, not for site-to-site grouping) |
 | "Où est-elle utilisée ?" (`locate`) | 10 inliers for a small crop (`geometric_locate_min_inliers`) | a person starts the job | off until asked; no automatic run | no ("not measured on real images", above) |
 
@@ -268,6 +269,24 @@ photos as one row in "À traiter", where one decision covers every file of the g
 of the team: either measure it on real images, or put it behind a per-brand setting that starts off.
 
 Adding a function with a threshold means adding a row here, with its switch and its default.
+
+## Twin references
+
+Off by default (`match.group_reference_twins`, the flag rule above). When on, `match.reference_twins` finds, among the brand's references, those
+that are the same picture as another one: both hashes within `TWIN_BITS` (2 of 64) and a CLIP similarity of at least `TWIN_SIMILARITY` (0.985);
+all three are needed, and a reference without an embedding is never a twin. A group holds 40 at most (`variants.link_groups`). `run_matching` then
+compares one representative per group (the one already compared, else the smallest id): the comparison, and above all the keypoint check of its
+candidates, are done once, and the representative's findings are written for each twin (same level, score and confidence). Every twin stays in
+the library and in "À traiter" with its own rights and its own decisions. A reference that is only close (another text, another crop) is not a
+twin: compare with the hash thresholds (8 bits) and CLIP bands (0.75 to 0.92), which are far looser.
+
+Incremental passes: a group holding a reference not compared yet has its representative compared again in full, so the newcomer takes over its
+findings; a new site image is compared with the representatives only and reaches every twin. Turning the setting on or off changes the
+signature, so the next pass recomputes everything. Nothing is stored: the groups are found again at each pass (a few hundred ms for 5,000
+references). `locate` ("Où est-elle utilisée ?") is not affected: it still searches each reference on its own.
+
+Not measured: no real library has been run with it. Before turning it on for a brand, run a comparison with and without it and compare the
+hits (`twins` in the stats of the job says how many references were folded).
 
 ## The algorithm proposes, a person decides
 

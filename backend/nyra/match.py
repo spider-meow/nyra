@@ -30,6 +30,7 @@ import numpy as np
 from PIL import Image, ImageOps
 
 from nyra.config import Config, MatchConfig
+from nyra.variants import link_groups
 
 log = logging.getLogger("nyra.match")
 
@@ -403,6 +404,7 @@ def signature(config: MatchConfig, use_clip: bool, exclusions: Sequence[tuple[st
             "flip",
             "hashguard" if use_clip else "hash-only",  # CLIP overrules a colliding hash: older matches are recomputed
             f"x{excluded}" if exclusions else "x0",
+            *(["twins"] if config.group_reference_twins and use_clip else []),  # added only when on: the others keep their results
             *aside,
         ]
     )
@@ -456,6 +458,61 @@ def _can_verify(config: MatchConfig, use_clip: bool, loader) -> bool:
         return True
     log.warning("OpenCV is missing: CLIP matches are kept without geometric verification")
     return False
+
+
+# Two references are twins when both hashes are this close (of 64 bits) and their CLIP similarity reaches `TWIN_SIMILARITY`: the same
+# picture re-exported, not a variant (another text, another crop). Chosen to be stricter than every threshold of a match, not measured.
+TWIN_BITS = 2
+TWIN_SIMILARITY = 0.985
+_TWIN_CHUNK = 256
+
+
+def reference_twins(refs: Sequence[dict[str, Any]]) -> dict[Any, Any]:
+    """`{twin id: representative id}` for the references that are the same picture as another one (the others are not in it).
+
+    Needs both hashes and an embedding on each; the representative is the one already compared (the oldest known), else the smallest
+    id. A group never goes past `variants.MAX_GROUP`. Pairs are looked at `_TWIN_CHUNK` rows at a time, so memory stays bounded."""
+    packed = pack(refs, True)
+    count = len(refs)
+    if packed.emb is None or count < 2:
+        return {}
+    usable = packed.p_ok & packed.d_ok & packed.emb_ok
+    links: list[tuple[int, int]] = []
+    for start in range(0, count, _TWIN_CHUNK):
+        rows = slice(start, start + _TWIN_CHUNK)
+        close = (_popcount(np.bitwise_xor(packed.phash[rows, None], packed.phash[None, :])) <= TWIN_BITS) \
+            & (_popcount(np.bitwise_xor(packed.dhash[rows, None], packed.dhash[None, :])) <= TWIN_BITS) \
+            & ((packed.emb[rows] @ packed.emb.T) >= TWIN_SIMILARITY) & usable[rows, None] & usable[None, :]
+        for row, other in zip(*np.nonzero(close)):
+            if other > start + row:
+                links.append((start + int(row), int(other)))
+    groups = link_groups([None] * count, links)
+    members: dict[Any, list[dict]] = {}
+    for ref, group in zip(refs, groups):
+        if group is not None:
+            members.setdefault(group, []).append(ref)
+    twins: dict[Any, Any] = {}
+    for group in members.values():
+        rep = min(group, key=lambda ref: (ref.get("compared_at") is None, str(ref["id"])))
+        twins.update({ref["id"]: rep["id"] for ref in group if ref is not rep})
+    return twins
+
+
+def _fold_twins(refs: list[dict], twins: dict) -> tuple[list[dict], dict]:
+    """The references to compare (the twins left out) and `{representative: [its twins]}`. A representative whose group
+    holds a reference not compared yet is compared again in full, as if new: the newcomer takes over its findings."""
+    followers: dict[Any, list] = {}
+    for twin, rep in twins.items():
+        followers.setdefault(rep, []).append(twin)
+    fresh = {row["id"] for row in refs if row["compared_at"] is None}
+    out = []
+    for row in refs:
+        if row["id"] in twins:
+            continue
+        if row["compared_at"] is not None and fresh.intersection(followers.get(row["id"], ())):
+            row = {**row, "compared_at": None}
+        out.append(row)
+    return out, followers
 
 
 def _rectangles(refs: list[dict], sites: list[dict], all_sites: list[dict], full: bool) -> tuple[list, list, list]:
@@ -531,12 +588,16 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
     verifying = _can_verify(config.match, use_clip, loader)
     sig = signature(config.match, use_clip, exclusions, verified=verifying, set_aside=set_aside)
     refs, all_sites = store.load_features(use_clip)
+    twins = reference_twins(refs) if use_clip and config.match.group_reference_twins else {}
+    followers: dict = {}
+    if twins:
+        refs, followers = _fold_twins(refs, twins)
     excluded = excluded_site_ids(all_sites, exclusions, config.match) | set_aside
     sites = [row for row in all_sites if row["id"] not in excluded]
     full = store.get_signature() != sig
     info = stats if stats is not None else {}
     info.update({"full": full, "references": len(refs), "site_images": len(all_sites), "excluded": len(excluded),
-                 "pairs": 0, "hits": 0, "hits_by_level": {}, "verified_candidates": 0,
+                 "twins": len(twins), "pairs": 0, "hits": 0, "hits_by_level": {}, "verified_candidates": 0,
                  "compare_seconds": 0.0, "verify_seconds": 0.0})
 
     rectangles, clear_ref_ids, clear_site_ids = _rectangles(refs, sites, all_sites, full)
@@ -558,6 +619,9 @@ def run_matching(store: "MatchStore | str | Path", config: Config, use_clip: boo
     if verifying:
         hits = _verify_candidates(hits, loader, config.match, info, verify_progress, should_stop)
 
+    if followers:  # the twins get what their representative got (and lose what they had: the representative's findings are theirs)
+        clear_ref_ids = clear_ref_ids + [twin for rep in clear_ref_ids for twin in followers.get(rep, ())]
+        hits = hits + [(twin, *hit[1:]) for hit in hits for twin in followers.get(hit[0], ())]
     info["hits"] = len(hits)
     for hit in hits:
         info["hits_by_level"][hit[2]] = info["hits_by_level"].get(hit[2], 0) + 1

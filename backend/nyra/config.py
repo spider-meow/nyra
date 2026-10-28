@@ -71,6 +71,10 @@ class MatchConfig:
     geometric_min_inliers: int = 20
     geometric_review_coverage: float = 0.05
     geometric_confirm_coverage: float = 0.20
+    # Off until measured on real images (docs/MATCHING.md, the flag rule). On: references that are the same picture to within a few
+    # bits of both hashes and a CLIP similarity of nearly 1 (`match.reference_twins`) are compared once, and the findings of the
+    # one compared are given to the others.
+    group_reference_twins: bool = False
     # The search for one picture's crops (`verify.locate`): a very small crop holds few keypoints, so from this many
     # (and a large share of the crop covered) it is "to verify" instead of being lost. Not tunable per organization.
     geometric_locate_min_inliers: int = 10
@@ -118,7 +122,7 @@ ORG_OVERRIDABLE = {
               "respect_robots_txt", "dismiss_overlays", "pre_actions"},
     "match": {"phash_threshold", "dhash_threshold", "clip_similarity_high", "clip_similarity_medium",
               "clip_similarity_floor", "verify_clip_matches", "geometric_min_inliers", "geometric_review_coverage",
-              "geometric_confirm_coverage"},
+              "geometric_confirm_coverage", "group_reference_twins"},
     "report": {"default_within_days"},
 }
 
