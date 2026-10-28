@@ -65,10 +65,7 @@ export function Library() {
   });
 
   return (
-    <div
-      {...up.dropProps}
-      className={cx("relative", admin && selected.size > 0 && "pb-20", up.dragging && "after:pointer-events-none after:absolute after:inset-0 after:rounded-xl after:border-2 after:border-dashed after:border-focus after:bg-focus-soft/40")}
-    >
+    <div className={cx("relative", admin && selected.size > 0 && "pb-20")}>
       <PageHeader title="Bibliothèque" actions={<LibraryActions up={up} onImport={() => setImportOpen(true)} />} />
       <UploadNotices up={up} indexing={Boolean(library.data?.indexing)} folders={view.folders} current={openFolder} />
 
