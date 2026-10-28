@@ -50,7 +50,7 @@ before September 26, 2026 still point at their original.
 | `usage_counters` | What an organization used: `kind` ∈ {pages_read, images_new, bytes_downloaded} per month (`period` = first day of the month) and `emails` (invitations) per day; added to by the worker (crawls and page checks, at most a few seconds late) and the API, read by the cap, the client's Usage page and the back office | `org_id` + `period` + `kind` (key), `amount` |
 | `org_settings` | Per-organization overrides of `config.yaml`, shared by its brands | `overrides` jsonb (whitelisted keys only) |
 | `sites` | A brand's addresses | `brand_id`, `url` (canonical, unique per org: an address belongs to one brand), `label` (US, FR...) |
-| `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `unlimited_rights` (never expires; excludes a date: a check forbids both), `collection_id` (its folder, null = unfiled), `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `compared_at` |
+| `reference_images` | A brand's library | `brand_id`, `filename` (unique per brand), `expiry_date`, `unlimited_rights` (never expires; excludes a date: a check forbids both), `collection_id` (its folder, null = unfiled), `tags text[]` (free labels, normalized by the API, GIN-indexed; never read by matching), `phash`, `dhash`, `phash_flip`, `dhash_flip`, `embedding vector(512)`, `storage_path`, `thumb_path`, `content_hash` (SHA-256 of the file sent; the import refuses the same bytes twice in a brand; null before AXE-626), `compared_at` |
 | `collections` | Folders of a brand's library (a shoot, a season), 3 levels at most (the API checks) | `brand_id`, `parent_id` (null = top level), `name` (unique among siblings, case-insensitive). Deleting one deletes its sub-collections and un-files their references |
 | `pages` | Pages discovered | `url` (canonical, unique per site), `status` pending/done, `crawled_at`, `links_tracked` (the last read succeeded, HTTP 2xx, and stamped the page's links), `read_started_at` (when that read started: the links it stamped are at or after it) |
 | `site_images` | Images found | `url` (unique per site), `content_hash` (indexed; same bytes are reused), hashes, `embedding`, `storage_path`, `thumb_path`, `compared_at`, `variant_group` (shared by the crops and resizes of one photo, set by the worker after each comparison; NULL = no twin; never read by matching), `variants_checked_at` (incremental marker: only images where it is NULL are searched for twins), `logo_score` (probability that the whole image is a logo, from its embedding; NULL until scored), `logo_kept` (a person put it back into the comparison) |
@@ -96,6 +96,28 @@ files. The tables that are not an organization's are `platform_staff`, `service_
 `org_id` with the cascade (or be listed in `offboarding.INDIRECT` / `GLOBAL`), and no foreign key may be
 `no action`/`restrict`, or the test fails. Foreign keys to `auth.users` are `set null` (or `cascade` for
 `memberships` and `platform_staff`): deleting an account never blocks.
+
+### Write policies (audit AXE-579, 28 October 2026)
+
+The browser never writes to Postgres or Storage: `frontend/src` has no `supabase.from`, `rpc` or `storage` call, the Supabase session
+only signs in, and everything goes through `/api` (the backend writes with the service role, which bypasses RLS). The write policies
+below therefore serve nobody but someone who calls PostgREST or Storage by hand with a session. `backend/tests/test_rls_writes.py`
+tries each write as the `authenticated` role with the grants Supabase gives by default, and is the source of this table.
+
+| Table (policy) | Who may write | Verdict |
+|---|---|---|
+| `organizations` | nobody (read policy only) | OK: renaming, quotas, creating an organization are refused |
+| `memberships` (`FOR ALL`, admins) | admins of the organization | OK across organizations and for `monthly_email_allowed` and blocked members (triggers). **Gap AXE-623**: any existing account can be added without invitation or member quota |
+| `brands`, `sites`, `reference_images` (admins) | admins | **Gap AXE-623**: no quota (only the routes enforce it). **Gap AXE-622**: `reference_images` paths can point at another organization's file. `sites.url` accepts internal addresses: the crawler refuses them (`netguard`), accepted |
+| `site_images`, `reports` (admins) | admins | **Gap AXE-622**: paths (read from the policy, `reports` not tried) |
+| `matches`, `crawl_runs`, `pages`, `image_pages`, `match_meta`, `excluded_hashes` (admins) | admins | **Gap AXE-624**: findings and read figures can be invented or erased, with nothing in `audit_log` |
+| `reviews` (members) | any member | OK across organizations. **Gap AXE-624**: `reviewed_by` can be another member |
+| `org_settings` (admins) | admins | OK: the overrides are validated again when read (`with_overrides`: whitelist, `max_pages` capped). A nonsense value only breaks the organization's own jobs |
+| `storage.objects`, bucket `refs` (admins, `FOR ALL`) | admins, in their organization's folder | **Gap AXE-623**: no size or type limit, no storage quota (read from the migration, not tried: Storage is not in the test database) |
+| `jobs`, `collections`, `labels`, `image_labels`, `brand_logos`, `brand_schedules`, `audit_log`, `monthly_digests`, `usage_counters`, `page_replacements`, `reference_locations`, `platform_staff`, `service_metrics`, `service_metrics_history`, `rate_buckets` | nobody | OK: read policy only, or no access |
+
+Every gap has the same fix, AXE-625: drop the write policies and the `INSERT`/`UPDATE`/`DELETE` rights of `authenticated`, keep the reads.
+Until it lands the gap tests are strict `xfail`: the day a gap closes they fail and say so.
 
 ### The `insights` schema
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import uuid
 from datetime import datetime, timezone
@@ -218,6 +219,10 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
         # takes the next name. ponytail: the lock is on the name asked for, so a file literally named `a (1).jpg` arriving at the
         # same moment as a rename to it is not serialized (the row would be replaced, the stored original overwritten): rare, not handled.
         conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{scope.brand_id}/{filename.lower()}",))
+        # ponytail: two identical files sent at the same moment under different names are not serialized: both are kept.
+        twin = cloud_db.reference_with_hash(conn, scope.brand_id, hashlib.sha256(data).hexdigest())
+        if twin:
+            return None, False, f"Identique à « {twin} », déjà dans la bibliothèque : rien n'a été ajouté."
         name = filename if replace else _free_name(conn, scope.brand_id, filename)
         if name is None:
             return None, False, f"{MAX_SAME_NAME} visuels portent déjà ce nom : renommez ce fichier."

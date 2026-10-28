@@ -8,6 +8,7 @@ route functions can live at module level instead of inside `create_app`.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import uuid
@@ -212,6 +213,7 @@ def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename
         storage_path=storage_path, phash=features.phash, dhash=features.dhash,
         phash_flip=features.phash_flip, dhash_flip=features.dhash_flip,
         embedding=None, width=width, height=height, thumb_path=thumb_path, work_path=work_path, byte_size=len(kept),
+        content_hash=hashlib.sha256(data).hexdigest(),
     )
 
 

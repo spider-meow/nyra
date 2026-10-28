@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import csv
 import io
+import itertools
 import time
 import uuid
 
@@ -59,10 +60,14 @@ def org_with_users(cloud_database_url, cloud_org, cloud_brand):
         conn.execute("DELETE FROM platform_staff WHERE user_id = ANY(%s)", ([admin_id, client_id, outsider_id],))
 
 
+_uploads = itertools.count(1)
+
+
 def _upload_bytes() -> io.BytesIO:
+    """A new picture at each call (the ellipse starts further right): the library refuses the same bytes twice."""
     buf = io.BytesIO()
     img = Image.new("RGB", (300, 300))
-    ImageDraw.Draw(img).ellipse([50, 50, 250, 250], fill=(200, 10, 10))
+    ImageDraw.Draw(img).ellipse([50 + next(_uploads) % 40, 50, 250, 250], fill=(200, 10, 10))
     img.save(buf, format="JPEG")
     buf.seek(0)
     return buf
@@ -517,6 +522,19 @@ def test_upload_replaces_a_visual_of_the_same_name_only_when_asked(client, org_w
     assert first.json()["replaced"] == [] and first.json()["renamed"] == []
     again = _upload(client, base, admin_id, "a.jpg", "b.jpg", replace=True).json()
     assert again["saved"] == ["a.jpg", "b.jpg"] and again["replaced"] == ["a.jpg"] and again["renamed"] == []
+
+
+def test_upload_refuses_the_same_file_under_another_name_and_says_which_visual_it_is(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    data = _upload_bytes().getvalue()
+    send = lambda name, **form: client.post(f"{base}/library/upload", headers=_headers(admin_id), data=form or None,  # noqa: E731
+                                            files=[("files", (name, io.BytesIO(data), "image/jpeg"))]).json()
+    assert send("a.jpg")["saved"] == ["a.jpg"]
+    for body in (send("copie.jpg"), send("a.jpg"), send("a.jpg", replace="true")):  # another name, the same name, a replacement
+        assert body["saved"] == [] and body["job"] is None
+        assert body["failed"][0]["reason"] == "Identique à « a.jpg », déjà dans la bibliothèque : rien n'a été ajouté."
+    items = client.get(f"{base}/library", headers=_headers(client_id)).json()["items"]
+    assert [item["filename"] for item in items] == ["a.jpg"]
 
 
 def test_upload_keeps_both_visuals_when_a_name_is_taken(client, org_with_users):

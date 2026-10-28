@@ -472,6 +472,7 @@ def upsert_reference_image(
     work_path: Optional[str] = None,
     byte_size: Optional[int] = None,
     unlimited_rights: bool = False,
+    content_hash: Optional[str] = None,
 ) -> uuid.UUID:
     # A replaced picture is not the one that was searched for: forget what was found for the old one.
     conn.execute(
@@ -485,8 +486,8 @@ def upsert_reference_image(
         INSERT INTO reference_images
             (org_id, brand_id, filename, storage_path, expiry_date, credit, notes,
              phash, dhash, phash_flip, dhash_flip, embedding, width, height, thumb_path, work_path, byte_size,
-             unlimited_rights)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+             unlimited_rights, content_hash)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (brand_id, filename) DO UPDATE SET
             storage_path=excluded.storage_path,
             expiry_date=excluded.expiry_date,
@@ -503,6 +504,7 @@ def upsert_reference_image(
             thumb_path=excluded.thumb_path,
             work_path=excluded.work_path,
             byte_size=COALESCE(excluded.byte_size, reference_images.byte_size),
+            content_hash=excluded.content_hash,
             located_at=CASE
                 WHEN reference_images.phash IS DISTINCT FROM excluded.phash
                   OR reference_images.dhash IS DISTINCT FROM excluded.dhash
@@ -521,7 +523,7 @@ def upsert_reference_image(
         RETURNING id
         """,
         (org_id, brand_id, filename, storage_path, expiry_date, credit, notes, phash, dhash, phash_flip, dhash_flip,
-         embedding, width, height, thumb_path, work_path, byte_size, unlimited_rights),
+         embedding, width, height, thumb_path, work_path, byte_size, unlimited_rights, content_hash),
     ).fetchone()
     return row["id"]
 
@@ -605,6 +607,14 @@ def get_reference_by_filename(conn: psycopg.Connection, brand_id: uuid.UUID, fil
     return conn.execute(
         "SELECT * FROM reference_images WHERE brand_id = %s AND filename = %s", (brand_id, filename)
     ).fetchone()
+
+
+def reference_with_hash(conn: psycopg.Connection, brand_id: uuid.UUID, content_hash: str) -> Optional[str]:
+    """The name of the visual of this brand made of exactly these bytes, if any (visuals added before the hash was kept have none)."""
+    row = conn.execute(
+        "SELECT filename FROM reference_images WHERE brand_id = %s AND content_hash = %s ORDER BY created_at LIMIT 1", (brand_id, content_hash)
+    ).fetchone()
+    return row["filename"] if row else None
 
 
 def existing_filenames(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str]) -> set[str]:
