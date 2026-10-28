@@ -23,39 +23,30 @@ export function batches(files: File[]): File[][] {
   return out;
 }
 
-/** The common rights of an upload: a date, or unlimited rights, or neither (each file keeps what it had). */
-export type UploadRights = { expiry: string; unlimited: boolean };
-export const NO_RIGHTS: UploadRights = { expiry: "", unlimited: false };
+/**
+ * The choices common to an upload: the rights (a date, or unlimited rights, or neither: each file keeps what it had) and what to do
+ * with a file whose name is already in the library: keep both (the new one is numbered, `a (1).jpg`), or `replace` the old image.
+ */
+export type UploadRights = { expiry: string; unlimited: boolean; replace: boolean };
+export const NO_RIGHTS: UploadRights = { expiry: "", unlimited: false, replace: false };
 
 /** Where an upload goes: an existing collection, a new one (created just before sending), or nowhere. */
 export type Destination = { collectionId?: string; newName?: string };
 
 export type UploadResult = {
   saved: string[];
-  /** Also in `saved`: a visual of that name was already in the library and has been replaced. */
+  /** Also in `saved`: `replace` was chosen and a visual of that name was already in the library. */
   replaced: string[];
+  /** Also in `saved`, under `to`: the name `from` was already taken, the new visual got another one. */
+  renamed: { from: string; to: string }[];
   failed: { filename: string; reason: string }[];
 };
-
-/** Two files with the same name would overwrite each other: keep the first, say so for the others. */
-export function withoutDuplicates(files: File[], result: UploadResult): File[] {
-  const seen = new Set<string>();
-  const unique: File[] = [];
-  for (const file of files) {
-    if (seen.has(file.name)) {
-      result.failed.push({ filename: file.name, reason: "Même nom qu'un autre fichier de cet envoi : un seul exemplaire a été gardé." });
-    } else {
-      seen.add(file.name);
-      unique.push(file);
-    }
-  }
-  return unique;
-}
 
 /** One request: what the server saved or refused goes into `result`; a failed request refuses the whole batch. */
 export async function sendBatch(path: string, batch: File[], result: UploadResult, rights: UploadRights, collectionId?: string): Promise<void> {
   const body = new FormData();
   for (const file of batch) body.append("files", file);
+  if (rights.replace) body.append("replace", "true");
   if (rights.unlimited) body.append("unlimited_rights", "true");
   else if (rights.expiry) body.append("expiry_date", rights.expiry);
   if (collectionId) body.append("collection_id", collectionId);
@@ -63,6 +54,7 @@ export async function sendBatch(path: string, batch: File[], result: UploadResul
     const data = await api.post<UploadResult>(path, body);
     result.saved.push(...data.saved);
     result.replaced.push(...(data.replaced ?? []));
+    result.renamed.push(...(data.renamed ?? []));
     result.failed.push(...data.failed);
   } catch (error) {
     const reason =
@@ -75,7 +67,7 @@ export async function sendBatch(path: string, batch: File[], result: UploadResul
 
 /** Every file sent must come back as saved or refused; anything else is reported, never dropped silently. */
 export function reportUnanswered(files: File[], result: UploadResult): void {
-  const answered = new Set([...result.saved, ...result.failed.map((item) => item.filename)]);
+  const answered = new Set([...result.saved, ...result.renamed.map((item) => item.from), ...result.failed.map((item) => item.filename)]);
   for (const file of files) {
     if (!answered.has(file.name)) result.failed.push({ filename: file.name, reason: "Le serveur n'a rien répondu pour ce fichier." });
   }
@@ -85,9 +77,10 @@ export function reportUnanswered(files: File[], result: UploadResult): void {
 export function summary(result: UploadResult): Partial<ToastInput> {
   const saved = result.saved.length;
   const replaced = result.replaced.length;
+  const renamed = result.renamed.length;
   const failed = result.failed.length;
   const added = saved - replaced;
-  if (saved && !failed && !replaced) {
+  if (saved && !failed && !replaced && !renamed) {
     return {
       tone: "success",
       message: saved > 1 ? `${saved} visuels ajoutés` : "Visuel ajouté",
@@ -102,6 +95,7 @@ export function summary(result: UploadResult): Partial<ToastInput> {
       description: [
         added ? plural(added, "nouveau", "nouveaux") : "",
         replaced ? `${replaced} ${replaced > 1 ? "remplacés" : "remplacé"} (même nom déjà présent)` : "",
+        renamed ? `${renamed} ${renamed > 1 ? "renommés" : "renommé"} (nom déjà pris)` : "",
         failed ? plural(failed, "refusé", "refusés") : "",
       ].filter(Boolean).join(" · ") + ". Le détail est en haut de la bibliothèque.",
       progress: undefined,

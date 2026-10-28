@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Modal } from "../../components/feedback";
 import { Button, Checkbox, FieldLabel, Input, Segmented, fieldClass } from "../../components/ui";
 import { formatDate, plural } from "../../lib/format";
-import type { Destination, UploadRights } from "../../lib/upload";
+import { NO_RIGHTS, type Destination, type UploadRights } from "../../lib/upload";
 import type { CollectionIndex } from "./collections";
 
 const NAMES_SHOWN = 6;
@@ -32,7 +32,7 @@ type Props = {
 
 /** Before files are sent: which collection they go in, and an optional expiry date (or unlimited rights) common to these files only. */
 export function ImportDialog({ files, folders, current, onCancel, onSend }: Props) {
-  const [rights, setRights] = useState<UploadRights>({ expiry: "", unlimited: false });
+  const [rights, setRights] = useState<UploadRights>(NO_RIGHTS);
   const [mode, setMode] = useState<Mode>("none");
   const [existing, setExisting] = useState("");
   const [name, setName] = useState("");
@@ -45,7 +45,7 @@ export function ImportDialog({ files, folders, current, onCancel, onSend }: Prop
       setMode(next.mode);
       setExisting(next.existing);
       setName(next.name);
-      setRights({ expiry: "", unlimited: false });
+      setRights(NO_RIGHTS);
     }
   }
   const names = files.map((file) => file.name);
@@ -107,13 +107,19 @@ export function ImportDialog({ files, folders, current, onCancel, onSend }: Prop
           <FieldLabel htmlFor="import-expiry" hint="facultatif">Date d'expiration commune</FieldLabel>
           <Input id="import-expiry" type="date" disabled={rights.unlimited} value={rights.expiry} onChange={(event) => setRights({ ...rights, expiry: event.target.value })} />
           <div className="mt-2">
-            <Checkbox checked={rights.unlimited} onChange={(value) => setRights({ expiry: value ? "" : rights.expiry, unlimited: value })} label="Droits illimités" hint="Jamais expiré : le visuel reste reconnu sur les sites, sans alerte." />
+            <Checkbox checked={rights.unlimited} onChange={(value) => setRights({ ...rights, expiry: value ? "" : rights.expiry, unlimited: value })} label="Droits illimités" hint="Jamais expiré : le visuel reste reconnu sur les sites, sans alerte." />
           </div>
         </div>
+        <Checkbox
+          checked={rights.replace}
+          onChange={(value) => setRights({ ...rights, replace: value })}
+          label="Remplacer les visuels du même nom"
+          hint="Sans cette case, un visuel dont le nom existe déjà est ajouté sous un autre nom (« nom (1).jpg ») : l'existant n'est pas touché."
+        />
         <p className="text-xs text-muted">
           {rights.expiry || rights.unlimited
-            ? "Appliqué à ces fichiers seulement, aucun autre visuel de la bibliothèque n'est modifié. Si l'un d'eux remplace un visuel du même nom, il prend cette valeur aussi."
-            : "Sans valeur commune, les nouveaux visuels n'ont pas d'échéance, et un visuel remplacé garde la sienne. Vous pourrez la saisir ensuite."}
+            ? `Appliqué à ces fichiers seulement, aucun autre visuel de la bibliothèque n'est modifié.${rights.replace ? " Si l'un d'eux remplace un visuel du même nom, il prend cette valeur aussi." : ""}`
+            : `Sans valeur commune, les nouveaux visuels n'ont pas d'échéance${rights.replace ? ", et un visuel remplacé garde la sienne" : ""}. Vous pourrez la saisir ensuite.`}
         </p>
       </form>
     </Modal>

@@ -78,7 +78,7 @@ const MAX_OFFSET = 50_000;
 
 /** What the row adds to its title: a decision, a role, a number of items. */
 function summary(event: AuditEvent): string {
-  const { decision, role, count, replaced, reason } = event.detail ?? {};
+  const { decision, role, count, replaced, renamed, reason } = event.detail ?? {};
   const parts: string[] = [];
   if (typeof decision === "string") parts.push(DECISION_WORD[decision] ?? decision);
   if (typeof role === "string") parts.push(ROLE_WORD[role] ?? role);
@@ -86,6 +86,7 @@ function summary(event: AuditEvent): string {
   if (event.action === "schedule.run" && typeof reason === "string" && reason) parts.push(RUN_REASON[reason] ?? reason);
   if (event.action === "digest.skipped" && typeof reason === "string" && reason) parts.push(SKIP_REASON[reason] ?? reason);
   if (replaced === true) parts.push("remplace un visuel du même nom");
+  if (renamed === true) parts.push("renommé : le nom était déjà pris");
   return parts.join(" · ");
 }
 
