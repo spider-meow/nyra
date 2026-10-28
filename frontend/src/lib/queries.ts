@@ -29,7 +29,7 @@ import { api, errorMessage } from "./api";
 import { useAuth } from "./auth";
 import { useOrg } from "./org";
 import { isRecord, oneOf, readStored, removeOtherBrands, removeStored, storageKey, writeStored } from "./storage";
-import { batches, reportUnanswered, sendBatch, summary, withoutDuplicates, type UploadResult, type UploadRights } from "./upload";
+import { batches, reportUnanswered, sendBatch, summary, type UploadResult, type UploadRights } from "./upload";
 import { SHRINK_ABOVE_BYTES, shrinkAll } from "./shrink";
 
 // Copies of the Library and Overview answers in localStorage, so those pages open at once.
@@ -402,8 +402,8 @@ export function useReferenceUpload() {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   async function run(sent: File[], rights: UploadRights, collectionId?: string): Promise<UploadResult> {
-    const result: UploadResult = { saved: [], replaced: [], failed: [] };
-    const files = withoutDuplicates(sent, result);
+    const result: UploadResult = { saved: [], replaced: [], renamed: [], failed: [] };
+    const files = sent;
     const total = files.length;
     const warn = (event: BeforeUnloadEvent) => event.preventDefault();
     window.addEventListener("beforeunload", warn);

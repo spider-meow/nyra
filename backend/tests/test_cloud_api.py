@@ -511,15 +511,62 @@ def test_accented_names_get_a_safe_storage_key_and_one_bad_file_spares_the_other
     assert [item["filename"] for item in items] == ["Été n°1 [final].jpg"]
 
 
-def test_upload_says_which_files_replaced_a_visual_of_the_same_name(client, org_with_users):
+def test_upload_replaces_a_visual_of_the_same_name_only_when_asked(client, org_with_users):
     _, base, admin_id, _, _ = org_with_users
-    first = client.post(f"{base}/library/upload", headers=_headers(admin_id), files=[("files", ("a.jpg", _upload_bytes(), "image/jpeg"))])
-    assert first.json()["replaced"] == []
-    again = client.post(
-        f"{base}/library/upload", headers=_headers(admin_id),
-        files=[("files", ("a.jpg", _upload_bytes(), "image/jpeg")), ("files", ("b.jpg", _upload_bytes(), "image/jpeg"))],
-    ).json()
-    assert again["saved"] == ["a.jpg", "b.jpg"] and again["replaced"] == ["a.jpg"]
+    first = _upload(client, base, admin_id, "a.jpg")
+    assert first.json()["replaced"] == [] and first.json()["renamed"] == []
+    again = _upload(client, base, admin_id, "a.jpg", "b.jpg", replace=True).json()
+    assert again["saved"] == ["a.jpg", "b.jpg"] and again["replaced"] == ["a.jpg"] and again["renamed"] == []
+
+
+def test_upload_keeps_both_visuals_when_a_name_is_taken(client, org_with_users):
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload(client, base, admin_id, "a.jpg")
+    client.put(f"{base}/library/a.jpg", headers=_headers(admin_id), json={"credit": "Studio", "expiry_date": "2027-05-05"})
+    # taken by the library, taken by the same upload, capitals do not count, the extension stays last
+    body = _upload(client, base, admin_id, "a.jpg", "A.JPG", "a.jpg", "b.jpg", "b.jpg").json()
+    assert body["saved"] == ["a (1).jpg", "A (2).JPG", "a (3).jpg", "b.jpg", "b (1).jpg"] and body["replaced"] == []
+    assert body["renamed"] == [{"from": "a.jpg", "to": "a (1).jpg"}, {"from": "A.JPG", "to": "A (2).JPG"},
+                               {"from": "a.jpg", "to": "a (3).jpg"}, {"from": "b.jpg", "to": "b (1).jpg"}]
+    items = {i["filename"]: i for i in client.get(f"{base}/library", headers=_headers(client_id)).json()["items"]}
+    assert sorted(items) == ["A (2).JPG", "a (1).jpg", "a (3).jpg", "a.jpg", "b (1).jpg", "b.jpg"]
+    assert items["a.jpg"]["credit"] == "Studio" and items["a.jpg"]["expiry_date"] == "2027-05-05"  # the first one is untouched
+    assert items["a (1).jpg"]["credit"] == "" and items["a (1).jpg"]["expiry_date"] == ""
+
+
+def test_two_uploads_of_one_name_at_the_same_time_keep_both(client, org_with_users):
+    from concurrent.futures import ThreadPoolExecutor
+
+    _, base, admin_id, client_id, _ = org_with_users
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        bodies = [future.result().json() for future in [pool.submit(_upload, client, base, admin_id, "c.jpg") for _ in range(4)]]
+    assert sorted(name for body in bodies for name in body["saved"]) == ["c (1).jpg", "c (2).jpg", "c (3).jpg", "c.jpg"]
+    items = client.get(f"{base}/library", headers=_headers(client_id)).json()["items"]
+    assert sorted(item["filename"] for item in items) == ["c (1).jpg", "c (2).jpg", "c (3).jpg", "c.jpg"]  # none replaced the other
+
+
+def test_numbered_names_stay_within_the_length_limit_and_stop_at_the_hundredth():
+    from nyra.cloud.routes import library as library_routes
+    from nyra.cloud.routes.common import MAX_FILENAME
+
+    assert library_routes.numbered_name("photo.jpg", 2) == "photo (2).jpg"
+    assert library_routes.numbered_name("archive.tar.jpg", 1) == "archive.tar (1).jpg"
+    long = "x" * (MAX_FILENAME - 4) + ".jpg"
+    cut = library_routes.numbered_name(long, 12)
+    assert len(cut) == MAX_FILENAME and cut.endswith(" (12).jpg")
+
+
+def test_the_hundred_and_first_copy_of_a_name_is_refused(client, org_with_users, cloud_brand, cloud_database_url):
+    org_id, base, admin_id, _, _ = org_with_users
+    from nyra.cloud.routes import library as library_routes
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        names = ["z.jpg", *(library_routes.numbered_name("z.jpg", n) for n in range(1, library_routes.MAX_SAME_NAME + 1))]
+        for name in names:
+            conn.execute("""INSERT INTO reference_images (org_id, brand_id, filename, storage_path) VALUES (%s, %s, %s, %s)""",
+                         (org_id, cloud_brand, name, f"{org_id}/{name}"))
+    body = _upload(client, base, admin_id, "z.jpg").json()
+    assert body["saved"] == [] and body["failed"][0]["filename"] == "z.jpg" and "100 visuels portent déjà ce nom" in body["failed"][0]["reason"]
 
 
 def test_reupload_moves_a_reference_stored_before_brands(client, org_with_users, cloud_brand, cloud_database_url,
@@ -530,7 +577,7 @@ def test_reupload_moves_a_reference_stored_before_brands(client, org_with_users,
     with cloud_db.connect(cloud_database_url) as conn:
         cloud_db.upsert_reference_image(conn, org_id=org_id, brand_id=cloud_brand, filename="old.jpg", storage_path=legacy,
                                         expiry_date="2027-01-01", credit="Studio", notes=None)
-    client.post(f"{base}/library/upload", headers=_headers(admin_id), files=[("files", ("old.jpg", _upload_bytes(), "image/jpeg"))])
+    _upload(client, base, admin_id, "old.jpg", replace=True)
     with cloud_db.connect(cloud_database_url) as conn:
         ref = cloud_db.get_reference_by_filename(conn, cloud_brand, "old.jpg")
     assert ref["storage_path"] == f"{org_id}/{cloud_brand}/old.jpg"
@@ -559,12 +606,12 @@ def test_a_common_expiry_applies_to_the_files_of_one_upload_only(client, org_wit
     assert items["old.jpg"]["expiry_date"] == "2030-01-01"  # not in this upload: untouched
     bad = client.post(f"{base}/library/upload", headers=_headers(admin_id), files=files, data={"expiry_date": "pas une date"})
     assert bad.status_code == 400
-    free = client.post(f"{base}/library/upload", headers=_headers(admin_id), data={"unlimited_rights": "true"},
+    free = client.post(f"{base}/library/upload", headers=_headers(admin_id), data={"unlimited_rights": "true", "replace": "true"},
                        files=[("files", ("a.jpg", _upload_bytes(), "image/jpeg"))])
     assert free.json()["replaced"] == ["a.jpg"]  # a replaced visual takes the common value too
     items = {i["filename"]: i for i in client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]}
     assert items["a.jpg"]["unlimited_rights"] is True and items["a.jpg"]["expiry_date"] == ""
-    _upload(client, base, admin_id, "b.jpg")  # no common value: the replaced visual keeps its own
+    _upload(client, base, admin_id, "b.jpg", replace=True)  # no common value: the replaced visual keeps its own
     items = {i["filename"]: i for i in client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]}
     assert items["b.jpg"]["expiry_date"] == "2027-03-31"
 
@@ -578,7 +625,7 @@ def test_unlimited_rights_exclude_a_date_and_go_through_csv_both_ways(client, or
     items = {i["filename"]: i for i in client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]}
     assert items["a.jpg"]["status"] == "illimite" and items["a.jpg"]["days_left"] is None
     assert items["b.jpg"]["status"] == "inconnue"  # no date entered is not unlimited
-    _upload(client, base, admin_id, "a.jpg")  # a replaced picture keeps its rights
+    _upload(client, base, admin_id, "a.jpg", replace=True)  # a replaced picture keeps its rights
     assert client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"][0]["unlimited_rights"] is True
     exported = client.get(f"{base}/library/export-csv", headers=_headers(admin_id)).content.decode("utf-8-sig")
     assert "a.jpg,illimité," in exported
@@ -625,8 +672,8 @@ def test_bulk_expiry_and_bulk_delete(client, org_with_users, cloud_brand, fake_s
     assert ("refs", f"{org_id}/{cloud_brand}/thumbs/a.jpg.jpg") not in fake_storage_client.store
 
 
-def _upload(client, base, admin_id, *names):
-    return client.post(f"{base}/library/upload", headers=_headers(admin_id),
+def _upload(client, base, admin_id, *names, replace=False):
+    return client.post(f"{base}/library/upload", headers=_headers(admin_id), data={"replace": "true"} if replace else None,
                        files=[("files", (name, _upload_bytes(), "image/jpeg")) for name in names])
 
 
@@ -691,7 +738,7 @@ def test_replacing_an_image_keeps_its_tags(client, org_with_users):
     _, base, admin_id, client_id, _ = org_with_users
     _upload(client, base, admin_id, "a.jpg")
     client.put(f"{base}/library/a.jpg", headers=_headers(admin_id), json={"tags": ["classic"]})
-    assert _upload(client, base, admin_id, "a.jpg").json()["replaced"] == ["a.jpg"]
+    assert _upload(client, base, admin_id, "a.jpg", replace=True).json()["replaced"] == ["a.jpg"]
     assert _tags(client, base, client_id) == {"a.jpg": ["classic"]}
 
 
@@ -1824,7 +1871,8 @@ def test_an_organization_at_its_limit_cannot_grow_and_the_others_are_not_affecte
     assert client.post(f"{other_base}/brands/{other_brand}/sites", headers=_headers(admin_id), json={"url": "https://c.test/"}).status_code == 200
 
     assert _upload(client, base, admin_id, "a.jpg").json()["saved"] == ["a.jpg"]
-    assert _upload(client, base, admin_id, "a.jpg").json()["replaced"] == ["a.jpg"]  # replacing adds nothing
+    assert _upload(client, base, admin_id, "a.jpg", replace=True).json()["replaced"] == ["a.jpg"]  # replacing adds nothing
+    assert _upload(client, base, admin_id, "a.jpg").status_code == 403  # a copy under another name adds one
     assert _upload(client, base, admin_id, "b.jpg").status_code == 403
     assert _upload(client, f"{other_base}/brands/{other_brand}", admin_id, "b.jpg").json()["saved"] == ["b.jpg"]
 
@@ -1922,7 +1970,7 @@ def test_limits_lowered_under_the_usage_still_allow_replacing_and_an_invalid_row
     with caplog.at_level(logging.INFO, logger="nyra.usage"):
         _limits(client, admin_id, org_id, references=0)
     assert any(f"changed by {admin_id}" in record.getMessage() for record in caplog.records)  # who changed the limits
-    assert _upload(client, base, admin_id, "a.jpg").json()["replaced"] == ["a.jpg"]  # nothing added: allowed
+    assert _upload(client, base, admin_id, "a.jpg", replace=True).json()["replaced"] == ["a.jpg"]  # nothing added: allowed
     assert _upload(client, base, admin_id, "b.jpg").status_code == 403
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE organizations SET quota_overrides = '{\"brands\": \"many\"}' WHERE id = %s", (org_id,))

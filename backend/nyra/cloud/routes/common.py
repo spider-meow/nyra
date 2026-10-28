@@ -169,9 +169,12 @@ def site_json(row: dict) -> dict:
             "last_crawled_at": iso(row["last_crawled_at"])}
 
 
+MAX_FILENAME = 200
+
+
 def safe_filename(name: str) -> str:
     base = Path(name).name.strip()
-    if not base or base in {".", ".."} or "/" in base or "\\" in base or "\x00" in base or len(base) > 200:
+    if not base or base in {".", ".."} or "/" in base or "\\" in base or "\x00" in base or len(base) > MAX_FILENAME:
         raise HTTPException(status_code=400, detail="Nom de fichier invalide.")
     if Path(base).suffix.lower() not in IMAGE_SUFFIXES:
         raise HTTPException(status_code=400, detail=f"Format non pris en charge : {base}")

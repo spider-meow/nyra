@@ -24,6 +24,7 @@ from ..csvcell import csv_cell, csv_text
 from .collections import collection_json, require_collection
 from .common import (
     BRAND,
+    MAX_FILENAME,
     MAX_UPLOAD_BYTES,
     BrandScope,
     Ctx,
@@ -41,6 +42,7 @@ from .common import (
 )
 
 MAX_FILES_PER_UPLOAD = 100
+MAX_SAME_NAME = 100  # visuals of one name kept side by side: `a.jpg`, then `a (1).jpg` to `a (100).jpg`
 MAX_THUMBS_PER_REQUEST = 200  # the interface shows 100 cards at a time
 MAX_CSV_BYTES = 2_000_000
 
@@ -164,52 +166,80 @@ def _read_upload(upload_file: UploadFile) -> tuple[Optional[dict], str, bytes]:
     return None, filename, data
 
 
-def _new_names(conn, brand_id: uuid.UUID, files: list[UploadFile]) -> int:
-    """How many of these files add a visual to the library (the others replace one of the same name)."""
-    names = set()
+def _new_names(conn, brand_id: uuid.UUID, files: list[UploadFile], replace: bool) -> int:
+    """How many of these files add a visual to the library: all of them, unless they replace the visual of the same name."""
+    names = []
     for upload_file in files:
         try:
-            names.add(safe_filename(upload_file.filename or ""))
+            names.append(safe_filename(upload_file.filename or ""))
         except HTTPException:
             continue  # refused one by one in the loop below, with its reason
+    if not replace:
+        return len(names)
     known = conn.execute("SELECT COUNT(*) AS n FROM reference_images WHERE brand_id = %s AND filename = ANY(%s)",
-                         (brand_id, list(names))).fetchone()["n"]
-    return len(names) - known
+                         (brand_id, list(set(names)))).fetchone()["n"]
+    return len(set(names)) - known
+
+
+def numbered_name(filename: str, number: int) -> str:
+    """`a.jpg` and 2 give `a (2).jpg`; the stem is cut when the number would make the name too long."""
+    path = Path(filename)
+    tag = f" ({number})"
+    return f"{path.stem[:MAX_FILENAME - len(tag) - len(path.suffix)]}{tag}{path.suffix}"
+
+
+def _free_name(conn, brand_id: uuid.UUID, filename: str) -> Optional[str]:
+    """The name itself if the brand has no visual of that name (capitals do not count: `A.JPG` is `a.jpg`), else the first
+    `name (1).ext`, `name (2).ext`... that is free; None when the first MAX_SAME_NAME are taken."""
+    candidates = [filename, *(numbered_name(filename, number) for number in range(1, MAX_SAME_NAME + 1))]
+    taken = {row["name"] for row in conn.execute(
+        "SELECT lower(filename) AS name FROM reference_images WHERE brand_id = %s AND lower(filename) = ANY(%s)",
+        (brand_id, [candidate.lower() for candidate in candidates])).fetchall()}
+    return next((candidate for candidate in candidates if candidate.lower() not in taken), None)
 
 
 def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: UploadFile, filename: str,
-                  data: bytes, rights: Optional[tuple[Optional[str], bool]]) -> tuple[Optional[bool], str]:
-    """Store one file as a reference: (a reference of that name was replaced, why the file was refused).
-    The first item is None when the file was refused. `rights` (expiry date, unlimited rights) is the common
-    value chosen for this upload; None keeps what a replaced reference had."""
+                  data: bytes, rights: Optional[tuple[Optional[str], bool]], replace: bool = False) -> tuple[Optional[str], bool, str]:
+    """Store one file as a reference: (the name it was saved under, a reference of that name was replaced, why it was refused).
+    The name is None when the file was refused. A name already in the library is never taken over unless `replace`: the file
+    is saved as `a (1).jpg`, `a (2).jpg`... `rights` (expiry date, unlimited rights) is the common value chosen for this
+    upload; None keeps what a replaced reference had."""
     img, refused = fetch.decode_reference(data, config.crawl.max_image_pixels)
     if img is None:
-        return None, refused
+        return None, False, refused
     content_type = upload_file.content_type if (upload_file.content_type or "").startswith("image/") else None
-    stored = put_reference_files(client, scope.org_id, scope.brand_id, filename, data, img, content_type)
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        existing = cloud_db.get_reference_by_filename(conn, scope.brand_id, filename)
+        # Held until the commit: two uploads of one name wait for each other, so the second one sees the first one's row and
+        # takes the next name. ponytail: the lock is on the name asked for, so a file literally named `a (1).jpg` arriving at the
+        # same moment as a rename to it is not serialized (the row would be replaced, the stored original overwritten): rare, not handled.
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{scope.brand_id}/{filename.lower()}",))
+        name = filename if replace else _free_name(conn, scope.brand_id, filename)
+        if name is None:
+            return None, False, f"{MAX_SAME_NAME} visuels portent déjà ce nom : renommez ce fichier."
+        stored = put_reference_files(client, scope.org_id, scope.brand_id, name, data, img, content_type)
+        existing = cloud_db.get_reference_by_filename(conn, scope.brand_id, name)
         ref_id = cloud_db.upsert_reference_image(
-            conn, org_id=scope.org_id, brand_id=scope.brand_id, filename=filename,
+            conn, org_id=scope.org_id, brand_id=scope.brand_id, filename=name,
             expiry_date=rights[0] if rights else iso(existing["expiry_date"]) if existing else None,
             unlimited_rights=rights[1] if rights else existing["unlimited_rights"] if existing else False,
             credit=existing["credit"] if existing else None,
             notes=existing["notes"] if existing else None,
             **stored,
         )
-        scope.audit(conn, "library.upload", "reference", ref_id, replaced=bool(existing))  # one row per file, with its write
+        scope.audit(conn, "library.upload", "reference", ref_id, replaced=bool(existing), renamed=name != filename)  # one row per file, with its write
     if existing and existing["storage_path"] != stored["storage_path"]:
         # Uploaded before brands existed: the new file replaces the old one.
         ctx.remove_files(cloud_storage.BUCKET_REFS, [existing["storage_path"], existing["thumb_path"]])
-    return bool(existing), ""
+    return name, bool(existing), ""
 
 
 @router.post(f"{BRAND}/library/upload")
 def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unlimited_rights: bool = Form(False),
-           collection_id: Optional[uuid.UUID] = Form(None),
+           collection_id: Optional[uuid.UUID] = Form(None), replace: bool = Form(False),
            scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    """Add visuals. A common expiry date (or unlimited rights) applies to these files only, replaced ones included;
-    without one, a replaced visual keeps its own."""
+    """Add visuals. A file whose name is already in the library is saved as `a (1).jpg`, `a (2).jpg`... and reported in `renamed`;
+    with `replace` it replaces the visual of that name instead (which keeps its credit, notes and, without a common value,
+    its rights). A common expiry date (or unlimited rights) applies to these files only, replaced ones included."""
     expiry, unlimited = rights_from_body(expiry_date, unlimited_rights)
     rights = (expiry, unlimited) if expiry or unlimited else None
     if not files:
@@ -221,11 +251,12 @@ def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unl
             require_collection(conn, scope.brand_id, collection_id)
     client = ctx.settings.storage_client()
     saved: list[str] = []
-    replaced: list[str] = []  # also in `saved`: a reference of that name was already in the library
+    replaced: list[str] = []  # also in `saved`: `replace` was asked and a reference of that name was already in the library
+    renamed: list[dict] = []  # also in `saved`, under the new name: {"from": the name sent, "to": the name it was saved under}
     failed: list[dict] = []
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)
-        new = _new_names(conn, scope.brand_id, files)
+        new = _new_names(conn, scope.brand_id, files, replace)
     enforce(ctx, scope.org_id, "references", adding=new)
     enforce(ctx, scope.org_id, "storage", adding=sum(upload_file.size or 0 for upload_file in files))
     for upload_file in files:
@@ -234,17 +265,19 @@ def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unl
             failed.append(refusal)
             continue
         try:
-            was_replaced, refused = _store_upload(ctx, scope, client, config, upload_file, filename, data, rights)
+            name, was_replaced, refused = _store_upload(ctx, scope, client, config, upload_file, filename, data, rights, replace)
         except Exception as exc:  # noqa: BLE001 - one bad file must not sink the others
             log.exception("upload of %r to brand %s failed", filename, scope.brand_id)
             failed.append({"filename": filename, "reason": upload_failure(exc)})
             continue
-        if was_replaced is None:
+        if name is None:
             failed.append({"filename": filename, "reason": refused})
             continue
-        saved.append(filename)
+        saved.append(name)
         if was_replaced:
-            replaced.append(filename)
+            replaced.append(name)
+        if name != filename:
+            renamed.append({"from": filename, "to": name})
     job = None
     if saved:
         with cloud_db.connect(ctx.settings.database_url) as conn:
@@ -252,7 +285,7 @@ def upload(files: list[UploadFile] = File(...), expiry_date: str = Form(""), unl
                 cloud_db.set_reference_collection(conn, scope.brand_id, saved, collection_id)
             job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind="index",
                                      created_by=scope.member.user_id)
-    return {"saved": saved, "replaced": replaced, "failed": failed, "job": job}
+    return {"saved": saved, "replaced": replaced, "renamed": renamed, "failed": failed, "job": job}
 
 
 @router.put(f"{BRAND}/library/{{filename}}")

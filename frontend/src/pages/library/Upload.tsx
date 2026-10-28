@@ -36,6 +36,7 @@ export function useUpload(onFiled: (collectionId: string) => void) {
   // The refused files themselves, to send them again in one click.
   const [retryable, setRetryable] = useState<File[]>([]);
   const [replaced, setReplaced] = useState<string[]>([]);
+  const [renamed, setRenamed] = useState<{ from: string; to: string }[]>([]);
   const [dragging, setDragging] = useState(false);
   // The files waiting for the common rights to be chosen (the dialog), and the rights of the last send, for a retry.
   const [staged, setStaged] = useState<File[]>([]);
@@ -67,12 +68,14 @@ export function useUpload(onFiled: (collectionId: string) => void) {
     setFailures([]);
     setRetryable([]);
     setReplaced([]);
+    setRenamed([]);
     setStaged([]);
     setLastRights(rights);
     setLastCollection(collectionId);
     void uploader.run(files, rights, collectionId).then((result) => {
       setFailures(result.failed);
       setReplaced(result.replaced);
+      setRenamed(result.renamed);
       const refused = new Set(result.failed.map((item) => item.filename));
       setRetryable(files.filter((file) => refused.has(file.name)));
     });
@@ -114,10 +117,11 @@ export function useUpload(onFiled: (collectionId: string) => void) {
   }, [admin, dialogOpen]);
 
   return {
-    uploader, fileInput, zone, failures, retryable, replaced, dragging, upload, stage, staged,
+    uploader, fileInput, zone, failures, retryable, replaced, renamed, dragging, upload, stage, staged,
     cancelStaged: () => setStaged([]),
     pick: () => fileInput.current?.click(),
     closeReplaced: () => setReplaced([]),
+    closeRenamed: () => setRenamed([]),
     closeFailures: () => { setFailures([]); setRetryable([]); },
   };
 }
@@ -176,6 +180,7 @@ export function UploadNotices(props: { up: Upload; indexing: boolean; folders: C
       ) : null}
 
       <ImportDialog files={up.staged} folders={props.folders} current={props.current} onCancel={up.cancelStaged} onSend={up.upload} />
+      {up.renamed.length ? <RenamedNotice names={up.renamed} onClose={up.closeRenamed} /> : null}
       {up.replaced.length ? <ReplacedNotice names={up.replaced} onClose={up.closeReplaced} /> : null}
       {up.failures.length ? <FailedNotice up={up} /> : null}
     </>
@@ -214,6 +219,27 @@ export function DropZone(props: { up: Upload; folders: CollectionIndex; current?
   );
 }
 
+function RenamedNotice(props: { names: { from: string; to: string }[]; onClose: () => void }) {
+  return (
+    <Card className="mb-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">
+            {props.names.length > 1 ? `${props.names.length} visuels enregistrés sous un autre nom` : "1 visuel enregistré sous un autre nom"}
+          </p>
+          <p className="mt-0.5 text-[13px] text-muted">
+            Un visuel de ce nom était déjà dans la bibliothèque : il n'a pas été touché, le nouveau a reçu un numéro. Cochez « Remplacer les visuels du même nom » à l'envoi pour mettre à jour l'image d'un visuel.
+          </p>
+          <ul className="mt-1 grid gap-0.5 break-words text-[13px] text-ink-soft">
+            {props.names.map((item) => <li key={item.to}>{item.from} → <span className="font-medium text-ink">{item.to}</span></li>)}
+          </ul>
+        </div>
+        <Button size="sm" variant="ghost" onClick={props.onClose}>Fermer</Button>
+      </div>
+    </Card>
+  );
+}
+
 function ReplacedNotice(props: { names: string[]; onClose: () => void }) {
   return (
     <Card className="mb-4">
@@ -223,7 +249,7 @@ function ReplacedNotice(props: { names: string[]; onClose: () => void }) {
             {props.names.length > 1 ? `${props.names.length} visuels remplacés` : "1 visuel remplacé"}
           </p>
           <p className="mt-0.5 text-[13px] text-muted">
-            Un visuel du même nom était déjà dans la bibliothèque : l'image a été remplacée, son échéance, son crédit et ses notes sont conservés (sauf si une échéance commune a été choisie à l'envoi).
+            Vous avez demandé de remplacer les visuels du même nom : l'image a été remplacée, son échéance, son crédit et ses notes sont conservés (sauf si une échéance commune a été choisie à l'envoi).
           </p>
           <p className="mt-1 break-words text-[13px] text-ink-soft">{props.names.join(", ")}</p>
         </div>
