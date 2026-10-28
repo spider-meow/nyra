@@ -17,7 +17,8 @@ from dataclasses import dataclass
 from typing import Optional
 
 import httpx
-from PIL import Image, ImageOps, UnidentifiedImageError
+import numpy as np
+from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 
 from nyra import netguard
 from nyra.match import compute_hashes
@@ -48,6 +49,50 @@ def extension_for(content_type: Optional[str], image: Optional[Image.Image] = No
     return ".bin"
 
 
+def _to_8bit(img: Image.Image) -> Image.Image:
+    """A 16-bit (`I;16`, `I;16B`...), 32-bit (`I`) or float (`F`) grey image as 8-bit grey. A plain `convert` clips everything above
+    255, so a 16-bit scan turns white. 16-bit data keeps its exposure (the value over 256); the others are stretched to their own range."""
+    values = np.asarray(img).astype(np.float64)
+    if img.mode.startswith("I;16"):
+        scaled = values / 256.0
+    else:
+        low, high = values.min(), values.max()
+        scaled = (values - low) / (high - low or 1.0) * 255.0
+    return Image.fromarray(np.clip(scaled, 0, 255).astype(np.uint8), "L")
+
+
+def _cmyk_to_rgb(img: Image.Image) -> Image.Image:
+    """CMYK as sRGB through the file's own colour profile when it has a usable one, else Pillow's plain conversion (duller colours)."""
+    profile = img.info.get("icc_profile")
+    if profile:
+        try:
+            source = ImageCms.ImageCmsProfile(io.BytesIO(profile))
+            return ImageCms.profileToProfile(img, source, ImageCms.createProfile("sRGB"), outputMode="RGB")
+        except (ImageCms.PyCMSError, OSError, ValueError):  # a broken or mismatched profile: the plain conversion below
+            pass
+    return img.convert("RGB")
+
+
+def normalize_mode(img: Image.Image) -> Image.Image:
+    """The image in a mode every later step can `.convert("RGB")` correctly: 16-bit and float greys as 8-bit grey, CMYK as RGB.
+    Any other image is returned as it is. The result remembers the format of the file (`source_format`) and `original_size`."""
+    if img.mode.startswith("I;16") or img.mode in ("I", "F"):
+        out = _to_8bit(img)
+    elif img.mode == "CMYK":
+        out = _cmyk_to_rgb(img)
+    else:
+        return img
+    out.info["source_format"] = img.format
+    if "original_size" in img.info:
+        out.info["original_size"] = img.info["original_size"]
+    return out
+
+
+def source_format(img: Image.Image) -> Optional[str]:
+    """The format of the file the image was read from (`TIFF`, `JPEG`...), kept through `normalize_mode`."""
+    return img.info.get("source_format") or img.format
+
+
 def decode(data: bytes, max_pixels: int) -> Optional[Image.Image]:
     """Open and fully load an image, or None if it's unreadable or too large."""
     previous = Image.MAX_IMAGE_PIXELS
@@ -57,7 +102,7 @@ def decode(data: bytes, max_pixels: int) -> Optional[Image.Image]:
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             img = Image.open(io.BytesIO(data))
             img.load()
-        return img
+        return normalize_mode(img)
     except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError, Image.DecompressionBombWarning):
         return None
     finally:
@@ -93,7 +138,7 @@ def decode_reference(data: bytes, max_pixels: int) -> tuple[Optional[Image.Image
             img.draft("RGB", (width // scale, height // scale))
         img.load()
         img.info["original_size"] = (width, height)
-        return img, ""
+        return normalize_mode(img), ""
     except OSError:
         return None, "Fichier incomplet ou endommagé : l'image ne se lit pas jusqu'au bout. Réexportez-la puis renvoyez-la."
     except (ValueError, Image.DecompressionBombError):
@@ -140,9 +185,11 @@ def make_stored_original(img: Image.Image, data: bytes, content_type: Optional[s
 
     A 15 MB studio export is not worth its weight: matching reads the 1024 px working copy, and the
     edit screen only shows the image. JPEG, or PNG when there is transparency to keep. Animations and
-    anything the copy would not make lighter stay as sent.
+    anything the copy would not make lighter stay as sent. A TIFF is always converted, light or not: browsers do not
+    display it (the first page is kept).
     """
-    if (max(img.size) <= STORED_SIDE and len(data) <= STORED_BYTES) or getattr(img, "n_frames", 1) > 1:
+    web_copy = source_format(img) == "TIFF"
+    if not web_copy and ((max(img.size) <= STORED_SIDE and len(data) <= STORED_BYTES) or getattr(img, "n_frames", 1) > 1):
         return data, content_type
     flat = ImageOps.exif_transpose(img)
     alpha = flat.mode in ("RGBA", "LA", "PA") or "transparency" in flat.info
@@ -153,7 +200,7 @@ def make_stored_original(img: Image.Image, data: bytes, content_type: Optional[s
         flat.save(buf, format="PNG", optimize=True)
     else:
         flat.save(buf, format="JPEG", quality=88, optimize=True)
-    if len(buf.getvalue()) >= len(data):
+    if not web_copy and len(buf.getvalue()) >= len(data):
         return data, content_type
     return buf.getvalue(), "image/png" if alpha else "image/jpeg"
 
