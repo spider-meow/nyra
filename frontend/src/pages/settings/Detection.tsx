@@ -6,6 +6,7 @@ import { numberProps, ResetButton, SaveIndicator, useOverridesForm, type Overrid
 type Level = "strict" | "balanced" | "wide";
 
 const THRESHOLDS = ["match.phash_threshold", "match.dhash_threshold", "match.clip_similarity_high", "match.clip_similarity_medium", "match.clip_similarity_floor"];
+const TWINS = "match.group_reference_twins";
 const VERIFY = ["match.verify_clip_matches", "match.geometric_min_inliers", "match.geometric_review_coverage", "match.geometric_confirm_coverage"];
 
 // Starting points, to be tuned on real cases (docs/MATCHING.md). "balanced" is the standard configuration.
@@ -57,6 +58,12 @@ function Advanced(props: { form: OverridesForm }) {
             onChange={(value) => form.set(VERIFY[0], String(value))}
             label="Vérifier chaque ressemblance sur les détails de l'image"
             hint="Écarte les autres prises de vue d'un même produit. Recommandé."
+          />
+          <Checkbox
+            checked={form.boolOf(TWINS)}
+            onChange={(value) => form.set(TWINS, String(value))}
+            label="Ne comparer qu'une fois les visuels quasi identiques"
+            hint="Deux visuels de la bibliothèque qui sont la même image (même export, même fichier réenregistré) sont comparés une seule fois : le résultat vaut pour les deux, et les deux restent dans la bibliothèque. Désactivé par défaut."
           />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {field(VERIFY[1], "Points communs minimum", "nombre")}
