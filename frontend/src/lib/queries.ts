@@ -27,6 +27,7 @@ import type {
 } from "../types";
 import { api, errorMessage } from "./api";
 import { useAuth } from "./auth";
+import { withOrder } from "./order";
 import { useOrg } from "./org";
 import { isRecord, oneOf, readStored, removeOtherBrands, removeStored, storageKey, writeStored } from "./storage";
 import { batches, reportUnanswered, sendBatch, summary, type UploadResult, type UploadRights } from "./upload";
@@ -446,7 +447,8 @@ export function useReferenceUpload() {
 }
 
 export function useLibraryMutations() {
-  const { apiPath } = useOrg();
+  const { apiPath, brand } = useOrg();
+  const client = useQueryClient();
   const invalidate = useInvalidate();
   const done = () => invalidate("occurrences", "library", "overview", "matches", "jobs");
   return {
@@ -485,6 +487,19 @@ export function useLibraryMutations() {
     moveCollection: useMutation({
       mutationFn: (input: { id: string; parent_id: string | null }) => api.post(apiPath(`/collections/${input.id}/move`), { parent_id: input.parent_id }),
       onSuccess: () => invalidate("library"),
+    }),
+    reorderCollections: useMutation({
+      // `ids`: every child of `parent_id`, in the order wanted. Shown at once; put back if the server refuses (a level that changed meanwhile, for one).
+      mutationFn: (input: { parent_id: string | null; ids: string[] }) => api.put(apiPath("/collections/order"), input),
+      onMutate: async (input) => {
+        const key = ["library", brand.id];
+        await client.cancelQueries({ queryKey: key });
+        const before = client.getQueryData<LibraryAnswer>(key);
+        client.setQueryData<LibraryAnswer>(key, (old) => old && { ...old, collections: withOrder(old.collections, input.parent_id, input.ids) });
+        return { key, before };
+      },
+      onError: (_error, _input, context) => context && client.setQueryData(context.key, context.before),
+      onSettled: () => invalidate("library"),
     }),
     removeCollection: useMutation({
       mutationFn: (id: string) => api.del(apiPath(`/collections/${id}`)),

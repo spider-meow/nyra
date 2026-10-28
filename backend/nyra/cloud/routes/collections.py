@@ -26,6 +26,11 @@ class MoveBody(BaseModel):
     parent_id: Optional[uuid.UUID] = None  # None = the top level
 
 
+class OrderBody(BaseModel):
+    parent_id: Optional[uuid.UUID] = None  # None = the top level
+    ids: list[uuid.UUID] = Field(min_length=1, max_length=500)  # every child of that parent, in the order wanted
+
+
 class FileBody(BaseModel):
     filenames: list[str] = Field(default_factory=list, max_length=5000)
     collection_id: Optional[uuid.UUID] = None  # None un-files
@@ -66,6 +71,20 @@ def add_collection(body: CollectionBody, scope: BrandScope = Depends(brand_admin
             raise _taken() from exc
         scope.audit(conn, "collection.create", "collection", row["id"])
     return {"collection": collection_json(row)}
+
+
+@router.put(f"{BRAND}/collections/order")  # before `{collection_id}`: "order" would be taken for an identifier
+def order_collections(body: OrderBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Sets the order of the collections under one parent (or at the top). `ids` must be all of them: a list made before one was added,
+    moved or deleted is refused with 409 and changes nothing."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        cloud_db.lock_collections(conn, scope.brand_id)
+        if body.parent_id:
+            require_collection(conn, scope.brand_id, body.parent_id)
+        if not cloud_db.reorder_collections(conn, scope.brand_id, body.parent_id, body.ids):
+            raise HTTPException(status_code=409, detail="Les collections ont changé entre-temps : rechargez la page, puis réessayez.")
+        scope.audit(conn, "collection.reorder", "collection", body.parent_id, count=len(body.ids))
+    return {"ok": True}
 
 
 @router.put(f"{BRAND}/collections/{{collection_id}}")

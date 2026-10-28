@@ -90,6 +90,7 @@ BODIES = {
     ("POST", ORG + "/members"): lambda t: {"json": {"email": f"new-{t['tag']}@x.test"}},
     ("PUT", ORG + "/members/{user_id}"): lambda t: {"json": {"role": "client"}},
     ("POST", BR + "/collections"): lambda t: {"json": {"name": "x", "parent_id": str(t["col"])}},
+    ("PUT", BR + "/collections/order"): lambda t: {"json": {"parent_id": None, "ids": [str(t["col"]), str(t["col2"])]}},
     ("PUT", BR + "/collections/{collection_id}"): lambda t: {"json": {"name": "x"}},
     ("POST", BR + "/collections/{collection_id}/move"): lambda t: {"json": {"parent_id": str(t["col2"])}},
     ("POST", BR + "/library/collection"): lambda t: {"json": {"filenames": [t["filename"]], "collection_id": str(t["col"])}},

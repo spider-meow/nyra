@@ -22,6 +22,7 @@ const ACTION_LABEL: Record<string, string> = {
   "collection.create": "Collection créée",
   "collection.rename": "Collection renommée",
   "collection.move": "Collection déplacée",
+  "collection.reorder": "Collections réordonnées",
   "collection.delete": "Collection supprimée",
   "exclusion.add": "Image ignorée",
   "exclusion.delete": "Image remise dans la comparaison",

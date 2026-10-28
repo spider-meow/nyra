@@ -540,7 +540,7 @@ def list_references(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
 
 
 def list_collections(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
-    return conn.execute("SELECT id, parent_id, name FROM collections WHERE brand_id = %s ORDER BY lower(name)", (brand_id,)).fetchall()
+    return conn.execute("SELECT id, parent_id, name FROM collections WHERE brand_id = %s ORDER BY position, lower(name)", (brand_id,)).fetchall()
 
 
 def get_collection(conn: psycopg.Connection, brand_id: uuid.UUID, collection_id: uuid.UUID) -> Optional[Row]:
@@ -569,15 +569,37 @@ def collection_subtree(conn: psycopg.Connection, collection_id: uuid.UUID) -> di
     return {row["id"]: row["depth"] for row in rows}
 
 
+# The place after the last child of a parent, taking the brand then the parent as parameters: where an added or moved collection lands.
+_LAST_PLACE = "(SELECT COALESCE(MAX(position) + 1, 0) FROM collections WHERE brand_id = %s AND parent_id IS NOT DISTINCT FROM %s)"
+
+
 def move_collection(conn: psycopg.Connection, brand_id: uuid.UUID, collection_id: uuid.UUID, parent_id: Optional[uuid.UUID]) -> bool:
-    return conn.execute("UPDATE collections SET parent_id = %s WHERE brand_id = %s AND id = %s", (parent_id, brand_id, collection_id)).rowcount > 0
+    """Under another parent, at the end of its children."""
+    return conn.execute(
+        f"UPDATE collections SET parent_id = %s, position = {_LAST_PLACE} WHERE brand_id = %s AND id = %s",
+        (parent_id, brand_id, parent_id, brand_id, collection_id),
+    ).rowcount > 0
+
+
+def reorder_collections(conn: psycopg.Connection, brand_id: uuid.UUID, parent_id: Optional[uuid.UUID], ids: list[uuid.UUID]) -> bool:
+    """Gives the children of `parent_id` the order of `ids`. False, nothing written, when `ids` are not exactly those children
+    (one was added, moved or deleted meanwhile: a stale list never drops or resurrects a sibling)."""
+    current = conn.execute("SELECT id FROM collections WHERE brand_id = %s AND parent_id IS NOT DISTINCT FROM %s", (brand_id, parent_id)).fetchall()
+    if len(set(ids)) != len(ids) or {row["id"] for row in current} != set(ids):
+        return False
+    written = conn.execute(
+        "UPDATE collections c SET position = o.place FROM unnest(%s::uuid[]) WITH ORDINALITY AS o(id, place) WHERE c.id = o.id AND c.brand_id = %s",
+        (ids, brand_id),
+    ).rowcount
+    assert written == len(ids), "every sibling was found above"
+    return True
 
 
 def add_collection(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUID, parent_id: Optional[uuid.UUID], name: str) -> Row:
     """Raises psycopg.errors.UniqueViolation when a sibling already has this name."""
     return conn.execute(
-        "INSERT INTO collections (org_id, brand_id, parent_id, name) VALUES (%s, %s, %s, %s) RETURNING id, parent_id, name",
-        (org_id, brand_id, parent_id, name),
+        f"INSERT INTO collections (org_id, brand_id, parent_id, name, position) VALUES (%s, %s, %s, %s, {_LAST_PLACE}) RETURNING id, parent_id, name",
+        (org_id, brand_id, parent_id, name, brand_id, parent_id),
     ).fetchone()
 
 
