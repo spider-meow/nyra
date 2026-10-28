@@ -97,27 +97,27 @@ files. The tables that are not an organization's are `platform_staff`, `service_
 `no action`/`restrict`, or the test fails. Foreign keys to `auth.users` are `set null` (or `cascade` for
 `memberships` and `platform_staff`): deleting an account never blocks.
 
-### Write policies (audit AXE-579, 28 October 2026)
+### Write policies: none (audit AXE-579, closed by AXE-625, 28 October 2026)
 
 The browser never writes to Postgres or Storage: `frontend/src` has no `supabase.from`, `rpc` or `storage` call, the Supabase session
-only signs in, and everything goes through `/api` (the backend writes with the service role, which bypasses RLS). The write policies
-below therefore serve nobody but someone who calls PostgREST or Storage by hand with a session. `backend/tests/test_rls_writes.py`
-tries each write as the `authenticated` role with the grants Supabase gives by default, and is the source of this table.
+only signs in, and everything goes through `/api` (the backend writes with the service role, which bypasses RLS). **No table has a write
+policy any more**: the migration `20261028000041_no_direct_writes.sql` dropped the `FOR ALL` policies of `brands`, `sites`,
+`reference_images`, `pages`, `site_images`, `image_pages`, `matches`, `reviews`, `match_meta`, `crawl_runs`, `reports`, `org_settings`,
+`excluded_hashes`, `memberships` and of `storage.objects` (bucket `refs`), took `INSERT`, `UPDATE` and `DELETE` from the role
+`authenticated` on every table of `public` (and on the tables to come: `alter default privileges`), and kept every read policy (the
+migration stops if a table would lose its only `SELECT` policy). Two layers, so that one mistake in a policy is not enough.
 
-| Table (policy) | Who may write | Verdict |
-|---|---|---|
-| `organizations` | nobody (read policy only) | OK: renaming, quotas, creating an organization are refused |
-| `memberships` (`FOR ALL`, admins) | admins of the organization | OK across organizations and for `monthly_email_allowed` and blocked members (triggers). **Gap AXE-623**: any existing account can be added without invitation or member quota |
-| `brands`, `sites`, `reference_images` (admins) | admins | **Gap AXE-623**: no quota (only the routes enforce it). **Gap AXE-622**: `reference_images` paths can point at another organization's file. `sites.url` accepts internal addresses: the crawler refuses them (`netguard`), accepted |
-| `site_images`, `reports` (admins) | admins | **Gap AXE-622**: paths (read from the policy, `reports` not tried) |
-| `matches`, `crawl_runs`, `pages`, `image_pages`, `match_meta`, `excluded_hashes` (admins) | admins | **Gap AXE-624**: findings and read figures can be invented or erased, with nothing in `audit_log` |
-| `reviews` (members) | any member | OK across organizations. **Gap AXE-624**: `reviewed_by` can be another member |
-| `org_settings` (admins) | admins | OK: the overrides are validated again when read (`with_overrides`: whitelist, `max_pages` capped). A nonsense value only breaks the organization's own jobs |
-| `storage.objects`, bucket `refs` (admins, `FOR ALL`) | admins, in their organization's folder | **Gap AXE-623**: no size or type limit, no storage quota (read from the migration, not tried: Storage is not in the test database) |
-| `jobs`, `collections`, `labels`, `image_labels`, `brand_logos`, `brand_schedules`, `audit_log`, `monthly_digests`, `usage_counters`, `page_replacements`, `reference_locations`, `platform_staff`, `service_metrics`, `service_metrics_history`, `rate_buckets` | nobody | OK: read policy only, or no access |
+`backend/tests/test_rls_writes.py` tries 29 writes as the `authenticated` role with the grants Supabase gives by default (all of them):
+each is refused, among them the holes the audit found: **AXE-622** (a path pointing at another organization's file: `reference_images`,
+`site_images`, `reports`), **AXE-623** (quotas only enforced by the routes: brands, references, members added without an invitation;
+no size limit in Storage) and **AXE-624** (matches, read figures and decisions invented or erased with nothing in `audit_log`;
+`reviewed_by` of another member). It also runs the migration on top of the default rights and checks that no table keeps a write right
+or a write policy and that every read stays. Reads: a member reads the organization, a stranger does not.
 
-Every gap has the same fix, AXE-625: drop the write policies and the `INSERT`/`UPDATE`/`DELETE` rights of `authenticated`, keep the reads.
-Until it lands the gap tests are strict `xfail`: the day a gap closes they fail and say so.
+Not verified: the migration was run on the test database only, never on a real Supabase project (its default rights, its Storage
+schema); `storage.objects` is not in the test database as Supabase has it, so the Storage policy is dropped by name and not tried.
+Apply it on the real project by someone who has access, then try one write with a user session (it must answer 401 or 403).
+A new table needs no write policy: the backend writes it, and `authenticated` has no right on it.
 
 ### The `insights` schema
 

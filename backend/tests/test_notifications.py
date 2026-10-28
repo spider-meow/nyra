@@ -180,6 +180,19 @@ def api_role(cloud_database_url):
         conn.execute("GRANT SELECT ON auth.users TO authenticated")
 
 
+@pytest.fixture()
+def old_write_policy(api_role, cloud_database_url):
+    """The write policy of memberships that AXE-625 dropped, put back for one test: the triggers of AXE-523 and AXE-578 stay as a
+    second line, and this is how to see that they still refuse what the policy would let through."""
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DROP POLICY IF EXISTS \"org admins manage memberships\" ON public.memberships")
+        conn.execute("CREATE POLICY \"org admins manage memberships\" ON public.memberships FOR ALL "
+                     "USING (public.is_org_admin(org_id)) WITH CHECK (public.is_org_admin(org_id))")
+    yield
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DROP POLICY \"org admins manage memberships\" ON public.memberships")
+
+
 def as_user(url, user_id, sql, args=()):
     """Run one statement as the public API would for this signed-in person; return the number of rows it changed."""
     with cloud_db.connect(url) as conn:
@@ -188,7 +201,7 @@ def as_user(url, user_id, sql, args=()):
         return conn.execute(sql, args).rowcount
 
 
-def test_the_public_api_lets_a_person_change_their_own_wish_and_nothing_the_team_decides(api_role, org_with_users, second_admin, cloud_database_url):
+def test_the_public_api_lets_a_person_change_their_own_wish_and_nothing_the_team_decides(old_write_policy, org_with_users, second_admin, cloud_database_url):
     org_id, _, admin_id, client_id, _ = org_with_users
     update = "UPDATE public.memberships SET {} WHERE org_id = %s AND user_id = %s"
     assert as_user(cloud_database_url, second_admin, update.format("monthly_email_wanted = false"), (org_id, second_admin)) == 1
@@ -258,7 +271,7 @@ def test_the_trigger_function_has_a_pinned_search_path(cloud_database_url):
     assert config and any(item.startswith("search_path=") for item in config)
 
 
-def test_the_public_api_cannot_delete_a_membership_the_team_blocked_nor_recreate_it(api_role, client, org_with_users, second_admin, cloud_database_url):
+def test_the_public_api_cannot_delete_a_membership_the_team_blocked_nor_recreate_it(old_write_policy, client, org_with_users, second_admin, cloud_database_url):
     """AXE-578: delete then recreate with the defaults used to lift the Nyra team's block."""
     org_id, _, admin_id, client_id, _ = org_with_users
     with cloud_db.connect(cloud_database_url) as conn:
