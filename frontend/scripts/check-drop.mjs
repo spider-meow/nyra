@@ -55,10 +55,12 @@ const limitsSource = readFileSync(new URL("../src/lib/uploadLimits.ts", import.m
 const limits = await import(`data:text/javascript;base64,${Buffer.from((await transformWithOxc(limitsSource, "limits.ts", { target: "es2022" })).code).toString("base64")}`);
 assert.deepEqual([limits.MAX_BYTES, limits.MAX_TIFF_BYTES], [30_000_000, 100_000_000], "the server's limits (routes/common.py)");
 assert.equal(limits.megabytes(45_300_000), "45,3 Mo");
+assert.equal(limits.megabytes(45_250_000), "45,3 Mo", "rounded up, as the server does (Python and JS used to differ on an exact tie)");
+assert.equal(limits.megabytes(30_000_001), "30,1 Mo");
 assert.equal(limits.heavyReason({ name: "photo.jpg", size: 30_000_000 }), null, "exactly the limit goes");
 assert.equal(limits.heavyReason({ name: "scan.TIF", size: 72_000_000 }), null, "a 72 MB TIFF goes");
 assert.equal(limits.heavyReason({ name: "scan.tiff", size: 100_000_000 }), null);
-assert.equal(limits.heavyReason({ name: "photo.png", size: 30_000_001 }), "Fichier trop lourd : 30,0 Mo, 30,0 Mo au plus.");
+assert.equal(limits.heavyReason({ name: "photo.png", size: 30_000_001 }), "Fichier trop lourd : 30,1 Mo, 30,0 Mo au plus.", "never « 30,0 Mo, 30,0 Mo au plus »");
 assert.equal(limits.heavyReason({ name: "photo.jpg", size: 45_300_000 }), "Fichier trop lourd : 45,3 Mo, 30,0 Mo au plus.");
 assert.equal(limits.heavyReason({ name: "Scan.Tif", size: 130_000_000 }), "Fichier trop lourd : 130,0 Mo, 100,0 Mo au plus pour un TIFF. Exportez-le en JPEG ou réduisez-le.");
 assert.notEqual(limits.heavyReason({ name: "tif.jpg", size: 40_000_000 }), null, "a name that only contains tif is not a TIFF");

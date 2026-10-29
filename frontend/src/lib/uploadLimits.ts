@@ -6,8 +6,8 @@ export const MAX_TIFF_BYTES = 100_000_000;
 
 const isTiff = (name: string) => /\.tiff?$/i.test(name);
 
-/** `45,3 Mo`, as the server writes it (decimal megabytes, a comma). */
-export const megabytes = (size: number) => `${(size / 1e6).toFixed(1).replace(".", ",")} Mo`;
+/** `45,3 Mo`, as the server writes it (decimal megabytes, a comma, rounded UP: a file over a limit never reads as equal to it). */
+export const megabytes = (size: number) => `${(Math.ceil(size / 1e5) / 10).toFixed(1).replace(".", ",")} Mo`;
 
 /** Why a file is too heavy to be sent, in the server's own words (nothing leaves the browser), or null when it may go. */
 export function heavyReason(file: { name: string; size: number }): string | null {

@@ -125,14 +125,16 @@ and an animated GIF go as they are, and so does any file this browser cannot dec
 the limit of its format at once, in the same words, instead of sending it whole to be refused (`lib/uploadLimits.ts`). The pixel limit above is
 unchanged: a TIFF is refused above `NYRA_UPLOAD_MAX_PIXELS` (25 Mpx), whatever it weighs, and an upload is decoded one at a time per process.
 **The file is never held in memory as bytes**: the multipart parser spools it to disk, the decoder and the SHA-256 read it from there (`fetch.decode_reference`
-and `fetch.sha256_of` take the file itself), and only the converted copy (JPEG, or PNG with transparency) is kept. Measured on a development machine
-(peak of the process, a 24 Mpx RGB TIFF of 72 MB): **535 MiB** read as bytes, as before, against **302 MiB** read from the file, with the same SHA-256 and the
-same converted copy. A file named `.tif` that is not a TIFF gets no more than the usual 30 MB (it is read back as bytes after decoding). Refusals say the real
-size: « Fichier trop lourd : 130,0 Mo, 100,0 Mo au plus pour un TIFF. Exportez-le en JPEG ou réduisez-le. »
+and `fetch.sha256_of` take the file itself), and only the converted copy (JPEG, or PNG with transparency) is kept. Measured on a development machine (peak of the process, the same code, a 24 Mpx RGB TIFF of 72 MB): **371 MiB** with the file read into memory as bytes,
+**302 MiB** read from the file, with the same SHA-256 and the same converted copy: the gain is the weight of the file itself (about 70 MiB here, **100 MiB
+at the limit**), which is what keeps a 100 MB TIFF from adding to the decoded image's peak in a 512 MiB container (150 at rest + 255 above the process's own
+start = 405 MiB, against about 505 with the bytes of a 100 MB file held as well). Before this change such a file was refused at 30 MB, so there is no older
+figure to compare with. A file named `.tif` that is not a TIFF gets no more than the usual 30 MB (it is read back as bytes after decoding). Refusals say the real
+size, rounded up so that a file over a limit never reads as equal to it (the browser and the server round alike): « Fichier trop lourd : 130,0 Mo, 100,0 Mo au plus pour un TIFF. Exportez-le en JPEG ou réduisez-le. »
 *Not measured:* a real upload of 100 MB through Caddy and a slow connection (no request-body limit is set in the repository, `Caddyfile` has none, so Caddy
 should pass it; the progress bar counts files, not bytes, and a single 100 MB request shows no progress until it ends); the time to convert a 25 Mpx TIFF
 on the Droplet (a few seconds on a development machine); the 16-bit and CMYK TIFFs at the limit under `docker stats`; the disk the multipart parser needs
-for a 100 MB part (the container's `/tmp`). **On Vercel a request is limited to ~4.5 MB: a TIFF never arrives there** (413); that needs a direct upload to
+for a 100 MB part (the container's `/tmp`; a request may carry 100 files, so up to 10 GB of spool for an administrator who sends it by hand, 3 GB before: the quota counts what is stored, not the spool). **On Vercel a request is limited to ~4.5 MB: a TIFF never arrives there** (413); that needs a direct upload to
 Storage with a signed URL, another piece of work. A TIFF above 25 Mpx is not accepted here (the old text of AXE-630 said 60 Mpx, which the 512 MiB of `web`
 cannot hold, AXE-639).
 

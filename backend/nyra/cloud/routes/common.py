@@ -9,6 +9,7 @@ route functions can live at module level instead of inside `create_app`.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import threading
 import uuid
@@ -231,8 +232,9 @@ def upload_byte_limit(filename: str) -> int:
 
 
 def megabytes(size: int) -> str:
-    """`45,3 Mo`, as a person reads it (decimal megabytes, a comma)."""
-    return f"{size / 1e6:.1f}".replace(".", ",") + " Mo"
+    """`45,3 Mo`, as a person reads it (decimal megabytes, a comma), rounded UP: a file over a limit never reads as equal to it (30 000 001 bytes
+    is `30,1 Mo`, not `30,0`), and the browser (`lib/uploadLimits.ts`) rounds the same way, so both say the same words."""
+    return f"{math.ceil(size / 1e5) / 10:.1f}".replace(".", ",") + " Mo"
 
 
 # What one `web` process can decode and re-encode (AXE-639). A library image costs about 10 MiB per megapixel at its peak (the decoded image, and the
