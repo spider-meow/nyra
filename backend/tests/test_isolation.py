@@ -499,6 +499,50 @@ def test_nothing_the_client_reads_names_the_platform_admin_who_acted_in_its_spac
         assert str(staff_outsider) not in seen and "@nyra.test" not in seen, (who, path)
 
 
+def test_a_platform_admin_sees_the_space_as_the_role_they_choose(client, world, staff_outsider, cloud_database_url):
+    """AXE-634: the header makes the SERVER answer as an administrator or a client (real 403s), as a client read-only unless the actions
+    are allowed; no header, or a value that is not a role, changes nothing; the journal says which role was borrowed."""
+    a, _ = world
+    org, brand = a["org"], a["brand"]
+    base, usage, staff = f"/api/orgs/{org}/brands/{brand}", f"/api/orgs/{org}/usage", _headers(staff_outsider)
+    as_ = lambda role, **more: {**staff, "X-Nyra-View-As": role, **more}  # noqa: E731
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = %s", (org,))
+    for headers in (staff, as_("root"), as_(""), as_("admin")):  # as before: an administrator
+        assert client.get(usage, headers=headers).status_code == 200
+    client_view = as_("client")
+    assert client.get(f"{base}/library", headers=client_view).status_code == 200  # a client reads
+    assert client.get(usage, headers=client_view).status_code == 403  # ... but not what is for administrators
+    refused = client.post(f"{base}/collections", headers=client_view, json={"name": "Essai"})
+    assert refused.status_code == 403 and "Lecture seule" in refused.json()["detail"]  # read-only until the actions are allowed
+    really = client.post(f"{base}/collections", headers=as_("client", **{"X-Nyra-View-Write": "1"}), json={"name": "Essai"})
+    assert really.status_code == 403 and "administrateurs" in really.json()["detail"]  # done as a client: the route is an administrator's
+    assert client.get(f"/api/staff/organizations/{org}/audit", headers=client_view).status_code == 200  # the team's own rights stay theirs
+    assert client.post(f"{base}/collections", headers=as_("admin"), json={"name": "Vu en admin"}).status_code == 200
+    with cloud_db.connect(cloud_database_url) as conn:
+        rows = conn.execute("SELECT detail, by_staff FROM audit_log WHERE org_id = %s AND user_id = %s AND action = 'collection.create'",
+                            (org, staff_outsider)).fetchall()
+    assert [(row["detail"].get("view_as"), row["by_staff"]) for row in rows] == [("admin", True)]
+    own = client.get(f"/api/orgs/{org}/audit", headers=_headers(a["admin"])).json()["events"]
+    assert not [e for e in own if e["user_id"] == str(staff_outsider)]  # the client's journal shows nothing of the borrowed role
+
+
+def test_a_header_gives_nobody_else_another_role(client, world):
+    a, b = world
+    usage_a, base_a = f"/api/orgs/{a['org']}/usage", f"/api/orgs/{a['org']}/brands/{a['brand']}"
+    for role in ("admin", "client", "staff"):
+        client_headers = {**_headers(a["client"]), "X-Nyra-View-As": role, "X-Nyra-View-Write": "1"}
+        assert client.get(usage_a, headers=client_headers).status_code == 403, role  # a client stays a client
+        assert client.post(f"{base_a}/collections", headers=client_headers, json={"name": "x"}).status_code == 403, role
+    admin_headers = {**_headers(a["admin"]), "X-Nyra-View-As": "client"}
+    assert client.get(usage_a, headers=admin_headers).status_code == 200  # an administrator stays one: the header is ignored
+    assert client.post(f"{base_a}/collections", headers=admin_headers, json={"name": "Sans effet"}).status_code == 200
+    for who in ("admin", "client"):  # and it opens no other organization
+        stranger = {**_headers(a[who]), "X-Nyra-View-As": "admin"}
+        assert client.get(f"/api/orgs/{b['org']}/usage", headers=stranger).status_code == 403
+        assert client.get(f"/api/staff/organizations/{a['org']}/audit", headers=stranger).status_code == 403
+
+
 def test_a_member_of_an_organization_stays_a_member_there_and_a_stranger_gets_nothing(client, world, cloud_database_url):
     a, b = world
     # a client of A (not a platform admin): A's brand under A is theirs to read, B in any way is a 403

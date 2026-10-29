@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, StrictBool
 from .. import audit as cloud_audit
 from .. import auth as cloud_auth
 from .. import db as cloud_db
-from .common import Ctx, get_ctx, member_dep, staff_dep
+from .common import Ctx, get_ctx, member_dep, seen_as, staff_dep
 
 router = APIRouter()
 
@@ -58,7 +58,7 @@ def put_notifications(body: MineBody, member: cloud_auth.Member = Depends(member
             "UPDATE memberships SET monthly_email_wanted = %s WHERE user_id = %s AND org_id = %s AND monthly_email_wanted IS DISTINCT FROM %s",
             (body.monthly_email, member.user_id, member.org_id, body.monthly_email)).rowcount
         if changed:
-            cloud_audit.record(conn, member.org_id, member.user_id, "notifications.update", "user", member.user_id, monthly_email=body.monthly_email)
+            cloud_audit.record(conn, member.org_id, member.user_id, "notifications.update", "user", member.user_id, **seen_as(member), monthly_email=body.monthly_email)
         return _state(conn, member)
 
 

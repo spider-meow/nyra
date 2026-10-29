@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
-import { createContext, useContext, type ReactNode } from "react";
+import { createContext, useContext, useSyncExternalStore, type ReactNode } from "react";
 import type { Brand, Organization } from "../types";
 import { api } from "./api";
 import { useAuth } from "./auth";
 import { isRecord, readStored, storageKey, writeStored } from "./storage";
+import { getViewAs, rightsFor, subscribeViewAs, type ViewAs } from "./viewAs";
 
 const ORGS_COPY_MAX_AGE_MS = 5 * 60_000;
 const isOrgsCopy = (value: unknown): value is { savedAt: number; answer: Organization[] } =>
@@ -68,6 +69,8 @@ type OrgState = {
   platformAdmin: boolean;
   /** Opened by the Nyra team without being a member: a banner says so, and nothing of the person's own account (notifications) applies. */
   staffView: boolean;
+  /** The role a platform admin chose to see this space with (AXE-634); null: as the Nyra team. Only in `staffView`. */
+  viewAs: ViewAs | null;
   /** API path under this brand: apiPath("/library") -> /orgs/<id>/brands/<id>/library */
   apiPath: (path: string) => string;
   /** API path under the organization (settings, brands): orgApiPath("/settings") -> /orgs/<id>/settings */
@@ -81,12 +84,16 @@ const OrgContext = createContext<OrgState | null>(null);
 export function OrgProvider(props: { org: Organization; brand: Brand; children: ReactNode }) {
   const { org, brand } = props;
   const me = useMe();
+  const chosen = useSyncExternalStore(subscribeViewAs, getViewAs);
+  const staffView = Boolean(org.staff_view);
+  const viewAs = staffView && me.data?.staff && chosen?.orgId === org.org_id ? chosen : null;
+  // The server gives a platform admin the rights of an administrator everywhere, or those of the role they chose to see it with.
   const value: OrgState = {
     org,
     brand,
-    admin: org.role === "admin" || Boolean(me.data?.staff), // the server gives a platform admin the rights of an administrator everywhere
-    platformAdmin: Boolean(me.data?.staff),
-    staffView: Boolean(org.staff_view),
+    ...rightsFor(viewAs, Boolean(me.data?.staff), org.role),
+    staffView,
+    viewAs,
     apiPath: (path) => `/orgs/${org.org_id}/brands/${brand.id}${path}`,
     orgApiPath: (path) => `/orgs/${org.org_id}${path}`,
     link: (path = "") => brandLink(org, brand.slug, path),

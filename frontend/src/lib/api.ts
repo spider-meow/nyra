@@ -12,10 +12,13 @@ type TokenProvider = () => Promise<string | null>;
 
 let tokenProvider: TokenProvider = async () => null;
 let onUnauthorized: () => void = () => {};
+let extraHeaders: (path: string) => Record<string, string> = () => ({});
 
-export function bindSession(provider: TokenProvider, unauthorized: () => void): void {
+/** `headers`: what else a request to `path` carries (the role a platform admin chose to see a space with, lib/viewAs.ts). */
+export function bindSession(provider: TokenProvider, unauthorized: () => void, headers: (path: string) => Record<string, string> = () => ({})): void {
   tokenProvider = provider;
   onUnauthorized = unauthorized;
+  extraHeaders = headers;
 }
 
 /** `replay` false: a 429 is final, whatever its Retry-After (an action that says to come back in minutes, not in seconds). */
@@ -26,6 +29,7 @@ async function request<T>(path: string, init: RequestInit = {}, replay = true): 
     const headers = new Headers(init.headers);
     token = await tokenProvider(); // read again for each try: it may expire during the waits
     if (token) headers.set("Authorization", `Bearer ${token}`);
+    for (const [name, value] of Object.entries(extraHeaders(path))) headers.set(name, value);
     if (typeof init.body === "string") headers.set("Content-Type", "application/json"); // `api` sends JSON text or FormData only
     response = await fetch(`/api${path}`, { ...init, headers });
     // Only the rate limiter (cloud/ratelimit.py) is replayed: it refuses with 429 and always sets Retry-After, before the

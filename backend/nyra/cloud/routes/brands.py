@@ -34,6 +34,7 @@ from .common import (
     enforce,
     get_ctx,
     iso,
+    seen_as,
     site_json,
     staff_dep,
     unreferenced_count,
@@ -108,7 +109,7 @@ def update_brand(org_id: uuid.UUID, brand_id: uuid.UUID, body: BrandBody, member
         with cloud_db.connect(ctx.settings.database_url) as conn:
             if not cloud_db.update_brand(conn, org_id, brand_id, name=name, slug=slug):
                 raise HTTPException(status_code=404, detail="Marque introuvable.")
-            cloud_audit.record(conn, org_id, member.user_id, "brand.update", "brand", brand_id, brand_id=brand_id)
+            cloud_audit.record(conn, org_id, member.user_id, "brand.update", "brand", brand_id, brand_id=brand_id, **seen_as(member))
             brand = cloud_db.get_brand(conn, org_id, brand_id)
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(status_code=409, detail=f"Une marque utilise déjà l'identifiant {slug}.") from exc

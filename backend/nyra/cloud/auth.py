@@ -50,6 +50,7 @@ class Member:
     org_id: uuid.UUID
     role: str
     staff: bool = False  # a platform admin acting in an organization they are not a member of
+    view_as: Optional[str] = None  # the role a platform admin chose to see the space with (AXE-634): `role` is then that one
 
 
 _jwks_clients: dict[str, PyJWKClient] = {}

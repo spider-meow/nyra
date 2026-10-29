@@ -1,10 +1,12 @@
 import { useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet } from "react-router";
 import { useOrg, useOrganizations } from "../lib/org";
 import { Icon } from "./icons";
 import { JobToasts } from "./layout/JobToasts";
 import { Sidebar, useNavItems } from "./layout/Sidebar";
-import { Button } from "./ui";
+import { setViewAs, type ViewAs } from "../lib/viewAs";
+import { Button, Checkbox, Segmented } from "./ui";
 
 /** The side column (a menu on a phone) and the page beside it. `sidebar` gets the function that closes the phone menu. */
 export function Frame(props: { sidebar: (close: () => void) => ReactNode; title: string; children: ReactNode }) {
@@ -29,14 +31,32 @@ export function Frame(props: { sidebar: (close: () => void) => ReactNode; title:
   );
 }
 
-/** Shown in a client's space opened by the Nyra team (not a member): whose space it is, and the way back. */
+type Seen = "staff" | ViewAs["role"];
+
+/** Shown in a client's space opened by the Nyra team (not a member): whose space it is, the role to see it with, and the way back. */
 function StaffBanner() {
-  const { org, staffView } = useOrg();
+  const { org, staffView, viewAs } = useOrg();
+  const queries = useQueryClient();
   if (!staffView) return null;
+  // What is on screen was asked under the previous role: everything is asked again under the new one.
+  function choose(role: Seen, write: boolean) {
+    setViewAs(role === "staff" ? null : { orgId: org.org_id, role, write });
+    void queries.invalidateQueries();
+  }
+  const seen: Seen = viewAs?.role ?? "staff";
   return (
-    <div role="status" className="-mx-4 -mt-6 mb-6 flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-ink bg-yellow px-4 py-2.5 text-sm md:-mx-14 md:-mt-10 md:px-14">
+    <div role="status" className="-mx-4 -mt-6 mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-ink bg-yellow px-4 py-2.5 text-sm md:-mx-14 md:-mt-10 md:px-14">
       <Icon name="eye" size={16} />
-      <p className="min-w-0 flex-1">Vous consultez l'espace de <strong>{org.name}</strong> en tant qu'équipe Nyra.</p>
+      <p className="min-w-0 flex-1 basis-56">Vous consultez l'espace de <strong>{org.name}</strong> {seen === "staff" ? "en tant qu'équipe Nyra" : seen === "admin" ? "en tant qu'administrateur" : "en tant que client"}.</p>
+      <Segmented
+        label="Voir en tant que"
+        value={seen}
+        options={[{ value: "staff", label: "Équipe Nyra" }, { value: "admin", label: "Administrateur" }, { value: "client", label: "Client" }]}
+        onChange={(role) => choose(role, false)}
+      />
+      {viewAs?.role === "client" ? (
+        <Checkbox checked={viewAs.write} onChange={(write) => choose("client", write)} label="Autoriser les actions" hint={viewAs.write ? "Elles sont faites pour de vrai, en tant que client." : "Lecture seule."} />
+      ) : null}
       <Link to="/back-office/organizations" className="font-medium underline">Retour au back office</Link>
     </div>
   );
