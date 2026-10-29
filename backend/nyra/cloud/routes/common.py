@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -215,6 +217,40 @@ def upload_failure(exc: Exception) -> str:
     if type(exc).__module__.startswith(("storage3", "supabase", "httpx", "httpcore")):
         return f"Le stockage a refusé le fichier : {detail}"
     return f"Erreur inattendue ({type(exc).__name__}) : {detail}"
+
+
+# What one `web` process can decode and re-encode (AXE-639). A library image costs about 10 MiB per megapixel at its peak (the decoded image, and the
+# copy the original, the thumbnail and the working copy are cut from: measured, docs/DEPLOYMENT.md), on top of the ~150 MiB the process already
+# holds, and the container has `WEB_MEM_LIMIT` (512m) with no swap: past ~25 Mpx one file killed it, and every route answered 502 until it restarted.
+# A JPEG above the limit is decoded at a reduced scale (`fetch.decode_reference`), any other format is refused with the reason.
+UPLOAD_MAX_PIXELS = 25_000_000  # not 30: 30 Mpx peaks at 357 MiB, 150 + 309 = 459 of the 512 left too little for the requests running beside it
+_MIN_UPLOAD_PIXELS = 1_000_000
+
+
+def upload_pixel_limit(config: Config) -> int:
+    """The pixel count above which an uploaded image is reduced (JPEG) or refused: `NYRA_UPLOAD_MAX_PIXELS` (raise it with `WEB_MEM_LIMIT`),
+    never above the organization's own `crawl.max_image_pixels`. An invalid value is logged and the default kept."""
+    limit = UPLOAD_MAX_PIXELS
+    raw = os.environ.get("NYRA_UPLOAD_MAX_PIXELS", "").strip()
+    if raw:
+        if raw.isdigit() and int(raw) >= _MIN_UPLOAD_PIXELS:
+            limit = int(raw)
+        else:
+            log.warning("NYRA_UPLOAD_MAX_PIXELS=%r is not a whole number of %d or more; keeping the default (%d)", raw, _MIN_UPLOAD_PIXELS, UPLOAD_MAX_PIXELS)
+    return min(config.crawl.max_image_pixels, limit)
+
+
+# One image is processed at a time in a web process: two at once would add their peaks, and the second one was enough to pass the container's limit.
+# ponytail: shared by every request of the process (it is the point), and it makes uploads queue behind each other; with several `web` processes
+# the bound is per process. Upgrade path: a worker job for the processing, which the worker's 2.5 GiB can take.
+_HEAVY_IMAGE = threading.Semaphore(1)
+
+
+@contextmanager
+def heavy_image():
+    """Held from the moment an image is decoded until its copies are stored (the decoded image is alive all along)."""
+    with _HEAVY_IMAGE:
+        yield
 
 
 def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename: str, data: bytes, img,

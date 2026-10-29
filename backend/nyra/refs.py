@@ -167,9 +167,8 @@ class RefFeatures:
 
 
 def reference_features(img: Image.Image) -> RefFeatures:
-    rgb = img.convert("RGB")
-    phash, dhash = compute_hashes(rgb)
-    phash_flip, dhash_flip = compute_flip_hashes(rgb)
+    phash, dhash = compute_hashes(img)  # each reads the image as RGB without a copy of it (match._rgb)
+    phash_flip, dhash_flip = compute_flip_hashes(img)
     return RefFeatures(img.size[0], img.size[1], phash, dhash, phash_flip, dhash_flip)
 
 

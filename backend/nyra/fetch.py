@@ -49,16 +49,24 @@ def extension_for(content_type: Optional[str], image: Optional[Image.Image] = No
     return ".bin"
 
 
+_BAND_VALUES = 4_000_000  # values converted at a time: 32 MB of float64
+
+
 def _to_8bit(img: Image.Image) -> Image.Image:
     """A 16-bit (`I;16`, `I;16B`...), 32-bit (`I`) or float (`F`) grey image as 8-bit grey. A plain `convert` clips everything above
-    255, so a 16-bit scan turns white. 16-bit data keeps its exposure (the value over 256); the others are stretched to their own range."""
-    values = np.asarray(img).astype(np.float64)
-    if img.mode.startswith("I;16"):
-        scaled = values / 256.0
-    else:
-        low, high = values.min(), values.max()
-        scaled = (values - low) / (high - low or 1.0) * 255.0
-    return Image.fromarray(np.clip(scaled, 0, 255).astype(np.uint8), "L")
+    255, so a 16-bit scan turns white. 16-bit data keeps its exposure (the value over 256); the others are stretched to their own range.
+    Done a band of rows at a time: the same operations on each value, but never the three 8-byte-a-pixel arrays of the whole image (780 MB for 30 Mpx)."""
+    values = np.asarray(img)
+    sixteen = img.mode.startswith("I;16")
+    if not sixteen:
+        low, high = np.float64(values.min()), np.float64(values.max())
+    out = np.empty(values.shape, dtype=np.uint8)
+    band = max(1, _BAND_VALUES // max(values.shape[1], 1))
+    for start in range(0, values.shape[0], band):
+        part = values[start:start + band].astype(np.float64)
+        scaled = part / 256.0 if sixteen else (part - low) / (high - low or 1.0) * 255.0
+        out[start:start + band] = np.clip(scaled, 0, 255).astype(np.uint8)
+    return Image.fromarray(out, "L")
 
 
 def _cmyk_to_rgb(img: Image.Image) -> Image.Image:
@@ -152,8 +160,15 @@ def meets_min_size(img: Image.Image, min_side_px: int) -> bool:
     return min(width, height) >= min_side_px
 
 
+def _turned(img: Image.Image, mode: str = "RGB") -> Image.Image:
+    """A copy of the image upright, in `mode`. `exif_transpose` already returns a copy: converting it to the mode it is in would copy it a
+    second time (a 60 Mpx image is 180 MB each). The caller may change the result, which is never the image itself."""
+    turned = ImageOps.exif_transpose(img)
+    return turned if turned.mode == mode else turned.convert(mode)
+
+
 def make_thumbnail(img: Image.Image, size: int = THUMB_SIZE) -> bytes:
-    rgb = ImageOps.exif_transpose(img).convert("RGB")
+    rgb = _turned(img)
     rgb.thumbnail((size, size))
     buf = io.BytesIO()
     rgb.save(buf, format="JPEG", quality=78, optimize=True)
@@ -169,7 +184,7 @@ def make_working_copy(img: Image.Image, side: int = WORKING_SIDE) -> bytes:
     Enough for CLIP (224 px), the keypoint check (1024 px) and the comparison
     screen, at a fraction of the original's weight.
     """
-    rgb = ImageOps.exif_transpose(img).convert("RGB")
+    rgb = _turned(img)
     rgb.thumbnail((side, side))
     buf = io.BytesIO()
     rgb.save(buf, format="JPEG", quality=85, optimize=True)
@@ -193,7 +208,9 @@ def make_stored_original(img: Image.Image, data: bytes, content_type: Optional[s
         return data, content_type
     flat = ImageOps.exif_transpose(img)
     alpha = flat.mode in ("RGBA", "LA", "PA") or "transparency" in flat.info
-    flat = flat.convert("RGBA" if alpha else "RGB")
+    mode = "RGBA" if alpha else "RGB"
+    if flat.mode != mode:
+        flat = flat.convert(mode)
     flat.thumbnail((STORED_SIDE, STORED_SIDE))
     buf = io.BytesIO()
     if alpha:
