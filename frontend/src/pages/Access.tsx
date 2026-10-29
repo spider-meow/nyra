@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Suspense, createContext, lazy, useContext, useState, type FormEvent, type ReactNode } from "react";
+import { Suspense, createContext, lazy, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, Navigate, Outlet, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
 import { Button, Card, Checkbox, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
@@ -7,6 +7,7 @@ import { ApiError, api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { OrgProvider, brandLink, useMe, useOrganizations, useStaffOpenedOrganization } from "../lib/org";
 import { useStaffOrgs } from "../lib/staff";
+import { setViewAs } from "../lib/viewAs";
 import type { Brand, Organization } from "../types";
 
 const PasswordStrength = lazy(() => import("../components/PasswordStrength"));
@@ -258,6 +259,9 @@ export function OrgShell() {
   const member = orgs.data?.find((item) => item.slug === slug);
   // Not one of the caller's organizations: a platform admin still opens it (they are in no client's team).
   const opened = useStaffOpenedOrganization(slug, !orgs.isLoading && !member && Boolean(me.data?.staff));
+  // The role a platform admin chose (AXE-634) lasts while they stay in this organization, brands included, and goes when they leave it.
+  const orgId = member?.org_id ?? opened.data?.org_id;
+  useEffect(() => (orgId ? () => setViewAs(null) : undefined), [orgId]);
   if (orgs.isLoading || (!member && (me.isLoading || opened.isLoading))) return <Centered title="Un instant"><div className="mt-4"><Spinner /></div></Centered>;
   const failure = orgs.error ?? (member ? null : me.error ?? (opened.error instanceof ApiError && opened.error.status === 404 ? null : opened.error));
   if (failure) return <Centered title="Erreur" body={errorMessage(failure)} />;

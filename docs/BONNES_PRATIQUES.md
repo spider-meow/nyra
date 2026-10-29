@@ -103,6 +103,7 @@ cd frontend && npm run check:drop  # le dépôt de fichiers sur la page : seuls 
 cd frontend && npm run check:order # l'ordre des collections à la main : où tombe une ligne glissée, les flèches aux extrémités, l'ordre affiché tout de suite
 cd frontend && npm run check:selection # ce que le menu d'actions dit de la sélection (dates, tags, collections)
 cd frontend && npm run check:emails # l'aperçu des e-mails : iframe sandbox="" sans permission, aucun innerHTML
+cd frontend && npm run check:viewas # « Voir en tant que » : les en-têtes envoyés (seulement pour l'organisation vue) et les droits affichés sous chaque rôle
 pytest -q                          # sans warning non justifié
 ```
 

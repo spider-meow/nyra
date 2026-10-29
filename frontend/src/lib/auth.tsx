@@ -2,6 +2,7 @@ import { createClient, type Session, type SupabaseClient } from "@supabase/supab
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { bindSession } from "./api";
+import { getViewAs, viewAsHeaders } from "./viewAs";
 import { loadConfig } from "./config";
 import { clearStored } from "./storage";
 
@@ -66,6 +67,7 @@ async function connect(stopped: () => boolean): Promise<Booted | null> {
   bindSession(
     async () => (await supabase.auth.getSession()).data.session?.access_token ?? null,
     () => void supabase.auth.signOut(),
+    (path) => viewAsHeaders(getViewAs(), path),
   );
   const { data } = await supabase.auth.getSession();
   if (stopped()) return null;

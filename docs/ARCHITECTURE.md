@@ -295,6 +295,18 @@ numbers and the report itself are pure functions over plain dicts in
   office's « Ouvrir l'espace » links to `/o/<slug>`; `OrgShell` asks `GET /api/staff/organizations/open/{slug}` when the
   slug is not among the caller's organizations (`staff_view: true`), and a banner says whose space it is. Tests:
   `test_isolation.py` (`test_a_platform_admin_*`).
+- **« Voir en tant que » (AXE-634, `_staff_member` in `cloud/routes/common.py`, `frontend/src/lib/viewAs.ts`).** A platform admin who opens a
+  client's space may see it as `admin` or as `client`: the interface sends `X-Nyra-View-As` and `member_dep` / `admin_dep` then give a
+  `Member` with that role (and `view_as` set), so a client gets the real 403s on the administrators' routes. The header is read **only after
+  the caller is known to be a platform admin**; for anyone else it is ignored without an error (an administrator or a client who sends it
+  keeps their own role, and it opens no other organization). As a client the space is **read-only** (a 403 « Lecture seule » on any method
+  but GET, HEAD and OPTIONS) unless `X-Nyra-View-Write: 1` (the « Autoriser les actions » box): a client's decisions would otherwise be
+  written in the team's name. The token, the team's own routes (`/api/staff/*`, which do not go through `member_dep`), the members, the
+  monthly e-mail and the quotas are untouched. Every audit row of an action done under a borrowed role carries `view_as` (`seen_as`), and
+  stays `by_staff`, so the client's journal still shows nothing. The choice is kept for the tab (`sessionStorage`) and dropped when the
+  person leaves the organization (`OrgShell`); the interface also drops the team's own settings (`platformAdmin` false) under a chosen role.
+  Tests: `test_a_platform_admin_sees_the_space_as_the_role_they_choose`, `test_a_header_gives_nobody_else_another_role` (backend),
+  `check:viewas` (interface). Out of scope: seeing a particular person's data as they do.
 - **The browser writes nothing to the database or to Storage** (AXE-625). `frontend/src` has no `supabase.from`, `rpc` or `storage` call;
   the Supabase session only signs in. Every write goes through `/api`, where the backend (service role or owner, which bypass RLS) checks
   the role, the quotas and the organization and writes `audit_log`. The `authenticated` role therefore has **no write policy and no

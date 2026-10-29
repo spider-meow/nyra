@@ -83,7 +83,7 @@ class BrandScope:
     def audit(self, conn, action: str, object_type: str, object_id=None, **detail) -> None:
         """Trace an action of this person on this brand, on the connection (and transaction) of the change itself."""
         cloud_audit.record(conn, self.org_id, self.member.user_id, action, object_type, object_id,
-                           brand_id=self.brand_id, **detail)
+                           brand_id=self.brand_id, **seen_as(self.member), **detail)
 
 
 async def get_ctx(request: Request) -> Ctx:
@@ -101,9 +101,31 @@ def staff_dep(claims: cloud_auth.Claims = Depends(user_dep), ctx: Ctx = Depends(
     return claims
 
 
-def _org_member(org_id: uuid.UUID, token: str, ctx: Ctx, admin_only: bool) -> cloud_auth.Member:
+VIEW_AS_HEADER = "x-nyra-view-as"  # `admin` or `client`: only a platform admin is given the role (AXE-634); anyone else's header is ignored
+VIEW_WRITE_HEADER = "x-nyra-view-write"  # `1`: the actions are really done as a client; without it, "as client" is read-only
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+def _staff_member(request: Request, claims: cloud_auth.Claims, org_id: uuid.UUID) -> cloud_auth.Member:
+    """The platform admin's role in the space: administrator, unless they chose to see it as `admin` or `client`. As a client the
+    space is read-only (a client's decisions would be written in the team's name) unless they allowed the actions."""
+    view = request.headers.get(VIEW_AS_HEADER, "").strip().lower()
+    if view not in ("admin", "client"):
+        return cloud_auth.Member(user_id=claims.user_id, org_id=org_id, role="admin", staff=True)
+    if view == "client" and request.method not in SAFE_METHODS and request.headers.get(VIEW_WRITE_HEADER, "").strip() != "1":
+        raise HTTPException(status_code=403, detail="Lecture seule en mode Client : cochez « Autoriser les actions » pour essayer.")
+    return cloud_auth.Member(user_id=claims.user_id, org_id=org_id, role=view, staff=True, view_as=view)
+
+
+def seen_as(member: cloud_auth.Member) -> dict[str, str]:
+    """The audit detail of an action done under a borrowed role (« vu en tant que client »); nothing for anyone else."""
+    return {"view_as": member.view_as} if member.view_as else {}
+
+
+def _org_member(request: Request, org_id: uuid.UUID, token: str, ctx: Ctx, admin_only: bool) -> cloud_auth.Member:
     """A platform admin acts as an administrator of any organization, without being one of its members (AXE-573:
-    no `memberships` row, so the client's team never lists them). Anyone else needs their own membership and role."""
+    no `memberships` row, so the client's team never lists them), or with the role they chose to see it with (AXE-634).
+    Anyone else needs their own membership and role, whatever header they send."""
     claims = ctx.user(token)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         staff = cloud_insights.is_staff(conn, claims.user_id)
@@ -111,19 +133,20 @@ def _org_member(org_id: uuid.UUID, token: str, ctx: Ctx, admin_only: bool) -> cl
     if staff:
         if not known:
             raise HTTPException(status_code=404, detail="Organisation introuvable.")
-        return cloud_auth.Member(user_id=claims.user_id, org_id=org_id, role="admin", staff=True)
-    member = ctx.member(org_id, token)
+        member = _staff_member(request, claims, org_id)
+    else:
+        member = ctx.member(org_id, token)
     return ctx.admin(member) if admin_only else member
 
 
-def member_dep(org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
+def member_dep(request: Request, org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
                ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
-    return _org_member(org_id, token, ctx, admin_only=False)
+    return _org_member(request, org_id, token, ctx, admin_only=False)
 
 
-def admin_dep(org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
+def admin_dep(request: Request, org_id: uuid.UUID, token: str = Depends(cloud_auth._bearer_token),
               ctx: Ctx = Depends(get_ctx)) -> cloud_auth.Member:
-    return _org_member(org_id, token, ctx, admin_only=True)
+    return _org_member(request, org_id, token, ctx, admin_only=True)
 
 
 def rights_from_body(expiry_date: str, unlimited_rights: bool) -> tuple[Optional[str], bool]:
