@@ -280,3 +280,75 @@ def test_a_page_that_is_only_a_consent_notice_is_a_consent_wall():
     assert is_consent_wall("Nous utilisons des cookies pour améliorer votre expérience. Gérer mes cookies. Tout accepter")
     assert not is_consent_wall("Cookies")  # a footer link alone
     assert not is_consent_wall("Notre carafe. " * 200 + "cookies cookies")  # a banner over a real page comes with its text
+
+
+def test_an_address_with_a_path_only_takes_the_pages_under_that_path():
+    site = "https://Remymartin.com/en-us/"
+    for url in ("https://www.remymartin.com/en-us/", "https://remymartin.com/en-us", "https://remymartin.com:443/en-us/a/b",
+                "https://remymartin.com/en-us?x=1", "https://remymartin.com//en-us//vins/"):
+        assert same_site(url, site), url
+    for url in ("https://remymartin.com/en-usa/", "https://remymartin.com/fr/", "https://remymartin.com/", "https://other.com/en-us/"):
+        assert not same_site(url, site), url
+    assert same_site("https://remymartin.com/fr/", "https://remymartin.com") and same_site("https://remymartin.com/fr/", "https://remymartin.com/")
+
+
+def test_the_sitemap_the_links_and_the_page_check_stay_under_the_path(monkeypatch):
+    from nyra import crawl as crawl_module
+    from nyra.config import load_config
+
+    monkeypatch.setattr(crawl_module, "load_robots", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(crawl_module, "fetch_sitemap_urls", lambda *_args, **_kwargs: [
+        "https://t.test/en-us/a", "https://t.test/fr/a", "https://t.test/en-usa/"])
+    reading = crawl_module._Crawl("https://t.test/en-us/", store=None, config=load_config(), max_pages=9, embedder=None,
+                                  resume=False, progress=None, should_stop=None)
+    reading.discover()
+    assert list(reading.queue) == ["https://t.test/en-us/", "https://t.test/en-us/a"] and reading.stats.sitemap_urls == 1
+    html = '<a href="/en-us/b">b</a><a href="/fr/b">fr</a><a href="/en-usa/">usa</a>'
+    assert extract_internal_links(html, "https://t.test/en-us/", reading.site_url) == {"https://t.test/en-us/b"}
+    other = crawl_module._Crawl("https://t.test/en-us/", store=None, config=load_config(), max_pages=3, embedder=None,
+                                resume=False, progress=None, should_stop=None, follow_links=False)
+    other.seed(["https://t.test/en-us/x", "https://t.test/fr/x"])
+    assert list(other.queue) == ["https://t.test/en-us/x"]
+
+
+def test_a_page_of_the_path_that_redirects_outside_it_is_told_and_not_read(monkeypatch):
+    import asyncio
+
+    from nyra import crawl as crawl_module
+    from nyra import netguard
+    from nyra.config import load_config
+
+    class Store:
+        def upsert_page(self, url): return 1
+        def mark_page(self, page_id, status): self.status = status
+        def known_images(self, urls): return {}
+
+    class Page:
+        url = "https://t.test/fr/"
+        async def goto(self, url, **_kw): return type("R", (), {"status": 200})()
+        async def content(self): return '<img src="/a.jpg"><a href="/fr/b">b</a>'
+        async def evaluate(self, _js): return ""
+
+    async def no_check(_url): return None
+
+    async def no_actions(*_a, **_kw): return None
+
+    monkeypatch.setattr(netguard, "check_url_async", no_check)
+    for name in ("dismiss_overlays", "autoscroll", "click_load_more"):
+        monkeypatch.setattr(crawl_module, name, no_actions)
+    store = Store()
+    reading = crawl_module._Crawl("https://t.test/en-us/", store=store, config=load_config(), max_pages=3, embedder=None,
+                                  resume=False, progress=None, should_stop=None)
+    asyncio.run(reading._crawl_page(Page(), None, "https://t.test/en-us/"))
+    assert reading.stats.pages_left_scope == 1 and reading.stats.images_found == 0 and not reading.queue
+    assert store.status == crawl_module.REDIRECTED
+
+
+def test_adding_an_address_warns_when_it_contains_or_is_contained_by_another():
+    from nyra.crawl import overlap_warning
+
+    assert overlap_warning("https://t.test/en-us/", ["https://t.test/"]) == (
+        "https://t.test/ contient déjà cette adresse : ses pages seront lues deux fois (et comptées deux fois dans le quota).")
+    assert "contient déjà https://t.test/en-us/" in overlap_warning("https://t.test/", ["https://t.test/en-us/"])
+    assert overlap_warning("https://t.test/en-us/", ["https://t.test/fr/", "https://other.test/"]) is None
+    assert overlap_warning("https://t.test/", []) is None

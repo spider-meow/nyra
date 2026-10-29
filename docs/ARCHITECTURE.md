@@ -195,6 +195,16 @@ memberships per organization. Product routes live under
 `/o/{org}/b/{brand}/...` (English since October 2026; the old French addresses
 redirect, see `frontend/src/lib/paths.ts`).
 
+**Scope of an address (AXE-635, `crawl.same_site`).** An address with a path reads only the pages under that path, on whole
+segments: `/en-us/` takes `/en-us` and `/en-us/a`, never `/en-usa/` or `/fr/`; the query and doubled slashes change nothing; an address
+without a path reads the whole domain. It holds for the start page, the sitemap addresses (the sitemap of the domain is still read, only
+the addresses under the path are kept, and `sitemap_urls` counts those), the links followed and a page check. Images have no path limit:
+only the page that shows them counts. A page of the path that redirects to another path of the same host (`/en-us/` to `/fr/`) is not
+read further (no image, no link) and the job says so (`pages_left_scope`). Nothing already read outside the path is deleted; it just
+leaves the next reads. Adding an address that contains another address of the brand, or is contained by one, answers `warning` (not a
+refusal): the wider address still reads the narrower one's pages, so they are read, and counted in the month's pages, twice. The
+page « Sites et lectures » shows « Limitée à /en-us/ » on such an address. Out of scope: excluding paths, several paths per address.
+
 ## Pipeline
 
 ```

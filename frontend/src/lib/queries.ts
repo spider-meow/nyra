@@ -541,7 +541,7 @@ export function useSiteMutations() {
   const done = () => invalidate("sites", "overview", "scans", "matches");
   return {
     add: useMutation({
-      mutationFn: (input: { url: string; label: string }) => api.post<{ site: Site }>(apiPath("/sites"), input),
+      mutationFn: (input: { url: string; label: string }) => api.post<{ site: Site; warning: string | null }>(apiPath("/sites"), input),
       onSuccess: done,
     }),
     rename: useMutation({

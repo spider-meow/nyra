@@ -147,6 +147,12 @@ function useSiteRemoval(site: Site, remove: ReturnType<typeof useSiteMutations>[
   return del;
 }
 
+/** The path an address is limited to ("/en-us/"), or "" when it reads the whole domain. */
+function scopePath(url: string): string {
+  const path = new URL(url).pathname.replace(/\/+/g, "/");
+  return path === "/" ? "" : path;
+}
+
 function SiteRow(props: { site: Site; state: SiteState; selectable: boolean; selected: boolean; onSelect: (on: boolean) => void }) {
   const { site } = props;
   const { admin } = useOrg();
@@ -188,6 +194,7 @@ function SiteRow(props: { site: Site; state: SiteState; selectable: boolean; sel
         <p className="truncate text-xs text-muted">
           <a href={site.url} target="_blank" rel="noreferrer noopener" className="hover:underline">{site.url}</a>
         </p>
+        {scopePath(site.url) ? <p className="text-xs text-muted">Limitée à {scopePath(site.url)}</p> : null}
         {STATE_PILL[props.state].note ? <p className="text-xs text-muted">{STATE_PILL[props.state].note}</p> : null}
       </div>
       {site.last_crawled_at ? (
@@ -213,11 +220,15 @@ function AddSite(props: { onDone?: () => void }) {
     add.mutate(
       { url, label },
       {
-        onSuccess: ({ site }) => {
+        onSuccess: ({ site, warning }) => {
           setUrl("");
           setLabel("");
           props.onDone?.();
-          toast.show({ tone: "success", message: "Adresse ajoutée", description: `${site.url} peut être lue dès maintenant.` });
+          toast.show(
+            warning
+              ? { tone: "info", message: "Adresse ajoutée", description: warning, duration: 10000 }
+              : { tone: "success", message: "Adresse ajoutée", description: `${site.url} peut être lue dès maintenant.` },
+          );
         },
         onError: (error) => toast.show({ tone: "error", message: "L'adresse n'a pas été ajoutée", description: errorMessage(error) }),
       },
