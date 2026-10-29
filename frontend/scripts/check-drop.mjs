@@ -8,7 +8,7 @@ import { transformWithOxc } from "vite";
 
 const source = readFileSync(new URL("../src/lib/dropzone.ts", import.meta.url), "utf8");
 const { code } = await transformWithOxc(source, "source.ts", { target: "es2022" });
-const { carriesFiles, mergeFiles, dragDepth } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+const { carriesFiles, mergeFiles, dragDepth, splitImages, rejectionNotice } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 
 // --- only files light the drop zone -----------------------------------------------------------------------------------
 assert.equal(carriesFiles(["Files"]), true);
@@ -32,4 +32,22 @@ assert.equal(dragDepth(depth, "drop"), 0);
 assert.equal(dragDepth(0, "leave"), 0, "a stray leave never goes below 0");
 assert.equal(dragDepth(dragDepth(0, "enter"), "leave"), 0);
 
-console.log("drop: only file drags count, no duplicate kept, the drag depth always returns to 0");
+// --- only images enter the waiting list (AXE-628): a mixed drop keeps its photos, the rest is named ---------------------
+const named = (name, type = "") => ({ name, type });
+const names = (files) => files.map((f) => f.name);
+let split = splitImages([named("film.mp4", "video/mp4")]);
+assert.deepEqual([names(split.images), names(split.rejected)], [[], ["film.mp4"]], "a video alone: nothing enters");
+split = splitImages([named("a.jpg", "image/jpeg"), named("film.mov", "video/quicktime"), named("b.png", "image/png"), named("clip.mp4")]);
+assert.deepEqual([names(split.images), names(split.rejected)], [["a.jpg", "b.png"], ["film.mov", "clip.mp4"]], "a mixed drop: the photos enter, the videos stay out");
+split = splitImages([named("scan.tif"), named("PHOTO.JPG"), named("old.BMP", "image/bmp"), named("clip.MP4"), named("notes.pdf", "application/pdf"), named("noext")]);
+assert.deepEqual(names(split.images), ["scan.tif", "PHOTO.JPG", "old.BMP"], "no type: the extension decides, in any case");
+assert.deepEqual(names(split.rejected), ["clip.MP4", "notes.pdf", "noext"]);
+assert.equal(splitImages([named("fake.jpg", "video/mp4")]).images.length, 0, "a video type refuses even an image extension");
+assert.equal(splitImages([named("photo.heic", "image/heic")]).images.length, 0, "a format the server does not take");
+const notice = rejectionNotice([named("a.mp4", "video/mp4"), named("b.mov"), named("c.pdf", "application/pdf"), named("d.mkv")]);
+assert.equal(notice.message, "4 fichiers non pris en charge");
+assert.match(notice.description, /Écarté : a\.mp4, b\.mov, c\.pdf et 1 autre\(s\)\./);
+assert.equal(rejectionNotice([named("a.mp4"), named("b.MOV")]).message, "2 vidéos non prises en charge");
+assert.equal(rejectionNotice([named("a.mp4")]).message, "1 vidéo non prise en charge");
+
+console.log("drop: only file drags count, no duplicate kept, the drag depth always returns to 0, only images enter");

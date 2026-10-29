@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useToast } from "../../components/feedback";
 import { Icon } from "../../components/icons";
 import { Button, Card, cx } from "../../components/ui";
-import { carriesFiles, dragDepth, mergeFiles } from "../../lib/dropzone";
+import { carriesFiles, dragDepth, mergeFiles, rejectionNotice, splitImages } from "../../lib/dropzone";
 import { plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { errorMessage } from "../../lib/api";
@@ -43,9 +43,13 @@ export function useUpload(onFiled: (collectionId: string) => void) {
   const [lastRights, setLastRights] = useState<UploadRights>(NO_RIGHTS);
   const [lastCollection, setLastCollection] = useState<string | undefined>();
 
-  // A drop while the dialog is open adds to what it holds: the choices already made stay.
+  // A drop while the dialog is open adds to what it holds: the choices already made stay. Only images enter; the others are named at once,
+  // and a mixed drop is never refused as a whole.
   function stage(files: File[]) {
-    if (admin && files.length) setStaged((waiting) => mergeFiles(waiting, files));
+    if (!admin || !files.length) return;
+    const { images, rejected } = splitImages(files);
+    if (rejected.length) toast.show({ tone: images.length ? "info" : "error", ...rejectionNotice(rejected), duration: 8000 });
+    if (images.length) setStaged((waiting) => mergeFiles(waiting, images));
   }
 
   async function upload(files: File[], rights: UploadRights = lastRights, destination: Destination = { collectionId: lastCollection }) {
