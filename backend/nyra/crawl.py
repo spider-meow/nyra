@@ -103,9 +103,27 @@ def _bare_host(netloc: str) -> str:
     return host[4:] if host.startswith("www.") else host
 
 
-def same_site(url: str, site_netloc: str) -> bool:
-    """Same host, with or without a leading www."""
-    return _bare_host(urlparse(url).netloc) == _bare_host(site_netloc)
+def same_site(url: str, site: str) -> bool:
+    """Whether `url` is inside the address `site` (a host, or a full address). Same host, with or without a leading
+    www. When the address has a path, only that path counts, on whole segments: `/en-us/` takes `/en-us` and
+    `/en-us/a`, never `/en-usa/`. The query and doubled slashes change nothing. No path: the whole domain."""
+    base = urlparse(site if "//" in site else f"//{site}")
+    if _bare_host(urlparse(url).netloc) != _bare_host(base.netloc):
+        return False
+    prefix = re.sub("/+", "/", base.path).rstrip("/")
+    path = re.sub("/+", "/", urlparse(url).path).rstrip("/")
+    return path == prefix or path.startswith(prefix + "/")
+
+
+def overlap_warning(url: str, others: Sequence[str]) -> Optional[str]:
+    """A sentence when `url` contains another address of the brand or is contained by one: the wider address still
+    reads the narrower one's pages, which are then read twice (and counted twice in the month's pages)."""
+    for other in others:
+        if same_site(other, url) and not same_site(url, other):
+            return f"Cette adresse contient déjà {other} : ses pages seront lues deux fois (et comptées deux fois dans le quota)."
+        if same_site(url, other) and not same_site(other, url):
+            return f"{other} contient déjà cette adresse : ses pages seront lues deux fois (et comptées deux fois dans le quota)."
+    return None
 
 
 # --- HTML parsing (pure) ------------------------------------------------------
@@ -175,7 +193,7 @@ def extract_images_from_html(html: str, base_url: str) -> set[str]:
     return {url for url in urls if urlparse(url).scheme in {"http", "https"}}
 
 
-def extract_internal_links(html: str, base_url: str, site_netloc: str) -> set[str]:
+def extract_internal_links(html: str, base_url: str, site: str) -> set[str]:
     soup = BeautifulSoup(html, "html.parser")
     links: set[str] = set()
     for a in soup.find_all("a", href=True):
@@ -183,7 +201,7 @@ def extract_internal_links(html: str, base_url: str, site_netloc: str) -> set[st
         if not href or href.startswith(("mailto:", "tel:", "javascript:", "#")):
             continue
         absolute = normalize_url(urljoin(base_url, href))
-        if urlparse(absolute).scheme in {"http", "https"} and same_site(absolute, site_netloc):
+        if urlparse(absolute).scheme in {"http", "https"} and same_site(absolute, site):
             links.add(absolute)
     return links
 
@@ -464,6 +482,7 @@ class CrawlStats:
     sitemap_urls: int = 0
     pages_failed: int = 0
     pages_redirected: int = 0      # the address answered with another page: read, but not recorded as itself
+    pages_left_scope: int = 0      # redirected out of the address's path: neither its links nor its images are taken
     pages_ok: int = 0              # read with success: 2xx, the page asked for, no consent wall
     pages_walled: int = 0          # a consent notice still hid the page after we tried to close it (CONSENT_WALL)
     http_statuses: dict[str, int] = field(default_factory=dict)
@@ -604,7 +623,7 @@ class _Crawl:
             sitemap_urls = fetch_sitemap_urls(self.site_url, client, max_urls=max(5000, self.max_pages * 4), robots=robots)
         done = self.store.crawled_urls() if self.resume else set()
         self.visited |= done
-        seeds = [normalize_url(url) for url in sitemap_urls if same_site(url, self.netloc)]
+        seeds = [normalize_url(url) for url in sitemap_urls if same_site(url, self.site_url)]
         for url in [self.site_url, *seeds]:
             self.enqueue(url)
         self.stats.sitemap_urls = len(seeds)
@@ -618,7 +637,7 @@ class _Crawl:
             robots = load_robots(self.site_url, client)
         self.robots = robots if cfg.respect_robots_txt else None
         for url in urls:
-            if same_site(url, self.netloc):
+            if same_site(url, self.site_url):
                 self.enqueue(url)  # as stored: it is the key of the page, so the read lands on the same row
         self.stats.pages_queued = len(self.queue)
 
@@ -733,11 +752,17 @@ class _Crawl:
         status_key = str(http_status)
         self.stats.http_statuses[status_key] = self.stats.http_statuses.get(status_key, 0) + 1
 
-        image_urls = extract_images_from_html(html, final_url)
-        joined = {urljoin(final_url, u) for u in background_urls if u and not u.startswith("data:")}
-        image_urls |= {u for u in joined if urlparse(u).scheme in {"http", "https"}}  # as for the HTML images above
-        if self.follow_links:
-            for link in extract_internal_links(html, final_url, self.netloc):
+        # /en-us/ sent to /fr/ on the same host: another country's page, so neither its images nor its links are taken.
+        left_scope = _bare_host(urlparse(final_url).netloc) == _bare_host(self.netloc) and not same_site(final_url, self.site_url)
+        if left_scope:
+            self.stats.pages_left_scope += 1
+            image_urls = set()
+        else:
+            image_urls = extract_images_from_html(html, final_url)
+            joined = {urljoin(final_url, u) for u in background_urls if u and not u.startswith("data:")}
+            image_urls |= {u for u in joined if urlparse(u).scheme in {"http", "https"}}  # as for the HTML images above
+        if self.follow_links and not left_scope:
+            for link in extract_internal_links(html, final_url, self.site_url):
                 self.enqueue(link)
 
         await self._collect_images(http, sorted(image_urls), page_id)

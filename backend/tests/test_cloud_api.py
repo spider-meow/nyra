@@ -292,7 +292,12 @@ def test_addresses_belong_to_one_brand_and_are_checked(client, org_with_users, m
     monkeypatch.setattr(netguard, "check_url", lambda url: None)
     body = {"url": "https://www.Louis-XIII.com/fr?utm_source=x", "label": "FR"}
     assert client.post(f"{base}/sites", headers=_headers(client_id), json=body).status_code == 403
-    site = client.post(f"{base}/sites", headers=_headers(admin_id), json=body).json()["site"]
+    added = client.post(f"{base}/sites", headers=_headers(admin_id), json=body).json()
+    site = added["site"]
+    assert added["warning"] is None
+    inner = client.post(f"{base}/sites", headers=_headers(admin_id), json={"url": "https://www.louis-xiii.com/fr/vins"}).json()
+    assert "https://www.louis-xiii.com/fr contient déjà cette adresse" in inner["warning"]
+    assert client.delete(f"{base}/sites/{inner['site']['id']}", headers=_headers(admin_id)).status_code == 200
     assert site["url"] == "https://www.louis-xiii.com/fr" and site["label"] == "FR" and site["images"] == 0
     assert client.post(f"{base}/sites", headers=_headers(admin_id), json={"url": "ftp://x"}).status_code == 400
 

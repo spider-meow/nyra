@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 from nyra import netguard
 from nyra import report as report_module
-from nyra.crawl import normalize_url
+from nyra.crawl import normalize_url, overlap_warning
 
 from .. import audit as cloud_audit
 from .. import db as cloud_db
@@ -186,7 +186,8 @@ def add_site(body: SiteBody, scope: BrandScope = Depends(brand_admin_dep), ctx: 
             rows = cloud_db.list_sites(conn, scope.brand_id)
     except cloud_db.SiteTaken as exc:
         raise HTTPException(status_code=409, detail="Cette adresse appartient déjà à une autre marque.") from exc
-    return {"site": site_json(next(row for row in rows if row["id"] == site_id))}
+    others = [row["url"] for row in rows if row["id"] != site_id]
+    return {"site": site_json(next(row for row in rows if row["id"] == site_id)), "warning": overlap_warning(url, others)}
 
 
 @router.put(f"{BRAND}/sites/{{site_id}}")

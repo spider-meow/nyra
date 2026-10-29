@@ -720,6 +720,8 @@ class Worker:
         for run in runs:
             if run["suspect"]:
                 message += f" La lecture de {run['site']} semble incomplète ({run['suspect']}) : rien n'est marqué retiré."
+            if run["pages_left_scope"]:
+                message += f" {run['pages_left_scope']} page(s) de {run['site']} renvoient hors de son chemin : non lues."
         message += f" {cloud_usage.CAPPED}" if capped else self._usage_note(org_id, config)
         if params.get("then_match", True):
             result["match_metrics"] = {}
@@ -796,7 +798,7 @@ class Worker:
         return {"suspect": suspect, "site": site["label"] or site["url"],
             "run_id": str(run_id), "pages_visited": stats.pages_visited, "pages_queued": stats.pages_queued, "images_found": stats.images_found,
             "images_stored": stats.images_stored, "images_new": stats.images_new,
-            "blocked_by_robots": stats.blocked_by_robots, "errors": stats.errors[:8],
+            "blocked_by_robots": stats.blocked_by_robots, "pages_left_scope": stats.pages_left_scope, "errors": stats.errors[:8],
         }
 
     def _check(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
