@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import uuid
 from datetime import datetime, timezone
@@ -35,11 +34,14 @@ from .common import (
     enforce,
     get_ctx,
     heavy_image,
+    is_tiff,
     iso,
     log,
+    megabytes,
     put_reference_files,
     rights_from_body,
     safe_filename,
+    upload_byte_limit,
     upload_failure,
     upload_pixel_limit,
 )
@@ -159,19 +161,25 @@ def library_original_url(filename: str, scope: BrandScope = Depends(brand_member
     return {"url": url}
 
 
-def _read_upload(upload_file: UploadFile) -> tuple[Optional[dict], str, bytes]:
-    """(why the file is refused, its name, its bytes); the first item is None when it is fine."""
+def _read_upload(upload_file: UploadFile) -> tuple[Optional[dict], str, fetch.Source]:
+    """(why the file is refused, its name, its content); the first item is None when it is fine. The content is the bytes, except for a TIFF:
+    the spooled file itself, read from disk by the decoder and the hash, so that a 100 MB scan is never held in memory as bytes (AXE-630)."""
     raw_name = upload_file.filename or ""
     try:
         filename = safe_filename(raw_name)
     except HTTPException as exc:
         return {"filename": raw_name or "(sans nom)", "reason": str(exc.detail)}, "", b""
-    data = upload_file.file.read(MAX_UPLOAD_BYTES + 1)
-    if not data:
-        return {"filename": filename, "reason": "Fichier vide."}, filename, data
-    if len(data) > MAX_UPLOAD_BYTES:
-        return {"filename": filename, "reason": "Fichier trop lourd (30 Mo au plus)."}, filename, data
-    return None, filename, data
+    upload_file.file.seek(0, 2)
+    size = upload_file.file.tell()
+    upload_file.file.seek(0)
+    if not size:
+        return {"filename": filename, "reason": "Fichier vide."}, filename, b""
+    limit = upload_byte_limit(filename)
+    if size > limit:
+        advice = " Exportez-le en JPEG ou réduisez-le." if is_tiff(filename) else ""
+        return {"filename": filename, "reason": f"Fichier trop lourd : {megabytes(size)}, {megabytes(limit)} au plus"
+                f"{' pour un TIFF' if is_tiff(filename) else ''}.{advice}"}, filename, b""
+    return None, filename, upload_file.file if is_tiff(filename) else upload_file.file.read()
 
 
 def _new_names(conn, brand_id: uuid.UUID, files: list[UploadFile], replace: bool) -> int:
@@ -207,7 +215,7 @@ def _free_name(conn, brand_id: uuid.UUID, filename: str) -> Optional[str]:
 
 
 def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: UploadFile, filename: str,
-                  data: bytes, rights: Optional[tuple[Optional[str], bool]], replace: bool = False) -> tuple[Optional[str], bool, str]:
+                  data: fetch.Source, rights: Optional[tuple[Optional[str], bool]], replace: bool = False) -> tuple[Optional[str], bool, str]:
     """Store one file as a reference: (the name it was saved under, a reference of that name was replaced, why it was refused).
     The name is None when the file was refused. A name already in the library is never taken over unless `replace`: the file
     is saved as `a (1).jpg`, `a (2).jpg`... `rights` (expiry date, unlimited rights) is the common value chosen for this
@@ -216,6 +224,13 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
         img, refused = fetch.decode_reference(data, upload_pixel_limit(config))
         if img is None:
             return None, False, refused
+        if not isinstance(data, bytes) and fetch.source_format(img) != "TIFF":
+            # Named .tif, not a TIFF: no right to the TIFF limit. The usual one, and bytes, as for any other file.
+            size = data.seek(0, 2)
+            if size > MAX_UPLOAD_BYTES:
+                return None, False, f"Fichier trop lourd : {megabytes(size)}, {megabytes(MAX_UPLOAD_BYTES)} au plus."
+            data.seek(0)
+            data = data.read()
         content_type = upload_file.content_type if (upload_file.content_type or "").startswith("image/") else None
         with cloud_db.connect(ctx.settings.database_url) as conn:
             # Held until the commit: two uploads of one name wait for each other, so the second one sees the first one's row and
@@ -223,7 +238,7 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
             # same moment as a rename to it is not serialized (the row would be replaced, the stored original overwritten): rare, not handled.
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{scope.brand_id}/{filename.lower()}",))
             # ponytail: two identical files sent at the same moment under different names are not serialized: both are kept.
-            twin = cloud_db.reference_with_hash(conn, scope.brand_id, hashlib.sha256(data).hexdigest())
+            twin = cloud_db.reference_with_hash(conn, scope.brand_id, fetch.sha256_of(data))
             if twin:
                 return None, False, f"Identique à « {twin} », déjà dans la bibliothèque : rien n'a été ajouté."
             name = filename if replace else _free_name(conn, scope.brand_id, filename)

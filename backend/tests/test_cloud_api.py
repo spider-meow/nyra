@@ -602,6 +602,44 @@ def test_a_tiff_upload_is_kept_as_a_jpeg_and_a_16_bit_grey_one_is_not_white(clie
     assert shown.getpixel((2, 100)) < 40 and shown.getpixel((297, 100)) > 215  # the 16-bit ramp is a ramp, not white
 
 
+def test_a_tiff_above_30_mb_is_accepted_and_converted_and_the_limits_say_the_real_size(client, org_with_users, fake_storage_client, monkeypatch):
+    """AXE-630: a studio TIFF is 72 MB at 24 Mpx. It has its own limit and is read from its spooled file, never held in memory as bytes; the
+    stored visual is its converted copy. Another format keeps the lower limit, and a file named .tif that is not a TIFF does not get the higher one."""
+    import numpy as np
+
+    from nyra.cloud.routes import common as common_routes
+    from nyra.cloud.routes import library as library_routes
+
+    _, base, admin_id, _, _ = org_with_users
+    pixels = np.random.default_rng(2).integers(0, 255, (3000, 4000, 3), dtype=np.uint8)  # 12 Mpx
+    scan = io.BytesIO()
+    Image.fromarray(pixels).save(scan, format="TIFF")  # uncompressed: 36 MB, above the 30 MB of every other format
+    assert len(scan.getvalue()) > 30_000_000
+    sent = client.post(f"{base}/library/upload", headers=_headers(admin_id), files=[("files", ("studio.tif", scan.getvalue(), "image/tiff"))])
+    assert sent.status_code == 200 and sent.json()["saved"] == ["studio.tif"] and sent.json()["failed"] == []
+    refs = {path.rsplit("/", 1)[-1]: data for (bucket, path), data in fake_storage_client.store.items() if bucket == "refs"}
+    assert refs["studio.tif"][:2] == b"\xff\xd8" and len(refs["studio.tif"]) < 5_000_000  # the converted JPEG, not the 36 MB scan
+
+    monkeypatch.setattr(common_routes, "MAX_UPLOAD_BYTES", 500_000)
+    monkeypatch.setattr(library_routes, "MAX_UPLOAD_BYTES", 500_000)
+    monkeypatch.setattr(common_routes, "MAX_TIFF_UPLOAD_BYTES", 5_000_000)
+    noise = Image.fromarray(np.random.default_rng(3).integers(0, 255, (900, 1200, 3), dtype=np.uint8))
+    jpeg, big_tiff = io.BytesIO(), io.BytesIO()
+    noise.save(jpeg, format="JPEG", quality=95)  # ~1 MB: above 500 KB
+    Image.fromarray(np.random.default_rng(4).integers(0, 255, (1500, 1500, 3), dtype=np.uint8)).save(big_tiff, format="TIFF")  # 6.7 MB: above 5 MB
+    assert len(jpeg.getvalue()) > 500_000
+    sent = client.post(f"{base}/library/upload", headers=_headers(admin_id), files=[
+        ("files", ("trop-lourd.tif", big_tiff.getvalue(), "image/tiff")),
+        ("files", ("photo.jpg", jpeg.getvalue(), "image/jpeg")),  # another format: the usual limit
+        ("files", ("menteur.tif", jpeg.getvalue(), "image/tiff")),  # a JPEG named .tif: not a TIFF, the usual limit
+    ]).json()
+    assert sent["saved"] == []
+    reasons = {item["filename"]: item["reason"] for item in sent["failed"]}
+    assert reasons["trop-lourd.tif"] == "Fichier trop lourd : 6,8 Mo, 5,0 Mo au plus pour un TIFF. Exportez-le en JPEG ou réduisez-le."
+    assert reasons["photo.jpg"].startswith("Fichier trop lourd : ") and reasons["photo.jpg"].endswith(", 0,5 Mo au plus.")
+    assert reasons["menteur.tif"].startswith("Fichier trop lourd : ") and reasons["menteur.tif"].endswith(", 0,5 Mo au plus.")
+
+
 def test_numbered_names_stay_within_the_length_limit_and_stop_at_the_hundredth():
     from nyra.cloud.routes import library as library_routes
     from nyra.cloud.routes.common import MAX_FILENAME

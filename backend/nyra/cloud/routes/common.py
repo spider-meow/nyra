@@ -8,7 +8,6 @@ route functions can live at module level instead of inside `create_app`.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import threading
@@ -41,6 +40,9 @@ if TYPE_CHECKING:
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".avif"}
 MAX_UPLOAD_BYTES = 30_000_000
+# A TIFF (studio, prepress) is heavy before it is big: uncompressed, 24 Mpx is 72 MB. It is the only format a browser cannot lighten before sending
+# (lib/shrink.ts), and the server keeps its converted copy only, so it may weigh more. Not measured through a real proxy: docs/DEPLOYMENT.md.
+MAX_TIFF_UPLOAD_BYTES = 100_000_000
 
 BRAND = "/api/orgs/{org_id}/brands/{brand_id}"
 
@@ -219,6 +221,20 @@ def upload_failure(exc: Exception) -> str:
     return f"Erreur inattendue ({type(exc).__name__}) : {detail}"
 
 
+def is_tiff(filename: str) -> bool:
+    return Path(filename).suffix.lower() in (".tif", ".tiff")
+
+
+def upload_byte_limit(filename: str) -> int:
+    """The heaviest file accepted under this name: a TIFF may weigh more than the other formats (see `MAX_TIFF_UPLOAD_BYTES`)."""
+    return MAX_TIFF_UPLOAD_BYTES if is_tiff(filename) else MAX_UPLOAD_BYTES
+
+
+def megabytes(size: int) -> str:
+    """`45,3 Mo`, as a person reads it (decimal megabytes, a comma)."""
+    return f"{size / 1e6:.1f}".replace(".", ",") + " Mo"
+
+
 # What one `web` process can decode and re-encode (AXE-639). A library image costs about 10 MiB per megapixel at its peak (the decoded image, and the
 # copy the original, the thumbnail and the working copy are cut from: measured, docs/DEPLOYMENT.md), on top of the ~150 MiB the process already
 # holds, and the container has `WEB_MEM_LIMIT` (512m) with no swap: past ~25 Mpx one file killed it, and every route answered 502 until it restarted.
@@ -253,7 +269,7 @@ def heavy_image():
         yield
 
 
-def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename: str, data: bytes, img,
+def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename: str, data: fetch.Source, img,
                         content_type: Optional[str] = None) -> dict:
     """Store a reference's original, thumbnail and working copy; the row fields they give
     (paths, hashes, size), ready for `upsert_reference_image`."""
@@ -272,7 +288,7 @@ def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename
         storage_path=storage_path, phash=features.phash, dhash=features.dhash,
         phash_flip=features.phash_flip, dhash_flip=features.dhash_flip,
         embedding=None, width=width, height=height, thumb_path=thumb_path, work_path=work_path, byte_size=len(kept),
-        content_hash=hashlib.sha256(data).hexdigest(),
+        content_hash=fetch.sha256_of(data),
     )
 
 
