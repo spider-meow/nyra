@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode, useEffect, type ComponentType, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
-import { createBrowserRouter, Navigate, RouterProvider, useMatches, useRouteError } from "react-router";
+import { createBrowserRouter, Navigate, Outlet, RouterProvider, useMatches, useRouteError } from "react-router";
 import { ConfirmProvider, ToastProvider } from "./components/feedback";
+import { NavProgress } from "./components/layout/NavProgress";
 import { ApiError } from "./lib/api";
 import { AuthProvider } from "./lib/auth";
 import { reportError, startMonitoring } from "./lib/monitoring";
@@ -73,6 +74,13 @@ const lazyPage = (load: () => Promise<ComponentType>) => async () => {
 
 const router = createBrowserRouter([
   {
+    // The bar of a page being loaded sits above every route (the old page stays on screen until the next one is there).
+    element: (
+      <>
+        <NavProgress />
+        <Outlet />
+      </>
+    ),
     errorElement: <PageError />,
     HydrateFallback: () => <div className="p-8"><Spinner label="Chargement…" /></div>,
     children: [

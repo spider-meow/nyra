@@ -104,6 +104,7 @@ cd frontend && npm run check:order # l'ordre des collections à la main : où to
 cd frontend && npm run check:selection # ce que le menu d'actions dit de la sélection (dates, tags, collections)
 cd frontend && npm run check:emails # l'aperçu des e-mails : iframe sandbox="" sans permission, aucun innerHTML
 cd frontend && npm run check:viewas # « Voir en tant que » : les en-têtes envoyés (seulement pour l'organisation vue) et les droits affichés sous chaque rôle
+cd frontend && npm run check:navprogress # la barre de chargement d'une page : rien sous 150 ms, 300 ms au moins une fois montrée
 pytest -q                          # sans warning non justifié
 ```
 
