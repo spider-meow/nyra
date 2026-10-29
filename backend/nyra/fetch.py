@@ -14,7 +14,7 @@ import hashlib
 import io
 import warnings
 from dataclasses import dataclass
-from typing import Optional
+from typing import BinaryIO, Optional, Union
 
 import httpx
 import numpy as np
@@ -117,7 +117,29 @@ def decode(data: bytes, max_pixels: int) -> Optional[Image.Image]:
         Image.MAX_IMAGE_PIXELS = previous
 
 
-def decode_reference(data: bytes, max_pixels: int) -> tuple[Optional[Image.Image], str]:
+Source = Union[bytes, BinaryIO]  # a file's bytes, or the file itself (an upload spooled to disk): a heavy TIFF is never held in memory as bytes
+
+
+def _opened(data: Source) -> BinaryIO:
+    """The source as a file to read from the start: bytes in memory, or the spooled file rewound (Pillow reads what it needs from it)."""
+    if isinstance(data, (bytes, bytearray)):
+        return io.BytesIO(data)
+    data.seek(0)
+    return data
+
+
+def sha256_of(data: Source) -> str:
+    """The SHA-256 of a file, whole or read in 1 MiB pieces from its start: the same value as `hashlib.sha256(bytes).hexdigest()`."""
+    if isinstance(data, (bytes, bytearray)):
+        return hashlib.sha256(data).hexdigest()
+    data.seek(0)
+    digest = hashlib.sha256()
+    for piece in iter(lambda: data.read(1 << 20), b""):
+        digest.update(piece)
+    return digest.hexdigest()
+
+
+def decode_reference(data: Source, max_pixels: int) -> tuple[Optional[Image.Image], str]:
     """A library image, or None and why not, in words an admin can act on.
 
     Only hashes, a CLIP embedding and a thumbnail come out of a reference,
@@ -130,7 +152,7 @@ def decode_reference(data: bytes, max_pixels: int) -> tuple[Optional[Image.Image
     Image.MAX_IMAGE_PIXELS = None  # the size is checked here, before anything is decoded
     try:
         try:
-            img = Image.open(io.BytesIO(data))
+            img = Image.open(_opened(data))
         except UnidentifiedImageError:
             return None, "Format non reconnu : le fichier n'est pas une image lisible (JPEG, PNG, WebP…)."
         width, height = img.size

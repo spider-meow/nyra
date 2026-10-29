@@ -206,3 +206,95 @@ def test_the_16_bit_and_float_greys_are_converted_by_bands_to_the_same_pixels(mo
         for name, img in images.items():
             assert fetch._to_8bit(img).tobytes() == _old_to_8bit(img).tobytes(), (name, band_values)
             assert fetch._to_8bit(img).size == img.size
+
+
+# --- AXE-630: a TIFF may weigh more than the other formats, and is never held in memory as bytes -----------------------------------------
+
+def _tiff_bytes(width: int = 600, height: int = 400) -> bytes:
+    buf = io.BytesIO()
+    _picture(width, height).save(buf, format="TIFF")  # uncompressed: 3 bytes a pixel
+    return buf.getvalue()
+
+
+def _spooled(content: bytes, name: str):
+    """What the multipart parser gives a route: a file spooled to disk past 1 MiB, seekable, positioned wherever it was left."""
+    import tempfile
+
+    from starlette.datastructures import UploadFile
+
+    spool = tempfile.SpooledTemporaryFile(max_size=1_000_000)
+    spool.write(content)
+    spool.seek(len(content) // 2)  # not at the start: whatever reads it must rewind
+    return UploadFile(file=spool, filename=name, size=len(content))
+
+
+def test_the_hash_and_the_decoding_of_a_file_are_those_of_its_bytes():
+    data = _tiff_bytes()
+    for content in (data, b"", b"x", b"y" * (3 * (1 << 20) + 7)):  # empty, tiny, and over three 1 MiB pieces
+        assert fetch.sha256_of(_spooled(content, "a.tif").file) == fetch.sha256_of(content)
+    from_bytes, why = fetch.decode_reference(data, 25_000_000)
+    from_file, why_file = fetch.decode_reference(_spooled(data, "a.tif").file, 25_000_000)
+    assert from_bytes is not None and from_file is not None and why == why_file == ""
+    assert from_file.tobytes() == from_bytes.tobytes() and fetch.source_format(from_file) == "TIFF"
+    refused, reason = fetch.decode_reference(_spooled(data, "a.tif").file, 100_000)  # 240,000 px: above this limit
+    assert refused is None and "Image trop grande" in reason
+
+
+def test_a_tiff_has_its_own_weight_limit_and_the_refusal_says_the_real_size(monkeypatch):
+    from nyra.cloud.routes import library
+
+    assert common.upload_byte_limit("scan.TIF") == common.upload_byte_limit("scan.tiff") == common.MAX_TIFF_UPLOAD_BYTES == 100_000_000
+    assert common.upload_byte_limit("photo.jpg") == common.upload_byte_limit("photo.png") == common.MAX_UPLOAD_BYTES == 30_000_000
+    assert common.megabytes(45_300_000) == "45,3 Mo" and common.megabytes(100_000_000) == "100,0 Mo"
+    assert common.megabytes(45_250_000) == "45,3 Mo" and common.megabytes(30_000_001) == "30,1 Mo"  # rounded up, as the browser does (check:drop)
+    monkeypatch.setattr(common, "MAX_UPLOAD_BYTES", 1_000_000)
+    monkeypatch.setattr(common, "MAX_TIFF_UPLOAD_BYTES", 2_000_000)
+    light = _tiff_bytes(600, 400)  # 720 KB
+    heavy = _tiff_bytes(1000, 700)  # 2.1 MB
+    refusal, name, content = library._read_upload(_spooled(light, "scan.tif"))
+    assert refusal is None and name == "scan.tif"
+    assert not isinstance(content, bytes) and fetch.sha256_of(content) == fetch.sha256_of(light)  # the file, not 720 KB of bytes
+    refusal, _, _ = library._read_upload(_spooled(heavy, "scan.tif"))
+    assert refusal == {"filename": "scan.tif", "reason": "Fichier trop lourd : 2,2 Mo, 2,0 Mo au plus pour un TIFF. Exportez-le en JPEG ou réduisez-le."}
+    refusal, _, _ = library._read_upload(_spooled(b"j" * 1_200_000, "photo.jpg"))  # another format keeps the lower limit, whatever it holds
+    assert refusal == {"filename": "photo.jpg", "reason": "Fichier trop lourd : 1,2 Mo, 1,0 Mo au plus."}
+    refusal, _, content = library._read_upload(_spooled(b"j" * 900_000, "photo.jpg"))
+    assert refusal is None and isinstance(content, bytes) and len(content) == 900_000  # bytes, as before
+    refusal, _, _ = library._read_upload(_spooled(b"", "vide.tif"))
+    assert refusal == {"filename": "vide.tif", "reason": "Fichier vide."}
+
+
+def _every_kind_of_tiff() -> dict[str, bytes]:
+    """The TIFFs a studio sends: compressed or not, grey 16 bits, CMYK, palette, with transparency, several pages."""
+    rgb = _picture(500, 340)
+    out: dict[str, bytes] = {}
+    for name, img, options in (
+        ("rgb", rgb, {}), ("lzw", rgb, {"compression": "tiff_lzw"}), ("deflate", rgb, {"compression": "tiff_adobe_deflate"}),
+        ("cmyk", rgb.convert("CMYK"), {}), ("cmyk lzw", rgb.convert("CMYK"), {"compression": "tiff_lzw"}), ("palette", rgb.convert("P"), {}),
+        ("rgba", Image.merge("RGBA", (*rgb.split(), Image.new("L", rgb.size, 150))), {}),
+        ("grey16", Image.fromarray(np.tile(np.linspace(0, 65535, 500).astype("uint16"), (340, 1))), {}),
+    ):
+        buf = io.BytesIO()
+        img.save(buf, format="TIFF", **options)
+        out[name] = buf.getvalue()
+    pages = io.BytesIO()
+    rgb.save(pages, format="TIFF", save_all=True, append_images=[rgb.rotate(90), rgb.convert("L")])
+    out["several pages"] = pages.getvalue()
+    return out
+
+
+@pytest.mark.parametrize("name", list(_every_kind_of_tiff()))
+def test_every_kind_of_tiff_gives_the_same_copies_read_from_its_file_as_from_its_bytes(name):
+    data = _every_kind_of_tiff()[name]
+    heavy = b"x" * (fetch.STORED_BYTES + 1)
+    from_bytes, _ = fetch.decode_reference(data, 25_000_000)
+    from_file, _ = fetch.decode_reference(_spooled(data, "a.tif").file, 25_000_000)
+    assert from_bytes is not None and from_file is not None and fetch.source_format(from_file) == "TIFF"
+    assert (from_file.size, from_file.mode, from_file.tobytes()) == (from_bytes.size, from_bytes.mode, from_bytes.tobytes())
+    source = _spooled(data, "a.tif").file
+    assert fetch.make_stored_original(from_file, source, "image/tiff") == fetch.make_stored_original(from_bytes, data, "image/tiff")
+    assert isinstance(fetch.make_stored_original(from_file, source, "image/tiff")[0], bytes)  # the converted copy, never the file itself
+    assert fetch.make_thumbnail(from_file) == fetch.make_thumbnail(from_bytes)
+    assert fetch.make_working_copy(from_file) == fetch.make_working_copy(from_bytes)
+    assert reference_features(from_file) == reference_features(from_bytes)
+    assert heavy  # (a TIFF is converted whatever its weight: `data` is never what is stored)

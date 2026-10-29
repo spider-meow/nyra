@@ -32,6 +32,7 @@ import { useOrg } from "./org";
 import { isRecord, oneOf, readStored, removeOtherBrands, removeStored, storageKey, writeStored } from "./storage";
 import { batches, reportUnanswered, sendBatch, summary, type UploadResult, type UploadRights } from "./upload";
 import { SHRINK_ABOVE_BYTES, shrinkAll } from "./shrink";
+import { heavyReason } from "./uploadLimits";
 
 // Copies of the Library and Overview answers in localStorage, so those pages open at once.
 // They hold no signed URL (thumbnails come from `useLibraryThumbs`). Older than this, a copy is ignored.
@@ -425,7 +426,15 @@ export function useReferenceUpload() {
         ready = await shrinkAll(files, (count) => toast.update(id, { message: `Préparation des visuels · ${count} sur ${total}`, progress: count / total }));
         toast.update(id, { message: sending, progress: total > 1 ? 0 : undefined });
       }
-      for (const batch of batches(ready)) {
+      // Too heavy even once lightened (a TIFF cannot be): said at once, as the server would, instead of sending it whole to be refused.
+      for (const file of ready) {
+        const reason = heavyReason(file);
+        if (reason) {
+          result.failed.push({ filename: file.name, reason });
+          done += 1;
+        }
+      }
+      for (const batch of batches(ready.filter((file) => !heavyReason(file)))) {
         await sendBatch(apiPath("/library/upload"), batch, result, rights, collectionId);
         done += batch.length;
         setProgress({ done, total });
