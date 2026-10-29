@@ -85,28 +85,36 @@ instead of the worker restarting.
 **Memory of an uploaded image (AXE-639).** `web` decodes and re-encodes every image a person adds to the library (an upload, or a site image
 adopted), and until 29 October nothing bounded that against `WEB_MEM_LIMIT`: one large file passed the 512 MiB, Docker killed the container (exit 137,
 `OOMKilled`), and every route answered 502 from Caddy until it restarted (the interface showed « La requête a échoué »; « Réessayer » sent the
-same files and killed it again). Measured on a development machine (peak of the process, one file), before and after the change:
+same files and killed it again). Measured on a development machine (peak of the process, one file, **including the 50 to 100 MiB of the interpreter and its libraries**; the
+`web` process holds about 150 MiB at rest), with the old code (limit 60 Mpx) and with this change at its default limit (25 Mpx):
 
-| File (accepted by the old limits: 30 MB, 60 Mpx) | Before | After |
+| File (accepted by the old limits: 30 MB, 60 Mpx) | Old code | This change |
 |---|---|---|
-| JPEG 60 Mpx (8000×7500) | 1065 MiB | 250 MiB (decoded at a reduced scale, see below) |
-| JPEG 108 Mpx | 542 MiB | 357 MiB |
+| JPEG 60 Mpx (8000×7500) | 1065 MiB | 251 MiB (decoded at a reduced scale, see below) |
+| JPEG 108 Mpx | 542 MiB | 185 MiB (idem) |
 | PNG 49 Mpx | 871 MiB | refused with its reason (above the limit) |
-| PNG 30 Mpx | 563 MiB | 357 MiB |
-| 16-bit grey TIFF 30 Mpx | 909 MiB | 371 MiB |
+| PNG 25 Mpx (the largest a non-JPEG may be) | 482 MiB | 322 MiB |
+| 16-bit grey TIFF 20 Mpx | 625 MiB | 297 MiB |
+
+(With the limit raised to 30 Mpx, a PNG of that size peaks at 357 MiB against 563 for the old code, and a 16-bit grey TIFF at 371 against 909: the
+band-by-band conversion is what spares the TIFF its three 8-byte-a-pixel arrays.)
 
 What changed: (1) the image is no longer copied to read it as RGB when it already is (`match._rgb`), the hashes of the mirror are taken on the grey
 image (the same hashes, a third of the memory), and the thumbnail, the working copy and the stored original are cut from ONE copy instead of two;
-the 16-bit conversion works a band of rows at a time. **Nothing that comes out changed**: 34 images of every mode, with EXIF orientations, gave the
-same hashes, thumbnails, working copies and stored originals byte for byte before and after (`backend/tests/test_image_memory.py` keeps the definitions).
+the 16-bit conversion works a band of rows at a time. **Nothing that comes out changed.** `backend/tests/test_image_memory.py` compares, for 7 modes (RGB, grey, palette, 1-bit, CMYK, grey+alpha, RGBA) × 4 EXIF
+orientations, the thumbnail, the working copy and the stored original with the bytes the old code cut (its steps are written out in the test), the
+hashes with the definitions (those of the RGB image and of its mirror), and the 16-bit and float conversion with the old one on edge cases. Before the
+tests existed, 34 images gave the same bytes before and after, and an independent read compared 240 combinations (16 kinds of image × 8 orientations)
+with no difference.
 (2) **A pixel limit for uploads**, `NYRA_UPLOAD_MAX_PIXELS` (default **25 million**, never above the organization's `crawl.max_image_pixels`): a JPEG
 above it is decoded at 1/2, 1/4 or 1/8 scale and kept (its real size is recorded; the hashes of such an image are taken on the reduced decode, as
 they already were above 60 Mpx), any other format is refused **before it is decoded**, with « Image trop grande : … Réduisez-la ou exportez-la en JPEG ».
 (3) **One image at a time per `web` process** (`common.heavy_image`): two at once add their peaks. Uploads queue behind each other; with several `web`
-processes the bound is per process. The peak is about **10 MiB per megapixel** on top of the ~150 MiB at rest (30 Mpx peaks at 357 MiB: 459 MiB of the 512 leaves too little for the requests running beside it, hence 25): **if you raise `WEB_MEM_LIMIT`, raise
-`NYRA_UPLOAD_MAX_PIXELS` by (the added MiB − 60) / 10 million pixels, and not the other way round.** On the 4 GB Droplet there is no room to raise it
+processes the bound is per process. The peak is about **10 MiB per megapixel** on top of the ~150 MiB at rest (a 25 Mpx PNG peaks at 322 MiB, that is 150 + 274 = 424 of the 512, about 90 MiB for the requests running beside it; at 30 Mpx only 50 were left): **the limit in million pixels is about
+(`WEB_MEM_LIMIT` in MiB − 150 at rest − 100 of margin) / 10: 512 gives 26, hence 25. If you raise `WEB_MEM_LIMIT`, raise `NYRA_UPLOAD_MAX_PIXELS` with it, and never
+the other way round.** On the 4 GB Droplet there is no room to raise it
 (0.6 GiB left, see above). *Not measured:* a real server under real uploads (`docker stats` while sending 9 large files, then
-`docker inspect -f '{{.State.OOMKilled}} {{.RestartCount}}' <web>`: it must stay `false 0`); the effect on the hashes of a JPEG above 30 Mpx, reduced
+`docker inspect -f '{{.State.OOMKilled}} {{.RestartCount}}' <web>`: it must stay `false 0`); the effect on the hashes of a JPEG above 25 Mpx, reduced
 before hashing (none such had been accepted by a 512 MiB container, whose peak passed the limit from about 25 Mpx); the worker's own indexing, which
 decodes with its 2.5 GiB. Ceiling: the next step is to move the processing to a worker job.
 

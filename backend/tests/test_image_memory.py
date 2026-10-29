@@ -33,11 +33,12 @@ def _picture(width: int = 400, height: int = 300) -> Image.Image:
 
 def _in_every_mode() -> dict[str, Image.Image]:
     rgb = _picture()
-    return {"RGB": rgb, "L": rgb.convert("L"), "P": rgb.convert("P"),
+    return {"RGB": rgb, "L": rgb.convert("L"), "P": rgb.convert("P"), "1": rgb.convert("1"), "CMYK": rgb.convert("CMYK"),
+            "LA": Image.merge("LA", (rgb.convert("L"), Image.new("L", rgb.size, 180))),
             "RGBA": Image.merge("RGBA", (*rgb.split(), Image.new("L", rgb.size, 180)))}
 
 
-@pytest.mark.parametrize("mode", ["RGB", "L", "P", "RGBA"])
+@pytest.mark.parametrize("mode", ["RGB", "L", "P", "1", "CMYK", "LA", "RGBA"])
 def test_the_hashes_are_those_of_the_rgb_image_and_of_its_mirror(mode):
     img = _in_every_mode()[mode]
     rgb = img.convert("RGB")
@@ -50,33 +51,82 @@ def test_the_hashes_are_those_of_the_rgb_image_and_of_its_mirror(mode):
     assert (compute_phash(rgb), compute_dhash(rgb)) == expected[:2]
 
 
-def test_an_rgb_image_is_not_copied_to_be_hashed_and_nothing_cut_from_it_changes_it():
-    img = _picture(1800, 1200)
-    assert _rgb(img) is img and _rgb(img.convert("L")) is not None
-    exif = Image.Exif()
-    exif[0x0112] = 6  # turned a quarter: the copies are cut from the turned image
-    jpeg = io.BytesIO()
-    img.save(jpeg, format="JPEG", exif=exif)
-    for source in (img, Image.open(io.BytesIO(jpeg.getvalue())), img.convert("RGBA")):
-        source.load()
-        before = source.tobytes()
-        assert fetch._turned(source) is not source  # a copy, which `thumbnail` is free to shrink in place
-        fetch.make_thumbnail(source)
-        fetch.make_working_copy(source)
-        fetch.make_stored_original(source, b"x" * (fetch.STORED_BYTES + 1), "image/jpeg")
-        reference_features(source)
-        assert source.tobytes() == before and source.size[0] > 1000  # still whole, still the same pixels
+def _turned_upright(img: Image.Image, orientation: int) -> Image.Image:
+    img = img.copy()
+    exif = img.getexif()
+    exif[0x0112] = orientation  # what a camera writes: 1 as shot, 6 and 8 a quarter turn, 3 upside down
+    return img
 
 
-def test_the_stored_original_and_the_copies_keep_their_pixels_whatever_the_mode():
-    for mode, img in _in_every_mode().items():
-        rgb = img.convert("RGB")
-        thumb = Image.open(io.BytesIO(fetch.make_thumbnail(img)))
-        reference = rgb.copy()
-        reference.thumbnail((fetch.THUMB_SIZE, fetch.THUMB_SIZE))
-        assert thumb.size == reference.size, mode
-        work = Image.open(io.BytesIO(fetch.make_working_copy(img)))
-        assert work.size == rgb.size  # 400 px wide: under the working side, kept at its size
+def _jpeg(img: Image.Image, quality: int) -> bytes:
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
+
+
+def _thumbnail_as_it_was(img: Image.Image) -> bytes:
+    rgb = ImageOps.exif_transpose(img).convert("RGB")
+    rgb.thumbnail((fetch.THUMB_SIZE, fetch.THUMB_SIZE))
+    return _jpeg(rgb, 78)
+
+
+def _working_copy_as_it_was(img: Image.Image) -> bytes:
+    rgb = ImageOps.exif_transpose(img).convert("RGB")
+    rgb.thumbnail((fetch.WORKING_SIDE, fetch.WORKING_SIDE))
+    return _jpeg(rgb, 85)
+
+
+def _stored_original_as_it_was(img: Image.Image, data: bytes):
+    flat = ImageOps.exif_transpose(img)
+    alpha = flat.mode in ("RGBA", "LA", "PA") or "transparency" in flat.info
+    flat = flat.convert("RGBA" if alpha else "RGB")
+    flat.thumbnail((fetch.STORED_SIDE, fetch.STORED_SIDE))
+    buf = io.BytesIO()
+    if alpha:
+        flat.save(buf, format="PNG", optimize=True)
+    else:
+        flat.save(buf, format="JPEG", quality=88, optimize=True)
+    if len(buf.getvalue()) >= len(data):
+        return data, "image/png"
+    return buf.getvalue(), "image/png" if alpha else "image/jpeg"
+
+
+@pytest.mark.parametrize("orientation", [1, 3, 6, 8])
+@pytest.mark.parametrize("mode", ["RGB", "L", "P", "1", "CMYK", "LA", "RGBA"])
+def test_the_thumbnail_the_working_copy_and_the_stored_original_are_byte_for_byte_those_of_before(mode, orientation):
+    img = _turned_upright(_in_every_mode()[mode], orientation)
+    assert fetch.make_thumbnail(img) == _thumbnail_as_it_was(img)
+    assert fetch.make_working_copy(img) == _working_copy_as_it_was(img)
+    heavy = b"x" * (fetch.STORED_BYTES + 1)  # a heavy file: the copy is cut (a light one is kept as it was sent)
+    assert fetch.make_stored_original(img, heavy, "image/png") == _stored_original_as_it_was(img, heavy)
+
+
+@pytest.mark.parametrize("mode", ["RGB", "L", "P", "CMYK", "RGBA"])
+def test_nothing_cut_from_an_image_changes_it_and_an_rgb_one_is_not_copied_to_be_hashed(mode):
+    for orientation in (1, 6):  # nothing to turn, and a quarter turn
+        img = _turned_upright(_in_every_mode()[mode], orientation)
+        before = (img.tobytes(), img.size, img.mode)
+        assert fetch._turned(img) is not img  # a copy, which `thumbnail` is free to shrink in place (relies on Pillow's exif_transpose, which copies)
+        fetch.make_thumbnail(img)
+        fetch.make_working_copy(img)
+        fetch.make_stored_original(img, b"x" * (fetch.STORED_BYTES + 1), "image/jpeg")
+        reference_features(img)
+        compute_flip_hashes(img)
+        assert (img.tobytes(), img.size, img.mode) == before, (mode, orientation)
+    assert _rgb(_in_every_mode()["RGB"]) is not None and _rgb(_in_every_mode()["L"]).mode == "RGB"
+    rgb = _in_every_mode()["RGB"]
+    assert _rgb(rgb) is rgb  # the point: no copy of what is already RGB
+
+
+def test_both_routes_that_decode_a_library_image_hold_the_lock_and_the_pixel_limit():
+    """A route that lost its `with heavy_image()` would pass every test above and bring the container down again."""
+    import inspect
+
+    from nyra.cloud.routes import library, site_images
+
+    for route in (library._store_upload, site_images._adopt_one):
+        source = inspect.getsource(route)
+        assert "with heavy_image():" in source and "upload_pixel_limit(config)" in source, route.__name__
 
 
 def test_the_pixel_limit_of_an_upload(monkeypatch, caplog):

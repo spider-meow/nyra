@@ -223,7 +223,7 @@ def upload_failure(exc: Exception) -> str:
 # copy the original, the thumbnail and the working copy are cut from: measured, docs/DEPLOYMENT.md), on top of the ~150 MiB the process already
 # holds, and the container has `WEB_MEM_LIMIT` (512m) with no swap: past ~25 Mpx one file killed it, and every route answered 502 until it restarted.
 # A JPEG above the limit is decoded at a reduced scale (`fetch.decode_reference`), any other format is refused with the reason.
-UPLOAD_MAX_PIXELS = 25_000_000  # not 30: 30 Mpx peaks at 357 MiB, 150 + 309 = 459 of the 512 left too little for the requests running beside it
+UPLOAD_MAX_PIXELS = 25_000_000  # (512 - 150 at rest - 100 of margin) / 10: a 25 Mpx PNG peaks at 150 + 274 = 424 MiB; at 30 Mpx only 50 were left
 _MIN_UPLOAD_PIXELS = 1_000_000
 
 
