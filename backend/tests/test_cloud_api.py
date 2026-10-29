@@ -569,6 +569,22 @@ def test_two_uploads_of_one_name_at_the_same_time_keep_both(client, org_with_use
     assert sorted(item["filename"] for item in items) == ["c (1).jpg", "c (2).jpg", "c (3).jpg", "c.jpg"]  # none replaced the other
 
 
+def test_an_upload_above_the_pixel_limit_of_the_server_is_refused_with_the_reason_and_a_jpeg_is_reduced(client, org_with_users, monkeypatch):
+    """AXE-639: one big image used to pass the memory of the `web` container, which was killed (every route answered 502). The limit is
+    `NYRA_UPLOAD_MAX_PIXELS`: a JPEG above it is decoded at a reduced scale and kept, another format is refused before anything is decoded."""
+    _, base, admin_id, _, _ = org_with_users
+    monkeypatch.setenv("NYRA_UPLOAD_MAX_PIXELS", "1000000")
+    wide = Image.new("RGB", (1500, 1000), (120, 60, 30))  # 1.5 Mpx: above the limit
+    png, jpeg = io.BytesIO(), io.BytesIO()
+    wide.save(png, format="PNG")
+    wide.save(jpeg, format="JPEG")
+    sent = client.post(f"{base}/library/upload", headers=_headers(admin_id),
+                       files=[("files", ("grande.png", png.getvalue(), "image/png")), ("files", ("grande.jpg", jpeg.getvalue(), "image/jpeg"))])
+    body = sent.json()
+    assert sent.status_code == 200 and body["saved"] == ["grande.jpg"]
+    assert [item["filename"] for item in body["failed"]] == ["grande.png"] and body["failed"][0]["reason"].startswith("Image trop grande : 1500 × 1000 px")
+
+
 def test_a_tiff_upload_is_kept_as_a_jpeg_and_a_16_bit_grey_one_is_not_white(client, org_with_users, fake_storage_client):
     import numpy as np
 

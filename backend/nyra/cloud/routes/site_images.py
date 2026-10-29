@@ -31,6 +31,7 @@ from .common import (
     enforce,
     get_ctx,
     group_status,
+    heavy_image,
     iso,
     log,
     online_images,
@@ -38,6 +39,7 @@ from .common import (
     rights_from_body,
     safe_filename,
     upload_failure,
+    upload_pixel_limit,
 )
 
 router = APIRouter()
@@ -231,10 +233,11 @@ def _adopt_one(ctx: Ctx, scope: BrandScope, client, config: Config, body: AdoptB
     filename = unique_filename(name, taken)
     data = original_from_site(row["url"], config) or cloud_storage.download(
         client, cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"])
-    img, refused = fetch.decode_reference(data, config.crawl.max_image_pixels)
-    if img is None:
-        return None, refused
-    stored = put_reference_files(client, scope.org_id, scope.brand_id, filename, data, img)
+    with heavy_image():
+        img, refused = fetch.decode_reference(data, upload_pixel_limit(config))
+        if img is None:
+            return None, refused
+        stored = put_reference_files(client, scope.org_id, scope.brand_id, filename, data, img)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         ref_id = cloud_db.upsert_reference_image(
             conn, org_id=scope.org_id, brand_id=scope.brand_id, filename=filename,

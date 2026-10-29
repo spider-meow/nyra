@@ -62,14 +62,22 @@ def compute_dhash(image: Image.Image) -> str:
     return str(imagehash.dhash(image))
 
 
+def _rgb(image: Image.Image) -> Image.Image:
+    """The image as RGB, without copying it when it already is: `convert` to the same mode copies every pixel, and a 60 Mpx image is 180 MB.
+    The result is only read (hashed), never changed."""
+    return image if image.mode == "RGB" else image.convert("RGB")
+
+
 def compute_hashes(image: Image.Image) -> tuple[str, str]:
-    rgb = image.convert("RGB")
+    rgb = _rgb(image)
     return compute_phash(rgb), compute_dhash(rgb)
 
 
 def compute_flip_hashes(image: Image.Image) -> tuple[str, str]:
-    """Hashes of the horizontal mirror, stored on references only."""
-    return compute_hashes(ImageOps.mirror(image.convert("RGB")))
+    """Hashes of the horizontal mirror, stored on references only. The hashes read the grey image, and the grey image of the mirror is the
+    mirror of the grey image (a pixel-by-pixel conversion): mirrored as grey, a third of the memory, the very same hashes."""
+    grey = ImageOps.mirror(_rgb(image).convert("L"))
+    return compute_phash(grey), compute_dhash(grey)
 
 
 def hamming_distance(hash_a: Optional[str], hash_b: Optional[str]) -> Optional[int]:

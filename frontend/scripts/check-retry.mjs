@@ -8,7 +8,7 @@ import { transformWithOxc } from "vite";
 
 const source = readFileSync(new URL("../src/lib/api.ts", import.meta.url), "utf8");
 const { code: outputText } = await transformWithOxc(source, "source.ts", { target: "es2022" });
-const { api, ApiError } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
+const { api, ApiError, isUnanswered, UNAVAILABLE, UNREACHABLE } = await import(`data:text/javascript;base64,${Buffer.from(outputText).toString("base64")}`);
 
 const reply = (status, body, headers = {}) => new Response(JSON.stringify(body), { status, headers });
 const limited = (retryAfter = "0.01") => reply(429, { detail: "Trop de requêtes." }, retryAfter === null ? {} : { "Retry-After": retryAfter });
@@ -70,4 +70,24 @@ fakeApi(() => reply(500, { detail: "boom" }));
 await assert.rejects(api.get("/x"), (error) => error.status === 500);
 assert.equal(calls.length, 1);
 
-console.log("retry: 429 with Retry-After replayed at most 3 times, capped, never for uploads or a caller that opts out, other errors untouched");
+// --- what the person reads when the server did not answer (AXE: error states) --------------------------------------------
+const rawReply = (status, text) => new Response(text, { status });
+for (const [label, make] of [["empty 502 from the proxy", () => rawReply(502, "")], ["502 with a page", () => rawReply(502, "<html>Bad Gateway</html>")], ["504 plain text", () => rawReply(504, "upstream timeout")], ["503, no detail", () => reply(503, {})]]) {
+  fakeApi(make);
+  await assert.rejects(api.get("/x"), (error) => error.message === UNAVAILABLE && isUnanswered(error), label);
+  assert.equal(calls.length, 1, `${label}: not replayed`);
+}
+fakeApi(() => rawReply(500, "Internal Server Error"));
+await assert.rejects(api.get("/x"), (error) => /côté serveur/.test(error.message) && !/Internal/.test(error.message) && !isUnanswered(error), "a 500 page is not shown as is");
+fakeApi(() => reply(502, { detail: "L'image n'est pas disponible pour le moment." }));
+await assert.rejects(api.get("/x"), (error) => error.message === "L'image n'est pas disponible pour le moment.", "the API's own reason is kept, whatever the status");
+fakeApi(() => reply(403, { detail: "Réservé aux administrateurs de l'organisation." }));
+await assert.rejects(api.get("/x"), (error) => error.message === "Réservé aux administrateurs de l'organisation." && error.status === 403);
+fakeApi(() => rawReply(404, "not found"));
+await assert.rejects(api.get("/x"), (error) => error.message === "not found", "a 4xx text body is kept as before");
+globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+await assert.rejects(api.get("/x"), (error) => error instanceof ApiError && error.status === 0 && error.message === UNREACHABLE && isUnanswered(error), "no connection");
+assert.equal(isUnanswered(new ApiError("x", 429)), false);
+assert.equal(isUnanswered(new Error("x")), false);
+
+console.log("retry: 429 with Retry-After replayed at most 3 times, capped, never for uploads or a caller that opts out, other errors untouched, and a server that does not answer says so in words");

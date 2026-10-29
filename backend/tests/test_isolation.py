@@ -193,6 +193,16 @@ def _fresh(url, store, job="check") -> dict:
     return tenant
 
 
+@pytest.fixture(autouse=True)
+def no_rate_limit(monkeypatch):
+    """These tests call every route as one person, up to ~150 writes in a run, against a bucket of 120 a minute that refills 2 a second: they passed
+    only on a machine slow enough, and failed on `PUT /api/staff/organizations/{org_id}/quotas` (a 429, no leak) the day it ran faster. The limiter has its
+    own tests (test_ratelimit.py, test_rate_buckets.py, and the 429 case of test_cloud_api.py). Autouse, so that it runs before `client`: the app reads
+    its limits from the environment when it is built."""
+    monkeypatch.setenv("NYRA_RATE_READ_PER_MIN", "1000000")
+    monkeypatch.setenv("NYRA_RATE_WRITE_PER_MIN", "1000000")
+
+
 @pytest.fixture()
 def world(cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
     """(A, B): two organizations, each with a brand, two people (admin, client, no platform admin) and data of every kind."""

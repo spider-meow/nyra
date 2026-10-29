@@ -34,12 +34,14 @@ from .common import (
     brand_member_dep,
     enforce,
     get_ctx,
+    heavy_image,
     iso,
     log,
     put_reference_files,
     rights_from_body,
     safe_filename,
     upload_failure,
+    upload_pixel_limit,
 )
 
 MAX_FILES_PER_UPLOAD = 100
@@ -210,37 +212,38 @@ def _store_upload(ctx: Ctx, scope: BrandScope, client, config, upload_file: Uplo
     The name is None when the file was refused. A name already in the library is never taken over unless `replace`: the file
     is saved as `a (1).jpg`, `a (2).jpg`... `rights` (expiry date, unlimited rights) is the common value chosen for this
     upload; None keeps what a replaced reference had."""
-    img, refused = fetch.decode_reference(data, config.crawl.max_image_pixels)
-    if img is None:
-        return None, False, refused
-    content_type = upload_file.content_type if (upload_file.content_type or "").startswith("image/") else None
-    with cloud_db.connect(ctx.settings.database_url) as conn:
-        # Held until the commit: two uploads of one name wait for each other, so the second one sees the first one's row and
-        # takes the next name. ponytail: the lock is on the name asked for, so a file literally named `a (1).jpg` arriving at the
-        # same moment as a rename to it is not serialized (the row would be replaced, the stored original overwritten): rare, not handled.
-        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{scope.brand_id}/{filename.lower()}",))
-        # ponytail: two identical files sent at the same moment under different names are not serialized: both are kept.
-        twin = cloud_db.reference_with_hash(conn, scope.brand_id, hashlib.sha256(data).hexdigest())
-        if twin:
-            return None, False, f"Identique à « {twin} », déjà dans la bibliothèque : rien n'a été ajouté."
-        name = filename if replace else _free_name(conn, scope.brand_id, filename)
-        if name is None:
-            return None, False, f"{MAX_SAME_NAME} visuels portent déjà ce nom : renommez ce fichier."
-        stored = put_reference_files(client, scope.org_id, scope.brand_id, name, data, img, content_type)
-        existing = cloud_db.get_reference_by_filename(conn, scope.brand_id, name)
-        ref_id = cloud_db.upsert_reference_image(
-            conn, org_id=scope.org_id, brand_id=scope.brand_id, filename=name,
-            expiry_date=rights[0] if rights else iso(existing["expiry_date"]) if existing else None,
-            unlimited_rights=rights[1] if rights else existing["unlimited_rights"] if existing else False,
-            credit=existing["credit"] if existing else None,
-            notes=existing["notes"] if existing else None,
-            **stored,
-        )
-        scope.audit(conn, "library.upload", "reference", ref_id, replaced=bool(existing), renamed=name != filename)  # one row per file, with its write
-    if existing and existing["storage_path"] != stored["storage_path"]:
-        # Uploaded before brands existed: the new file replaces the old one.
-        ctx.remove_files(cloud_storage.BUCKET_REFS, [existing["storage_path"], existing["thumb_path"]])
-    return name, bool(existing), ""
+    with heavy_image():
+        img, refused = fetch.decode_reference(data, upload_pixel_limit(config))
+        if img is None:
+            return None, False, refused
+        content_type = upload_file.content_type if (upload_file.content_type or "").startswith("image/") else None
+        with cloud_db.connect(ctx.settings.database_url) as conn:
+            # Held until the commit: two uploads of one name wait for each other, so the second one sees the first one's row and
+            # takes the next name. ponytail: the lock is on the name asked for, so a file literally named `a (1).jpg` arriving at the
+            # same moment as a rename to it is not serialized (the row would be replaced, the stored original overwritten): rare, not handled.
+            conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"{scope.brand_id}/{filename.lower()}",))
+            # ponytail: two identical files sent at the same moment under different names are not serialized: both are kept.
+            twin = cloud_db.reference_with_hash(conn, scope.brand_id, hashlib.sha256(data).hexdigest())
+            if twin:
+                return None, False, f"Identique à « {twin} », déjà dans la bibliothèque : rien n'a été ajouté."
+            name = filename if replace else _free_name(conn, scope.brand_id, filename)
+            if name is None:
+                return None, False, f"{MAX_SAME_NAME} visuels portent déjà ce nom : renommez ce fichier."
+            stored = put_reference_files(client, scope.org_id, scope.brand_id, name, data, img, content_type)
+            existing = cloud_db.get_reference_by_filename(conn, scope.brand_id, name)
+            ref_id = cloud_db.upsert_reference_image(
+                conn, org_id=scope.org_id, brand_id=scope.brand_id, filename=name,
+                expiry_date=rights[0] if rights else iso(existing["expiry_date"]) if existing else None,
+                unlimited_rights=rights[1] if rights else existing["unlimited_rights"] if existing else False,
+                credit=existing["credit"] if existing else None,
+                notes=existing["notes"] if existing else None,
+                **stored,
+            )
+            scope.audit(conn, "library.upload", "reference", ref_id, replaced=bool(existing), renamed=name != filename)  # one row per file, with its write
+        if existing and existing["storage_path"] != stored["storage_path"]:
+            # Uploaded before brands existed: the new file replaces the old one.
+            ctx.remove_files(cloud_storage.BUCKET_REFS, [existing["storage_path"], existing["thumb_path"]])
+        return name, bool(existing), ""
 
 
 @router.post(f"{BRAND}/library/upload")

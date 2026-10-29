@@ -1,5 +1,5 @@
 import type { ToastInput } from "../components/feedback";
-import { ApiError, api, errorMessage } from "./api";
+import { ApiError, api, errorMessage, isUnanswered } from "./api";
 import { plural } from "./format";
 
 // A serverless host refuses request bodies above ~4.5 MB: send a few files at a time.
@@ -60,7 +60,9 @@ export async function sendBatch(path: string, batch: File[], result: UploadResul
     const reason =
       error instanceof ApiError && error.status === 413
         ? "Fichier trop lourd pour être envoyé (4 Mo au plus par fichier sur ce serveur)."
-        : errorMessage(error);
+        : isUnanswered(error)
+          ? "Le serveur n'a pas répondu pendant l'envoi. Réessayez ; si cela se reproduit avec ce fichier, il est peut-être trop grand (en pixels) : réduisez-le, puis renvoyez-le."
+          : errorMessage(error);
     result.failed.push(...batch.map((file) => ({ filename: file.name, reason })));
   }
 }
