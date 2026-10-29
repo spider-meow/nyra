@@ -78,6 +78,7 @@ jobs:
       - run: npm run check:selection
       - run: npm run check:emails
       - run: npm run check:viewas
+      - run: npm run check:navprogress
       - run: npx playwright install --with-deps chromium
       - run: npm run check:remember
 

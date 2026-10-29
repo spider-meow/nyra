@@ -17,7 +17,8 @@
     "check:remember": "node scripts/check-remember.mjs",
     "check:retry": "node scripts/check-retry.mjs",
     "check:emails": "node scripts/check-emails.mjs",
-    "check:viewas": "node scripts/check-viewas.mjs"
+    "check:viewas": "node scripts/check-viewas.mjs",
+    "check:navprogress": "node scripts/check-navprogress.mjs"
   },
   "dependencies": {
     "@sentry/react": "11.9.0",

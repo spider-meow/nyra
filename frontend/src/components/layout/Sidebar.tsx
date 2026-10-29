@@ -1,4 +1,4 @@
-import { NavLink, useLocation, useNavigate } from "react-router";
+import { NavLink, useLocation, useNavigate, useNavigation } from "react-router";
 import { useAuth } from "../../lib/auth";
 import { brandLink, useMe, useOrg } from "../../lib/org";
 import { useOverview } from "../../lib/queries";
@@ -44,6 +44,8 @@ const navItemClass = (isActive: boolean) =>
   );
 
 export function NavItems(props: { list: NavItem[]; onNavigate: () => void; end?: boolean }) {
+  // The item clicked lights up at once; the one being left goes dark, so that two are never lit while the next page loads.
+  const loading = useNavigation().state !== "idle";
   return props.list.map((item) =>
     item.newTab ? (
       // Another page of the product, opened beside this one: never "active", and the arrow says so.
@@ -54,10 +56,10 @@ export function NavItems(props: { list: NavItem[]; onNavigate: () => void; end?:
         <span className="sr-only">(s'ouvre dans un nouvel onglet)</span>
       </a>
     ) : (
-      <NavLink key={item.to} to={item.to} end={props.end} onClick={props.onNavigate} className={({ isActive }) => navItemClass(isActive)}>
-        {({ isActive }) => (
+      <NavLink key={item.to} to={item.to} end={props.end} onClick={props.onNavigate} className={({ isActive, isPending }) => navItemClass(isPending || (isActive && !loading))}>
+        {({ isActive, isPending }) => (
           <>
-            <Icon name={item.icon} className={isActive ? "text-ink" : "text-muted group-hover:text-ink-soft"} />
+            <Icon name={item.icon} className={isPending || (isActive && !loading) ? "text-ink" : "text-muted group-hover:text-ink-soft"} />
             <span className="flex-1">{item.label}</span>
             {item.count ? (
               <span
