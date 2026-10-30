@@ -121,7 +121,8 @@ def presence(reference_id: uuid.UUID, site: Optional[uuid.UUID] = None, section:
         counts = cloud_presence.counts(conn, scope.brand_id, reference_id)
         rows = cloud_presence.pages(conn, scope.brand_id, reference_id, site=site, section=section, state=state, marked=marked, limit=limit, offset=offset)
         suspect = frozenset(row["site_id"] for row in cloud_presence.suspect_sites(conn, scope.brand_id))
-    return {**cloud_presence.summary(counts, suspect), "total": cloud_presence.total(counts, site=site, section=section, state=state, marked=marked), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"], "marked": row["marked"], "checked": row["checked"], "walled": row["walled"]} for row in rows],
+    return {**cloud_presence.summary(counts, suspect), "total": cloud_presence.total(counts, site=site, section=section, state=state, marked=marked), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"], "marked": row["marked"], "checked": row["checked"], "walled": row["walled"],
+                                                                                                    "redirect_url": row["redirect_url"], "redirect_hops": row["redirect_hops"], "redirect_kind": row["redirect_kind"]} for row in rows],
             "offset": offset}
 
 

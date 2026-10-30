@@ -15,7 +15,8 @@ export type Presence = {
   totals: Counts & { pages: number };
   versions: Version[];
   /** The pages for the narrowing, `total` of them, from `offset`. */
-  pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean; checked: boolean; /** A consent notice still hid the page: not read, never "gone". */ walled: boolean }[];
+  pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean; checked: boolean; /** A consent notice still hid the page: not read, never "gone". */ walled: boolean;
+    /** Where a page that answered with another page ended (null: it did not), and how many HTTP redirects led there. Absent from an older server. */ redirect_url?: string | null; redirect_hops?: number | null }[];
   total: number;
   offset: number;
 };

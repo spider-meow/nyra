@@ -26,6 +26,11 @@ function statusOf(page: Page): { label: string; tone: string } {
   return { label: "Remplacée · à vérifier", tone: "bg-soon-soft text-soon" };
 }
 
+/** Where a redirected page ended: the path when it stayed on the same site, the whole address when it left it. */
+function redirectLabel(from: string, to: string): string {
+  return hostOf(to) === hostOf(from) ? pathOf(to) : to;
+}
+
 /** How many pages are in each state for the version and rubric chosen (the whole visual when none is). */
 function countsFor(data: Presence, narrowing: Narrowing): Counts {
   const version = data.versions.find((item) => item.site_id === narrowing.site);
@@ -101,6 +106,7 @@ export function Pages(props: { referenceId: string; data: Presence; narrowing: N
               <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="min-w-0 basis-full hover:underline lg:flex-1 lg:basis-0">
                 <span className="block truncate text-xs text-muted">{hostOf(page.url)}</span>
                 <span className="block truncate font-mono text-[13px]">{pathOf(page.url)}</span>
+                {page.redirect_url ? <span className="block truncate text-xs text-muted" title={page.redirect_url}>Redirigée vers {redirectLabel(page.url, page.redirect_url)}{page.redirect_hops && page.redirect_hops > 1 ? ` · ${page.redirect_hops} sauts` : ""}</span> : null}
               </a>
               <span className={cx("shrink-0 rounded-md px-2 py-px text-xs font-medium", statusOf(page).tone)}>{statusOf(page).label}</span>
               {admin ? <Button size="sm" variant="ghost" disabled={busy || Boolean(hold)} {...holdProps(hold)} aria-label={`Vérifier la page ${pathOf(page.url)}`} onClick={() => verify([page.url])}>Vérifier</Button> : null}

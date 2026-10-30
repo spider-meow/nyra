@@ -508,7 +508,7 @@ class LocalStore:
         with self._conn() as conn:
             return upsert_page(conn, url)
 
-    def mark_page(self, page_id: int, http_status: int) -> None:
+    def mark_page(self, page_id: int, http_status: int, redirect: Optional[dict] = None) -> None:  # `redirect`: not kept by the local store
         with self._conn() as conn:
             conn.execute(
                 "UPDATE pages SET status = 'done', http_status = ?, crawled_at = ? WHERE id = ?",
