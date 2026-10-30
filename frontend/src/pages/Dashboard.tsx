@@ -1,6 +1,6 @@
 import { Link } from "react-router";
-import { EmptyState, LinkButton, PageHeader, Skeleton, Stat } from "../components/ui";
-import { errorMessage } from "../lib/api";
+import { LoadError, RefreshFailed, Refreshing } from "../components/busy";
+import { LinkButton, PageHeader, Skeleton, Stat } from "../components/ui";
 import { plural } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useOverview } from "../lib/queries";
@@ -26,7 +26,7 @@ export function Dashboard() {
       </div>
     );
   }
-  if (overview.error || !overview.data) return <EmptyState title="Impossible de charger le tableau de bord" body={errorMessage(overview.error)} />;
+  if (!overview.data) return <LoadError title="Impossible de charger le tableau de bord" error={overview.error} onRetry={() => void overview.refetch()} retrying={overview.isFetching} />;
 
   const { dashboard, stats, last_crawl: lastCrawl } = overview.data;
   const noLibrary = stats.reference_images === 0;
@@ -34,7 +34,8 @@ export function Dashboard() {
   if (noLibrary || neverCrawled) return <Start noLibrary={noLibrary} neverCrawled={neverCrawled} />;
 
   return (
-    <>
+    <Refreshing active={overview.isFetching}>
+      {overview.error ? <RefreshFailed error={overview.error} onRetry={() => void overview.refetch()} retrying={overview.isFetching} /> : null}
       <PageHeader
         eyebrow={today()}
         title="Tableau de bord"
@@ -48,7 +49,7 @@ export function Dashboard() {
       <Hero overview={overview.data} />
       <Stats dashboard={dashboard} stats={stats} />
       <Upcoming items={dashboard.upcoming} />
-    </>
+    </Refreshing>
   );
 }
 

@@ -1,8 +1,9 @@
+import { RefreshFailed } from "../../components/busy";
 import { useState } from "react";
 import { useToast } from "../../components/feedback";
 import { Icon } from "../../components/icons";
 import { OrgHoldNotice, holdProps, useOrgHold } from "../../components/OrgHold";
-import { Button, Segmented, Spinner, Thumb, cx } from "../../components/ui";
+import { Button, Segmented, Skeleton, Thumb, cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDateTime, hostOf, pathOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -24,8 +25,8 @@ export default function OccurrencesPanel({ item }: { item: LibraryItem }) {
     <>
       <Summary data={data} filter={filter} onFilter={(next) => { setFilter(next); setOffset(0); }} />
       <div className="max-h-72 overflow-x-hidden overflow-y-auto px-4 pb-3">
-        {found.isLoading ? <Spinner /> : null}
-        {found.isError ? <p className="text-sm text-muted">{errorMessage(found.error)}</p> : null}
+        {found.isLoading ? <div className="grid gap-2" aria-busy="true">{[0, 1, 2].map((key) => <Skeleton key={key} className="h-12" />)}</div> : null}
+        {found.isError ? <RefreshFailed error={found.error} onRetry={() => void found.refetch()} retrying={found.isFetching} /> : null}
         {data ? <PageRows data={data} filter={filter} /> : null}
       </div>
       <div className="border-t border-line bg-sunk">

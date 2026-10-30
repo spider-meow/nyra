@@ -1,9 +1,9 @@
+import { LoadError, RefreshFailed, Refreshing } from "../components/busy";
 import { useState } from "react";
 import { Link } from "react-router";
 import { OrgHoldNotice, holdProps } from "../components/OrgHold";
 import { Button, EmptyState, PageHeader, Segmented, Skeleton, StatusBadge, Thumb } from "../components/ui";
 import { InfoTip } from "../components/SettingsBlock";
-import { errorMessage } from "../lib/api";
 import { daysText, hostOf, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useVisuals, type VisualItem } from "../lib/presence";
@@ -22,12 +22,13 @@ export function Visuals() {
   const [tab, setTab] = useState<Tab>("todo");
 
   if (visuals.isLoading) return <Skeleton className="h-96" />;
-  if (visuals.error || !visuals.data) return <EmptyState title="Visuels indisponibles" body={errorMessage(visuals.error)} action={<Button onClick={() => void visuals.refetch()}>Réessayer</Button>} />;
+  if (!visuals.data) return <LoadError title="Visuels indisponibles" error={visuals.error} onRetry={() => void visuals.refetch()} retrying={visuals.isFetching} />;
   const all = [...visuals.data.visuals].sort(byUrgency);
   const todo = all.filter((item) => !item.replaced);
   const shown = tab === "todo" ? todo : tab === "done" ? all.filter((item) => item.replaced) : all;
   return (
-    <>
+    <Refreshing active={visuals.isFetching}>
+      {visuals.error ? <RefreshFailed error={visuals.error} onRetry={() => void visuals.refetch()} retrying={visuals.isFetching} /> : null}
       <PageHeader
         title="Visuels à remplacer"
         actions={admin ? <Button variant="primary" loading={read.busy} disabled={Boolean(read.hold)} {...holdProps(read.hold)} onClick={read.read}>Relire les sites</Button> : undefined}
@@ -58,7 +59,7 @@ export function Visuals() {
           action={<Link className="text-sm font-medium underline underline-offset-2" to={`${link("review")}?window=3650`}>Aller à « À traiter »</Link>}
         />
       )}
-    </>
+    </Refreshing>
   );
 }
 

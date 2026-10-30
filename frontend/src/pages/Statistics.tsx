@@ -1,3 +1,4 @@
+import { LoadError, RefreshFailed, Refreshing } from "../components/busy";
 import { useState } from "react";
 import {
   CountList,
@@ -13,7 +14,6 @@ import {
   type HistoryMetric,
 } from "../components/insights";
 import { EmptyState, PageHeader } from "../components/ui";
-import { errorMessage } from "../lib/api";
 import { num } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useInsights } from "../lib/queries";
@@ -31,14 +31,15 @@ function StatisticsContent() {
   const [metric, setMetric] = useState<HistoryMetric>("duration_seconds");
 
   if (insights.isLoading) return <StatisticsSkeleton />;
-  // A failed background refresh keeps the data already on screen; the error shows only when there is none.
-  if (!insights.data) return <EmptyState title="Impossible de charger les statistiques" body={errorMessage(insights.error)} />;
+  // A failed background refresh keeps the data already on screen, with a notice above it; the full error shows only when there is none.
+  if (!insights.data) return <LoadError title="Impossible de charger les statistiques" error={insights.error} onRetry={() => void insights.refetch()} retrying={insights.isFetching} />;
 
   const { site, formats, library, crawls, jobs, compare, matching } = insights.data;
   const { summary, last, history } = crawls;
 
   return (
-    <>
+    <Refreshing active={insights.isFetching}>
+      {insights.error ? <RefreshFailed error={insights.error} onRetry={() => void insights.refetch()} retrying={insights.isFetching} /> : null}
       <PageHeader
         title="Statistiques"
       />
@@ -73,6 +74,6 @@ function StatisticsContent() {
       <Section className="mt-4" title="Toutes les lectures" description="Les 30 dernières, la plus récente en haut. Le tableau reprend les valeurs du graphique.">
         <Table head={crawlRunHead} rows={crawlRunRows(history)} empty="Pas encore de lecture." />
       </Section>
-    </>
+    </Refreshing>
   );
 }

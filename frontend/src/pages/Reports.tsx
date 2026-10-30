@@ -1,3 +1,4 @@
+import { LoadError, Refreshing } from "../components/busy";
 import { useState } from "react";
 import { useToast } from "../components/feedback";
 import { OrgHoldNotice, holdProps, useOrgHold } from "../components/OrgHold";
@@ -63,9 +64,10 @@ function ReportList() {
   const { admin } = useOrg();
   const reports = useReports();
   if (reports.isLoading) return <Skeleton className="h-40" />;
-  if (reports.error) return <EmptyState title="Rapports indisponibles" body={errorMessage(reports.error)} />;
+  if (reports.error && !reports.data) return <LoadError title="Rapports indisponibles" error={reports.error} onRetry={() => void reports.refetch()} retrying={reports.isFetching} />;
   if (!reports.data?.reports.length) return <EmptyState title="Aucun rapport" body={admin ? "Générez le premier rapport ci-dessus." : "Aucun rapport n'a encore été généré."} />;
   return (
+    <Refreshing active={reports.isFetching}>
     <Card padded={false}>
       <ul className="divide-y divide-line">
         {reports.data.reports.map((report) => (
@@ -87,6 +89,7 @@ function ReportList() {
         ))}
       </ul>
     </Card>
+    </Refreshing>
   );
 }
 

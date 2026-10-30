@@ -41,7 +41,7 @@ export function SiteImages() {
   const [adding, setAdding] = useState<SiteImage[] | null>(null);
   const [zoom, setZoom] = useState<SiteImage | null>(null);
   const [typing, setTyping] = useState(false);
-  const ignore = useIgnore();
+  const { ignore, ignoring } = useIgnore();
   const { labels, labelsOf } = useSiteLabels();
   const filter = useLabelFilter(items, labelsOf);
   const chosen = items.filter((item) => pick.selected.has(item.id));
@@ -83,7 +83,7 @@ export function SiteImages() {
         </>
       )}
       {qualifying && chosen.length ? (
-        <BulkBar chosen={chosen} labels={labels} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => pick.setSelected(new Set(failedIds)))} onClear={pick.clear} />
+        <BulkBar chosen={chosen} labels={labels} ignoring={ignoring} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => pick.setSelected(new Set(failedIds)))} onClear={pick.clear} />
       ) : null}
       <AddToLibrary items={adding} onClose={() => setAdding(null)} onDone={(ids) => pick.setSelected(new Set([...pick.selected].filter((id) => !ids.includes(id))))} />
       <Zoom item={zoom} onClose={() => setZoom(null)} />
@@ -100,10 +100,10 @@ function useSiteLabels() {
 }
 
 /** What can be done to the cards ticked: add them to the library, ignore them, or (labels on) type them. */
-function BulkBar(props: { chosen: SiteImage[]; labels: LabelInfo[]; onAdd: () => void; onIgnore: () => void; onClear: () => void }) {
+function BulkBar(props: { chosen: SiteImage[]; labels: LabelInfo[]; ignoring: boolean; onAdd: () => void; onIgnore: () => void; onClear: () => void }) {
   const { chosen, labels } = props;
   return (
-    <SelectionBar count={chosen.length} onAdd={props.onAdd} onIgnore={props.onIgnore} onClear={props.onClear}>
+    <SelectionBar count={chosen.length} ignoring={props.ignoring} onAdd={props.onAdd} onIgnore={props.onIgnore} onClear={props.onClear}>
       {LABELS_ENABLED ? <TypeButtons types={labels.filter((label) => label.kind === "type")} items={chosen} onDone={props.onClear} /> : null}
       {LABELS_ENABLED ? <ContentTagger labels={labels} images={{ siteImageIds: chosen.flatMap((item) => item.ids) }} dark /> : null}
     </SelectionBar>
@@ -345,12 +345,13 @@ function EmptyTab({ view, filtered }: { view: SiteImageView; filtered: boolean }
   return <p className="py-10 text-center text-sm text-muted">{filtered ? "Aucune image ne correspond à cette recherche." : "Aucune image dans cet onglet."}</p>;
 }
 
-function SelectionBar(props: { count: number; onAdd: () => void; onIgnore: () => void; onClear: () => void; children: ReactNode }) {
+function SelectionBar(props: { count: number; ignoring: boolean; onAdd: () => void; onIgnore: () => void; onClear: () => void; children: ReactNode }) {
   return (
     <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-4xl flex-wrap items-center gap-3 rounded-3xl border border-line-strong bg-bar px-5 py-2.5 text-sm text-white shadow-float md:left-[calc(248px+2.5rem)]" role="region" aria-label="Actions sur la sélection">
       <span className="font-medium">{plural(props.count, "sélectionnée", "sélectionnées")}</span>
       <Button size="sm" onClick={props.onAdd}>Ajouter à la bibliothèque</Button>
-      <button type="button" className="text-white/80 hover:text-white" onClick={props.onIgnore}>Ignorer</button>
+      {/* Immediate feedback on the bar itself, not only the toast: the images are set aside one request later. */}
+      <button type="button" className="text-white/80 hover:text-white disabled:opacity-60" disabled={props.ignoring} aria-busy={props.ignoring} onClick={props.onIgnore}>{props.ignoring ? "Ignorer…" : "Ignorer"}</button>
       {props.children}
       <button type="button" className="ml-auto text-white/70 hover:text-white" onClick={props.onClear}>Annuler</button>
     </div>
@@ -362,7 +363,7 @@ function useIgnore() {
   const { addMany } = useExclusionMutations();
   const toast = useToast();
   // `done` receives the ids of the cards that could not be ignored, so a caller can keep them selected for a retry.
-  return (items: SiteImage[], done: (failedIds: string[]) => void) => {
+  const ignore = (items: SiteImage[], done: (failedIds: string[]) => void) => {
     const pending = toast.loading(items.length > 1 ? `${items.length} images ignorées…` : "Image ignorée…");
     // Every version of a photo is set aside: a crop does not look like its original to the hashes.
     const siteImageIds = items.flatMap((item) => item.variants.map((variant) => variant.id));
@@ -380,4 +381,5 @@ function useIgnore() {
           });
     });
   };
+  return { ignore, ignoring: addMany.isPending };
 }

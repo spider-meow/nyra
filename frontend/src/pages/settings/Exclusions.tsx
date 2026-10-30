@@ -1,6 +1,7 @@
+import { LoadError } from "../../components/busy";
 import { useToast } from "../../components/feedback";
 import { SettingsBlock } from "../../components/SettingsBlock";
-import { Button, Thumb } from "../../components/ui";
+import { Button, Skeleton, Thumb } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDate, hostOf } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -18,7 +19,11 @@ export function Exclusions() {
       title={`Images exclues${org.brands.length > 1 ? ` · ${brand.name}` : ""}`}
       description="Faux positifs récurrents (logos, visuels génériques) qui ne sont plus jamais proposés, copies proches comprises. On exclut une image depuis l'écran « À traiter »."
     >
-      {items.length ? (
+      {exclusions.isLoading ? (
+        <div className="p-5" aria-busy="true"><Skeleton className="h-16" /></div>
+      ) : exclusions.error && !exclusions.data ? (
+        <div className="p-5"><LoadError title="Impossible de charger les images exclues" error={exclusions.error} onRetry={() => void exclusions.refetch()} retrying={exclusions.isFetching} /></div>
+      ) : items.length ? (
         <ul className="divide-y divide-line">
           {items.map((item) => (
             <li key={item.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
