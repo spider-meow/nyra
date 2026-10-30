@@ -41,7 +41,7 @@ class CrawlConfig:
     user_agent: str = "NyraBot/0.1"
     min_image_side_px: int = 200
     max_image_bytes: int = 25_000_000
-    max_image_pixels: int = 60_000_000
+    max_image_pixels: int = 40_000_000
     respect_robots_txt: bool = True
     request_timeout_seconds: int = 20
     page_load_timeout_ms: int = 30000

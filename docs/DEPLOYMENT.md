@@ -255,14 +255,30 @@ traceback is in the worker's log.
 ## Staying up
 
 - **A process that exits** is restarted by the platform (`restart: unless-stopped` in compose).
-- **A job whose worker died** (crash, redeploy, restart) is noticed after 3 minutes without a
-  heartbeat and **put back in the queue**, a crawl resuming where it was, up to 2 times; after that it
-  is marked failed, so a job that kills its worker every time cannot loop. A job whose stop was
-  requested is not restarted.
+- **A worker stopped on purpose** (deployment, `docker stop`: SIGTERM) stops its job at the next page or batch and puts it
+  back in the queue **at once, without counting a retry** (« Relancé après un redémarrage du serveur »), so several
+  deployments in a row cannot fail a read. A `fresh` read that starts again skips the pages its own earlier run read.
+  `stop_grace_period` is 120 s: a page or a batch that takes longer is cut by SIGKILL and falls under the next point.
+- **A job whose worker died** (crash, kill, hang) is noticed after 3 minutes without a heartbeat and **put back in
+  the queue**, up to 2 times; after that it is marked failed, so a job that kills its worker every time cannot loop. A
+  job whose stop was requested is not restarted. Each retry is **lighter** (`lighter` in `cloud/worker.py`: one page at a
+  time, embedding batches halved at each retry) and **does not read again the pages being read when the worker went
+  silent** (`params.skip_pages`, at most 50, told in the message of the job): the same page would kill it again. Those
+  pages stay « unknown » for the presence of a visual, never « gone ».
+- **Why a worker stopped** (AXE-644): each heartbeat records, in `jobs.progress.diag` (never shown to a client), the pages
+  being read and the container's memory (`mem`, `mem_limit`, `mem_peak` = the kernel's `memory.peak`, which counts the page
+  cache, and `oom_kill` = processes the kernel killed during this job, Chromium included). `jobs.reap_stale` reads them back:
+  `error` becomes `heartbeat lost; phase=…; mem=2,4 Gio/2,5 Gio; oom_kill=…; reading=…`, and the message says « la mémoire du
+  serveur était presque pleine (… sur …) » when `oom_kill` is above 0 or the last reading was at 85 % of the limit or more
+  (`MEMORY_ALERT_SHARE`), otherwise « sans qu'on sache pourquoi (mémoire, redémarrage du serveur ou blocage) ». The same
+  85 % raises one warning in the worker's log per job, and the worker logs at start whether the kernel has killed anything
+  in its container. Limits: a heartbeat is every 30 s, a spike between two is not seen (`oom_kill` is); the API hides `diag`, but Supabase's read policy on `jobs` still lets a member of the organization read `progress` by hand (memory figures and the pages of their own sites).
+- **A browser that dies under a page** (Chromium or Playwright's driver, « Invalid InterceptionId » of 29 October): the
+  reader logs the page, leaves it out (recorded as failed, so never « gone »), starts Playwright and Chromium again and goes
+  on, up to 3 restarts per read; a fourth stops the read with a message and keeps what it read.
 - **A worker killed for memory** (container limit, exit 137, no chance to write a message): restarted by
-  `restart: unless-stopped`; its job has no heartbeat for 3 minutes, goes back to the queue, and after the
-  2 retries fails with « le worker s'est arrêté 3 fois de suite…, le plus souvent faute de mémoire ou à cause d'un redémarrage du serveur. Relancez-la
-  en réduisant le nombre de pages ou d'images… ».
+  `restart: unless-stopped`; its job has no heartbeat for 3 minutes and goes back to the queue (lighter, without the
+  page that was being read), and after the 2 retries fails with the message above.
 - **A hung worker** restarts itself, with no component reading the Docker socket: a watchdog thread of the
   worker exits (code 70) when its alive file has not been touched for 5 minutes (`WATCHDOG_SECONDS`), and
   `restart: unless-stopped` restarts it. This works with plain `docker compose` and on any platform. It covers a
@@ -409,8 +425,7 @@ and fix forward.
    docker compose -f docker-compose.yml -f docker-compose.droplet.yml up -d --force-recreate web
    ```
 
-   (`N` = the number of workers you run now; without `--scale` compose goes back to one.) `worker` first: Docker sends SIGTERM and waits `stop_grace_period: 30s`; a job still running then is picked up
-   again by the new worker after 3 minutes without a heartbeat (see *Staying up*), nothing is lost. `web` next:
+   (`N` = the number of workers you run now; without `--scale` compose goes back to one.) `worker` first: Docker sends SIGTERM and waits `stop_grace_period: 120s`; the worker stops its job at the next page and puts it back in the queue at once, **without counting a retry** (AXE-642), so a series of deployments cannot fail a read. A page or batch that takes longer than the grace period is cut by SIGKILL: the job is then picked up again after 3 minutes without a heartbeat and a retry is counted (see *Staying up*). `web` next:
    there is one instance behind Caddy, so expect a gap of a few seconds (Caddy answers 502, the interface retries on
    the next click). Not tested as a zero-downtime switch; if that matters, run two `web` instances first.
 4. Check (all of these, in this order):

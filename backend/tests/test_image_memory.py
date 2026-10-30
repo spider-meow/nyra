@@ -298,3 +298,16 @@ def test_every_kind_of_tiff_gives_the_same_copies_read_from_its_file_as_from_its
     assert fetch.make_working_copy(from_file) == fetch.make_working_copy(from_bytes)
     assert reference_features(from_file) == reference_features(from_bytes)
     assert heavy  # (a TIFF is converted whatever its weight: `data` is never what is stored)
+
+
+def test_a_crawled_image_keeps_its_hashes_and_thumbnail_but_only_a_working_size_in_memory():
+    """AXE-643: the worker no longer holds the 3 bytes a pixel of every new image until its embedding. What comes out is the same."""
+    big = _picture(2400, 1600)
+    data = _jpeg(big, 90)
+    processed = fetch.process_image(data, "image/jpeg", min_side_px=200, max_pixels=40_000_000)
+    full = Image.open(io.BytesIO(data)).convert("RGB")
+    assert (processed.phash, processed.dhash) == (str(imagehash.phash(full)), str(imagehash.dhash(full)))
+    assert processed.thumbnail == _thumbnail_as_it_was(Image.open(io.BytesIO(data)))
+    assert (processed.width, processed.height) == (2400, 1600)  # the real size is still the one recorded
+    assert max(processed.rgb.size) == fetch.WORKING_SIDE and processed.rgb.mode == "RGB"
+    assert fetch.process_image(data, "image/jpeg", min_side_px=200, max_pixels=1_000_000) is None  # over the pixel cap: refused

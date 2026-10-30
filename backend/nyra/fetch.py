@@ -253,7 +253,7 @@ class ProcessedImage:
     dhash: str
     thumbnail: bytes
     extension: str
-    rgb: Image.Image  # kept in memory only, for the embedding step
+    rgb: Image.Image  # kept in memory only, for the embedding step: at most `WORKING_SIDE` px on its long side
 
 
 def process_image(
@@ -267,9 +267,8 @@ def process_image(
     img = decode(data, max_pixels)
     if img is None or not meets_min_size(img, min_side_px):
         return None
-    rgb = img.convert("RGB")
-    phash, dhash = compute_hashes(rgb)
-    return ProcessedImage(
+    phash, dhash = compute_hashes(img)  # of the full image, as before; the embedding now reads the working size (see below)
+    processed = ProcessedImage(
         content_hash=content_hash(data),
         width=img.size[0],
         height=img.size[1],
@@ -277,8 +276,12 @@ def process_image(
         dhash=dhash,
         thumbnail=make_thumbnail(img),
         extension=extension_for(content_type, img),
-        rgb=rgb,
+        rgb=img if img.mode == "RGB" else img.convert("RGB"),
     )
+    # Only the embedding and the working copy are cut from `rgb` (CLIP reads 224 px, the working copy is `WORKING_SIDE`): keep that
+    # size, not the 3 bytes a pixel of the full image, which a page of large banners made 10 to 17 MiB a megapixel (AXE-643).
+    processed.rgb.thumbnail((WORKING_SIDE, WORKING_SIDE))
+    return processed
 
 
 def download(url: str, client: httpx.Client, *, timeout: float, max_bytes: int) -> Optional[tuple[bytes, Optional[str]]]:

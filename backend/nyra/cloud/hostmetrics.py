@@ -72,6 +72,21 @@ def _cgroup_memory() -> tuple[int, Optional[int]]:
     return max(int(current) - cache, 0), int(limit) if limit.isdigit() else None
 
 
+def memory_snapshot() -> dict[str, int]:
+    """What a stopped worker's last heartbeat must still say (AXE-644): `mem` in use (as `docker stats`), `mem_limit`, `mem_peak`
+    (the kernel's `memory.peak`, which counts the page cache: an upper bound) and `oom_kill` (processes the kernel killed in this
+    container, Chromium included, since it started). A figure the machine does not give (no cgroup v2) is left out."""
+    memory, limit = _cgroup_memory()
+    out = {"mem": memory}
+    if limit is not None:
+        out["mem_limit"] = limit
+    peak = (_read(CGROUP / "memory.peak") or "").strip()
+    if peak.isdigit():
+        out["mem_peak"] = int(peak)
+    out["oom_kill"] = _kv(_read(CGROUP / "memory.events") or "").get("oom_kill", 0)
+    return out
+
+
 def _cpu_limit() -> Optional[float]:
     """Cores the container may use (`cpus:` in compose), or None for no limit."""
     quota, _, period = (_read(CGROUP / "cpu.max") or "max").partition(" ")

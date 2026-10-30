@@ -33,7 +33,7 @@ import threading
 import time
 import traceback
 import uuid
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -43,7 +43,7 @@ import psycopg
 from nyra import fetch, netguard, observability
 from nyra import report as report_module
 from nyra.config import Config, load_config, with_overrides
-from nyra.crawl import CrawlStats, crawl_pages, crawl_site, normalize_url
+from nyra.crawl import BrowserUnavailable, CrawlStats, crawl_pages, crawl_site, normalize_url
 from nyra.estimate import remaining_seconds
 from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching, warm_clip
 
@@ -166,6 +166,18 @@ def overrun_message(kind: str) -> str:
             f"conservé : relancez-la, ou réduisez {lighter}.")
 
 
+RESTART_MESSAGE = "Relancé après un redémarrage du serveur."
+
+
+def lighter(config: Config, retries: int) -> Config:
+    """The settings for a job started again `retries` times after its worker died, probably for lack of memory (AXE-645): one page at a time and
+    embedding batches halved at each retry (16, 8, 4). The first attempt (`retries` 0) is untouched."""
+    if retries < 1:
+        return config
+    batch = max(1, config.match.embedding_batch_size >> retries)
+    return replace(config, crawl=replace(config.crawl, concurrency=1), match=replace(config.match, embedding_batch_size=batch))
+
+
 class JobFailed(Exception):
     """A failure with a message fit for the interface."""
 
@@ -173,10 +185,15 @@ class JobFailed(Exception):
 class JobContext:
     """Progress, cancellation and liveness for one running job."""
 
-    def __init__(self, database_url: str, job: dict):
+    def __init__(self, database_url: str, job: dict, stop: Optional[threading.Event] = None):
         self.database_url = database_url
         self.job = job
-        self.cancelled = False
+        self._cancel_requested = False  # a person asked to stop the job (read from the database at each heartbeat)
+        self.stopped_early = False  # the job saw the worker's stop and acted on it: a job that finished before it looked is done
+        self._stop = stop  # the worker's: set by SIGTERM (a deploy, a Docker stop), see `interrupted`
+        self.diag: dict = {}  # what the next heartbeats record for `jobs.reap_stale`: the pages being read (AXE-644)
+        self._oom_base = hostmetrics.memory_snapshot().get("oom_kill", 0)  # kills before this job are not this job's
+        self._memory_alerted = False
         self._last_report = 0.0
         self._lock = threading.Lock()
         self._done = threading.Event()
@@ -184,6 +201,38 @@ class JobContext:
         self.max_seconds = job_limit_seconds(job["kind"])
         self._beat = threading.Thread(target=self._beat_loop, name=f"heartbeat-{job['id']}", daemon=True)
         self._beat.start()
+
+    @property
+    def interrupted(self) -> bool:
+        """The worker was asked to stop (SIGTERM): the job stops where it is, like a cancellation, and is put back in the queue."""
+        return self._stop is not None and self._stop.is_set()
+
+    @property
+    def cancelled(self) -> bool:
+        """True when the job must stop: a person asked, or the worker is stopping. Every step of a job already looks at it."""
+        if self.interrupted:
+            self.stopped_early = True
+        return self._cancel_requested or self.interrupted
+
+    @cancelled.setter
+    def cancelled(self, value: bool) -> None:
+        self._cancel_requested = value
+
+    @property
+    def restart_asked(self) -> bool:
+        """Stopped by the worker's own stop and not by a person: the job is not over, it starts again after the restart."""
+        return self.stopped_early and not self._cancel_requested
+
+    def _diagnostics(self) -> dict:
+        """The pages being read and the memory now, for the heartbeat; a warning once when the memory passes the alert level."""
+        memory = hostmetrics.memory_snapshot()
+        memory["oom_kill"] = max(memory.get("oom_kill", 0) - self._oom_base, 0)
+        limit = memory.get("mem_limit")
+        if limit and memory["mem"] >= cloud_jobs.MEMORY_ALERT_SHARE * limit and not self._memory_alerted:
+            self._memory_alerted = True
+            log.warning("job %s: memory at %d MiB of %d MiB (%.0f %%), close to the kill limit; pages being read: %s",
+                        self.job["id"], memory["mem"] >> 20, limit >> 20, 100 * memory["mem"] / limit, self.diag.get("reading"))
+        return {**self.diag, **memory}
 
     def _beat_loop(self) -> None:
         while not self._done.wait(HEARTBEAT_SECONDS):
@@ -218,8 +267,8 @@ class JobContext:
         with self._lock:
             try:
                 with cloud_db.connect(self.database_url) as conn:
-                    if cloud_jobs.heartbeat(conn, self.job["id"], message=message, progress=progress):
-                        self.cancelled = True
+                    if cloud_jobs.heartbeat(conn, self.job["id"], message=message, progress=progress, diag=self._diagnostics()):
+                        self._cancel_requested = True
             except Exception:  # noqa: BLE001 - a missed heartbeat must not kill the job
                 log.exception("heartbeat failed")
 
@@ -542,6 +591,9 @@ class Worker:
         log.info("worker started")
         touch_alive()
         log.info("%d leftover(s) removed from the temp directory", clean_temp(time.time()))
+        killed = hostmetrics.memory_snapshot().get("oom_kill", 0)
+        if killed:
+            log.warning("the kernel has killed %d process(es) of this container for lack of memory since it started", killed)
         try:
             cloud_storage.trim_cache()
         except Exception:  # noqa: BLE001 - tidying the cache is best effort; a bad cache directory must not crash-loop the worker
@@ -593,7 +645,7 @@ class Worker:
             self._run_job(job)
 
     def _run_job(self, job: dict) -> None:
-        ctx = JobContext(self.database_url, job)
+        ctx = JobContext(self.database_url, job, self._stop)
         log.info("job %s (%s) for org %s, brand %s started", job["id"], job["kind"], job["org_id"], job["brand_id"])
         handler = {
             "crawl": self._crawl,
@@ -608,13 +660,9 @@ class Worker:
                 message, result = handler(ctx, uuid.UUID(job["org_id"]), uuid.UUID(job["brand_id"]), job.get("params") or {})
             finally:
                 ctx.close()  # the heartbeat stops before the outcome is written: it must not time out a job that just ended
-            status = "cancelled" if ctx.cancelled else "done"
-            with cloud_db.connect(self.database_url) as conn:
-                cloud_jobs.finish(conn, job["id"], status=status, message=message, result=result)
+            self._end(ctx, status="cancelled" if ctx._cancel_requested or ctx.stopped_early else "done", message=message, result=result)
         except MatchStopped:
-            with cloud_db.connect(self.database_url) as conn:
-                cloud_jobs.finish(conn, job["id"], status="cancelled",
-                                  message="Arrêté. Les résultats précédents sont conservés.", result={})
+            self._end(ctx, status="cancelled", message="Arrêté. Les résultats précédents sont conservés.", result={})
         except JobFailed as exc:
             with cloud_db.connect(self.database_url) as conn:
                 cloud_jobs.finish(conn, job["id"], status="error", message=str(exc), error=str(exc))
@@ -628,12 +676,25 @@ class Worker:
             clean_temp(time.time())
             log.info("job %s finished", job["id"])
 
+    def _end(self, ctx: JobContext, *, status: str, message: str, result: dict) -> None:
+        """Write how the job ended. A job that stopped because the worker is stopping (a deploy) goes back in the queue instead, at once
+        and WITHOUT counting a retry (AXE-642): nothing went wrong, and it resumes where it was. If a person also asked to stop it, it ends."""
+        with cloud_db.connect(self.database_url) as conn:
+            if status == "cancelled" and ctx.restart_asked and cloud_jobs.requeue(conn, ctx.job, message=RESTART_MESSAGE):
+                log.info("job %s put back in the queue: the worker is stopping", ctx.job["id"])
+                return
+            cloud_jobs.finish(conn, ctx.job["id"], status=status, message=message, result=result)
+
     # --- helpers --------------------------------------------------------------
 
     def config_for(self, org_id: uuid.UUID) -> Config:
         with cloud_db.connect(self.database_url) as conn:
             overrides = cloud_db.get_overrides(conn, org_id)
         return with_overrides(load_config(self.config_path), overrides)
+
+    def job_config(self, org_id: uuid.UUID, params: dict) -> Config:
+        """The settings of a job: the organization's, lighter for a job started again after its worker died (`params.retries`, AXE-645)."""
+        return lighter(self.config_for(org_id), int(params.get("retries", 0)))
 
     def _compare(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, config: Config,
                  metrics: Optional[dict] = None) -> int:
@@ -686,7 +747,7 @@ class Worker:
     # --- handlers ---------------------------------------------------------------
 
     def _crawl(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
-        config = self.config_for(org_id)
+        config = self.job_config(org_id, params)
         sites = self._sites_to_crawl(org_id, brand_id, params)
         if not sites:
             raise JobFailed("Aucune adresse à lire pour cette marque.")
@@ -712,6 +773,7 @@ class Worker:
             **{key: sum(run[key] for run in runs)
                for key in ("pages_visited", "images_found", "images_stored", "images_new", "blocked_by_robots")},
             "errors": [error for run in runs for error in run["errors"]][:8],
+            "pages_skipped": sorted(params.get("skip_pages") or []),
         }
         if ctx.cancelled:
             return "Lecture arrêtée. Les pages déjà lues sont conservées.", result
@@ -723,6 +785,9 @@ class Worker:
             if run["pages_left_scope"]:
                 message += f" {run['pages_left_scope']} page(s) de {run['site']} renvoient hors de son chemin : non lues."
         message += f" {cloud_usage.CAPPED}" if capped else self._usage_note(org_id, config)
+        if result["pages_skipped"]:
+            message += (f" {len(result['pages_skipped'])} page(s) ignorée(s) : le worker s'était arrêté pendant leur lecture "
+                        "(trop lourdes ?). Elles seront relues à la prochaine lecture.")
         if params.get("then_match", True):
             result["match_metrics"] = {}
             result["matches"] = self._compare(ctx, org_id, brand_id, config, result["match_metrics"])
@@ -742,22 +807,33 @@ class Worker:
         with cloud_db.connect(self.database_url) as conn:
             return cloud_usage.pages_note(*cloud_usage.pages_used(conn, config.quota, org_id))
 
+    def _pages_to_skip(self, ctx: JobContext, site: dict, params: dict) -> set[str]:
+        """The pages a read does not read: those that stopped the worker, and (a `fresh` read that starts again) those its own earlier run read.
+        ponytail: the links of a skipped page are not followed, so a site with no sitemap may be read in part after a restart (a `resume` always did)."""
+        skip = set(params.get("skip_pages") or [])
+        if params.get("fresh"):
+            with cloud_db.connect(self.database_url) as conn:
+                skip |= cloud_db.pages_read_by_job(conn, site["id"], uuid.UUID(ctx.job["id"]))
+        return skip
+
     def _crawl_site(self, ctx: JobContext, org_id: uuid.UUID, site: dict, config: Config, limit: int,
                     params: dict, prefix: str) -> dict:
-        storage = self.storage_client_factory()
         created_by = ctx.job.get("created_by")
         with cloud_db.connect(self.database_url) as conn:
             run_id = cloud_db.start_crawl_run(conn, org_id=org_id, site_id=site["id"],
                                               triggered_by=uuid.UUID(created_by) if created_by else None,
                                               job_id=uuid.UUID(ctx.job["id"]))
         store = CloudCrawlStore(org_id=org_id, site_id=site["id"], database_url=self.database_url,
-                                storage_client=storage)
+                                storage_client=self.storage_client_factory())
         last_run_update = 0.0
         reporter = _CrawlProgress(ctx, prefix, limit)
         meter = cloud_usage.Meter(self.database_url, org_id)  # a crash loses at most the last few seconds of the count
 
+        skip = self._pages_to_skip(ctx, site, params)
+
         def progress(stats: CrawlStats) -> None:
             nonlocal last_run_update
+            ctx.diag["reading"] = list(stats.reading)
             reporter.report(stats)
             if time.monotonic() - last_run_update > 5:
                 last_run_update = time.monotonic()
@@ -774,7 +850,7 @@ class Worker:
             stats = crawl_site(
                 site["url"], store, config, max_pages=limit,
                 embedder=lambda images: compute_clip_embeddings(images, config.match),
-                resume=not params.get("fresh", False), progress=progress, should_stop=ctx.should_stop,
+                resume=not params.get("fresh", False), progress=progress, should_stop=ctx.should_stop, skip=skip,
             )
         except netguard.BlockedURL as exc:
             with cloud_db.connect(self.database_url) as conn:
@@ -805,7 +881,7 @@ class Worker:
         """Read again only the pages given, `{site id: [addresses]}`: no sitemap, no link followed, no comparison. Each page
         stamps what it shows, so the page of a visual says at once whether it is still there. No crawl run is recorded: it
         would stand for a read of the whole site."""
-        config = self.config_for(org_id)
+        config = self.job_config(org_id, params)
         groups = {key: list(urls) for key, urls in (params.get("pages") or {}).items() if urls}
         with cloud_db.connect(self.database_url) as conn:
             sites = {str(row["id"]): row for row in cloud_db.get_sites(conn, brand_id, [uuid.UUID(key) for key in groups])}
@@ -831,12 +907,13 @@ class Worker:
             before = stats.pages_visited
 
             def progress(current: CrawlStats, before: int = before) -> None:
+                ctx.diag["reading"] = list(current.reading)
                 done = before + current.pages_visited
                 ctx.report(f"Page {done}/{total}", {"phase": "check", "done": done, "total": total})
 
             try:
                 read = crawl_pages(site["url"], urls, store, config, progress=progress, should_stop=ctx.should_stop,
-                                   embedder=lambda images: compute_clip_embeddings(images, config.match))
+                                   skip=set(params.get("skip_pages") or []), embedder=lambda images: compute_clip_embeddings(images, config.match))
             except netguard.BlockedURL as exc:
                 raise JobFailed(f"Adresse refusée : {exc}.") from exc
             except Exception as exc:
@@ -856,7 +933,7 @@ class Worker:
 
     def _match_job(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
         metrics: dict = {}
-        count = self._compare(ctx, org_id, brand_id, self.config_for(org_id), metrics)
+        count = self._compare(ctx, org_id, brand_id, self.job_config(org_id, params), metrics)
         return f"Comparaison terminée : {count} correspondance(s).", {"matches": count, "match_metrics": metrics}
 
     def _locate(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
@@ -871,13 +948,13 @@ class Worker:
         ctx.report("Recherche de la référence…", {"phase": "locate"}, force=True)
         try:
             result = locate_reference(self.database_url, self.storage_client_factory(), org_id, brand_id, reference_id,
-                                      self.config_for(org_id), progress=progress, should_stop=ctx.should_stop)
+                                      self.job_config(org_id, params), progress=progress, should_stop=ctx.should_stop)
         except NotSearchable as exc:
             raise JobFailed(str(exc)) from exc
         return f"{result['found']} image(s) trouvée(s) sur {result['searched']} lue(s).", result
 
     def _index(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
-        config = self.config_for(org_id)
+        config = self.job_config(org_id, params)
         storage = self.storage_client_factory()
         total, needs_model = self._index_pending(brand_id)
         run = _IndexRun(ctx, self.database_url, storage, org_id, brand_id, config, total, needs_model)
@@ -960,6 +1037,8 @@ class Worker:
 
 def browser_problem(exc: Exception) -> Optional[str]:
     """The worker's Chromium is missing or won't start: say how to fix it instead of a traceback."""
+    if isinstance(exc, BrowserUnavailable):
+        return str(exc)
     text = str(exc)
     if "Executable doesn't exist" in text or "playwright install" in text:
         return ("Le navigateur de lecture (Chromium) n'est pas installé pour ce worker. Sur la machine du worker, lancez "

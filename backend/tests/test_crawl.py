@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from nyra.crawl import (
     click_load_more,
     dismiss_overlays,
@@ -352,3 +354,226 @@ def test_adding_an_address_warns_when_it_contains_or_is_contained_by_another():
     assert "contient déjà https://t.test/en-us/" in overlap_warning("https://t.test/", ["https://t.test/en-us/"])
     assert overlap_warning("https://t.test/en-us/", ["https://t.test/fr/", "https://other.test/"]) is None
     assert overlap_warning("https://t.test/", []) is None
+
+
+# --- AXE-643 and AXE-646: a page's images in waves, and a browser that dies ---------------------------------------------
+
+def _crawler(**changes):
+    from dataclasses import replace
+
+    from nyra import crawl as crawl_module
+    from nyra.config import load_config
+
+    config = load_config()
+    config = replace(config, crawl=replace(config.crawl, delay_seconds_min=0, delay_seconds_max=0))
+    return crawl_module._Crawl("https://t.test/", store=changes.pop("store", None), config=config, max_pages=changes.pop("max_pages", 10),
+                               embedder=None, resume=False, progress=None, should_stop=changes.pop("should_stop", None))
+
+
+def test_the_images_of_a_page_are_downloaded_and_stored_in_waves_so_their_bytes_never_pile_up(monkeypatch):
+    from types import SimpleNamespace
+
+    from nyra import crawl as crawl_module
+
+    store = SimpleNamespace(known_images=lambda urls: {}, link=lambda *_args: None)
+    reading = _crawler(store=store)
+    stored, in_memory = [], []
+
+    async def download(url, _client, **_kwargs):
+        in_memory.append(url)
+        return b"x", "image/jpeg"
+
+    monkeypatch.setattr(crawl_module.fetch, "adownload", download)
+
+    def keep(downloads, _page_id):
+        stored.append(len(downloads))
+        in_memory.clear()  # saved: the wave's bytes are let go
+
+    monkeypatch.setattr(reading, "_store_downloads", keep)
+    urls = [f"https://t.test/{n}.jpg" for n in range(crawl_module.IMAGE_DOWNLOADS_PER_PAGE * 2 + 1)]
+    asyncio.run(reading._collect_images(None, urls, page_id=1))
+    assert stored == [crawl_module.IMAGE_DOWNLOADS_PER_PAGE, crawl_module.IMAGE_DOWNLOADS_PER_PAGE, 1] and not in_memory
+
+
+def test_a_page_stops_downloading_between_waves_when_asked(monkeypatch):
+    from types import SimpleNamespace
+
+    from nyra import crawl as crawl_module
+
+    reading = _crawler(store=SimpleNamespace(known_images=lambda urls: {}, link=lambda *_args: None), should_stop=lambda: True)
+
+    async def download(*_args, **_kwargs):
+        raise AssertionError("nothing is downloaded once the worker is stopping")
+
+    monkeypatch.setattr(crawl_module.fetch, "adownload", download)
+    assert asyncio.run(reading._collect_images(None, ["https://t.test/a.jpg"], page_id=1)) is False  # told: the page is not complete
+
+
+def test_a_dead_browser_is_told_from_a_bad_page():
+    from nyra.crawl import browser_died
+
+    class TargetClosedError(Exception):
+        pass
+
+    assert browser_died(TargetClosedError("x"))
+    assert browser_died(Exception("Page.goto: Target page, context or browser has been closed"))
+    assert browser_died(Exception("Connection closed while reading from the driver"))
+    assert not browser_died(Exception("Page.goto: Timeout 30000ms exceeded"))
+    assert not browser_died(Exception("net::ERR_NAME_NOT_RESOLVED"))
+
+
+class _MarkingStore:
+    def __init__(self):
+        self.marked = []
+
+    def upsert_page(self, url):
+        return url
+
+    def mark_page(self, page_id, status):
+        self.marked.append((page_id, status))
+
+
+def test_a_page_that_kills_the_browser_is_left_out_and_the_browser_starts_again(monkeypatch):
+    """AXE-646: the page is recorded as failed (never « gone »), the reader asks for a new browser and goes on with the next page."""
+    from nyra import crawl as crawl_module
+
+    store = _MarkingStore()
+    reading = _crawler(store=store)
+    reading.enqueue("https://t.test/kills-the-driver")
+    reading.enqueue("https://t.test/fine")
+    launches, read = [], []
+
+    async def check(_url):
+        return None
+
+    class Page:
+        async def goto(self, url, **_kwargs):
+            if "kills" in url:
+                raise Exception("Page.goto: Target page, context or browser has been closed")
+            read.append(url)
+            raise RuntimeError("stops the test here: the page after the dead browser was reached")
+
+        async def close(self):
+            return None
+
+    class Context:
+        async def new_page(self):
+            return Page()
+
+    async def launch():
+        launches.append(1)
+        reading._context = Context()
+        reading.generation += 1
+
+    async def shutdown():
+        return None
+
+    monkeypatch.setattr(crawl_module.netguard, "check_url_async", check)
+    monkeypatch.setattr(reading, "_launch", launch)
+    monkeypatch.setattr(reading, "_shutdown", shutdown)
+    reading._launch_lock = asyncio.Lock()
+
+    async def run():
+        await reading._launch()
+        await reading._worker(None)
+
+    asyncio.run(run())
+    assert read == ["https://t.test/fine"] and len(launches) == 2  # started once, and again after the death
+    assert reading.stats.browser_restarts == 1 and reading.stats.pages_failed == 2  # the dead page, and the test's own stop on the next
+    assert store.marked[0] == ("https://t.test/kills-the-driver", 0) and reading.stats.reading == []
+
+
+def test_a_browser_that_keeps_dying_stops_the_read_with_a_message(monkeypatch):
+    from nyra import crawl as crawl_module
+
+    reading = _crawler()
+    reading._launch_lock = asyncio.Lock()
+    reading.stats.browser_restarts = crawl_module.MAX_BROWSER_RESTARTS
+    with pytest.raises(crawl_module.BrowserUnavailable) as stopped:
+        asyncio.run(reading._relaunch(reading.generation))
+    assert "pages déjà lues sont conservées" in str(stopped.value)
+
+
+def test_a_page_stopped_between_two_waves_is_not_marked_read(monkeypatch):
+    """A stop in the middle of a page must leave it `pending`: marked done, a read that starts again would never read its other images."""
+    from nyra import crawl as crawl_module
+
+    store = _MarkingStore()
+    reading = _crawler(store=store, should_stop=lambda: True)
+
+    class Page:
+        url = "https://t.test/p"
+
+        async def goto(self, *_args, **_kwargs):
+            return type("Response", (), {"status": 200})()
+
+        async def content(self):
+            return "<html><body>" + "".join(f'<img src="/{n}.jpg">' for n in range(3)) + "</body></html>"
+
+        async def evaluate(self, script):
+            return [] if "background" in script.lower() or "BACKGROUND" in script else ""
+
+        async def wait_for_timeout(self, _ms):
+            return None
+
+    async def check(_url):
+        return None
+
+    async def collected(*_args):
+        return False
+
+    monkeypatch.setattr(crawl_module.netguard, "check_url_async", check)
+    monkeypatch.setattr(reading, "_collect_images", collected)
+    store.known_images = lambda urls: {}
+    asyncio.run(reading._crawl_page(Page(), None, "https://t.test/p"))
+    assert store.marked == [] and reading.stats.pages_visited == 0
+
+
+def test_a_page_closed_by_the_site_does_not_restart_the_browser_until_it_happens_twice_in_a_row(monkeypatch):
+    from nyra import crawl as crawl_module
+
+    reading = _crawler(store=_MarkingStore())
+    for n in range(3):
+        reading.enqueue(f"https://t.test/{n}")
+    launches = []
+
+    class Browser:
+        def is_connected(self):
+            return True  # the browser is fine: only pages close
+
+    class Page:
+        async def close(self):
+            return None
+
+    class Context:
+        async def new_page(self):
+            return Page()
+
+    async def check(_url):
+        return None
+
+    async def crawl_page(_page, _http, url):
+        if not url.endswith("/2"):
+            reading.stats.pages_failed += 1
+            raise crawl_module._BrowserDied(url)
+
+    async def launch():
+        launches.append(1)
+        reading._browser, reading._context = Browser(), Context()
+        reading.generation += 1
+
+    async def shutdown():
+        return None
+
+    monkeypatch.setattr(reading, "_crawl_page", crawl_page)
+    monkeypatch.setattr(reading, "_launch", launch)
+    monkeypatch.setattr(reading, "_shutdown", shutdown)
+    reading._launch_lock = asyncio.Lock()
+
+    async def run():
+        await reading._launch()
+        await reading._worker(None)
+
+    asyncio.run(run())
+    # /0 closed its page: new page, no restart; /1 died too in a row: restart; /2 read normally.
+    assert len(launches) == 2 and reading.stats.browser_restarts == 1
