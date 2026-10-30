@@ -37,4 +37,4 @@ services:
     mem_limit: ${WORKER_MEM_LIMIT:-2560m}
     memswap_limit: ${WORKER_MEM_LIMIT:-2560m}
     cpus: ${WORKER_CPUS:-1.5}
-    stop_grace_period: 30s
+    stop_grace_period: 120s

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import logging
 import random
 import re
 import threading
@@ -30,7 +31,7 @@ import urllib.robotparser
 import xml.etree.ElementTree as ET
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Protocol, Sequence
+from typing import Any, Callable, Collection, Optional, Protocol, Sequence
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 import httpx
@@ -43,7 +44,28 @@ from nyra.config import Config
 
 IMAGE_TAG_ATTRS = ("src", "data-src", "data-lazy-src", "data-original")
 TRACKING_PARAMS = {"gclid", "fbclid", "msclkid", "mc_cid", "mc_eid", "_ga", "_gl", "igshid", "yclid"}
-IMAGE_DOWNLOADS_PER_PAGE = 6
+IMAGE_DOWNLOADS_PER_PAGE = 6  # images of a page downloaded, processed and stored together: the bytes of a page never pile up (AXE-643)
+# Chromium or its driver may die under a page (AXE-646): the browser is started again, up to this many times per read, then the read stops.
+MAX_BROWSER_RESTARTS = 3
+SHUTDOWN_TIMEOUT_SECONDS = 10  # closing a frozen Chromium is given up after this long
+_BROWSER_GONE = ("target closed", "browser has been closed", "connection closed", "context or browser has been closed")
+
+log = logging.getLogger("nyra.crawl")
+
+
+class BrowserUnavailable(RuntimeError):
+    """Chromium keeps dying: the read stops, what it read is kept."""
+
+
+class _BrowserDied(Exception):
+    """Chromium or Playwright's driver stopped under a page (the cause is attached)."""
+
+
+def browser_died(exc: BaseException) -> bool:
+    """Whether `exc` says the browser or Playwright's driver is gone, not that this page is bad. Read from the name and the text: the
+    error class (`TargetClosedError`) is not part of Playwright's public API."""
+    text = str(exc).lower()
+    return type(exc).__name__ == "TargetClosedError" or any(marker in text for marker in _BROWSER_GONE)
 
 
 # --- URLs -------------------------------------------------------------------
@@ -485,6 +507,8 @@ class CrawlStats:
     pages_left_scope: int = 0      # redirected out of the address's path: neither its links nor its images are taken
     pages_ok: int = 0              # read with success: 2xx, the page asked for, no consent wall
     pages_walled: int = 0          # a consent notice still hid the page after we tried to close it (CONSENT_WALL)
+    browser_restarts: int = 0      # Chromium (or its driver) died and was started again
+    reading: list[str] = field(default_factory=list)  # the pages being read now: what a stopped worker's last heartbeat says (AXE-644)
     http_statuses: dict[str, int] = field(default_factory=dict)
     images_known: int = 0          # already stored under this URL: not downloaded again
     images_duplicate: int = 0      # same bytes already stored under another URL
@@ -589,7 +613,8 @@ Embedder = Callable[[list[Image.Image]], list[np.ndarray]]
 
 class _Crawl:
     def __init__(self, site_url: str, store: CrawlStore, config: Config, *, max_pages: int,
-                 embedder: Optional[Embedder], resume: bool, progress, should_stop, follow_links: bool = True):
+                 embedder: Optional[Embedder], resume: bool, progress, should_stop, follow_links: bool = True,
+                 skip: Collection[str] = ()):
         self.site_url = normalize_url(site_url)
         self.netloc = urlparse(self.site_url).netloc
         self.store = store
@@ -604,11 +629,14 @@ class _Crawl:
         self.lock = threading.Lock()
         self.queue: deque[str] = deque()
         self.queued: set[str] = set()
-        self.visited: set[str] = set()
+        self.visited: set[str] = set(skip)  # pages not to read: the ones a stopped read already did, or that killed the worker
         self.skipped_images: set[str] = set()
         self.started = 0
         self.in_flight = 0
         self.robots: Optional[urllib.robotparser.RobotFileParser] = None
+        self.generation = 0  # counts the browsers started: a reader whose page belongs to an older one asks for a new page
+        self._launch_lock: Optional[asyncio.Lock] = None
+        self._playwright = self._browser = self._context = None
 
     def _locked(self, fn, *args, **kwargs):
         with self.lock:
@@ -647,23 +675,66 @@ class _Crawl:
             self.queue.append(url)
 
     async def run(self) -> CrawlStats:
-        from playwright.async_api import async_playwright
-
         cfg = self.config.crawl
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(user_agent=cfg.user_agent)
-            await context.route("**/*", self._route)
+        self._launch_lock = asyncio.Lock()
+        try:
+            await self._launch()
             async with netguard.async_client(headers={"User-Agent": cfg.user_agent}) as http:
                 # A declared Crawl-delay means one page at a time: three readers each waiting it out would still send three requests per delay.
                 count = 1 if self._robots_delay() else max(1, cfg.concurrency)
-                workers = [asyncio.create_task(self._worker(context, http)) for _ in range(count)]
-                await asyncio.gather(*workers)
-            await context.close()
-            await browser.close()
+                workers = [asyncio.create_task(self._worker(http)) for _ in range(count)]
+                try:
+                    await asyncio.gather(*workers)
+                except Exception:
+                    for task in workers:
+                        task.cancel()
+                    await asyncio.gather(*workers, return_exceptions=True)  # let them end before the browser is closed under them
+                    raise
+        finally:
+            await self._shutdown()
         return self.stats
 
+    async def _launch(self) -> None:
+        """Start Playwright, Chromium and the browsing context (again after a death: the driver is a process of its own)."""
+        from playwright.async_api import async_playwright
+
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.launch(headless=True)
+        self._context = await self._browser.new_context(user_agent=self.config.crawl.user_agent)
+        await self._context.route("**/*", self._route)
+        self.generation += 1
+
+    async def _shutdown(self) -> None:
+        for closer in (self._context and self._context.close, self._browser and self._browser.close,
+                       self._playwright and self._playwright.stop):
+            if closer is None:
+                continue
+            try:
+                await asyncio.wait_for(closer(), SHUTDOWN_TIMEOUT_SECONDS)
+            except Exception as exc:  # noqa: BLE001 - best effort (a timeout too): after a death the browser is already gone, and closing it must not hide why
+                log.debug("closing the browser failed: %s", exc)
+        self._context = self._browser = self._playwright = None
+
+    async def _relaunch(self, seen: int) -> None:
+        """Start the browser again after a death, once however many readers saw it (`seen` is the generation they used)."""
+        async with self._launch_lock:
+            if self.generation != seen:
+                return  # another reader already did
+            self.stats.browser_restarts += 1
+            if self.stats.browser_restarts > MAX_BROWSER_RESTARTS:
+                raise BrowserUnavailable(
+                    f"Le navigateur de lecture s'est arrêté {self.stats.browser_restarts} fois pendant la lecture : les pages déjà lues "
+                    "sont conservées. Relancez la lecture, ou prévenez l'équipe Nyra.")
+            await self._shutdown()
+            await self._launch()
+
     async def _route(self, route) -> None:
+        try:
+            await self._decide(route)
+        except Exception as exc:  # noqa: BLE001 - the request is already gone (page closed, navigation): nothing is left to continue or abort
+            log.debug("request %s no longer routable: %s", route.request.url, exc)
+
+    async def _decide(self, route) -> None:
         request = route.request
         # The DOM already says which images exist; downloading them in the
         # browser too would double the traffic. Fonts and video never matter.
@@ -696,19 +767,39 @@ class _Crawl:
                 return None
             await asyncio.sleep(0.2)
 
-    async def _worker(self, context, http: httpx.AsyncClient) -> None:
+    async def _worker(self, http: httpx.AsyncClient) -> None:
         cfg = self.config.crawl
-        page = await context.new_page()
+        page, seen, died_before = None, 0, False
         try:
             while True:
                 url = await self._next_url()
                 if url is None:
                     return
                 self.in_flight += 1
+                self.stats.reading.append(url)
+                if self.progress:
+                    self.progress(self.stats)  # the page being read is in the heartbeat before it can kill the worker
                 try:
+                    if page is None or seen != self.generation:
+                        seen = self.generation
+                        page = await self._new_page(url)
                     await self._crawl_page(page, http, url)
+                    died_before = False
+                except _BrowserDied as exc:
+                    page = None  # a closed page is never used again
+                    # The same message says a page was closed (a popup, `window.close()`): the browser is started again only when it
+                    # is disconnected, or when a fresh page died too in a row.
+                    if self._browser is None or not self._browser.is_connected() or died_before:
+                        log.error("the browser stopped while reading %s (restart %d of %d allowed): %s", url,
+                                  self.stats.browser_restarts + 1, MAX_BROWSER_RESTARTS, exc.__cause__)
+                        await self._relaunch(seen)
+                        died_before = False
+                    else:
+                        log.warning("the page of %s was closed under the reader: %s", url, exc.__cause__)
+                        died_before = True
                 finally:
                     self.in_flight -= 1
+                    self.stats.reading.remove(url)
                 self.stats.pages_queued = len(self.queue) + self.in_flight  # pages in other workers are still to finish
                 if self.progress:
                     self.progress(self.stats)
@@ -716,7 +807,22 @@ class _Crawl:
                     return
                 await asyncio.sleep(max(random.uniform(cfg.delay_seconds_min, cfg.delay_seconds_max), self._robots_delay()))
         finally:
-            await page.close()
+            if page is not None:
+                try:
+                    await page.close()
+                except Exception as exc:  # noqa: BLE001 - best effort: the browser may be gone, and closing a page must not hide why
+                    log.debug("closing a page failed: %s", exc)
+
+    async def _new_page(self, url: str):
+        try:
+            return await self._context.new_page()
+        except Exception as exc:
+            if not browser_died(exc):
+                raise
+            self.stats.errors.append(f"{url}: navigateur arrêté, page ignorée")
+            self.stats.pages_failed += 1
+            self.stats.pages_visited += 1
+            raise _BrowserDied(url) from exc
 
     def _robots_delay(self) -> float:
         return robots_delay(self.robots, self.config.crawl.user_agent) if self.robots is not None else 0.0
@@ -747,6 +853,8 @@ class _Crawl:
             self.stats.pages_failed += 1
             await asyncio.to_thread(self._locked, self.store.mark_page, page_id, 0)
             self.stats.pages_visited += 1
+            if browser_died(exc):  # not this page's fault: the reader starts a new browser; the page is left out, not tried again
+                raise _BrowserDied(url) from exc
             return
         self.stats.render_seconds += time.perf_counter() - render_started
         status_key = str(http_status)
@@ -765,7 +873,8 @@ class _Crawl:
             for link in extract_internal_links(html, final_url, self.site_url):
                 self.enqueue(link)
 
-        await self._collect_images(http, sorted(image_urls), page_id)
+        if not await self._collect_images(http, sorted(image_urls), page_id):
+            return  # stopped between two waves: the page stays `pending`, so a read that starts again reads it whole
         # A page that sent the reader elsewhere says nothing about what the requested page shows: recorded as a redirection.
         if not same_page(url, final_url):
             self.stats.pages_redirected += 1
@@ -778,7 +887,8 @@ class _Crawl:
         await asyncio.to_thread(self._locked, self.store.mark_page, page_id, http_status)
         self.stats.pages_visited += 1
 
-    async def _collect_images(self, http: httpx.AsyncClient, image_urls: list[str], page_id: Any) -> None:
+    async def _collect_images(self, http: httpx.AsyncClient, image_urls: list[str], page_id: Any) -> bool:
+        """Download and store the page's images; False when the read was stopped before all of them were."""
         cfg = self.config.crawl
         candidates = [url for url in image_urls if url not in self.skipped_images]
         self.stats.images_found += len(image_urls)
@@ -788,11 +898,9 @@ class _Crawl:
             await asyncio.to_thread(self._locked, self.store.link, image_id, page_id)
             self.stats.images_stored += 1
         to_fetch = [url for url in candidates if url not in known]
-        semaphore = asyncio.Semaphore(IMAGE_DOWNLOADS_PER_PAGE)
 
         async def grab(url: str):
-            async with semaphore:
-                result = await fetch.adownload(url, http, timeout=cfg.request_timeout_seconds, max_bytes=cfg.max_image_bytes)
+            result = await fetch.adownload(url, http, timeout=cfg.request_timeout_seconds, max_bytes=cfg.max_image_bytes)
             if result is None:
                 self.skipped_images.add(url)
                 self.stats.downloads_failed += 1
@@ -800,13 +908,19 @@ class _Crawl:
             self.stats.bytes_downloaded += len(result[0])
             return url, result[0], result[1]
 
-        download_started = time.perf_counter()
-        downloads = [item for item in await asyncio.gather(*(grab(url) for url in to_fetch)) if item]
-        self.stats.downloads += len(to_fetch)
-        if to_fetch:
+        # A wave at a time: downloaded, processed, embedded and stored before the next one, so the bytes and the decoded images of a
+        # page never pile up (a page of large images was enough to kill the worker for lack of memory: AXE-643).
+        for start in range(0, len(to_fetch), IMAGE_DOWNLOADS_PER_PAGE):
+            if self.should_stop():
+                return False
+            wave = to_fetch[start:start + IMAGE_DOWNLOADS_PER_PAGE]
+            download_started = time.perf_counter()
+            downloads = [item for item in await asyncio.gather(*(grab(url) for url in wave)) if item]
+            self.stats.downloads += len(wave)
             self.stats.download_seconds += time.perf_counter() - download_started
-        if downloads:
-            await asyncio.to_thread(self._locked, self._store_downloads, downloads, page_id)
+            if downloads:
+                await asyncio.to_thread(self._locked, self._store_downloads, downloads, page_id)
+        return True
 
     def _store_downloads(self, downloads: list[tuple[str, bytes, Optional[str]]], page_id: Any) -> None:
         cfg = self.config.crawl
@@ -866,16 +980,17 @@ def crawl_site(
     resume: bool = True,
     progress: Optional[Callable[[CrawlStats], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
+    skip: Collection[str] = (),
 ) -> CrawlStats:
     """Crawl a site: sitemap seeds and the home page, then internal links, up to max_pages.
 
-    Skips pages already crawled when resume=True. Raises netguard.BlockedURL
-    if the site itself resolves to a non-public address.
+    Skips pages already crawled when resume=True, and the pages in `skip` (read by an earlier run of the same job, or that stopped
+    the worker). Raises netguard.BlockedURL if the site itself resolves to a non-public address.
     """
     netguard.check_url(site_url)
     limit = min(max_pages or config.crawl.max_pages, config.crawl.max_pages_limit)
     crawl = _Crawl(site_url, store, config, max_pages=limit, embedder=embedder, resume=resume,
-                   progress=progress, should_stop=should_stop)
+                   progress=progress, should_stop=should_stop, skip=skip)
     started = time.perf_counter()
     crawl.discover()
     stats = asyncio.run(crawl.run())
@@ -892,12 +1007,13 @@ def crawl_pages(
     embedder: Optional[Embedder] = None,
     progress: Optional[Callable[[CrawlStats], None]] = None,
     should_stop: Optional[Callable[[], bool]] = None,
+    skip: Collection[str] = (),
 ) -> CrawlStats:
     """Read only these pages of a site again (a person changed a visual on them): the same read as `crawl_site`, with no
     sitemap and no link followed, and at most as many pages as addresses given."""
     netguard.check_url(site_url)
     crawl = _Crawl(site_url, store, config, max_pages=len(urls), embedder=embedder, resume=False, progress=progress,
-                   should_stop=should_stop, follow_links=False)
+                   should_stop=should_stop, follow_links=False, skip=skip)
     crawl.seed(urls)
     started = time.perf_counter()
     stats = asyncio.run(crawl.run())

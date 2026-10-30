@@ -28,7 +28,12 @@ reproducible given the same inputs and thresholds.
   in parallel across workers. It heartbeats every 30 s and while it reports progress; a job
   whose heartbeat stops (crash, redeploy) is marked failed by the next
   worker instead of staying "running" forever. Cancellation is a flag the
-  worker checks between steps.
+  worker checks between steps. SIGTERM (a deployment) is the same flag: the job stops at its next page or batch
+  and goes back in the queue at once, without using a retry (`jobs.requeue`); one that was killed instead is
+  taken back by `reap_stale`, lighter and without the pages it was reading, and told why from the heartbeat's
+  `progress.diag` (memory, pages in flight). See « Staying up » in `DEPLOYMENT.md`. A page's images are downloaded,
+  processed and stored in waves of `IMAGE_DOWNLOADS_PER_PAGE`, and only a working-size copy of each new image
+  waits for its embedding; a Chromium or driver death is survived up to 3 times per read.
 - The interface polls one cheap endpoint (`jobs/current`) — every 2 s
   while something runs, every 20 s otherwise — and refreshes the lists a
   finished job changed.

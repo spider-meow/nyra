@@ -146,6 +146,8 @@ def _row(row: Optional[dict], *, author: bool = False) -> Optional[dict]:
     out = dict(row)
     if not author:
         out.pop("created_by", None)
+        if out.get("progress"):  # the worker's diagnostics (memory, pages in flight) are for `reap_stale`, not for a client
+            out["progress"] = {key: value for key, value in out["progress"].items() if key != "diag"}
     for key in ("id", "org_id", "brand_id", "created_by"):
         if out.get(key) is not None:
             out[key] = str(out[key])
@@ -256,15 +258,17 @@ WRITE_TIMEOUT_MS = 15_000
 
 
 def heartbeat(conn: psycopg.Connection, job_id: str, *, message: Optional[str] = None,
-              progress: Optional[dict] = None) -> bool:
-    """Record liveness (and progress). Returns True when cancellation was requested."""
+              progress: Optional[dict] = None, diag: Optional[dict] = None) -> bool:
+    """Record liveness (and progress). `diag` (phase, pages being read, memory: AXE-644) is merged into `progress` under `diag`, so
+    the last one written survives whatever kills the worker and `reap_stale` can say why. Returns True when cancellation was requested."""
     conn.execute(f"SET LOCAL statement_timeout = {WRITE_TIMEOUT_MS}")
     row = conn.execute(
         """UPDATE jobs SET heartbeat_at = now(),
                message = COALESCE(%s, message),
-               progress = COALESCE(%s::jsonb, progress)
+               progress = COALESCE(%s::jsonb, progress) || COALESCE(%s::jsonb, '{}'::jsonb)
            WHERE id = %s RETURNING cancel_requested""",
-        (message, json.dumps(progress) if progress is not None else None, job_id),
+        (message, json.dumps(progress) if progress is not None else None,
+         json.dumps({"diag": diag}) if diag else None, job_id),
     ).fetchone()
     return bool(row and row["cancel_requested"])
 
@@ -295,6 +299,19 @@ def fail_running(conn: psycopg.Connection, job: dict, *, message: str, error: st
     return row is not None
 
 
+def requeue(conn: psycopg.Connection, job: dict, *, message: str) -> bool:
+    """Put `job` (as `claim` returned it) back in the queue WITHOUT counting a retry: its worker stopped on purpose (a deploy, a Docker stop),
+    so nothing went wrong. Only if that very run is still running and nobody asked to stop it. The job keeps its `fresh`: a read that
+    starts again knows from its own earlier run which pages it has already read (`cloud_db.pages_read_by_job`). Returns whether it was queued."""
+    conn.execute(f"SET LOCAL statement_timeout = {WRITE_TIMEOUT_MS}")
+    row = conn.execute(
+        """UPDATE jobs SET status = 'queued', started_at = NULL, heartbeat_at = NULL, progress = '{}'::jsonb, message = %s
+           WHERE id = %s AND status = 'running' AND started_at = %s::timestamptz AND NOT cancel_requested RETURNING id""",
+        (message, job["id"], job["started_at"]),
+    ).fetchone()
+    return row is not None
+
+
 def request_cancel(conn: psycopg.Connection, brand_id: uuid.UUID, job_id: uuid.UUID) -> Optional[dict]:
     row = conn.execute(
         """UPDATE jobs SET
@@ -309,39 +326,98 @@ def request_cancel(conn: psycopg.Connection, brand_id: uuid.UUID, job_id: uuid.U
     return _row(row)
 
 
+# Past this share of its memory limit, a worker that stops is taken for killed by the kernel (AXE-644). Also the alert level.
+MEMORY_ALERT_SHARE = 0.85
+SKIPPED_PAGES_KEPT = 50  # pages a requeued read will not try again, at most (the list lives in `params`)
+
+
+def _gib(value: float) -> str:
+    return f"{value / 2**30:.1f}".replace(".", ",") + " Gio"
+
+
+def stop_cause(diag: Optional[dict]) -> Optional[str]:
+    """Why a worker that went silent most likely stopped, from its last diagnostics: `memory` when the kernel killed a process in its
+    container or its memory was near the limit, else None (a restart, a hang or a crash: nothing says which)."""
+    diag = diag or {}
+    limit = diag.get("mem_limit")
+    if diag.get("oom_kill") or (limit and diag.get("mem", 0) >= MEMORY_ALERT_SHARE * limit):
+        return "memory"
+    return None
+
+
+def _memory_sentence(diag: dict) -> str:
+    limit = diag.get("mem_limit")
+    return f" ({_gib(diag.get('mem', 0))} sur {_gib(limit)})" if limit else ""
+
+
+def _error_text(diag: dict, phase: Optional[str]) -> str:
+    """What `jobs.error` keeps of a lost worker, for whoever reads the database: phase, memory, pages being read."""
+    parts = ["heartbeat lost"]
+    if phase:
+        parts.append(f"phase={phase}")
+    if "mem" in diag:
+        parts.append(f"mem={_gib(diag['mem'])}/{_gib(diag['mem_limit']) if diag.get('mem_limit') else '?'}")
+    if diag.get("oom_kill"):
+        parts.append(f"oom_kill={diag['oom_kill']}")
+    if diag.get("reading"):
+        parts.append("reading=" + ",".join(diag["reading"][:3]))
+    return "; ".join(parts)[:500]
+
+
+def _failed_message(attempts: int, cause: Optional[str], diag: dict) -> str:
+    base = f"Interrompu : le worker s'est arrêté {attempts} fois de suite pendant la tâche"
+    if cause == "memory":
+        return (f"{base} ; la mémoire du serveur était presque pleine{_memory_sentence(diag)}. Relancez-la en réduisant le nombre de "
+                "pages ou d'images, ou prévenez l'équipe Nyra.")
+    return f"{base}, sans qu'on sache pourquoi (mémoire, redémarrage du serveur ou blocage). Relancez-la, ou prévenez l'équipe Nyra."
+
+
 def reap_stale(conn: psycopg.Connection, older_than_seconds: int = STALE_AFTER_SECONDS) -> tuple[int, int]:
     """Recover running jobs whose worker stopped reporting: (put back in the queue, marked failed).
 
-    A job goes back to the queue (with `retries` counted in its params, and a crawl resuming where it was)
-    up to `MAX_RETRIES` times, unless a stop was asked; past that it fails, so a job that kills its worker
-    every time cannot loop. Their crawl runs, dead either way, are closed.
+    A worker stopped by a deploy puts its job back itself, without counting a retry (`requeue`); what reaches here was killed, crashed or hung.
+    Such a job goes back to the queue (with `retries` counted in its params, and a crawl resuming where it was) up to `MAX_RETRIES` times,
+    unless a stop was asked; past that it fails, so a job that kills its worker every time cannot loop. Each retry is LIGHTER (the worker
+    reads `retries`: one page at a time, smaller batches) and does not try again the pages being read when the worker went silent
+    (`params.skip_pages`): the same page would kill it again. The cause comes from the last diagnostics (`stop_cause`). Their crawl runs,
+    dead either way, are closed.
     """
-    stale = "status = 'running' AND heartbeat_at < now() - make_interval(secs => %s)"
-    retries = "COALESCE((params ->> 'retries')::int, 0)"
-    requeued = conn.execute(
-        f"""UPDATE jobs SET status = 'queued', started_at = NULL, heartbeat_at = NULL, progress = '{{}}'::jsonb,
-               message = 'Relancé automatiquement : le worker s''est arrêté pendant la tâche.',
-               params = jsonb_set(params - 'fresh', '{{retries}}', to_jsonb({retries} + 1))
-           WHERE {stale} AND NOT cancel_requested AND {retries} < %s
-           RETURNING id""",
-        (older_than_seconds, MAX_RETRIES),
-    ).fetchall()
-    failed = conn.execute(
-        f"""UPDATE jobs SET status = 'error', finished_at = now(),
-               message = CASE WHEN cancel_requested THEN 'Interrompu : le worker s''est arrêté pendant la tâche.'
-                   ELSE 'Interrompu : le worker s''est arrêté {MAX_RETRIES + 1} fois de suite pendant la tâche, le plus souvent faute de mémoire ou à cause d''un redémarrage du serveur. Relancez-la en réduisant le nombre de pages ou d''images, ou prévenez l''équipe Nyra.' END,
-               error = 'heartbeat lost'
-           WHERE {stale}
-           RETURNING id""",
+    stale = conn.execute(
+        """SELECT id, params, progress, cancel_requested FROM jobs
+           WHERE status = 'running' AND heartbeat_at < now() - make_interval(secs => %s) FOR UPDATE SKIP LOCKED""",
         (older_than_seconds,),
     ).fetchall()
-    ids = [row["id"] for row in (*requeued, *failed)]
+    requeued = failed = 0
+    for row in stale:
+        params, progress = row["params"] or {}, row["progress"] or {}
+        diag = progress.get("diag") or {}
+        retries = int(params.get("retries", 0))
+        cause = stop_cause(diag)
+        if not row["cancel_requested"] and retries < MAX_RETRIES:
+            skip = list(dict.fromkeys([*params.get("skip_pages", []), *diag.get("reading", [])]))[-SKIPPED_PAGES_KEPT:]
+            params = {**params, "retries": retries + 1, **({"skip_pages": skip} if skip else {})}
+            why = " (mémoire presque pleine)" if cause == "memory" else ""
+            conn.execute(
+                """UPDATE jobs SET status = 'queued', started_at = NULL, heartbeat_at = NULL, progress = '{}'::jsonb, message = %s,
+                       params = %s WHERE id = %s""",
+                (f"Relancé automatiquement : le worker s'est arrêté pendant la tâche{why}. Lecture allégée.", json.dumps(params), row["id"]),
+            )
+            requeued += 1
+            continue
+        message = ("Interrompu : le worker s'est arrêté pendant la tâche." if row["cancel_requested"]
+                   else _failed_message(MAX_RETRIES + 1, cause, diag))
+        conn.execute(
+            "UPDATE jobs SET status = 'error', finished_at = now(), message = %s, error = %s WHERE id = %s",
+            (message, _error_text(diag, progress.get("phase")), row["id"]),
+        )
+        failed += 1
+    ids = [row["id"] for row in stale]
     if ids:
         conn.execute(
             "UPDATE crawl_runs SET status = 'error', finished_at = now() WHERE job_id = ANY(%s) AND status = 'running'",
             (ids,),
         )
-    return len(requeued), len(failed)
+    return requeued, failed
 
 
 def stalled_seconds(conn: psycopg.Connection) -> float:

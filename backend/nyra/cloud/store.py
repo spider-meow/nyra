@@ -167,7 +167,7 @@ class CloudMatchStore:
     """One brand: its library against the images of its own sites, nothing else."""
 
     def __init__(self, *, org_id: uuid.UUID, brand_id: uuid.UUID, database_url: str, storage_client=None,
-                 max_image_pixels: int = 60_000_000):
+                 max_image_pixels: int = 40_000_000):
         self.org_id = org_id
         self.brand_id = brand_id
         self.database_url = database_url

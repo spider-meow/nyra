@@ -1205,6 +1205,17 @@ def finish_crawl_run(conn: psycopg.Connection, run_id: uuid.UUID, *, status: str
     )
 
 
+def pages_read_by_job(conn: psycopg.Connection, site_id: uuid.UUID, job_id: uuid.UUID) -> set[str]:
+    """The pages of a site that the earlier runs of this job read (a job put back in the queue starts a new run): a `fresh` read that
+    starts again skips them and takes up where it stopped, instead of reading the whole site again or none of it. Bounded by the page limit."""
+    rows = conn.execute(
+        """SELECT url FROM pages WHERE site_id = %s AND status = 'done'
+             AND read_started_at >= (SELECT min(started_at) FROM crawl_runs WHERE job_id = %s AND site_id = %s)""",
+        (site_id, job_id, site_id),
+    ).fetchall()
+    return {row["url"] for row in rows}
+
+
 def crawl_history(conn: psycopg.Connection, site_ids: list[uuid.UUID], per_site: int = 5) -> list[Row]:
     """The last finished reads of each site, newest first (the figures `nyra.estimate` works from)."""
     return conn.execute(

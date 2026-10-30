@@ -494,14 +494,15 @@ def test_reap_stale_puts_a_job_back_in_the_queue_then_fails_it_after_its_retries
         for attempt in range(1, cloud_jobs.MAX_RETRIES + 1):
             assert cloud_jobs.reap_stale(conn) == (1, 0)
             job = cloud_jobs.get(conn, brand, job_id)
-            # Back in the queue, resuming (not starting over), with its retries counted.
-            assert job["status"] == "queued" and job["params"] == {"retries": attempt}
+            # Back in the queue with its retries counted; `fresh` stays (the worker skips the pages its own earlier run read).
+            assert job["status"] == "queued" and job["params"] == {"fresh": True, "retries": attempt}
             cloud_jobs.claim(conn)
             conn.execute("UPDATE jobs SET heartbeat_at = now() - interval '10 minutes' WHERE id = %s", (job_id,))
         assert cloud_jobs.reap_stale(conn) == (0, 1)
         failed = cloud_jobs.get(conn, brand, job_id)
         # A worker killed every time (out of memory leaves no trace) ends with a message that names the resources.
         assert failed["status"] == "error" and "3 fois" in failed["message"] and "mémoire" in failed["message"]
+        assert "sans qu'on sache pourquoi" in failed["message"]  # nothing said why: it does not claim a cause
 
 
 def test_reap_stale_does_not_restart_a_job_the_user_asked_to_stop(cloud_database_url):
@@ -511,6 +512,73 @@ def test_reap_stale_does_not_restart_a_job_the_user_asked_to_stop(cloud_database
         assert cloud_jobs.reap_stale(conn) == (0, 1)
         stopped = cloud_jobs.get(conn, brand, job_id)
         assert stopped["status"] == "error" and "mémoire" not in stopped["message"]
+
+
+GIB = 2**30
+
+
+def test_a_lost_worker_says_why_and_the_job_starts_again_without_the_page_that_was_being_read(cloud_database_url):
+    """AXE-644 and AXE-645: the last heartbeat's diagnostics outlive the worker; the retry skips the pages being read, a client never sees them."""
+    diag = {"reading": ["https://s.test/heavy"], "mem": int(2.4 * GIB), "mem_limit": int(2.5 * GIB), "oom_kill": 0}
+    with cloud_db.connect(cloud_database_url) as conn:
+        brand, job_id = _lose_the_worker(conn, "crawl", {"fresh": True})
+        cloud_jobs.heartbeat(conn, str(job_id), progress={"phase": "crawl", "done": 4}, diag=diag)
+        assert cloud_jobs.get(conn, brand, job_id)["progress"] == {"phase": "crawl", "done": 4}  # no `diag` for a person
+        conn.execute("UPDATE jobs SET heartbeat_at = now() - interval '10 minutes' WHERE id = %s", (job_id,))
+        assert cloud_jobs.reap_stale(conn) == (1, 0)
+        job = cloud_jobs.get(conn, brand, job_id)
+        assert job["params"] == {"fresh": True, "retries": 1, "skip_pages": ["https://s.test/heavy"]}
+        assert "mémoire presque pleine" in job["message"]
+        # Out of retries: the message names the memory and the figures, `error` keeps phase, memory, kills and pages for the database.
+        conn.execute("UPDATE jobs SET status = 'queued' WHERE id = %s", (job_id,))
+        conn.execute("UPDATE jobs SET params = jsonb_set(params, '{retries}', %s::jsonb) WHERE id = %s", (str(cloud_jobs.MAX_RETRIES), job_id))
+        cloud_jobs.claim(conn)
+        cloud_jobs.heartbeat(conn, str(job_id), progress={"phase": "crawl"}, diag={**diag, "oom_kill": 1})
+        conn.execute("UPDATE jobs SET heartbeat_at = now() - interval '10 minutes' WHERE id = %s", (job_id,))
+        assert cloud_jobs.reap_stale(conn) == (0, 1)
+        failed = cloud_jobs.get(conn, brand, job_id)
+        assert "la mémoire du serveur était presque pleine (2,4 Gio sur 2,5 Gio)" in failed["message"]
+        assert failed["error"] == "heartbeat lost; phase=crawl; mem=2,4 Gio/2,5 Gio; oom_kill=1; reading=https://s.test/heavy"
+
+
+def test_the_cause_of_a_stop_is_the_memory_only_when_the_figures_say_so():
+    assert cloud_jobs.stop_cause({"mem": 90, "mem_limit": 100}) == "memory"  # 85 % or more
+    assert cloud_jobs.stop_cause({"mem": 84, "mem_limit": 100}) is None
+    assert cloud_jobs.stop_cause({"mem": 10, "mem_limit": 100, "oom_kill": 1}) == "memory"  # the kernel killed something
+    assert cloud_jobs.stop_cause({}) is None and cloud_jobs.stop_cause(None) is None  # no figure: no claim
+
+
+def test_a_job_put_back_by_a_stopping_worker_keeps_its_retries_and_its_fresh(cloud_database_url):
+    """AXE-642: a deployment is not a failure: no retry is used, and a person's stop request wins."""
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        org = cloud_db.create_organization(conn, name="R", slug=f"r-{uuid.uuid4().hex[:8]}")
+        brand = _brand(conn, org)
+        job = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", params={"fresh": True, "retries": 1})
+        claimed = cloud_jobs.claim(conn)
+        assert cloud_jobs.requeue(conn, claimed, message="Relancé.")
+        queued = cloud_jobs.get(conn, brand, uuid.UUID(job["id"]))
+        assert queued["status"] == "queued" and queued["started_at"] is None and queued["message"] == "Relancé."
+        assert queued["params"] == {"fresh": True, "retries": 1}
+        assert not cloud_jobs.requeue(conn, claimed, message="x")  # not running any more: nothing to put back
+        again = cloud_jobs.claim(conn)
+        cloud_jobs.request_cancel(conn, brand, uuid.UUID(job["id"]))
+        assert not cloud_jobs.requeue(conn, again, message="x")  # a person asked to stop it: it ends, it does not restart
+
+
+def test_a_read_that_starts_again_knows_the_pages_its_earlier_run_read(cloud_database_url):
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('queued', 'running')")
+        org = cloud_db.create_organization(conn, name="P", slug=f"p-{uuid.uuid4().hex[:8]}")
+        brand = _brand(conn, org)
+        site = cloud_db.create_site(conn, org_id=org, brand_id=brand, url="https://p.example")
+        job = cloud_jobs.enqueue(conn, org_id=org, brand_id=brand, kind="crawl", params={"fresh": True})
+        cloud_db.start_crawl_run(conn, org_id=org, site_id=site, triggered_by=None, job_id=uuid.UUID(job["id"]))
+        for url, started in (("https://p.example/new", "now()"), ("https://p.example/last-month", "now() - interval '30 days'")):
+            conn.execute(f"INSERT INTO pages (org_id, site_id, url, status, read_started_at) VALUES (%s, %s, %s, 'done', {started})",
+                         (org, site, url))
+        assert cloud_db.pages_read_by_job(conn, site, uuid.UUID(job["id"])) == {"https://p.example/new"}
+        assert cloud_db.pages_read_by_job(conn, site, uuid.uuid4()) == set()  # a job that ran nothing: nothing is skipped
 
 
 def _two_brands(conn):

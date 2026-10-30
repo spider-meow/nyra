@@ -1181,3 +1181,82 @@ def test_running_out_of_memory_or_disk_says_so_and_what_to_do(worker, cloud_data
         job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
     assert worker.run_once()
     assert "disque" in _job(cloud_database_url, cloud_brand, job["id"])["message"]
+
+
+def test_a_retry_is_lighter_and_the_first_attempt_is_untouched():
+    """AXE-645: one page at a time and embedding batches halved at each retry (16, 8, 4)."""
+    config = Config()
+    assert worker_module.lighter(config, 0) is config
+    first, second = worker_module.lighter(config, 1), worker_module.lighter(config, 2)
+    assert (first.crawl.concurrency, first.match.embedding_batch_size) == (1, config.match.embedding_batch_size // 2)
+    assert second.match.embedding_batch_size == config.match.embedding_batch_size // 4
+    assert worker_module.lighter(replace(config, match=replace(config.match, embedding_batch_size=1)), 3).match.embedding_batch_size == 1
+
+
+def test_a_worker_that_is_stopping_puts_its_job_back_without_using_a_retry(worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    """AXE-642: SIGTERM stops the job where it is (every step reads `ctx.cancelled`) and requeues it at once, `retries` unchanged."""
+    def stopped_while_running(self, ctx, org_id, brand_id, params):
+        self.stop()  # what the SIGTERM handler does
+        assert ctx.cancelled and ctx.should_stop()
+        return "Comparaison terminée.", {}
+
+    monkeypatch.setattr(worker_module.Worker, "_match_job", stopped_while_running)
+    with cloud_db.connect(cloud_database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match", params={"retries": 1})
+    assert worker.run_once()
+    again = _job(cloud_database_url, cloud_brand, job["id"])
+    assert again["status"] == "queued" and again["params"] == {"retries": 1} and again["message"] == worker_module.RESTART_MESSAGE
+    assert again["started_at"] is None and again["finished_at"] is None
+
+
+def test_a_job_a_person_stopped_ends_even_when_the_worker_is_stopping(worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    def stopped_by_both(self, ctx, org_id, brand_id, params):
+        with cloud_db.connect(self.database_url) as conn:
+            cloud_jobs.request_cancel(conn, brand_id, uuid.UUID(ctx.job["id"]))
+        ctx._heartbeat()  # the next heartbeat tells the job a person asked to stop it
+        self.stop()
+        assert ctx.cancelled
+        return "x", {}
+
+    monkeypatch.setattr(worker_module.Worker, "_match_job", stopped_by_both)
+    with cloud_db.connect(cloud_database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
+    assert worker.run_once()
+    assert _job(cloud_database_url, cloud_brand, job["id"])["status"] == "cancelled"
+
+
+def test_a_read_started_again_is_lighter_skips_its_pages_and_says_so(worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    """AXE-645: `retries` lightens the settings, `skip_pages` and the pages the job's own earlier run read are not read again."""
+    seen = {}
+
+    def fake_crawl(url, store, config, **kwargs):
+        seen.update(kwargs, concurrency=config.crawl.concurrency)
+        return worker_module.CrawlStats()
+
+    monkeypatch.setattr(worker_module, "crawl_site", fake_crawl)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://skip.example")
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="crawl", params={
+            "site_ids": [str(site)], "fresh": True, "then_match": False, "retries": 1, "skip_pages": ["https://skip.example/heavy"]})
+        cloud_db.start_crawl_run(conn, org_id=cloud_org, site_id=site, triggered_by=None, job_id=uuid.UUID(job["id"]))
+        conn.execute("INSERT INTO pages (org_id, site_id, url, status, read_started_at) VALUES (%s, %s, %s, 'done', now())",
+                     (cloud_org, site, "https://skip.example/already"))
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert finished["status"] == "done" and "1 page(s) ignorée(s)" in finished["message"]
+    assert seen["skip"] == {"https://skip.example/heavy", "https://skip.example/already"} and seen["resume"] is False
+    assert seen["concurrency"] == 1
+
+
+def test_a_job_that_ended_before_it_saw_the_stop_is_done_not_started_again(worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    """A report fully built when SIGTERM arrives is kept: only a job that looked at the stop and left early goes back in the queue."""
+    def finished_then_stopped(self, ctx, org_id, brand_id, params):
+        self.stop()  # the handler never looks at `ctx.cancelled`, like `_report`
+        return "Rapport prêt.", {}
+
+    monkeypatch.setattr(worker_module.Worker, "_match_job", finished_then_stopped)
+    with cloud_db.connect(cloud_database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="match")
+    assert worker.run_once()
+    done = _job(cloud_database_url, cloud_brand, job["id"])
+    assert done["status"] == "done" and done["message"] == "Rapport prêt."
