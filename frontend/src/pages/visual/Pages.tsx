@@ -5,7 +5,7 @@ import { Button, Segmented, cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { hostOf, pathOf } from "../../lib/format";
 import { useOrg } from "../../lib/org";
-import { MAX_CHECKED_PAGES, PAGE_SIZE, REDIRECT_TEXT, useCheckPages, useMarkReplaced, type Counts, type Narrowing, type PageState, type Presence } from "../../lib/presence";
+import { HOME_TO_VALIDATE, MAX_CHECKED_PAGES, PAGE_SIZE, REDIRECT_TEXT, useCheckPages, useMarkReplaced, type Counts, type Narrowing, type PageState, type Presence } from "../../lib/presence";
 
 const STATE_TEXT: Record<PageState, { label: string; tone: string }> = {
   still: { label: "Encore en ligne", tone: "bg-expired-soft text-expired" },
@@ -21,7 +21,8 @@ type Page = Presence["pages"][number];
  * mark only when the page was read again after it was marked: before that, it says the mark waits to be checked. */
 function statusOf(page: Page, concluded: boolean): { label: string; tone: string } {
   if (!page.marked) {
-    const why = page.state === "unknown" && page.redirect_kind && !(page.redirect_kind === "clear" && concluded) ? REDIRECT_TEXT[page.redirect_kind] : undefined;
+    const why = page.state === "unknown" && page.redirect_kind && !(page.redirect_kind === "clear" && concluded)
+      ? (page.redirect_kind === "home" && concluded ? HOME_TO_VALIDATE : REDIRECT_TEXT[page.redirect_kind]) : undefined;
     if (why) return { label: why, tone: "bg-soon-soft text-soon" };
     return page.walled && page.state === "unknown" ? { label: "Page masquée par un bandeau de consentement", tone: "bg-soon-soft text-soon" } : STATE_TEXT[page.state];
   }

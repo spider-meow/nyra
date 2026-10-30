@@ -291,6 +291,12 @@ not a replacement says « retirée »; a site with flat addresses (`/old-slug` t
 rule does nothing there; the target's address is kept without its query and fragment; the redirect chain is read from Playwright's `redirected_from`, a hop it cannot tell counts as not permanent.
 Replay one real address before and after (a page that redirects, the visual it showed) before turning the setting on for a client.
 
+*A person decides the ambiguous one.* A page sent to the home page or a parent page (`home`) is never concluded by the algorithm. With the setting on, a person
+can validate it: marking the page « Remplacée » for the visual (the existing mark, per visual and page) and a read of the page after the mark make it read
+like any page, « retirée » when the visual is not on the target (« encore en ligne » when it is, which says the mark was wrong). The mark waits, as ever,
+until the page is read again; before that, and for every other kind (`temporary`, `script`, `other_section`, `other_site`, `barrier`, `error`,
+`incomplete`), nothing changes. « Visuels à remplacer » shows the pages sent elsewhere that remain unknown, by kind.
+
 ## Twin references
 
 Off by default (`match.group_reference_twins`, the flag rule above). When on, `match.reference_twins` finds, among the brand's references, those
