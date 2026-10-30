@@ -6,6 +6,14 @@
  * Pure functions, no React: `npm run check:paths` runs them on every old address.
  */
 
+/**
+ * Where to go after signing in: the page asked for before being sent to /login, when it is a page of an organization of this app (`/o/<slug>/…`).
+ * Never another site (`//evil.test`, `https:`, `/\\evil`) and never a path with a control character: anything else is null and the visitor lands on `/`.
+ */
+export function returnPath(value: unknown): string | null {
+  return typeof value === "string" && value.length <= 600 && /^\/o\/[\w-]+(?:\/[^\s\\]*)?$/.test(value) && !value.includes("//") ? value : null;
+}
+
 /** Pages of a brand: old segment -> new one. */
 export const LEGACY_PAGES: Record<string, string> = {
   "tableau-de-bord": "dashboard",

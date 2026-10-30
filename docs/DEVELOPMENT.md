@@ -86,7 +86,7 @@ share of its budget) and exits 1 naming the chunk that went over.
 |---|---|---|
 | `firstLoadGzipKB`: every chunk of `index.html` | 210 | 196.1 (17 Oct) |
 | `entryGzipKB`: the entry chunk alone | 27.5 | 27.04 (24 Oct, AXE-530) |
-| `lazyChunkGzipKB`: the largest page chunk | 15 | 14.3 (17 Oct) |
+| `lazyChunkGzipKB`: the largest page chunk | 17.5 | 15.7 (30 Oct, AXE-633: the Library keeps its folder and open visual in the address) |
 | `sentryGzipKB`: the Sentry chunk (lazy, off the critical path) | 68 | 61.7 |
 | `passwordMeterGzipKB`: the password strength meter (zxcvbn-ts, lazy, loaded only on the choose-a-password page) | 260 | 235.3 (13 Oct) |
 

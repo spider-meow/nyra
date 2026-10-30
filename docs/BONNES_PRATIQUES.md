@@ -98,6 +98,7 @@ cd frontend && npm run size        # budget de taille du premier chargement
 cd frontend && npm run check:scrub # le masquage des données client dans Sentry
 cd frontend && npm run check:rows  # le regroupement par photo de « À traiter »
 cd frontend && npm run check:paths # les adresses de l'interface et la redirection des anciennes
+cd frontend && npm run check:address # l'adresse de la bibliothèque (collection, visuel) et la page où l'on revient après la connexion : jamais un autre site
 cd frontend && npm run check:retry # le rejeu des requêtes refusées par la limite de débit (429)
 cd frontend && npm run check:drop  # le dépôt de fichiers sur la page : seuls les fichiers comptent, pas de doublon, le survol se termine
 cd frontend && npm run check:order # l'ordre des collections à la main : où tombe une ligne glissée, les flèches aux extrémités, l'ordre affiché tout de suite
