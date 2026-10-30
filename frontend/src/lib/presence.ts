@@ -16,9 +16,25 @@ export type Presence = {
   versions: Version[];
   /** The pages for the narrowing, `total` of them, from `offset`. */
   pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean; checked: boolean; /** A consent notice still hid the page: not read, never "gone". */ walled: boolean;
+    /** The kind of redirect, when the page answered with another page (see `REDIRECT_TEXT`). */ redirect_kind?: string | null;
     /** Where a page that answered with another page ended (null: it did not), and how many HTTP redirects led there. Absent from an older server. */ redirect_url?: string | null; redirect_hops?: number | null }[];
   total: number;
   offset: number;
+  /** The organization's rule for a permanent redirect is on (Réglages > Détection): such a page reads like any other. Absent from an older server. */
+  redirects_concluded?: boolean;
+};
+
+/** Why a page that answered with another page is "pas relue", by the kind of redirect (`crawl.redirect_kind`). A `clear` one is only unknown while the rule is off. */
+export const REDIRECT_TEXT: Record<string, string> = {
+  clear: "Redirection permanente · règle non activée",
+  temporary: "Redirection temporaire · rien n'est conclu",
+  script: "Redirigée par un script · rien n'est conclu",
+  home: "Renvoyée vers l'accueil ou une page parente · rien n'est conclu",
+  incomplete: "Une image de la page d'arrivée n'a pas pu être lue · rien n'est conclu",
+  other_section: "Renvoyée vers une autre rubrique ou un autre pays · rien n'est conclu",
+  other_site: "Renvoyée vers un autre site · rien n'est conclu",
+  barrier: "Renvoyée vers une barrière (consentement, connexion, âge, pays) · rien n'est conclu",
+  error: "La page d'arrivée a répondu en erreur · rien n'est conclu",
 };
 
 export const PAGE_SIZE = 50;

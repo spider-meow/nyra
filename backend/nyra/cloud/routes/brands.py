@@ -237,7 +237,7 @@ def overview(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(g
             "SELECT COUNT(*) AS c FROM reference_images WHERE brand_id = %s AND embedding IS NULL", (scope.brand_id,)
         ).fetchone()["c"]
         unreferenced_online = unreferenced_count(conn, scope.brand_id, config)
-        replaced = cloud_presence.replaced_references(conn, scope.brand_id)
+        replaced = cloud_presence.replaced_references(conn, scope.brand_id, conclude=config.report.conclude_redirected_pages)
     last_run = runs[0] if runs else None
     return {
         "organization": {"id": str(scope.org_id), "name": org["name"], "slug": org["slug"]},

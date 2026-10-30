@@ -7,6 +7,7 @@ type Level = "strict" | "balanced" | "wide";
 
 const THRESHOLDS = ["match.phash_threshold", "match.dhash_threshold", "match.clip_similarity_high", "match.clip_similarity_medium", "match.clip_similarity_floor"];
 const TWINS = "match.group_reference_twins";
+const REDIRECTS = "report.conclude_redirected_pages";
 const VERIFY = ["match.verify_clip_matches", "match.geometric_min_inliers", "match.geometric_review_coverage", "match.geometric_confirm_coverage"];
 
 // Starting points, to be tuned on real cases (docs/MATCHING.md). "balanced" is the standard configuration.
@@ -99,8 +100,18 @@ export function Detection(props: { data: Settings }) {
           <Input {...numberProps(form, "report.default_within_days")} aria-label="Délai par défaut, en jours" className="w-28" />
         </SettingsRow>
       </SettingsBlock>
+      <SettingsBlock title="Pages redirigées" description="Quand une page qui montrait un visuel renvoie maintenant vers une autre page.">
+        <div className="p-5">
+          <Checkbox
+            checked={form.boolOf(REDIRECTS)}
+            onChange={(value) => form.set(REDIRECTS, String(value))}
+            label="Conclure sur une redirection permanente vers une page de la même rubrique"
+            hint="La page d'arrivée est lue à la place : le visuel y est encore en ligne, ou il en est retiré. Une redirection temporaire, vers l'accueil, vers un autre site, une autre rubrique ou une page de connexion ou de consentement ne conclut rien. Désactivé par défaut tant que la règle n'a pas été mesurée sur de vraies adresses."
+          />
+        </div>
+      </SettingsBlock>
       <Advanced form={form} />
-      <ResetButton form={form} keys={[...THRESHOLDS, ...VERIFY, "report.default_within_days"]} />
+      <ResetButton form={form} keys={[...THRESHOLDS, ...VERIFY, "report.default_within_days", REDIRECTS]} />
     </>
   );
 }

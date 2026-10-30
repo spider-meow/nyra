@@ -600,6 +600,13 @@ SITE = "https://t.test/"
     ("https://t.test/p/old", "https://t.test/p/new", [301], 404, False, "error"),
     ("https://t.test/p/old", "https://other.test/p/new", [301], 200, False, "other_site"),
     ("https://t.test/p/old", "https://t.test/p/new", [0], 200, False, "temporary"),  # a hop Playwright could not tell is never permanent
+    ("https://t.test/fr/produit/x", "https://t.test/fr/", [301], 200, False, "home"),  # a parent: the locale's home, or a category
+    ("https://t.test/blogs/news/old", "https://t.test/blogs/news", [301], 200, False, "home"),
+    ("https://t.test/p/old", "https://t.test/my-account/orders", [301], 200, False, "barrier"),
+    ("https://t.test/p/old", "https://t.test/sign_in", [301], 200, False, "barrier"),
+    ("https://t.test/p/old", "https://t.test/select-country", [301], 200, False, "barrier"),
+    ("https://t.test/p/old", "https://t.test/index.php?route=account/login", [301], 200, False, "barrier"),  # the query counts
+    ("https://t.test/p/old", "https://t.test/pages/x", [301], 404, False, "error"),
 ])
 def test_a_redirected_page_is_told_from_a_barrier_a_home_and_a_replacement(requested, final, hops, status, walled, kind):
     from nyra.crawl import redirect_kind
@@ -673,3 +680,68 @@ def test_a_page_that_ended_elsewhere_is_recorded_with_where_it_ended(monkeypatch
     assert store.marked == [("https://t.test/p/old", crawl_module.REDIRECTED,
                              {"url": "https://t.test/p/new", "hops": 1, "status": 200, "kind": "clear"})]
     assert reading.stats.pages_redirected == 1 and reading.stats.pages_visited == 1
+
+
+def _redirecting_page(monkeypatch, *, response_url="https://t.test/p/old/", page_url="https://t.test/p/new?token=secret#top", failed_images=False):
+    """A page asked for as /p/old, answered by a 301 to `response_url` (the first document), where the reader ended on `page_url`."""
+    from nyra import crawl as crawl_module
+
+    store = _MarkingStore()
+    store.mark_page = lambda page_id, status, redirect=None: store.marked.append((page_id, status, redirect))
+    store.known_images = lambda urls: {}
+    reading = _crawler(store=store)
+
+    class Hop:
+        async def response(self):
+            return type("Hop", (), {"status": 301})()
+
+    class Request:
+        redirected_from = Hop()
+
+    class Hop2:
+        redirected_from = None
+
+        async def response(self):
+            return type("Hop", (), {"status": 301})()
+
+    Request.redirected_from = Hop2()
+
+    class Page:
+        url = page_url
+
+        async def goto(self, *_args, **_kwargs):
+            return type("Response", (), {"status": 200, "url": response_url, "request": Request()})()
+
+        async def content(self):
+            return "<html><body></body></html>"
+
+        async def evaluate(self, script):
+            return [] if "background" in script.lower() else ""
+
+        async def wait_for_timeout(self, _ms):
+            return None
+
+    async def check(_url):
+        return None
+
+    async def collected(*_args):
+        if failed_images:
+            reading.stats.downloads_failed += 1
+        return True
+
+    monkeypatch.setattr(crawl_module.netguard, "check_url_async", check)
+    monkeypatch.setattr(reading, "_collect_images", collected)
+    asyncio.run(reading._crawl_page(Page(), None, "https://t.test/p/old"))
+    return store.marked[0][2]
+
+
+def test_a_script_that_goes_on_after_the_http_redirects_is_not_a_clear_redirect(monkeypatch):
+    """The status and the hops are those of the first document: when the reader ended elsewhere than that document, nothing is concluded."""
+    assert _redirecting_page(monkeypatch)["kind"] == "script"
+    assert _redirecting_page(monkeypatch, response_url="https://t.test/p/new?token=secret")["kind"] == "clear"  # the document that ended is the target
+
+
+def test_the_target_is_kept_without_its_query_and_an_image_that_failed_to_download_concludes_nothing(monkeypatch):
+    redirect = _redirecting_page(monkeypatch, response_url="https://t.test/p/new?token=secret")
+    assert redirect["url"] == "https://t.test/p/new"  # no token, no return address, no fragment
+    assert _redirecting_page(monkeypatch, response_url="https://t.test/p/new?token=secret", failed_images=True)["kind"] == "incomplete"

@@ -998,7 +998,7 @@ class Worker:
             unmatched = cloud_db.unmatched_rows(conn, brand_id)
             stats = asdict(cloud_db.get_stats(conn, brand_id))
             provenance = cloud_db.report_provenance(conn, brand_id)
-            replaced = cloud_presence.replaced_references(conn, brand_id)
+            replaced = cloud_presence.replaced_references(conn, brand_id, conclude=config.report.conclude_redirected_pages)
         for row in matches:
             row["ref_thumb"] = (cloud_storage.BUCKET_REFS, row["ref_thumb_path"] or row["ref_storage_path"])
             row["site_thumb"] = (cloud_storage.BUCKET_SITE_IMAGES, row["site_thumb_path"] or row["site_storage_path"])
