@@ -1,8 +1,8 @@
+import { LoadError } from "../components/busy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { useToast } from "../components/feedback";
 import { Button, EmptyState, PageHeader, Skeleton } from "../components/ui";
-import { errorMessage } from "../lib/api";
 import { useOrg } from "../lib/org";
 import { useAssignments, useLabels } from "../lib/labels";
 import { useLibrary, useLibraryThumbs } from "../lib/queries";
@@ -20,9 +20,9 @@ import { newest, useLibraryView, type Tab } from "./library/view";
 const RECENT_CARDS = 4; // one row at the widest layout
 
 /** What stands in for the library while it loads, fails to load, or is empty. */
-function LibraryNotice(props: { loading: boolean; error: unknown; admin: boolean; uploading: boolean; onPick: () => void }) {
+function LibraryNotice(props: { loading: boolean; error: unknown; admin: boolean; uploading: boolean; onPick: () => void; onRetry: () => void; retrying: boolean }) {
   if (props.loading) return <div className="grid gap-2">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-14" />)}</div>;
-  if (props.error) return <EmptyState title="Impossible de charger la bibliothèque" body={errorMessage(props.error)} />;
+  if (props.error) return <LoadError title="Impossible de charger la bibliothèque" error={props.error} onRetry={props.onRetry} retrying={props.retrying} />;
   return (
     <EmptyState
       title="Aucun visuel pour l'instant"
@@ -110,7 +110,7 @@ export function Library() {
 
       {library.isLoading || library.error || !items.length ? (
         <DropZone up={up} folders={view.folders} current={openFolder}>
-          <LibraryNotice loading={library.isLoading} error={library.error} admin={admin} uploading={up.uploader.uploading} onPick={up.pick} />
+          <LibraryNotice loading={library.isLoading} error={library.error} admin={admin} uploading={up.uploader.uploading} onPick={up.pick} onRetry={() => void library.refetch()} retrying={library.isFetching} />
         </DropZone>
       ) : (
         <div className="lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8">

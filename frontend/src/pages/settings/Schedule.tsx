@@ -1,5 +1,6 @@
+import { LoadError } from "../../components/busy";
 import { SettingsBlock, SettingsRow } from "../../components/SettingsBlock";
-import { Button, Checkbox, EmptyState, fieldClass, Skeleton } from "../../components/ui";
+import { Checkbox, fieldClass, Skeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useOrg } from "../../lib/org";
 import { useSchedule, useSetSchedule } from "../../lib/queries";
@@ -26,9 +27,7 @@ export function Schedule() {
   const data = query.data;
 
   if (query.isLoading) return <Skeleton className="h-40" />;
-  if (query.error || !data) {
-    return <EmptyState title="Lecture mensuelle indisponible" body={errorMessage(query.error)} action={<Button size="sm" onClick={() => void query.refetch()}>Réessayer</Button>} />;
-  }
+  if (!data) return <LoadError title="Lecture mensuelle indisponible" error={query.error} onRetry={() => void query.refetch()} retrying={query.isFetching} />;
   const locked = !admin || save.isPending;
   return (
     <SettingsBlock title="Lecture mensuelle automatique">

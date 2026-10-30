@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
+import { LoadError, RefreshFailed, Refreshing } from "../../components/busy";
 import { OrgHoldNotice, holdProps } from "../../components/OrgHold";
 import { InfoTip } from "../../components/SettingsBlock";
 import { Button, DecisionBadge, EmptyState, Skeleton, Thumb } from "../../components/ui";
-import { errorMessage } from "../../lib/api";
 import { hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { usePresence, type Narrowing } from "../../lib/presence";
@@ -36,7 +36,7 @@ export function Visual(props: { referenceId: string; onBack: () => void }) {
   return (
     <>
       <Summary group={group} presence={presence.data} onBack={props.onBack} />
-      {presence.error ? <p className="mb-4 text-sm text-expired">{errorMessage(presence.error)}</p> : null}
+      {presence.error && presence.data ? <RefreshFailed error={presence.error} onRetry={() => void presence.refetch()} retrying={presence.isFetching} /> : null}
       {presence.data?.versions.filter((version) => version.suspect).map((version) => <SuspectReadNotice key={version.site_id} site={version.label || hostOf(version.site_url)} />)}
       {presence.data ? (
         <>
@@ -50,9 +50,11 @@ export function Visual(props: { referenceId: string; onBack: () => void }) {
           {admin && read.hold ? <div className="mb-3"><OrgHoldNotice hold={read.hold} /></div> : null}
           <Versions versions={presence.data.versions} narrowing={narrowing} onNarrow={narrow} />
           <h2 className="mt-8 mb-3 text-base font-semibold">Les pages</h2>
-          <Pages referenceId={props.referenceId} data={presence.data} narrowing={narrowing} onNarrow={narrow} onOffset={setOffset} />
+          <Refreshing active={presence.isFetching}>
+            <Pages referenceId={props.referenceId} data={presence.data} narrowing={narrowing} onNarrow={narrow} onOffset={setOffset} />
+          </Refreshing>
         </>
-      ) : <Skeleton className="h-64" />}
+      ) : presence.error ? <LoadError title="Impossible de charger les pages" error={presence.error} onRetry={() => void presence.refetch()} retrying={presence.isFetching} /> : <Skeleton className="h-64" />}
       <h2 className="mt-8 mb-3 text-base font-semibold">Les photos</h2>
       <Photos group={group} />
     </>

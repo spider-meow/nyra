@@ -1,8 +1,8 @@
+import { LoadError, RefreshFailed, Refreshing } from "../components/busy";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CompareView } from "../components/CompareView";
 import { Modal } from "../components/feedback";
-import { Button, Card, EmptyState, Kbd, LinkButton, PageHeader, Skeleton } from "../components/ui";
-import { errorMessage } from "../lib/api";
+import { Card, EmptyState, Kbd, LinkButton, PageHeader, Skeleton } from "../components/ui";
 import { useOrg } from "../lib/org";
 import { useDecide, useShortcuts } from "./review/decide";
 import { ReviewFilters, ReviewTabs } from "./review/Filters";
@@ -42,13 +42,24 @@ export function Review() {
   );
 }
 
-/** Loading, error, the missing list, the empty states, or the occurrences beside the comparison panel. */
+/** The three states of the list (first load, refresh with the rows on screen, failure), then what it shows. */
 function Results(props: { view: ReviewView; compare: ReactNode }) {
-  const { link } = useOrg();
-  const { matches, tab, missing, rows, counts } = props.view;
-  const noMatches = counts.found + counts.verify === 0;
+  const { matches } = props.view;
   if (matches.isLoading) return <div className="grid gap-2">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-16" />)}</div>;
-  if (matches.error) return <EmptyState title="Impossible de charger les correspondances" body={errorMessage(matches.error)} action={<Button onClick={() => void matches.refetch()}>Réessayer</Button>} />;
+  if (matches.error && !matches.data) return <LoadError title="Impossible de charger les correspondances" error={matches.error} onRetry={() => void matches.refetch()} retrying={matches.isFetching} />;
+  return (
+    <Refreshing active={matches.isFetching}>
+      {matches.error ? <RefreshFailed error={matches.error} onRetry={() => void matches.refetch()} retrying={matches.isFetching} /> : null}
+      <ResultsBody {...props} />
+    </Refreshing>
+  );
+}
+
+/** The missing list, the empty states, or the occurrences beside the comparison panel. */
+function ResultsBody(props: { view: ReviewView; compare: ReactNode }) {
+  const { link } = useOrg();
+  const { tab, missing, rows, counts } = props.view;
+  const noMatches = counts.found + counts.verify === 0;
   if (tab === "missing") return <MissingList items={missing} />;
   if (!rows.length) {
     return (

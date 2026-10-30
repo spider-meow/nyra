@@ -1,5 +1,5 @@
+import { LoadError, Refreshing } from "../../components/busy";
 import { Card, EmptyState, Skeleton, cx } from "../../components/ui";
-import { errorMessage } from "../../lib/api";
 import { formatDateTime, hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { useScans } from "../../lib/queries";
@@ -20,11 +20,12 @@ export function ScanHistory() {
   const { admin } = useOrg();
   const scans = useScans();
   if (scans.isLoading) return <Skeleton className="h-40" />;
-  if (scans.error) return <EmptyState title="Historique indisponible" body={errorMessage(scans.error)} />;
+  if (scans.error && !scans.data) return <LoadError title="Historique indisponible" error={scans.error} onRetry={() => void scans.refetch()} retrying={scans.isFetching} />;
   if (!scans.data?.scans.length) {
     return <EmptyState title="Aucune lecture pour l'instant" body={admin ? "Ajoutez une adresse puis lancez la lecture." : "Un administrateur doit lancer la première lecture."} />;
   }
   return (
+    <Refreshing active={scans.isFetching}>
     <Card padded={false} className="overflow-x-auto">
       <table className="w-full min-w-[640px] text-sm">
         <thead>
@@ -51,6 +52,7 @@ export function ScanHistory() {
         </tbody>
       </table>
     </Card>
+    </Refreshing>
   );
 }
 
