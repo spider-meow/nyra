@@ -118,11 +118,14 @@ def presence(reference_id: uuid.UUID, site: Optional[uuid.UUID] = None, section:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if not conn.execute("SELECT 1 FROM reference_images WHERE id = %s AND brand_id = %s", (reference_id, scope.brand_id)).fetchone():
             raise HTTPException(status_code=404, detail="Référence introuvable.")
-        counts = cloud_presence.counts(conn, scope.brand_id, reference_id)
-        rows = cloud_presence.pages(conn, scope.brand_id, reference_id, site=site, section=section, state=state, marked=marked, limit=limit, offset=offset)
+        conclude = ctx.org_config(conn, scope.org_id).report.conclude_redirected_pages
+        counts = cloud_presence.counts(conn, scope.brand_id, reference_id, conclude=conclude)
+        rows = cloud_presence.pages(conn, scope.brand_id, reference_id, site=site, section=section, state=state, marked=marked, limit=limit,
+                                    offset=offset, conclude=conclude)
         suspect = frozenset(row["site_id"] for row in cloud_presence.suspect_sites(conn, scope.brand_id))
-    return {**cloud_presence.summary(counts, suspect), "total": cloud_presence.total(counts, site=site, section=section, state=state, marked=marked), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"], "marked": row["marked"], "checked": row["checked"], "walled": row["walled"]} for row in rows],
-            "offset": offset}
+    return {**cloud_presence.summary(counts, suspect), "total": cloud_presence.total(counts, site=site, section=section, state=state, marked=marked), "pages": [{"url": row["url"], "site_id": str(row["site_id"]), "section": row["section"], "state": row["state"], "marked": row["marked"], "checked": row["checked"], "walled": row["walled"],
+                                                                                                    "redirect_url": row["redirect_url"], "redirect_hops": row["redirect_hops"], "redirect_kind": row["redirect_kind"]} for row in rows],
+            "offset": offset, "redirects_concluded": conclude}
 
 
 @router.get(f"{BRAND}/visuals")
@@ -130,7 +133,8 @@ def visuals(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
     """The visuals to replace: those a person confirmed, each with how many pages still show it, were seen without it, or
     were not read again (see `cloud.presence`); `replaced` once every page was read again and none shows it."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
-        items = cloud_presence.visuals(cloud_presence.by_visual(conn, scope.brand_id))
+        conclude = ctx.org_config(conn, scope.org_id).report.conclude_redirected_pages
+        items = cloud_presence.visuals(cloud_presence.by_visual(conn, scope.brand_id, conclude=conclude))
         suspect = cloud_presence.suspect_sites(conn, scope.brand_id)
     urls = ctx.sign(cloud_storage.BUCKET_REFS, [path for item in items for path in (item["row"]["thumb_path"], item["row"]["storage_path"]) if path])
     today = datetime.now(timezone.utc).date()
@@ -142,8 +146,8 @@ def visuals(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
         out.append({"reference_id": str(row["reference_id"]), "filename": row["filename"], "expiry_date": expiry,
                     "days_left": left, "status": report_module.rights_status(row, left),
                     "thumb": urls.get(row["thumb_path"] or "") or urls.get(row["storage_path"] or "", ""),
-                    **{key: item[key] for key in (*cloud_presence.STATES, "marked", "pages", "replaced")}})
-    return {"visuals": out, "suspect_sites": [{**row, "site_id": str(row["site_id"])} for row in suspect]}
+                    **{key: item[key] for key in (*cloud_presence.STATES, "marked", "pages", "replaced", "redirected")}})
+    return {"visuals": out, "suspect_sites": [{**row, "site_id": str(row["site_id"])} for row in suspect], "redirects_concluded": conclude}
 
 
 @router.post(f"{BRAND}/visuals/{{reference_id}}/replaced")

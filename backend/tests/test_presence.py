@@ -222,3 +222,138 @@ def test_a_visual_with_a_match_no_page_is_known_for_is_not_replaced_and_the_home
     assert replaced == {shown}
     rows = [{"reference_id": ref, "filename": str(ref), "expiry_date": "2020-01-01", "confidence": "haut"} for ref in (shown, lone, gone)]
     assert report.dashboard(rows, [], replaced=replaced)["expired_online"] == 2  # the replaced one is no longer online
+
+
+def test_a_page_that_ended_elsewhere_keeps_where_and_stays_unknown(cloud_database_url, cloud_org, cloud_brand):
+    """AXE-641: the target is kept and shown; the state is what it always was (unknown), and a page that stops redirecting loses it."""
+    after = READ + timedelta(minutes=2)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+    store = CloudCrawlStore(org_id=cloud_org, site_id=site, database_url=cloud_database_url, storage_client=None)
+    page = store.upsert_page("https://a.test/p/old")
+    store.link(image, page)
+    store.mark_page(page, 302, {"url": "https://a.test/p/new", "hops": 1, "status": 200, "kind": "clear"})
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE pages SET crawled_at = %s, read_started_at = %s WHERE id = %s", (after, after, page))
+        [row] = presence.pages(conn, cloud_brand, ref)
+        assert (row["state"], row["redirect_url"], row["redirect_hops"], row["redirect_kind"]) == ("unknown", "https://a.test/p/new", 1, "clear")
+    store.mark_page(page, 200)  # read again, no redirection any more
+    with cloud_db.connect(cloud_database_url) as conn:
+        [row] = presence.pages(conn, cloud_brand, ref)
+        assert (row["redirect_url"], row["redirect_hops"], row["redirect_kind"]) == (None, None, None)
+
+
+def test_a_page_is_still_recorded_before_the_redirect_columns_exist(cloud_database_url, cloud_org, cloud_brand, monkeypatch, caplog):
+    """The worker may be deployed before migration 20261029000043: the read goes on, as before, and says so once."""
+    from nyra.cloud import store as store_module
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, _ = _setup(conn, cloud_org, cloud_brand)
+    store = CloudCrawlStore(org_id=cloud_org, site_id=site, database_url=cloud_database_url, storage_client=None)
+    page = store.upsert_page("https://a.test/p/x")
+    monkeypatch.setattr(store_module, "MARK_PAGE_WITH_REDIRECT", "UPDATE pages SET redirect_missing = %s, a = %s, b = %s, c = %s, d = %s, e = %s WHERE id = %s")
+    store.mark_page(page, 200, None)
+    with cloud_db.connect(cloud_database_url) as conn:
+        row = conn.execute("SELECT status, http_status, links_tracked FROM pages WHERE id = %s", (page,)).fetchone()
+    assert (row["status"], row["http_status"], row["links_tracked"]) == ("done", 200, True)
+
+
+def _redirected(conn, org, site, image, path, kind, *, seen, target=None):
+    """A page that answered with another page (status 302, so never tracked), read after the last full read, of the given kind."""
+    _page(conn, org, site, image, path, tracked=False, seen=READ + timedelta(minutes=2) if seen else READ - timedelta(days=1))
+    conn.execute("UPDATE pages SET http_status = 302, redirect_url = %s, redirect_hops = 1, redirect_status = 200, redirect_kind = %s WHERE site_id = %s AND url = %s",
+                 (target or f"https://a.test{path}-new", kind, site, f"https://a.test{path}"))
+
+
+def test_a_clear_redirect_concludes_only_when_the_rule_is_on_and_every_other_kind_stays_unknown(cloud_database_url, cloud_org, cloud_brand):
+    """AXE-641: A shows the visual and now redirects to B. B shows it: still online. B does not: gone from A. A barrier, the home page, a
+    temporary or script redirect, another section: unknown, with the kind to say why. Off (the default): nothing changes."""
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+        _redirected(conn, cloud_org, site, image, "/p/seen-on-target", "clear", seen=True)
+        _redirected(conn, cloud_org, site, image, "/p/not-on-target", "clear", seen=False)
+        for kind in ("barrier", "home", "temporary", "script", "other_section", "other_site", "error"):
+            _redirected(conn, cloud_org, site, image, f"/p/{kind}", kind, seen=False)
+        off = {row["url"].rsplit("/", 1)[1]: row["state"] for row in presence.pages(conn, cloud_brand, ref)}
+        on = {row["url"].rsplit("/", 1)[1]: row["state"] for row in presence.pages(conn, cloud_brand, ref, conclude=True)}
+        listed = {row["url"].rsplit("/", 1)[1]: row for row in presence.pages(conn, cloud_brand, ref, conclude=True)}
+    assert set(off.values()) == {"unknown"}  # the default: a redirected page is never anything but unknown
+    assert on["seen-on-target"] == "still" and on["not-on-target"] == "gone"
+    assert {kind: state for kind, state in on.items() if kind not in ("seen-on-target", "not-on-target")} == dict.fromkeys(
+        ("barrier", "home", "temporary", "script", "other_section", "other_site", "error"), "unknown")
+    assert listed["home"]["redirect_kind"] == "home" and listed["home"]["redirect_url"] == "https://a.test/p/home-new"  # said, to be shown
+
+
+def test_a_redirect_never_concludes_on_a_suspect_read_or_a_page_not_read_again(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+        _redirected(conn, cloud_org, site, image, "/p/old", "clear", seen=False)
+        _page(conn, cloud_org, site, image, "/p/skipped", tracked=False, crawled=READ - timedelta(days=1), seen=READ - timedelta(days=1))
+        conn.execute("UPDATE pages SET http_status = 302, redirect_kind = 'clear' WHERE url = 'https://a.test/p/skipped'")  # not read in the last read
+        states = lambda: {row["url"].rsplit("/", 1)[1]: row["state"] for row in presence.pages(conn, cloud_brand, ref, conclude=True)}  # noqa: E731
+        assert states() == {"old": "gone", "skipped": "unknown"}
+        conn.execute("UPDATE crawl_runs SET suspect = true WHERE site_id = %s", (site,))  # the read looks incomplete: nothing is gone
+        assert set(states().values()) == {"unknown"}
+
+
+def test_a_visual_whose_pages_are_gone_or_redirected_clearly_is_replaced_and_an_ambiguous_redirect_says_so(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, _ = _setup(conn, cloud_org, cloud_brand)
+        clear = _visual(conn, cloud_org, cloud_brand, site, "clear", decision="retenu", pages=[("/removed", False, True)])
+        ambiguous = _visual(conn, cloud_org, cloud_brand, site, "ambiguous", decision="retenu", pages=[("/removed", False, True)])
+        for ref, kind in ((clear, "clear"), (ambiguous, "home")):
+            image = conn.execute("SELECT site_image_id FROM matches WHERE reference_id = %s", (ref,)).fetchone()["site_image_id"]
+            _redirected(conn, cloud_org, site, image, f"/{'clear' if ref == clear else 'ambiguous'}/old", kind, seen=False)
+        def replaced(conclude):
+            return {item["row"]["filename"]: item["replaced"] for item in presence.visuals(presence.by_visual(conn, cloud_brand, conclude=conclude))}
+        assert replaced(False) == {"clear": False, "ambiguous": False}  # before: the redirected page blocks both for ever
+        assert replaced(True) == {"clear": True, "ambiguous": False}  # the clear one is replaced; the ambiguous one still waits, and says why
+        assert presence.replaced_references(conn, cloud_brand, conclude=True) == frozenset({clear})
+
+
+def test_the_rule_is_an_organization_setting_that_starts_off():
+    from nyra.config import Config, validate_overrides, with_overrides
+
+    assert Config().report.conclude_redirected_pages is False
+    assert validate_overrides({"report": {"conclude_redirected_pages": True}})["report"] == {"conclude_redirected_pages": True}
+    assert with_overrides(Config(), {"report": {"conclude_redirected_pages": True}}).report.conclude_redirected_pages is True
+
+
+def test_a_person_validates_a_redirect_to_the_home_page_by_marking_it_replaced_and_only_when_the_rule_is_on(cloud_database_url, cloud_org, cloud_brand):
+    """AXE-641: the algorithm only proposes for a page sent to the home page or a parent page; the person's mark, read again after, decides.
+    Nothing validates any other ambiguous kind, a mark that waits to be checked, or a page when the rule is off."""
+    before_read = READ - timedelta(days=1)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+        for path, kind in (("/p/home", "home"), ("/p/home-unmarked", "home"), ("/p/home-waiting", "home"), ("/p/home-on-target", "home"), ("/p/temporary", "temporary")):
+            _redirected(conn, cloud_org, site, image, path, kind, seen=path == "/p/home-on-target")
+        user = None
+        pages = presence.pages_showing(conn, cloud_brand, ref, [f"https://a.test{path}" for path in ("/p/home", "/p/home-waiting", "/p/home-on-target", "/p/temporary")])
+        presence.set_replaced(conn, cloud_org, ref, list(pages.values()), replaced=True, user_id=user)
+        # Marked before the last read of every page but one: "/p/home-waiting" was marked after it (the mark waits to be checked).
+        conn.execute("UPDATE page_replacements SET marked_at = %s WHERE page_id <> %s", (before_read, pages["https://a.test/p/home-waiting"]))
+        conn.execute("UPDATE page_replacements SET marked_at = %s WHERE page_id = %s", (READ + timedelta(hours=1), pages["https://a.test/p/home-waiting"]))
+        state = lambda conclude: {row["url"].rsplit("/", 1)[1]: row["state"] for row in presence.pages(conn, cloud_brand, ref, conclude=conclude)}  # noqa: E731
+        off, on = state(False), state(True)
+    assert set(off.values()) == {"unknown"}  # the rule is off: a mark never concludes, as before
+    assert on == {"home": "gone", "home-unmarked": "unknown", "home-waiting": "unknown", "home-on-target": "still", "temporary": "unknown"}
+
+
+def test_the_list_of_visuals_says_which_pages_were_sent_elsewhere_and_a_validated_visual_is_replaced(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, _ = _setup(conn, cloud_org, cloud_brand)
+        ref = _visual(conn, cloud_org, cloud_brand, site, "v", decision="retenu", pages=[("/removed", False, True)])
+        image = conn.execute("SELECT site_image_id FROM matches WHERE reference_id = %s", (ref,)).fetchone()["site_image_id"]
+        _redirected(conn, cloud_org, site, image, "/v/old", "home", seen=False)
+        _redirected(conn, cloud_org, site, image, "/v/other", "temporary", seen=False)
+        [waiting] = presence.visuals(presence.by_visual(conn, cloud_brand, conclude=True))
+        assert waiting["redirected"] == {"home": 1, "temporary": 1} and not waiting["replaced"]  # said, and not silently blocked
+        pages = presence.pages_showing(conn, cloud_brand, ref, ["https://a.test/v/old", "https://a.test/v/other"])
+        presence.set_replaced(conn, cloud_org, ref, [pages["https://a.test/v/old"], pages["https://a.test/v/other"]], replaced=True, user_id=None)
+        conn.execute("UPDATE page_replacements SET marked_at = %s", (READ - timedelta(days=1),))
+        [after] = presence.visuals(presence.by_visual(conn, cloud_brand, conclude=True))
+    assert after["redirected"] == {"temporary": 1} and not after["replaced"]  # the validated page is gone; the temporary redirect still blocks

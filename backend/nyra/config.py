@@ -83,6 +83,9 @@ class MatchConfig:
 @dataclass(frozen=True)
 class ReportConfig:
     default_within_days: int = 90
+    # A permanent redirect to another page of the same section, read with success, counts as a read of the page (AXE-641): the visual is
+    # still there if it shows on the target, gone if it does not. Off until it has been measured on real addresses (docs/MATCHING.md).
+    conclude_redirected_pages: bool = False
 
 
 @dataclass(frozen=True)
@@ -123,7 +126,7 @@ ORG_OVERRIDABLE = {
     "match": {"phash_threshold", "dhash_threshold", "clip_similarity_high", "clip_similarity_medium",
               "clip_similarity_floor", "verify_clip_matches", "geometric_min_inliers", "geometric_review_coverage",
               "geometric_confirm_coverage", "group_reference_twins"},
-    "report": {"default_within_days"},
+    "report": {"default_within_days", "conclude_redirected_pages"},
 }
 
 

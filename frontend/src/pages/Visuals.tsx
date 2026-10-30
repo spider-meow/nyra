@@ -49,7 +49,7 @@ export function Visuals() {
       </div>
       {shown.length ? (
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
-          {shown.map((item) => <VisualRow key={item.reference_id} item={item} to={`${link("visuals")}/${item.reference_id}`} />)}
+          {shown.map((item) => <VisualRow key={item.reference_id} item={item} concluded={Boolean(visuals.data.redirects_concluded)} to={`${link("visuals")}/${item.reference_id}`} />)}
         </ul>
       ) : (
         <EmptyState
@@ -71,9 +71,21 @@ function figures(item: VisualItem): [string, string] {
   return item.unknown === item.pages ? ["Pas encore mesuré", `à relire${marked}`] : ["0 page confirmée", `${item.unknown.toLocaleString("fr-FR")} à relire${marked}`];
 }
 
-function VisualRow(props: { item: VisualItem; to: string }) {
+/** The pages sent elsewhere that nothing concluded: said on the line, never a silent block. The home page or a parent page waits for a person once the rule is on. */
+function redirectNote(item: VisualItem, concluded: boolean): string {
+  const home = item.redirected?.home ?? 0;
+  const other = Object.entries(item.redirected ?? {}).reduce((sum, [kind, count]) => sum + (kind === "home" ? 0 : count), 0);
+  const parts = [
+    home ? `${plural(home, "page renvoyée vers l'accueil", "pages renvoyées vers l'accueil")} : ${concluded ? "à valider sur la page du visuel" : "rien n'est conclu"}` : "",
+    other ? `${plural(other, "page renvoyée ailleurs", "pages renvoyées ailleurs")} : rien n'est conclu` : "",
+  ];
+  return parts.filter(Boolean).join(" · ");
+}
+
+function VisualRow(props: { item: VisualItem; to: string; concluded: boolean }) {
   const { item } = props;
   const [title, detail] = figures(item);
+  const note = redirectNote(item, props.concluded);
   const share = (count: number) => `${item.pages ? (count / item.pages) * 100 : 0}%`;
   return (
     <li>
@@ -86,6 +98,7 @@ function VisualRow(props: { item: VisualItem; to: string }) {
         <span className="flex w-full shrink-0 flex-col items-start gap-1 sm:w-auto sm:items-end sm:text-right">
           <span className="text-sm font-semibold tabular">{title}</span>
           <span className="text-xs text-muted">{detail}</span>
+          {note ? <span className="text-xs text-soon">{note}</span> : null}
           <span aria-hidden className="flex h-1.5 w-28 overflow-hidden rounded-full bg-sunk">
             <span className="bg-expired" style={{ width: share(item.still) }} />
             <span className="bg-line-strong" style={{ width: share(item.unknown) }} />

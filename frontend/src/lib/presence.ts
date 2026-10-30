@@ -15,12 +15,32 @@ export type Presence = {
   totals: Counts & { pages: number };
   versions: Version[];
   /** The pages for the narrowing, `total` of them, from `offset`. */
-  pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean; checked: boolean; /** A consent notice still hid the page: not read, never "gone". */ walled: boolean }[];
+  pages: { url: string; site_id: string; section: string; state: PageState; marked: boolean; checked: boolean; /** A consent notice still hid the page: not read, never "gone". */ walled: boolean;
+    /** The kind of redirect, when the page answered with another page (see `REDIRECT_TEXT`). */ redirect_kind?: string | null;
+    /** Where a page that answered with another page ended (null: it did not), and how many HTTP redirects led there. Absent from an older server. */ redirect_url?: string | null; redirect_hops?: number | null }[];
   total: number;
   offset: number;
+  /** The organization's rule for a permanent redirect is on (Réglages > Détection): such a page reads like any other. Absent from an older server. */
+  redirects_concluded?: boolean;
+};
+
+/** Why a page that answered with another page is "pas relue", by the kind of redirect (`crawl.redirect_kind`). A `clear` one is only unknown while the rule is off. */
+export const REDIRECT_TEXT: Record<string, string> = {
+  clear: "Redirection permanente · règle non activée",
+  temporary: "Redirection temporaire · rien n'est conclu",
+  script: "Redirigée par un script · rien n'est conclu",
+  home: "Renvoyée vers l'accueil ou une page parente · rien n'est conclu",
+  incomplete: "Une image de la page d'arrivée n'a pas pu être lue · rien n'est conclu",
+  other_section: "Renvoyée vers une autre rubrique ou un autre pays · rien n'est conclu",
+  other_site: "Renvoyée vers un autre site · rien n'est conclu",
+  barrier: "Renvoyée vers une barrière (consentement, connexion, âge, pays) · rien n'est conclu",
+  error: "La page d'arrivée a répondu en erreur · rien n'est conclu",
 };
 
 export const PAGE_SIZE = 50;
+
+/** What a page sent to the home page or a parent page says once the organization's rule is on: the algorithm only proposes, a person marks it replaced. */
+export const HOME_TO_VALIDATE = "Renvoyée vers l'accueil ou une page parente · marquez-la « Remplacée » pour valider";
 
 /** The pages of a visual still online, gone or unknown, with the counts per site version and section. The key starts
  * with "occurrences": what a finished read refreshes. */
@@ -37,6 +57,8 @@ export function usePresence(referenceId: string, narrowing: Narrowing, offset: n
 
 /** A visual to replace: its pages per state; `replaced` once every page was read again and none shows it. */
 export type VisualItem = Counts & {
+  /** The pages still unknown that answered with another page, by kind of redirect (see `REDIRECT_TEXT`). Absent from an older server. */
+  redirected?: Record<string, number>;
   reference_id: string;
   filename: string;
   expiry_date: string | null;
@@ -53,7 +75,7 @@ export function useVisuals() {
   const { apiPath, brand } = useOrg();
   return useQuery({
     queryKey: ["occurrences", brand.id, "visuals"],
-    queryFn: () => api.get<{ visuals: VisualItem[]; suspect_sites: { site_id: string; label: string; site_url: string; reason: string }[] }>(apiPath("/visuals")),
+    queryFn: () => api.get<{ visuals: VisualItem[]; suspect_sites: { site_id: string; label: string; site_url: string; reason: string }[]; redirects_concluded?: boolean }>(apiPath("/visuals")),
   });
 }
 

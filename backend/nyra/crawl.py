@@ -96,6 +96,69 @@ def same_page(requested: str, final: str) -> bool:
     return host(a) == host(b) and a.path.rstrip("/") == b.path.rstrip("/")
 
 
+# How a redirected page is told apart (AXE-641). Stored with the page (`pages.redirect_kind`), so the facts are collected before any rule
+# concludes from them (`docs/MATCHING.md`). `clear` is the only kind a conclusion may rest on; the others are never taken for "gone".
+MAX_REDIRECT_HOPS = 20
+PERMANENT_REDIRECTS = (301, 308)
+# Where a redirect usually leads to a barrier (a login, an age gate, a country or language choice): never a replacement of the page.
+BARRIER_PATH = re.compile(r"(^|/)(log[-_]?in|sign[-_]?(in|up)|connexion|identification|auth|authenticate|sso|(my[-_]|mon[-_])?(account|compte)|"
+                          r"consent|welcome|age|age[-_]?gate|verify|verification|region|(select[-_])?country|pays|langue|language|locale|choose)"
+                          r"(/|$|\.|-|_|\?)", re.I)
+
+
+def _depth(url: str) -> int:
+    return len([part for part in urlparse(url).path.split("/") if part])
+
+
+def _first_segment(url: str) -> str:
+    return urlparse(url).path.strip("/").split("/", 1)[0].lower()
+
+
+def redirect_kind(requested: str, final: str, hops: Sequence[int], final_status: int, walled: bool, site_url: str) -> Optional[str]:
+    """What the page that ended elsewhere is, or None when it ended on the page asked for (`same_page`):
+    `other_site` another domain; `barrier` a consent wall, or a login / age / country page; `script` no HTTP redirect, or a script or a click
+    went on after it (the status and the hops are those of the first document, not of the target's: nothing is concluded); `error` the target
+    did not answer 2xx; `home` the home page or a PARENT page (shallower than the page asked for: a deleted page often goes to its category or
+    its locale's home: ambiguous); `other_section` outside the address's path or in another first segment of the path (`/en-us/..` to
+    `/fr/..`); `temporary` a redirect that is not permanent (302, 303, 307: it may be a test, a country, a campaign); `clear` a permanent
+    redirect (301, 308) to another page of the same section, as deep as the page asked for, read with success; `incomplete` (set by the
+    reader) a `clear` one whose images could not all be downloaded. `hops`: the status of each HTTP redirect, first one first."""
+    if same_page(requested, final):
+        return None
+    if _bare_host(urlparse(final).netloc) != _bare_host(urlparse(requested).netloc):
+        return "other_site"
+    target = urlparse(final)
+    if walled or BARRIER_PATH.search(f"{target.path}?{target.query}"):
+        return "barrier"
+    if not hops:
+        return "script"
+    if not 200 <= final_status < 300:
+        return "error"
+    if _depth(final) < _depth(requested):
+        return "home"
+    if not same_site(final, site_url) or _first_segment(final) != _first_segment(requested):
+        return "other_section"
+    return "clear" if all(status in PERMANENT_REDIRECTS for status in hops) else "temporary"
+
+
+async def redirect_hops(response) -> list[int]:
+    """The status of each HTTP redirect that led to `response`, first one first (at most `MAX_REDIRECT_HOPS`); empty when there was none.
+    Best effort: what Playwright cannot tell (a request already released) leaves the list shorter, which only makes the kind more prudent."""
+    hops: list[int] = []
+    request = getattr(response, "request", None)
+    for _ in range(MAX_REDIRECT_HOPS):
+        request = request.redirected_from if request else None
+        if request is None:
+            break
+        try:
+            hop = await request.response()
+        except Exception:  # noqa: BLE001 - best effort: the hop is counted with status 0, which is never "permanent"
+            hop = None
+        hops.append(hop.status if hop else 0)
+    hops.reverse()
+    return hops
+
+
 def normalize_url(url: str) -> str:
     """Canonical form used as the page key.
 
@@ -584,7 +647,8 @@ class CrawlStore(Protocol):
 
     def upsert_page(self, url: str) -> Any: ...
 
-    def mark_page(self, page_id: Any, http_status: int) -> None: ...
+    def mark_page(self, page_id: Any, http_status: int, redirect: Optional[dict] = None) -> None:
+        """`redirect`: where a page that ended elsewhere ended (`url`, `hops`, `status`, `kind`); None for a page that did not."""
 
     def known_images(self, urls: Sequence[str]) -> dict[str, Any]:
         """url -> image id, for images already downloaded and hashed."""
@@ -847,6 +911,9 @@ class _Crawl:
                 background_urls = []
             http_status = response.status if response else 0
             final_url = page.url
+            hops = await redirect_hops(response) if not same_page(url, final_url) else []
+            if response and not same_page(getattr(response, "url", final_url), final_url):
+                hops = []  # a script or a click went on after the HTTP redirects: the hops and the status are not the target's
         except Exception as exc:  # noqa: BLE001 - one bad page must not kill the crawl
             self.stats.render_seconds += time.perf_counter() - render_started
             self.stats.errors.append(f"{url}: {str(exc).splitlines()[0][:300]}")
@@ -873,19 +940,30 @@ class _Crawl:
             for link in extract_internal_links(html, final_url, self.site_url):
                 self.enqueue(link)
 
+        failed_before = self.stats.downloads_failed
         if not await self._collect_images(http, sorted(image_urls), page_id):
             return  # stopped between two waves: the page stays `pending`, so a read that starts again reads it whole
+        http_status, redirect = self._outcome(url, final_url, http_status, walled, hops, incomplete=self.stats.downloads_failed > failed_before)
+        await asyncio.to_thread(self._locked, self.store.mark_page, page_id, http_status, redirect)
+        self.stats.pages_visited += 1
+
+    def _outcome(self, url: str, final_url: str, http_status: int, walled: bool, hops: list[int], *,
+                 incomplete: bool = False) -> tuple[int, Optional[dict]]:
+        """How a page that was read is recorded: its status, and where it ended when that is not the page asked for."""
         # A page that sent the reader elsewhere says nothing about what the requested page shows: recorded as a redirection.
         if not same_page(url, final_url):
             self.stats.pages_redirected += 1
-            http_status = REDIRECTED
-        elif walled and 200 <= http_status < 300:
+            kind = redirect_kind(url, final_url, hops, http_status, walled and 200 <= http_status < 300, self.site_url)
+            if kind == "clear" and incomplete:
+                kind = "incomplete"  # an image of the target that could not be downloaded would read as "gone": nothing is concluded
+            shown = urlunparse(urlparse(final_url)._replace(query="", fragment=""))  # a query may carry a token or a return address
+            return REDIRECTED, {"url": shown, "hops": len(hops), "status": CONSENT_WALL if walled and 200 <= http_status < 300 else http_status, "kind": kind}
+        if walled and 200 <= http_status < 300:
             self.stats.pages_walled += 1
-            http_status = CONSENT_WALL
-        elif 200 <= http_status < 300:
+            return CONSENT_WALL, None
+        if 200 <= http_status < 300:
             self.stats.pages_ok += 1
-        await asyncio.to_thread(self._locked, self.store.mark_page, page_id, http_status)
-        self.stats.pages_visited += 1
+        return http_status, None
 
     async def _collect_images(self, http: httpx.AsyncClient, image_urls: list[str], page_id: Any) -> bool:
         """Download and store the page's images; False when the read was stopped before all of them were."""

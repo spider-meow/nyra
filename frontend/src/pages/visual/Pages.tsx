@@ -5,7 +5,7 @@ import { Button, Segmented, cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { hostOf, pathOf } from "../../lib/format";
 import { useOrg } from "../../lib/org";
-import { MAX_CHECKED_PAGES, PAGE_SIZE, useCheckPages, useMarkReplaced, type Counts, type Narrowing, type PageState, type Presence } from "../../lib/presence";
+import { HOME_TO_VALIDATE, MAX_CHECKED_PAGES, PAGE_SIZE, REDIRECT_TEXT, useCheckPages, useMarkReplaced, type Counts, type Narrowing, type PageState, type Presence } from "../../lib/presence";
 
 const STATE_TEXT: Record<PageState, { label: string; tone: string }> = {
   still: { label: "Encore en ligne", tone: "bg-expired-soft text-expired" },
@@ -19,11 +19,21 @@ type Page = Presence["pages"][number];
 
 /** What a page says once the person's mark and the last read are put together. The state of a marked page answers the
  * mark only when the page was read again after it was marked: before that, it says the mark waits to be checked. */
-function statusOf(page: Page): { label: string; tone: string } {
-  if (!page.marked) return page.walled && page.state === "unknown" ? { label: "Page masquée par un bandeau de consentement", tone: "bg-soon-soft text-soon" } : STATE_TEXT[page.state];
+function statusOf(page: Page, concluded: boolean): { label: string; tone: string } {
+  if (!page.marked) {
+    const why = page.state === "unknown" && page.redirect_kind && !(page.redirect_kind === "clear" && concluded)
+      ? (page.redirect_kind === "home" && concluded ? HOME_TO_VALIDATE : REDIRECT_TEXT[page.redirect_kind]) : undefined;
+    if (why) return { label: why, tone: "bg-soon-soft text-soon" };
+    return page.walled && page.state === "unknown" ? { label: "Page masquée par un bandeau de consentement", tone: "bg-soon-soft text-soon" } : STATE_TEXT[page.state];
+  }
   if (page.checked && page.state === "gone") return { label: "Remplacée · confirmée", tone: "bg-ok-soft text-ok" };
   if (page.checked && page.state === "still") return { label: "Marquée remplacée · encore en ligne", tone: "bg-expired-soft text-expired" };
   return { label: "Remplacée · à vérifier", tone: "bg-soon-soft text-soon" };
+}
+
+/** Where a redirected page ended: the path when it stayed on the same site, the whole address when it left it. */
+function redirectLabel(from: string, to: string): string {
+  return hostOf(to) === hostOf(from) ? pathOf(to) : to;
 }
 
 /** How many pages are in each state for the version and rubric chosen (the whole visual when none is). */
@@ -101,8 +111,9 @@ export function Pages(props: { referenceId: string; data: Presence; narrowing: N
               <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="min-w-0 basis-full hover:underline lg:flex-1 lg:basis-0">
                 <span className="block truncate text-xs text-muted">{hostOf(page.url)}</span>
                 <span className="block truncate font-mono text-[13px]">{pathOf(page.url)}</span>
+                {page.redirect_url ? <span className="block truncate text-xs text-muted" title={page.redirect_url}>Redirigée vers {redirectLabel(page.url, page.redirect_url)}{page.redirect_hops && page.redirect_hops > 1 ? ` · ${page.redirect_hops} sauts` : ""}</span> : null}
               </a>
-              <span className={cx("shrink-0 rounded-md px-2 py-px text-xs font-medium", statusOf(page).tone)}>{statusOf(page).label}</span>
+              <span className={cx("shrink-0 rounded-md px-2 py-px text-xs font-medium", statusOf(page, Boolean(data.redirects_concluded)).tone)}>{statusOf(page, Boolean(data.redirects_concluded)).label}</span>
               {admin ? <Button size="sm" variant="ghost" disabled={busy || Boolean(hold)} {...holdProps(hold)} aria-label={`Vérifier la page ${pathOf(page.url)}`} onClick={() => verify([page.url])}>Vérifier</Button> : null}
               <label className="flex shrink-0 items-center gap-2 text-xs text-muted">
                 <input type="checkbox" className="h-[18px] w-[18px] accent-ink" checked={page.marked} disabled={mark.isPending} aria-label={`Page remplacée : ${pathOf(page.url)}`} onChange={(event) => setMarked([page.url], event.target.checked)} />
