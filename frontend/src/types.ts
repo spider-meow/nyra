@@ -276,9 +276,9 @@ export type SiteImage = {
   logo: { score: number; kept: boolean } | null;
 };
 
-export type SiteImageStatus = "qualify" | "found" | "logo" | "ignored";
+export type SiteImageStatus = "qualify" | "found" | "logo" | "packshot" | "ignored";
 /** The tabs of "Images en ligne". */
-export type SiteImageView = "qualify" | "found" | "logos" | "ignored" | "all";
+export type SiteImageView = "qualify" | "found" | "logos" | "packshots" | "ignored" | "all";
 /** One page of one tab, with the total of every tab and the site versions (US, FR...) of this one. */
 export type SiteImagesPage = {
   view: SiteImageView;
@@ -288,6 +288,8 @@ export type SiteImagesPage = {
   sites: { id: string; label: string; count: number }[];
   /** Whether the brand leaves the logos out of the comparison (Réglages > Général > Logos). */
   logos_set_aside: boolean;
+  /** Whether the brand filed the packshots under their own tab (Réglages > Général > Packshots). */
+  packshots_enabled: boolean;
 };
 
 // --- labels (types of site image, contents) ---

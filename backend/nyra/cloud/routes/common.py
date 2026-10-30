@@ -33,6 +33,7 @@ from .. import db as cloud_db
 from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
 from .. import logos as cloud_logos
+from .. import packshots as cloud_packshots
 from .. import storage as cloud_storage
 from .. import usage as cloud_usage
 
@@ -349,14 +350,16 @@ def _qualify(rows: list[dict], left_out: set) -> list[dict]:
 
 def _group_unreferenced(conn, brand_id: uuid.UUID, config: Config, rows: list[dict]) -> list[dict]:
     """`rows` (unmatched site images) without the ones set aside, one entry per photo (see `_qualify`)."""
-    excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match) | cloud_logos.set_aside_ids(conn, brand_id)
+    # The packshots leave "À qualifier" (their own tab) while the brand's setting is on; the comparison with the library still reads them (`cloud_logos.set_aside_ids` is what it leaves out).
+    excluded = (match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match) | cloud_logos.set_aside_ids(conn, brand_id)
+                | cloud_packshots.ids(conn, brand_id))
     return _qualify(rows, excluded)
 
 
 # The tabs of "Images en ligne", and what each lists. A row's `status` is the first that applies: found in the library
-# (`found`), set aside by hand (`ignored`), recognised as a logo (`logo`), else still to qualify (`qualify`).
-VIEWS = ("qualify", "found", "logos", "ignored", "all")
-STATUS_ORDER = ("found", "ignored", "logo", "qualify")
+# (`found`), set aside by hand (`ignored`), recognised as a logo (`logo`), a packshot while the brand's setting is on (`packshot`), else still to qualify (`qualify`).
+VIEWS = ("qualify", "found", "logos", "packshots", "ignored", "all")
+STATUS_ORDER = ("found", "ignored", "logo", "packshot", "qualify")
 
 
 def group_status(rows: list[dict]) -> str:
@@ -373,16 +376,20 @@ def online_images(conn, brand_id: uuid.UUID, config: Config) -> dict[str, list[d
     0.3 s for 10,000 images, 1 s for 30,000, growing in step with them). Past that, count the tabs in SQL and group only
     the tab asked for, or cache by a fingerprint like `unreferenced_count` does."""
     cloud_logos.score_pending(conn, brand_id)  # the images read since the last time, so the Logos tab is never behind
+    cloud_packshots.score_pending(conn, brand_id)  # the same for the Packshots tab (nothing unless the brand turned it on)
     rows = cloud_db.site_images_with_pages(conn, brand_id)
     excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
     aside = cloud_logos.set_aside_ids(conn, brand_id)
+    packshots = cloud_packshots.ids(conn, brand_id)
     for row in rows:
         row["recognised"] = row["logo_score"] is not None and row["logo_score"] >= detector.THRESHOLD
-        row["status"] = "found" if row["matched"] else "ignored" if row["id"] in excluded else "logo" if row["recognised"] else "qualify"
+        row["status"] = ("found" if row["matched"] else "ignored" if row["id"] in excluded else "logo" if row["recognised"]
+                         else "packshot" if row["id"] in packshots else "qualify")
     return {
-        "qualify": _qualify(rows, excluded | aside),
+        "qualify": _qualify(rows, excluded | aside | packshots),
         "found": group_rows([row for row in rows if row["matched"]]),
         "logos": group_rows([row for row in rows if row["recognised"]]),
+        "packshots": group_rows([row for row in rows if row["id"] in packshots]),
         "ignored": group_rows([row for row in rows if row["id"] in excluded]),
         "all": group_rows(rows),
     }
@@ -406,7 +413,7 @@ def unreferenced_count(conn, brand_id: uuid.UUID, config: Config) -> int:
     """How many entries `unreferenced_images` would list, without listing them."""
     key = (brand_id, config.match.phash_threshold, config.match.dhash_threshold)
     # before the rows: they can only be newer than it
-    signature = cloud_db.unreferenced_signature(conn, brand_id) + cloud_logos.fingerprint(conn, brand_id)
+    signature = cloud_db.unreferenced_signature(conn, brand_id) + cloud_logos.fingerprint(conn, brand_id) + cloud_packshots.fingerprint(conn, brand_id)
     with _unreferenced_lock:
         cached = _unreferenced_counts.get(key)
     if cached and cached[0] == signature:

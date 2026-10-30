@@ -1260,3 +1260,34 @@ def test_a_job_that_ended_before_it_saw_the_stop_is_done_not_started_again(worke
     assert worker.run_once()
     done = _job(cloud_database_url, cloud_brand, job["id"])
     assert done["status"] == "done" and done["message"] == "Rapport prêt."
+
+
+def test_an_index_job_measures_the_border_of_the_images_read_before_the_setting_and_only_when_it_is_on(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
+    """AXE-527: the images already in the base are measured by the next index job (their picture is read, nothing else), and only for a brand that turned the Packshots tab on."""
+    from nyra.cloud import packshots as cloud_packshots
+
+    plain = Image.new("RGB", (320, 320), "white")
+    ImageDraw.Draw(plain).rounded_rectangle([120, 40, 200, 280], radius=20, fill=(150, 60, 20))
+    buf = io.BytesIO()
+    plain.save(buf, format="JPEG")
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://pack.example")
+        bottle = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://pack.example/bottle", buf.getvalue())
+        noise = np.random.default_rng(2).integers(0, 255, (320, 320, 3), dtype=np.uint8)  # a picture whose border is not one colour
+        scene_bytes = io.BytesIO()
+        Image.fromarray(noise).save(scene_bytes, format="JPEG")
+        scene = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://pack.example/scene", scene_bytes.getvalue())
+        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="index")
+    assert worker.run_once()
+    with cloud_db.connect(cloud_database_url) as conn:
+        measures = lambda: {row["id"]: row["bg_uniform"] for row in conn.execute("SELECT id, bg_uniform FROM site_images WHERE id = ANY(%s)", ([bottle, scene],)).fetchall()}  # noqa: E731
+        assert measures() == {bottle: None, scene: None}  # off: no picture was read for it
+        assert cloud_packshots.set_enabled(conn, cloud_org, cloud_brand, True)
+        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="index")
+    assert worker.run_once()
+    with cloud_db.connect(cloud_database_url) as conn:
+        found = measures()
+        assert found[bottle] >= 0.99 and found[scene] < 0.9  # a bottle on white has a flat border, the other picture does not
+        assert cloud_packshots.ids(conn, cloud_brand) <= {bottle}  # the product probability comes from the embedding the same job stored
+        assert conn.execute("SELECT count(*) AS n FROM site_images WHERE id = ANY(%s) AND packshot_score IS NOT NULL", ([bottle, scene],)).fetchone()["n"] == 2

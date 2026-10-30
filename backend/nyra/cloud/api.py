@@ -41,6 +41,7 @@ from .routes import (
     members,
     notifications,
     occurrences,
+    packshots,
     reports_settings,
     schedule_settings,
     session,
@@ -150,7 +151,7 @@ def create_app(settings: CloudSettings) -> FastAPI:
     # (the order of `/library/export-csv` against `/library/{filename}` matters), the catch-all page last.
     interface.add_security(app, settings.supabase_url, settings.sentry_browser_dsn)
     interface.mount_assets(app, dist)
-    for module in (session, staff, staff_emails, audit, brands, members, collections, library, occurrences, jobs, matches, site_images, logos, reports_settings, schedule_settings, notifications, usage):
+    for module in (session, staff, staff_emails, audit, brands, members, collections, library, occurrences, jobs, matches, site_images, logos, packshots, reports_settings, schedule_settings, notifications, usage):
         app.include_router(module.router)
     if os.environ.get("NYRA_LABELS") == "1":  # labels (types and contents) are switched off until they are calibrated
         app.include_router(labels.router)

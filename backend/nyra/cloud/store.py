@@ -18,6 +18,7 @@ from nyra import fetch
 
 from . import db as cloud_db
 from . import logos as cloud_logos
+from . import packshots as cloud_packshots
 from . import storage as cloud_storage
 from .schedule import once_per_hour
 
@@ -173,6 +174,7 @@ class CloudCrawlStore:
                 stored_bytes=len(working_copy) + len(processed.thumbnail),
             )
             cloud_db.link_image_page(conn, image_id, page_id)
+            cloud_packshots.measures(conn, image_id, embedding, processed.bg_uniform)  # what the Packshots tab reads, known now: no later pass for new images
         return image_id
 
 

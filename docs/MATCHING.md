@@ -260,6 +260,7 @@ precision and recall have been measured on real images.** Current state (20 Oct 
 | Keypoint check of CLIP candidates | 20 inliers, 5 % / 20 % | `match.verify_clip_matches` (organization) | **on**; effectively off when OpenCV is missing (the signature then reads "unverified") | 1,057 images of one brand, copies made by us |
 | Labels (types, contents) | 0.82 (`CONTENT_THRESHOLD`) | `NYRA_LABELS=1` (API) and `VITE_LABELS=1` (interface), build-time | **off**: the routes are not registered, the screens not built | no |
 | Logos set aside | 0.95 (`logos.THRESHOLD`) | per brand, `brands.set_aside_logos` (Réglages > Général, administrators) | **off** | 1,716 images of one brand; precision only, recall not counted |
+| Packshots (`nyra/packshots.py`) | CLIP product probability >= 0.9 AND border of the image one flat colour >= 0.9 | `brands.detect_packshots` (per brand, Réglages > Général > Packshots, administrators) | **off** | **partly**: 96 random images of one brand's site, one person labelling (precision 13 of 13, recall 13 of 13; lower bound of the precision about 0.77) |
 | Twin references compared once (`reference_twins`) | both hashes within 2 bits and CLIP ≥ 0.985, groups of 40 at most | `match.group_reference_twins` (organization, Réglages > Détection) | **off** | **no** (chosen stricter than every match threshold; to measure on a library before turning it on) |
 | Redirected pages concluded (`crawl.redirect_kind`, `presence`) | permanent (301/308) redirect, same host and first path segment, target 2xx and not a consent wall, not a login / age / country path | `report.conclude_redirected_pages` (organization, Réglages > Détection) | **off** | **no** (written from the issue, no real address replayed yet: to measure before turning it on) |
 | Grouping of crops (`variants`) | CLIP ≥ 0.75 for 5 neighbours, then ≥ 20 inliers and ≥ 20 % of both images | none | **ON for every brand, after every comparison** | **no** (the thresholds were measured for brand-to-site matches, not for site-to-site grouping) |
@@ -296,6 +297,38 @@ can validate it: marking the page « Remplacée » for the visual (the existing 
 like any page, « retirée » when the visual is not on the target (« encore en ligne » when it is, which says the mark was wrong). The mark waits, as ever,
 until the page is read again; before that, and for every other kind (`temporary`, `script`, `other_section`, `other_site`, `barrier`, `error`,
 `incomplete`), nothing changes. « Visuels à remplacer » shows the pages sent elsewhere that remain unknown, by kind.
+
+## Packshots (AXE-527)
+
+A packshot is a product photographed alone on a plain background (a bottle cut out on white, grey or black). Off by default (`brands.detect_packshots`, the flag rule
+above). On, the images detected go to their own tab of "Images en ligne" and leave "À qualifier"; they stay under "Toutes", and **the comparison with the library
+still reads them** (the library's own visuals are often packshots: leaving them out of the comparison would miss an expired packshot still online). Nothing is
+hidden or ignored; turning the setting off puts everything back.
+
+*The rule* (`nyra/packshots.py`): `product_probability >= 0.9` AND `edge_uniformity >= 0.9`.
+- `product_probability`: CLIP zero-shot on the stored embedding (the share of the softmax on five "product on a plain background" descriptions against fourteen others,
+  `resources/packshot_text.npz`, regenerate with `python -m nyra.packshots`). **Alone it is not enough**: it gives about 1.0 to every photograph with a bottle in it,
+  advertising visuals and lifestyle scenes included.
+- `edge_uniformity`: the share of the pixels of a thin border (6 px on the picture shrunk to 128 px) within 14 grey levels of the border's median colour. Measured on
+  the pixels because CLIP does not see "plain background" (descriptions about the background alone: precision 0.73 at recall 0.62).
+
+*Measure* (30 October 2026, the 1,113 images of one brand's site, a random sample of 96 labelled by one person: 13 packshots, 4 ambiguous, 79 others):
+
+| Rule | Precision | Recall |
+|---|---|---|
+| CLIP product >= 0.99 | 0.82 | 0.69 |
+| CLIP product >= 0.90 | 0.65 | 1.00 |
+| border alone >= 0.9 and the border colour covering half the picture | 0.77 | 0.77 |
+| **CLIP product >= 0.9 and border >= 0.9** | **1.00 (13 of 13)** | **1.00** |
+
+About 11 % of that site's images are detected (126 of 1,113). *Not measured / limits:* one site, one person labelling, 13 positives (the lower bound of the precision is
+about 0.77, not 1.00), and the border threshold was chosen looking at the same images. Packshots on a studio gradient (a range of several bottles) or on a dark textured
+backdrop are missed; an illustration on a flat colour may be taken for one. Measure on another brand, and with more images, before relying on it: the Packshots tab is
+the place to look (the thresholds are `PRODUCT_THRESHOLD` and `UNIFORM_THRESHOLD`).
+
+*Where the measures live* (migration `20261030000044`): `site_images.packshot_score` (the product probability, worked out from the stored embedding) and `bg_uniform`
+(the border, measured on the pixels when a crawl reads the image). Images read before the setting was turned on are measured by the next `index` job, which reads their
+thumbnail and nothing else; the route that turns the setting on queues one.
 
 ## Twin references
 

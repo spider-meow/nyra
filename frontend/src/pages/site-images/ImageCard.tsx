@@ -10,6 +10,7 @@ const PILLS: Record<SiteImageStatus, { label: string; tone: string }> = {
   qualify: { label: "Droits non vérifiés", tone: "bg-urgent-soft text-urgent" },
   found: { label: "Dans la bibliothèque", tone: "bg-ok-soft text-ok" },
   logo: { label: "Logo", tone: "bg-unknown-soft text-unknown" },
+  packshot: { label: "Packshot", tone: "bg-unknown-soft text-unknown" },
   ignored: { label: "Ignorée", tone: "bg-unknown-soft text-unknown" },
 };
 

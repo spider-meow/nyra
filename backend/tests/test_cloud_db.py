@@ -766,6 +766,11 @@ def test_crawl_store_saves_images_and_reuses_duplicate_bytes(cloud_database_url,
     assert not any(path.endswith(f"{processed.content_hash}.jpg") and "/work/" not in path and "/thumbs/" not in path
                    for bucket, path in fake_storage_client.store)
 
+    # The two measures the Packshots tab reads are kept with the image (AXE-527): a new image needs no later pass.
+    with cloud_db.connect(cloud_database_url) as conn:
+        row = conn.execute("SELECT packshot_score, bg_uniform FROM site_images WHERE id = %s", (first,)).fetchone()
+    assert row["packshot_score"] is not None and 0 <= row["packshot_score"] <= 1 and row["bg_uniform"] == pytest.approx(processed.bg_uniform, abs=1e-6)
+
     existing = store.image_by_content_hash(processed.content_hash)
     second = store.save_duplicate(url="https://t.test/a.jpg?w=600", page_id=page, existing=existing)
     assert second != first

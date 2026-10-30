@@ -16,7 +16,7 @@ import { AddToLibrary } from "./site-images/AddToLibrary";
 import { ImageCard, Zoom } from "./site-images/ImageCard";
 import { LabelingMode, TypeButtons, TypeFilter, typeOf } from "./site-images/Typing";
 
-const TABS: [SiteImageView, string][] = [["qualify", "À qualifier"], ["found", "Retrouvées"], ["logos", "Logos"], ["ignored", "Ignorées"], ["all", "Toutes"]];
+const TABS: [SiteImageView, string][] = [["qualify", "À qualifier"], ["found", "Retrouvées"], ["logos", "Logos"], ["packshots", "Packshots"], ["ignored", "Ignorées"], ["all", "Toutes"]];
 const isView = (value: string | null): value is SiteImageView => TABS.some(([name]) => name === value);
 
 /**
@@ -37,6 +37,7 @@ export function SiteImages() {
   // A search, a site or a refresh with cards on screen: they stay (never passed off as the new answer: see `stale`), and so do the counters of the tabs.
   const refreshing = images.isFetching && !images.isFetchingNextPage && !images.isLoading;
   const counts = useLastKnown(page?.counts);
+  const packshotsOn = useLastKnown(page?.packshots_enabled) ?? false; // the tab exists only for a brand that turned the category on (it stays while another tab loads)
   const pick = useSelection();
   const [adding, setAdding] = useState<SiteImage[] | null>(null);
   const [zoom, setZoom] = useState<SiteImage | null>(null);
@@ -54,7 +55,7 @@ export function SiteImages() {
   return (
     <div className={cx(qualifying && chosen.length > 0 && "pb-20")}>
       <PageHeader title="Images en ligne" actions={admin && LABELS_ENABLED ? <Button onClick={() => setTyping(true)}>Étiqueter à la main</Button> : undefined} />
-      <ViewTabs view={view} counts={counts} onChange={changeView} />
+      <ViewTabs view={view} counts={counts} packshots={packshotsOn || view === "packshots"} onChange={changeView} />
       <ViewNote view={view} logosSetAside={page?.logos_set_aside} />
       {images.isLoading ? (
         <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" cell="aspect-[4/5]" />
@@ -168,10 +169,10 @@ function useLabelFilter(items: SiteImage[], labelsOf: (item: SiteImage) => Image
 type LabelFilter = ReturnType<typeof useLabelFilter>;
 
 /** The tabs of the page, each with its total. */
-function ViewTabs(props: { view: SiteImageView; counts: SiteImagesPage["counts"] | undefined; onChange: (view: SiteImageView) => void }) {
+function ViewTabs(props: { view: SiteImageView; counts: SiteImagesPage["counts"] | undefined; packshots: boolean; onChange: (view: SiteImageView) => void }) {
   return (
     <div className="mb-4 flex w-full overflow-x-auto border-b border-line [scrollbar-width:none]" role="tablist" aria-label="Images en ligne">
-      {TABS.map(([name, label]) => (
+      {TABS.filter(([name]) => name !== "packshots" || props.packshots).map(([name, label]) => (
         <button
           key={name}
           type="button"
@@ -200,6 +201,7 @@ function ViewNote({ view, logosSetAside }: { view: SiteImageView; logosSetAside:
     logos: logosSetAside
       ? <>Images reconnues comme logos : elles ne sont ni comparées ni proposées dans « À qualifier ». Le réglage se change dans les {settings}.</>
       : <>Images reconnues comme logos. Le réglage « Ne pas comparer les logos » est désactivé : elles sont encore comparées et proposées dans « À qualifier ». Pour les mettre à part, voir les {settings}.</>,
+    packshots: <>Photos de produit seul sur un fond uni, repérées par Nyra. Elles ne sont plus dans « À qualifier » mais restent comparées à la bibliothèque : rien n'est masqué. Une erreur de détection se corrige en désactivant le réglage dans les {settings}.</>,
     ignored: <>Images mises de côté à la main : elles ne sont plus proposées. On les réintègre depuis les <Link className={linkClass} to={`${link("settings")}?section=general`}>Réglages</Link>.</>,
   };
   return notes[view] ? <p className="mb-4 rounded-xl bg-side px-4 py-3 text-sm text-ink-soft">{notes[view]}</p> : null;

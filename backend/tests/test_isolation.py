@@ -117,6 +117,7 @@ BODIES = {
     ("POST", BR + "/site-images/adopt"): lambda t: {"json": {"site_image_ids": [str(t["image"])]}},
     ("POST", BR + "/exclusions"): lambda t: {"json": {"site_image_id": str(t["image"])}},
     ("PUT", BR + "/logos/setting"): lambda t: {"json": {"enabled": True}},
+    ("PUT", BR + "/packshots/setting"): lambda t: {"json": {"enabled": True}},
     ("POST", BR + "/logos/keep"): lambda t: {"json": {"site_image_ids": [str(t["image"])], "kept": False}},
     ("POST", BR + "/reports"): lambda t: {"json": {}},
     ("PUT", ORG + "/settings"): lambda t: {"json": {"overrides": {"crawl": {"max_pages": 5}}}},

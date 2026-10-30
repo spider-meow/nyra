@@ -22,6 +22,7 @@ Job kinds:
 from __future__ import annotations
 
 import errno
+import io
 import itertools
 import logging
 import os
@@ -39,6 +40,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 import psycopg
+from PIL import Image
 
 from nyra import fetch, netguard, observability
 from nyra import report as report_module
@@ -46,12 +48,14 @@ from nyra.config import Config, load_config, with_overrides
 from nyra.crawl import BrowserUnavailable, CrawlStats, crawl_pages, crawl_site, normalize_url
 from nyra.estimate import remaining_seconds
 from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching, warm_clip
+from nyra.packshots import edge_uniformity
 
 from . import audit as cloud_audit
 from . import db as cloud_db
 from . import digest as cloud_digest
 from . import hostmetrics
 from . import jobs as cloud_jobs
+from . import packshots as cloud_packshots
 from . import presence as cloud_presence
 from . import schedule as cloud_schedule
 from . import storage as cloud_storage
@@ -421,6 +425,38 @@ class _IndexRun:
             _SITE_CHUNK, _one_per_hash,
             lambda row: (cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"], row["content_hash"] or row["phash"]),
             self._prepare_site, _UPDATE_SITE)
+
+    def backfill_packshots(self) -> int:
+        """The border of the site images read before the brand turned the Packshots tab on (AXE-527): each one's thumbnail is read, nothing else.
+        Nothing unless the setting is on; an image that cannot be read is passed once and tried again at the next job. Returns how many were measured."""
+        with cloud_db.connect(self.database_url) as conn:
+            if not cloud_packshots.is_enabled(conn, self.brand_id):
+                return 0
+            cloud_packshots.score_pending(conn, self.brand_id)  # the embeddings are stored: no image is read for the product score
+        measured, after = 0, _FIRST_ID
+        while True:  # keyset on `id`: each pass moves forward, so the job always ends
+            if self.ctx.should_stop():
+                return measured
+            with cloud_db.connect(self.database_url) as conn:
+                rows = cloud_packshots.pending_background(conn, self.brand_id, after)
+            if not rows:
+                return measured
+            found = [(value, row["id"]) for row in rows if (value := self._background_of(row["path"])) is not None]
+            if found:
+                with cloud_db.connect(self.database_url) as conn, conn.cursor() as cur:
+                    cur.executemany("UPDATE site_images SET bg_uniform = %s WHERE id = %s", found)
+            measured += len(found)
+            after = rows[-1]["id"]
+            self.ctx.report(f"Mesure du fond des images · {measured}", {"phase": "index", "done": measured, "total": measured})
+
+    def _background_of(self, path: str) -> Optional[float]:
+        try:
+            data = cloud_storage.cached_download(self.storage, cloud_storage.BUCKET_SITE_IMAGES, path)
+            with Image.open(io.BytesIO(data)) as img:
+                return edge_uniformity(img)
+        except Exception:  # noqa: BLE001 - a missing or unreadable file must not stop the others
+            log.warning("measuring the border of %s failed; image skipped", path)
+            return None
 
     def result(self) -> dict[str, Any]:
         return {"indexed": self.updated, "metrics": {
@@ -961,7 +997,10 @@ class Worker:
         run.warm_model()
         run.process_references()
         run.process_sites()
+        measured = run.backfill_packshots()
         result = run.result()
+        if measured:
+            result["packshots_measured"] = measured
         if ctx.cancelled:
             return "Indexation arrêtée.", result
         if not self._has_site_images(brand_id):

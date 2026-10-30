@@ -31,6 +31,7 @@ const ACTION_LABEL: Record<string, string> = {
   "visual.replaced": "Pages marquées comme remplacées",
   "settings.update": "Réglages modifiés",
   "logos.setting": "Réglage des logos",
+  "packshots.setting": "Réglage des packshots",
   "logos.keep": "Logo gardé ou mis de côté",
   "brand.create": "Marque créée",
   "brand.update": "Marque renommée",
