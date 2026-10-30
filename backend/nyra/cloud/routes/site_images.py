@@ -18,6 +18,7 @@ from nyra.config import Config
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
 from .. import logos as cloud_logos
+from .. import packshots as cloud_packshots
 from .. import storage as cloud_storage
 from .common import (
     BRAND,
@@ -200,7 +201,7 @@ def site_images(view: str = "qualify", offset: int = Query(0, ge=0), limit: int 
                 site: Optional[uuid.UUID] = None, q: str = Query("", max_length=200),
                 scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """One tab of "Images en ligne", `limit` entries from `offset`: `qualify` (read on the sites, nothing in the library
-    matches it: rights unknown), `found` (a visual of the library is in it), `logos`, `ignored`, or `all`. `site` and `q`
+    matches it: rights unknown), `found` (a visual of the library is in it), `logos`, `packshots` (when the brand turned the category on), `ignored`, or `all`. `site` and `q`
     narrow the entries; `counts` are the totals of every tab and `sites` the site versions of this tab, whatever `site`
     and `q`. Only the thumbnails of the entries returned are signed."""
     if view not in VIEWS:
@@ -209,6 +210,7 @@ def site_images(view: str = "qualify", offset: int = Query(0, ge=0), limit: int 
         config = ctx.org_config(conn, scope.org_id)
         tabs = online_images(conn, scope.brand_id, config)
         logos_set_aside = cloud_logos.is_enabled(conn, scope.brand_id)
+        packshots_enabled = cloud_packshots.is_enabled(conn, scope.brand_id)
     needle = q.strip().lower()
     wanted = [group for group in tabs[view] if _wanted(group, site, needle)]
     page = wanted[offset : offset + limit]
@@ -221,6 +223,7 @@ def site_images(view: str = "qualify", offset: int = Query(0, ge=0), limit: int 
         "counts": {name: len(groups) for name, groups in tabs.items()},
         "sites": _site_tabs(tabs[view]),
         "logos_set_aside": logos_set_aside,
+        "packshots_enabled": packshots_enabled,
     }
 
 

@@ -280,6 +280,7 @@ traceback is in the worker's log.
   `restart: unless-stopped`; its job has no heartbeat for 3 minutes and goes back to the queue (lighter, without the
   page that was being read), and after the 2 retries fails with the message above.
 - **Redirect targets** (AXE-641): migration `20261029000043_page_redirects.sql` is additive (four nullable columns on `pages`): apply it by hand on Supabase before deploying. The reverse order is harmless: the worker logs one warning an hour (« apply migration 20261029000043 »), records pages as before, and the page of a visual shows no target until it is applied.
+- **Packshots** (AXE-527): migration `20261030000044_packshots.sql` is additive (two nullable columns on `site_images`, `brands.detect_packshots` false): apply it by hand on Supabase before deploying. The reverse order is harmless: until it is applied the setting answers "off" (one look at the catalogue a minute, no query on a missing column), a crawl records nothing more, and `PUT .../packshots/setting` answers 409. Turning the setting on queues an `index` job that reads the thumbnail of every image of the brand once.
 - **A hung worker** restarts itself, with no component reading the Docker socket: a watchdog thread of the
   worker exits (code 70) when its alive file has not been touched for 5 minutes (`WATCHDOG_SECONDS`), and
   `restart: unless-stopped` restarts it. This works with plain `docker compose` and on any platform. It covers a

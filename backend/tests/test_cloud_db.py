@@ -766,9 +766,17 @@ def test_crawl_store_saves_images_and_reuses_duplicate_bytes(cloud_database_url,
     assert not any(path.endswith(f"{processed.content_hash}.jpg") and "/work/" not in path and "/thumbs/" not in path
                    for bucket, path in fake_storage_client.store)
 
+    # The two measures the Packshots tab reads are kept with the image (AXE-527): a new image needs no later pass.
+    with cloud_db.connect(cloud_database_url) as conn:
+        row = conn.execute("SELECT packshot_score, bg_uniform FROM site_images WHERE id = %s", (first,)).fetchone()
+    assert row["packshot_score"] is not None and 0 <= row["packshot_score"] <= 1 and row["bg_uniform"] == pytest.approx(processed.bg_uniform, abs=1e-6)
+
     existing = store.image_by_content_hash(processed.content_hash)
     second = store.save_duplicate(url="https://t.test/a.jpg?w=600", page_id=page, existing=existing)
     assert second != first
+    with cloud_db.connect(cloud_database_url) as conn:  # the same bytes under another address: the same measures, or it would stay in "À qualifier" next to its twin
+        twin = conn.execute("SELECT packshot_score, bg_uniform FROM site_images WHERE id = %s", (second,)).fetchone()
+    assert (twin["packshot_score"], twin["bg_uniform"]) == (row["packshot_score"], row["bg_uniform"])
     store.mark_page(page, 200)
     assert store.known_images(["https://t.test/a.jpg", "https://t.test/other.jpg"]) == {"https://t.test/a.jpg": first}
     assert store.crawled_urls() == {"https://t.test/p"}
@@ -861,3 +869,26 @@ def test_a_page_records_when_its_read_started(cloud_database_url, cloud_org, clo
         assert conn.execute("SELECT status FROM pages WHERE id = %s", (first,)).fetchone()["status"] == "pending"
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT read_started_at FROM pages WHERE id = %s", (first,)).fetchone()["read_started_at"] > began
+
+
+def test_a_failing_packshot_measure_never_loses_the_image_that_was_read(cloud_database_url, cloud_org, cloud_brand, fake_storage_client, monkeypatch):
+    """AXE-527: the category is off by default, so reading a site must not depend on it: the image is kept, unmeasured, and the job `index` takes it up later."""
+    from nyra.cloud import packshots as cloud_packshots
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, cloud_org, cloud_brand)
+    store = CloudCrawlStore(org_id=cloud_org, site_id=site, database_url=cloud_database_url, storage_client=fake_storage_client)
+    page = store.upsert_page("https://t.test/p")
+    data = _jpeg(9)
+    processed = fetch.process_image(data, "image/jpeg", min_side_px=100, max_pixels=10_000_000)
+
+    def broken(_embeddings):
+        raise RuntimeError("the descriptions file is out of date")
+
+    monkeypatch.setattr(cloud_packshots, "product_scores", broken)
+    image = store.save_image(url="https://t.test/b.jpg", page_id=page, data=data, content_type="image/jpeg", processed=processed,
+                             embedding=np.ones(512, dtype=np.float32) / np.sqrt(512))
+    with cloud_db.connect(cloud_database_url) as conn:
+        row = conn.execute("SELECT url, packshot_score, bg_uniform FROM site_images WHERE id = %s", (image,)).fetchone()
+        linked = conn.execute("SELECT count(*) AS n FROM image_pages WHERE image_id = %s", (image,)).fetchone()["n"]
+    assert row["url"] == "https://t.test/b.jpg" and row["packshot_score"] is None and linked == 1

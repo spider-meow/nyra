@@ -46,6 +46,27 @@ export function useLogos() {
   });
 }
 
+/** The Packshots category of "Images en ligne" (AXE-527): whether the brand turned it on, whether the database can, and how many images are detected (administrators). */
+export function usePackshots() {
+  const { admin, apiPath, brand } = useOrg();
+  return useQuery({
+    queryKey: ["packshots", brand.id],
+    queryFn: () => api.get<{ available: boolean; enabled: boolean; detected: number }>(apiPath("/packshots")),
+    enabled: admin,
+  });
+}
+
+export function usePackshotMutations() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  return {
+    setEnabled: useMutation({
+      mutationFn: (enabled: boolean) => api.put<{ enabled: boolean; scored: number }>(apiPath("/packshots/setting"), { enabled }),
+      onSuccess: () => invalidate("packshots", "site-images", "overview", "jobs"),
+    }),
+  };
+}
+
 export function useLogoMutations() {
   const { apiPath } = useOrg();
   const invalidate = useInvalidate();

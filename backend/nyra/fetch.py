@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import warnings
 from dataclasses import dataclass
 from typing import BinaryIO, Optional, Union
@@ -22,7 +23,9 @@ from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 
 from nyra import netguard
 from nyra.match import compute_hashes
+from nyra.packshots import edge_uniformity
 
+log = logging.getLogger("nyra.fetch")
 THUMB_SIZE = 320
 
 _EXTENSIONS = {
@@ -254,6 +257,7 @@ class ProcessedImage:
     thumbnail: bytes
     extension: str
     rgb: Image.Image  # kept in memory only, for the embedding step: at most `WORKING_SIDE` px on its long side
+    bg_uniform: Optional[float] = None  # how much of the picture's border is one flat colour (`nyra.packshots`), kept next to the image
 
 
 def process_image(
@@ -281,6 +285,10 @@ def process_image(
     # Only the embedding and the working copy are cut from `rgb` (CLIP reads 224 px, the working copy is `WORKING_SIDE`): keep that
     # size, not the 3 bytes a pixel of the full image, which a page of large banners made 10 to 17 MiB a megapixel (AXE-643).
     processed.rgb.thumbnail((WORKING_SIDE, WORKING_SIDE))
+    try:
+        processed.bg_uniform = edge_uniformity(processed.rgb)
+    except Exception:  # noqa: BLE001 - a measure for a category that is off by default must never lose the image: it stays unmeasured (the `index` job takes it up)
+        log.exception("measuring the border of an image failed")
     return processed
 
 

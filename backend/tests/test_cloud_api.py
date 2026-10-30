@@ -1009,6 +1009,67 @@ def test_logos_are_set_aside_only_when_the_brand_asks_and_can_be_put_back(
     assert len(listed()) == 2 and unreferenced() == 2 and store.set_aside_ids() == set()
 
 
+def test_packshots_are_a_category_that_leaves_to_qualify_but_never_the_comparison(
+    client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client, monkeypatch
+):
+    """AXE-527: off by default; on, the Packshots tab lists the product-on-a-plain-background images and "À qualifier" leaves them out; the comparison still reads them."""
+    from nyra import packshots as detector
+    from nyra.cloud import packshots as cloud_packshots
+    from nyra.cloud.store import CloudMatchStore
+
+    org_id, base, admin_id, client_id, _ = org_with_users
+    text = detector._text()
+    product_look, scene_look = text[0], text[len(detector.PRODUCT_PROMPTS)]  # what a product photo and a lifestyle photo look like to CLIP
+    data = _upload_bytes().getvalue()
+    ids = {}
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand, "https://t.test/fr/")
+        for name, look, uniform in (("bottle", product_look, 0.99), ("styled", product_look, 0.2), ("scene", scene_look, 0.99)):
+            fake_storage_client.store[("site-images", f"{org_id}/{name}.jpg")] = data
+            ids[name] = conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash, embedding, bg_uniform)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, f"https://t.test/{name}.jpg", f"{org_id}/{name}.jpg", f"{org_id}/thumbs/{name}.jpg", name,
+                 f"{len(ids):016x}", f"{len(ids):016x}", look, uniform),
+            ).fetchone()["id"]
+    store = CloudMatchStore(org_id=org_id, brand_id=cloud_brand, database_url=cloud_database_url)
+    tab = lambda view: client.get(f"{base}/site-images", headers=_headers(admin_id), params={"view": view}).json()  # noqa: E731
+    unreferenced = lambda: client.get(f"{base}/overview", headers=_headers(admin_id)).json()["dashboard"]["unreferenced_online"]  # noqa: E731
+
+    # Off by default: nothing is detected, nothing leaves "À qualifier".
+    assert client.get(f"{base}/packshots", headers=_headers(client_id)).status_code == 403
+    assert client.get(f"{base}/packshots", headers=_headers(admin_id)).json() == {"available": True, "enabled": False, "detected": 0}
+    assert tab("qualify")["total"] == 3 and tab("packshots")["total"] == 0 and tab("qualify")["packshots_enabled"] is False
+    assert unreferenced() == 3
+
+    # Turned on by an administrator: what is a product on a flat border goes to its tab; the other two stay to qualify; an analysis job is queued.
+    assert client.put(f"{base}/packshots/setting", headers=_headers(client_id), json={"enabled": True}).status_code == 403
+    turned_on = client.put(f"{base}/packshots/setting", headers=_headers(admin_id), json={"enabled": True}).json()
+    assert turned_on["enabled"] is True and turned_on["scored"] == 3 and turned_on["job"]["kind"] == "index"
+    packs, qualify = tab("packshots"), tab("qualify")
+    assert [item["url"] for item in packs["items"]] == ["https://t.test/bottle.jpg"] and packs["packshots_enabled"] is True
+    assert qualify["total"] == 2 and qualify["counts"]["packshots"] == 1 and qualify["counts"]["all"] == 3  # still listed under "Toutes"
+    assert unreferenced() == 2
+    assert client.get(f"{base}/packshots", headers=_headers(admin_id)).json() == {"available": True, "enabled": True, "detected": 1}
+    # The comparison with the library never reads it: a packshot is not left out of it (that is what the logos setting does).
+    assert store.set_aside_ids() == set()
+
+    # An image whose border was not measured yet is not a packshot yet.
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE site_images SET bg_uniform = NULL WHERE id = %s", (ids["bottle"],))
+    assert tab("packshots")["total"] == 0 and tab("qualify")["total"] == 3
+
+    # Turned off: everything is back.
+    assert client.put(f"{base}/packshots/setting", headers=_headers(admin_id), json={"enabled": False}).json()["job"] is None
+    assert tab("packshots")["total"] == 0 and unreferenced() == 3
+
+    # Before the migration: off, the tab answers empty, and turning it on says why it cannot.
+    monkeypatch.setattr(cloud_packshots, "has_columns", lambda conn: False)
+    assert client.get(f"{base}/packshots", headers=_headers(admin_id)).json() == {"available": False, "enabled": False, "detected": 0}
+    assert client.put(f"{base}/packshots/setting", headers=_headers(admin_id), json={"enabled": True}).status_code == 409
+    assert tab("packshots")["total"] == 0
+
+
 def test_a_change_the_running_job_did_not_see_queues_another_behind_it(org_with_users, cloud_brand, cloud_database_url):
     from nyra.cloud import jobs as cloud_jobs
 
@@ -1098,7 +1159,7 @@ def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
 
     # Every tab with its total; the logo is still to qualify while the brand does not set logos aside.
     counts = tab("qualify")["counts"]
-    assert counts == {"qualify": 2, "found": 1, "logos": 1, "ignored": 1, "all": 4}
+    assert counts == {"qualify": 2, "found": 1, "logos": 1, "packshots": 0, "ignored": 1, "all": 4}
     assert listed("qualify") == {str(ids["plain"]), str(ids["logo"])}
     assert listed("found") == {str(ids["found"])} and listed("logos") == {str(ids["logo"])} and listed("ignored") == {str(ids["ignored"])}
     assert len(listed("all")) == 4

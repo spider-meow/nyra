@@ -393,10 +393,10 @@ def test_a_heavy_reference_is_kept_as_a_lighter_copy_and_a_light_one_untouched()
 # --- the algorithm proposes, a person decides ------------------------------------
 
 _NYRA = Path(__file__).resolve().parents[1] / "nyra"
-# The writers of what a person decides (decisions on matches, exclusions, labels, the logo settings): the database layer.
-_DECISION_SQL = re.compile(r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:reviews|excluded_hashes|image_labels|page_replacements)\b|SET\s+(?:logo_kept|set_aside_logos)\b",
+# The writers of what a person decides (decisions on matches, exclusions, labels, the logo and packshot settings): the database layer.
+_DECISION_SQL = re.compile(r"(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+(?:reviews|excluded_hashes|image_labels|page_replacements)\b|SET\s+(?:logo_kept|set_aside_logos|detect_packshots)\b",
                            re.IGNORECASE)
-_DECISION_WRITERS = {"db.py", "cloud/db.py", "cloud/logos.py", "cloud/labels.py", "cloud/presence.py"}
+_DECISION_WRITERS = {"db.py", "cloud/db.py", "cloud/logos.py", "cloud/packshots.py", "cloud/labels.py", "cloud/presence.py"}
 # Their callers: the API routes (a person's request) and the offline command line, never a job or a pipeline step.
 _DECISION_CALLS = re.compile(r"\b(?:set_reviews|add_exclusion|delete_exclusion|set_enabled|keep|set_decision|add_content_label|delete_content_label|set_replaced)\(")
 

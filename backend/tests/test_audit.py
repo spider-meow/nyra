@@ -222,6 +222,7 @@ def test_a_day_of_changes_leaves_one_row_each(client, org_with_users, second_adm
         client.post(f"{base}/collections", headers=as_admin, json={"name": "Été"}),
         client.post(f"{base}/sites", headers=as_admin, json={"url": "https://other.test/"}),
         client.put(f"{base}/logos/setting", headers=as_admin, json={"enabled": True}),
+        client.put(f"{base}/packshots/setting", headers=as_admin, json={"enabled": True}),
         client.post(f"{base}/reviews", headers=as_client, json={"reference_id": str(ref), "site_image_ids": [str(images[0])], "decision": "ecarte"}),
         client.put(f"/api/orgs/{org_id}/settings", headers=as_admin, json={"overrides": {"match": {"phash_threshold": 5}}}),
         client.post(f"{base}/jobs/index", headers=as_admin),
@@ -232,7 +233,7 @@ def test_a_day_of_changes_leaves_one_row_each(client, org_with_users, second_adm
     listed = client.get(f"/api/orgs/{org_id}/audit", headers=as_admin, params={"limit": 200}).json()["events"]
     actions = {event["action"] for event in listed}
     assert actions >= {"library.upload", "library.update", "library.expiry", "library.credit", "library.tags", "library.import_csv", "collection.create",
-                       "site.add", "logos.setting", "review.set", "settings.update", "job.index", "member.invite", "library.delete"}
+                       "site.add", "logos.setting", "packshots.setting", "review.set", "settings.update", "job.index", "member.invite", "library.delete"}
     review = next(event for event in listed if event["action"] == "review.set")
     assert review["email"] == f"{client_id}@x.com" and review["detail"]["decision"] == "ecarte"  # a plain member's decision is traced too
     assert "secret credit" not in str(listed) and "a.jpg" not in str(listed)  # no content, no file names
