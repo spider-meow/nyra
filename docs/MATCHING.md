@@ -261,6 +261,7 @@ precision and recall have been measured on real images.** Current state (20 Oct 
 | Labels (types, contents) | 0.82 (`CONTENT_THRESHOLD`) | `NYRA_LABELS=1` (API) and `VITE_LABELS=1` (interface), build-time | **off**: the routes are not registered, the screens not built | no |
 | Logos set aside | 0.95 (`logos.THRESHOLD`) | per brand, `brands.set_aside_logos` (Réglages > Général, administrators) | **off** | 1,716 images of one brand; precision only, recall not counted |
 | Twin references compared once (`reference_twins`) | both hashes within 2 bits and CLIP ≥ 0.985, groups of 40 at most | `match.group_reference_twins` (organization, Réglages > Détection) | **off** | **no** (chosen stricter than every match threshold; to measure on a library before turning it on) |
+| Redirected pages concluded (`crawl.redirect_kind`, `presence`) | permanent (301/308) redirect, same host and first path segment, target 2xx and not a consent wall, not a login / age / country path | `report.conclude_redirected_pages` (organization, Réglages > Détection) | **off** | **no** (written from the issue, no real address replayed yet: to measure before turning it on) |
 | Grouping of crops (`variants`) | CLIP ≥ 0.75 for 5 neighbours, then ≥ 20 inliers and ≥ 20 % of both images | none | **ON for every brand, after every comparison** | **no** (the thresholds were measured for brand-to-site matches, not for site-to-site grouping) |
 | "Où est-elle utilisée ?" (`locate`) | 10 inliers for a small crop (`geometric_locate_min_inliers`) | a person starts the job | off until asked; no automatic run | no ("not measured on real images", above) |
 
@@ -269,6 +270,23 @@ photos as one row in "À traiter", where one decision covers every file of the g
 of the team: either measure it on real images, or put it behind a per-brand setting that starts off.
 
 Adding a function with a threshold means adding a row here, with its switch and its default.
+
+## Redirected pages (AXE-641)
+
+Off by default (`report.conclude_redirected_pages`, the flag rule above). A page that answered with another page is recorded with where it ended and
+what kind of redirect it is (`crawl.redirect_kind`, stored in `pages.redirect_kind`). Without the setting such a page is always « pas relue »
+(unknown), whatever the kind, and it blocks its visual from ever being « remplacé ». With it, only `clear` concludes: a permanent redirect (every hop
+301 or 308), on the same host (`www.` ignored), to a page whose first path segment is the same (`/p/old` to `/p/new`, not `/en-us/x` to `/fr/x`),
+read with a 2xx status, not behind a consent wall, not on a login / age / country path, and inside the address's path (AXE-635). The images read on the
+target are attached to the page asked for, so that page then reads like any other: « encore en ligne » when the visual is on the target, « retirée »
+when it is not (and the read is not suspect, the page was read after the last full read: the same conditions as any page). Every other kind stays unknown
+and the page says which: `temporary` (302, 303, 307), `script` (no HTTP redirect), `home` (a deleted page often goes there: ambiguous), `other_section`,
+`other_site`, `barrier`, `error`. Nothing is written by a job: the state is worked out from the dates, as for every page.
+
+*Not measured:* the list of kinds and the word list of `BARRIER_PATH` come from the issue, not from real addresses. Known limits: a login or age page
+whose path is not in the list reads as `clear` if the redirect is permanent; a permanent redirect to a page of the same section that is not a
+replacement (a category) says « retirée »; the redirect chain is read from Playwright's `redirected_from`, a hop it cannot tell counts as not permanent.
+Replay one real address before and after (a page that redirects, the visual it showed) before turning the setting on for a client.
 
 ## Twin references
 
