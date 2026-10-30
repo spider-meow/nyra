@@ -5,6 +5,8 @@ import { Button, StatusBadge, cx } from "../../components/ui";
 import { formatDate, rightsText } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import type { ImageLabel, LibraryItem } from "../../types";
+import { visualLink } from "./address";
+import { useCopyLink } from "./copyLink";
 import type { LibraryView } from "./view";
 
 type Props = {
@@ -138,7 +140,8 @@ type CardProps = {
 };
 
 function ReferenceCard({ item, where, labels, thumbUrl, checked = false, anySelected = false, onEdit, onToggle }: CardProps) {
-  const { admin } = useOrg();
+  const { admin, link } = useOrg();
+  const copyLink = useCopyLink();
   const press = useLongPress(() => onToggle?.(item.filename, !checked));
   // In selection mode a card is ticked or unticked by a touch or a click; outside it, it opens. A long press starts the selection.
   const tick = admin && onToggle !== undefined;
@@ -186,6 +189,15 @@ function ReferenceCard({ item, where, labels, thumbUrl, checked = false, anySele
           <LabelChips labels={labels} />
           {!item.indexed ? <span className="text-[11.5px] text-urgent">Indexation en attente</span> : null}
         </span>
+      </button>
+      <button
+        type="button"
+        aria-label={`Copier le lien de ${item.filename}`}
+        title="Copier le lien"
+        onClick={() => void copyLink(visualLink(window.location.origin, link("library"), item.id))}
+        className="absolute top-2.5 right-2.5 flex h-7 w-7 items-center justify-center rounded-md bg-paper/90 text-ink-soft opacity-0 transition-opacity hover:text-ink group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+      >
+        <Icon name="link" size={15} />
       </button>
       {admin && onToggle ? (
         <input

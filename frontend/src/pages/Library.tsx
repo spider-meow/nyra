@@ -1,10 +1,13 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
+import { useToast } from "../components/feedback";
 import { Button, EmptyState, PageHeader, Skeleton } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useOrg } from "../lib/org";
 import { useAssignments, useLabels } from "../lib/labels";
 import { useLibrary, useLibraryThumbs } from "../lib/queries";
 import type { LibraryItem } from "../types";
+import { readAddress, writeAddress } from "./library/address";
 import { EditReference } from "./library/EditReference";
 import { ImportCsv } from "./library/ImportCsv";
 import { CollectionTree, FolderBar } from "./library/CollectionTree";
@@ -38,6 +41,37 @@ function usePicked(visible: LibraryItem[]) {
   return { setPicked, selected, clear: () => setPicked(new Set()) };
 }
 
+/**
+ * The visual whose sheet is open, from the address (`?visual=<id>`, AXE-633): opening one adds an entry to the history (so "Retour" closes it),
+ * closing replaces it. A link to a visual or a collection that is gone says so once, and the address is corrected to what is shown.
+ */
+function useOpenVisual(items: LibraryItem[], ready: boolean, view: { missingScope: boolean; setScope: (scope: "all", replace?: boolean) => void }) {
+  const [params, setParams] = useSearchParams();
+  const toast = useToast();
+  const told = useRef(new Set<string>()); // once each: a development double render must not say it twice
+  const asked = readAddress(params).visual;
+  const editing = asked ? items.find((item) => item.id === asked) ?? null : null;
+  const closeVisual = useCallback(() => setParams((current) => writeAddress(current, { visual: null }), { replace: true }), [setParams]);
+  const missingVisual = ready && asked !== null && !editing;
+  const { missingScope, setScope } = view;
+  useEffect(() => {
+    if (missingVisual && !told.current.has(`visual:${asked}`)) {
+      told.current.add(`visual:${asked}`);
+      toast.show({ tone: "error", message: "Ce visuel n'existe plus", description: "Il a été supprimé, ou le lien n'est pas celui de cette marque." });
+      closeVisual();
+    }
+  }, [missingVisual, asked, toast, closeVisual]);
+  useEffect(() => {
+    if (missingScope && !told.current.has("scope")) {
+      told.current.add("scope");
+      toast.show({ tone: "error", message: "Cette collection n'existe plus", description: "Voici « Tous les visuels »." });
+      setScope("all", true);
+    }
+    if (!missingScope) told.current.delete("scope");
+  }, [missingScope, toast, setScope]);
+  return { editing, openVisual: (item: LibraryItem) => setParams((current) => writeAddress(current, { visual: item.id })), closeVisual };
+}
+
 export function Library() {
   const { admin } = useOrg();
   const library = useLibrary();
@@ -45,7 +79,9 @@ export function Library() {
   const assignments = useAssignments("reference").data?.assignments;
   const labelsOf = useCallback((id: string) => assignments?.[id] ?? [], [assignments]);
   const collections = library.data?.collections ?? [];
-  const view = useLibraryView(items, collections, labelsOf);
+  const ready = library.isSuccess;
+  const view = useLibraryView(items, collections, labelsOf, ready);
+  const { editing, openVisual, closeVisual } = useOpenVisual(items, ready, view);
   const labels = useLabels().data?.labels ?? [];
   const up = useUpload(view.setScope); // after an import, the library shows the collection it went to
   const openFolder = view.scope === "all" || view.scope === "none" ? undefined : view.scope; // dropping in a collection proposes it
@@ -55,13 +91,12 @@ export function Library() {
   const browsing = view.scope === "all" && !view.filtering && !showAll && collections.length > 0;
   const recent = useMemo(() => (browsing ? newest(view.visible, RECENT_CARDS) : []), [browsing, view.visible]);
   const thumbs = useLibraryThumbs((browsing ? recent : view.visible.slice(0, view.shown)).map((item) => item.filename));
-  const [editing, setEditing] = useState<LibraryItem | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const changeTab = (next: Tab) => { view.changeTab(next); clear(); };
   const pickedItems = useMemo(() => items.filter((item) => selected.has(item.filename)), [items, selected]);
   const { removeNames, removing } = useRemoveReferences((names) => {
     setPicked((current) => new Set([...current].filter((name) => !names.includes(name)))); // keep the picks that were not deleted
-    setEditing(null);
+    closeVisual();
   });
 
   return (
@@ -86,16 +121,16 @@ export function Library() {
           {thumbs.failed ? <p role="status" className="mb-3 text-[13px] text-muted">Vignettes indisponibles pour le moment.</p> : null}
           <DropZone up={up} folders={view.folders} current={openFolder}>
             {browsing ? (
-              <RecentCards items={recent} total={view.visible.length} thumbs={thumbs.urls} labelsOf={labelsOf} onEdit={setEditing} onAll={() => setShowAll(true)} />
+              <RecentCards items={recent} total={view.visible.length} thumbs={thumbs.urls} labelsOf={labelsOf} onEdit={openVisual} onAll={() => setShowAll(true)} />
             ) : (
-              <LibraryGrid view={view} thumbs={thumbs.urls} labelsOf={labelsOf} selected={selected} setSelected={setPicked} onEdit={setEditing} />
+              <LibraryGrid view={view} thumbs={thumbs.urls} labelsOf={labelsOf} selected={selected} setSelected={setPicked} onEdit={openVisual} />
             )}
           </DropZone>
           </div>
         </div>
       )}
 
-      <EditReference item={editing} thumbUrl={editing ? thumbs.urls[editing.filename] : undefined} onClose={() => setEditing(null)} onDelete={(item) => void removeNames([item.filename])} />
+      <EditReference item={editing} thumbUrl={editing ? thumbs.urls[editing.filename] : undefined} onClose={closeVisual} onDelete={(item) => void removeNames([item.filename])} />
       <ImportCsv open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );

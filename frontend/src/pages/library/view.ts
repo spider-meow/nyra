@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import { LIBRARY_PAGE } from "../../lib/queries";
 import { isBoolean, isShortText, isStrings, oneOf, usePersistedState } from "../../lib/storage";
 import type { Collection, ImageLabel, LibraryItem, Status } from "../../types";
+import { readAddress, writeAddress } from "./address";
 import { collectionIndex, type CollectionIndex, type Scope } from "./collections";
 
 export type Filter = "all" | Status | "unindexed";
@@ -75,8 +77,9 @@ function visibleItems(pool: LibraryItem[], { tab, filter, sort, query, activeTag
 }
 
 /** Tab, status filter, sort, search and tag filters of the library, and the visuals they leave. Every filter change goes back to the first page. */
-export function useLibraryView(items: LibraryItem[], collections: Collection[], labelsOf: LabelsOf) {
-  // Tab and sort are kept in this browser; search and filters only for the browser tab (reload, come back later).
+export function useLibraryView(items: LibraryItem[], collections: Collection[], labelsOf: LabelsOf, ready: boolean) {
+  // Tab and sort are kept in this browser; search and filters only for the browser tab (reload, come back later). The folder is in the address.
+  const [params, setParams] = useSearchParams();
   const [tab, setTab] = usePersistedState<Tab>("library.tab", "active", "local", isTab);
   const [sort, setSort] = usePersistedState<Sort>("library.sort", "expiry", "local", isSort);
   const [filterSaved, setFilter] = usePersistedState<Filter>("library.filter", "all", "session", isFilter);
@@ -84,7 +87,6 @@ export function useLibraryView(items: LibraryItem[], collections: Collection[], 
   const [tagsSaved, setActiveTags] = usePersistedState<string[]>("library.tags", [], "session", isStrings);
   const [untaggedSaved, setUntagged] = usePersistedState("library.untagged", false, "session", isBoolean);
   const [content, setContent] = usePersistedState("library.content", "all", "session", isShortText);
-  const [scopeSaved, setScopeSaved] = usePersistedState<Scope>("library.scope", "all", "session", isShortText);
   const [allTags, setAllTags] = useState(false);
   const [shown, setShown] = useState(LIBRARY_PAGE);
 
@@ -100,8 +102,12 @@ export function useLibraryView(items: LibraryItem[], collections: Collection[], 
   const untagged = untaggedSaved && untaggedCount > 0;
   const filter = tab === "active" ? filterSaved : "all";
   const folders = useMemo(() => collectionIndex(collections), [collections]);
-  // A remembered folder can have been deleted since: fall back to the whole library.
-  const scope: Scope = scopeSaved === "all" || scopeSaved === "none" || folders.byId.has(scopeSaved) ? scopeSaved : "all";
+  // The folder of the address (AXE-633). One that no longer exists (deleted, or from another brand) shows the whole library, and `missingScope`
+  // lets the page say so once the library is loaded (before that, no folder is known yet).
+  const asked = readAddress(params).scope;
+  const known = asked === "all" || asked === "none" || folders.byId.has(asked);
+  const scope: Scope = known ? asked : "all";
+  const missingScope = ready && !known;
   const subtree = useMemo(() => new Set(scope === "all" || scope === "none" ? [] : folders.subtree(scope)), [scope, folders]);
   const { counts: folderCounts, statuses: folderStatuses } = useMemo(() => folderTotals(pool, folders), [pool, folders]);
   const visible = useMemo(() => visibleItems(pool, { tab, filter, sort, query, activeTags, untagged, content, scope, subtree, folders }, labelsOf), [pool, tab, filter, sort, query, activeTags, untagged, content, scope, subtree, folders, labelsOf]);
@@ -127,11 +133,12 @@ export function useLibraryView(items: LibraryItem[], collections: Collection[], 
   }
 
   return {
-    tab, filter, sort, query, activeTags, untagged, content, contentCounts, allTags, shown, scope, folders, folderCounts, folderStatuses,
+    tab, filter, sort, query, activeTags, untagged, content, contentCounts, allTags, shown, scope, missingScope, folders, folderCounts, folderStatuses,
     activeItems, expiredItems, libraryTags, poolTags, untaggedCount, visible,
     filtering: filter !== "all" || scope !== "all" || Boolean(query) || activeTags.length > 0 || untagged || content !== "all",
     changeTab, toggleTag, setSort,
-    setScope: (value: Scope) => { setScopeSaved(value); setShown(LIBRARY_PAGE); },
+    // A new entry of the history, so that "Retour" goes back to the folder before; `replace` for a correction (a folder that is gone).
+    setScope: (value: Scope, replace = false) => { setParams((current) => writeAddress(current, { scope: value }), { replace }); setShown(LIBRARY_PAGE); },
     toggleAllTags: () => setAllTags((value) => !value),
     setContent: (value: string) => { setContent(value); setShown(LIBRARY_PAGE); },
     toggleUntagged: () => { setUntagged(!untagged); setShown(LIBRARY_PAGE); },

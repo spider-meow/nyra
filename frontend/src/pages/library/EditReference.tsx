@@ -8,14 +8,17 @@ import { MAX_TAGS, splitTags } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { useLibraryMutations } from "../../lib/queries";
 import type { LibraryItem } from "../../types";
+import { visualLink } from "./address";
+import { useCopyLink } from "./copyLink";
 import { OccurrencesSection } from "./Occurrences";
 
 type Form = { expiry_date: string; unlimited_rights: boolean; credit: string; notes: string; tags: string[] };
 
 export function EditReference(props: { item: LibraryItem | null; thumbUrl: string | undefined; onClose: () => void; onDelete: (item: LibraryItem) => void }) {
-  const { admin } = useOrg();
+  const { admin, link } = useOrg();
   const { updateMeta } = useLibraryMutations();
   const toast = useToast();
+  const copyLink = useCopyLink();
   const item = props.item;
   const [form, setForm] = useState<Form>({ expiry_date: "", unlimited_rights: false, credit: "", notes: "", tags: [] });
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
@@ -54,6 +57,7 @@ export function EditReference(props: { item: LibraryItem | null; thumbUrl: strin
       footer={
         admin ? (
           <>
+            <Button onClick={() => void copyLink(visualLink(window.location.origin, link("library"), item.id))}>Copier le lien</Button>
             <button type="button" onClick={() => props.onDelete(item)} className="mr-auto inline-flex h-8 items-center rounded-lg px-2.5 text-[13px] font-medium text-expired transition-colors hover:bg-expired-soft">
               Supprimer
             </button>
@@ -65,7 +69,10 @@ export function EditReference(props: { item: LibraryItem | null; thumbUrl: strin
             ) : null}
           </>
         ) : (
-          <Button onClick={props.onClose}>Fermer</Button>
+          <>
+            <Button className="mr-auto" onClick={() => void copyLink(visualLink(window.location.origin, link("library"), item.id))}>Copier le lien</Button>
+            <Button onClick={props.onClose}>Fermer</Button>
+          </>
         )
       }
     >

@@ -1,10 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Suspense, createContext, lazy, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link, Navigate, Outlet, useNavigate, useParams, useRouteError } from "react-router";
+import { Link, Navigate, Outlet, useLocation, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
 import { Button, Card, Checkbox, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
 import { ApiError, api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
+import { returnPath } from "../lib/paths";
 import { OrgProvider, brandLink, useMe, useOrganizations, useStaffOpenedOrganization } from "../lib/org";
 import { useStaffOrgs } from "../lib/staff";
 import { setViewAs } from "../lib/viewAs";
@@ -35,15 +36,18 @@ function Centered(props: { title: string; body?: ReactNode; children?: ReactNode
 /** Everything behind a session. Signed-out visitors go to /login. */
 export function RequireSession() {
   const auth = useAuth();
+  const location = useLocation();
   if (auth.phase === "loading") return <Centered title="Un instant"><div className="mt-4"><Spinner label="Vérification de la session…" /></div></Centered>;
   if (auth.phase === "unconfigured") return <Centered title="Service indisponible" body={auth.problem} />;
-  if (auth.phase === "signed-out") return <Navigate to="/login" replace />;
+  // The page asked for goes with the visitor to /login, which brings them back to it once signed in (a shared link to a collection or a visual).
+  if (auth.phase === "signed-out") return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />;
   if (auth.mustSetPassword) return <Navigate to="/set-password" replace />;
   return <Outlet />;
 }
 
 export function Login() {
   const auth = useAuth();
+  const from = returnPath((useLocation().state as { from?: unknown } | null)?.from);
   const [mode, setMode] = useState<"password" | "reset" | "sent">("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -51,7 +55,7 @@ export function Login() {
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
-  if (auth.phase === "signed-in") return <Navigate to={auth.mustSetPassword ? "/set-password" : "/"} replace />;
+  if (auth.phase === "signed-in") return <Navigate to={auth.mustSetPassword ? "/set-password" : from ?? "/"} replace />;
   if (auth.phase === "unconfigured") return <Centered title="Service indisponible" body={auth.problem} />;
 
   async function submit(event: FormEvent) {

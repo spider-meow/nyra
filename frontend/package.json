@@ -14,6 +14,7 @@
     "check:selection": "node scripts/check-selection.mjs",
     "check:maps": "node scripts/check-maps.mjs",
     "check:paths": "node scripts/check-paths.mjs",
+    "check:address": "node scripts/check-address.mjs",
     "check:remember": "node scripts/check-remember.mjs",
     "check:retry": "node scripts/check-retry.mjs",
     "check:emails": "node scripts/check-emails.mjs",
