@@ -36,6 +36,9 @@ def _pages(only_reference: bool) -> str:
     SELECT m.reference_id, p.id AS page_id, p.url, s.id AS site_id, bool_or(pr.page_id IS NOT NULL) AS marked,
            COALESCE(bool_or(p.read_started_at > pr.marked_at), false) AS checked, COALESCE(p.http_status = {CONSENT_WALL}, false) AS walled,
            '/' || split_part(split_part(regexp_replace(p.url, '^https?://[^/]+', ''), '?', 1), '/', 2) AS section,
+           -- where a redirected page ended (AXE-641), read through to_jsonb: the query still runs, with NULLs, before migration 20261029000043
+           to_jsonb(p) ->> 'redirect_url' AS redirect_url, (to_jsonb(p) ->> 'redirect_hops')::int AS redirect_hops,
+           to_jsonb(p) ->> 'redirect_kind' AS redirect_kind,
            CASE WHEN p.status = 'done' AND p.links_tracked AND p.crawled_at >= rd.read_at AND COALESCE(bool_or(ip.last_seen >= p.read_started_at), false) THEN 'still'
                 WHEN p.status = 'done' AND (p.links_tracked OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at AND NOT rd.suspect
                      AND NOT {interrupted_sql('s.id', 'rd.read_at')} THEN 'gone'
@@ -69,10 +72,12 @@ def pages(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID
           section: Optional[str] = None, state: Optional[str] = None, marked: Optional[bool] = None, limit: int = 50,
           offset: int = 0) -> list[Row]:
     """`limit` pages from `offset` (at most `MAX_PAGES_PER_REQUEST`), by address, narrowed to a site version, a section, a
-    state and whether they were marked replaced. `walled`: a consent notice hid the page (never "gone"). `checked`: the page was read again after it was marked, so its state is
+    state and whether they were marked replaced. `walled`: a consent notice hid the page (never "gone"). `redirect_url`, `redirect_hops`,
+    `redirect_kind`: where a page that answered with another page ended (null for a page that did not). `checked`: the page was read again after it was marked, so its state is
     the answer to the mark (before that, the state is about the page as it was)."""
     return conn.execute(
-        f"""SELECT g.url, g.site_id, g.section, g.state, g.marked, g.checked, g.walled FROM ({_pages(True)}) g
+        f"""SELECT g.url, g.site_id, g.section, g.state, g.marked, g.checked, g.walled, g.redirect_url, g.redirect_hops, g.redirect_kind
+            FROM ({_pages(True)}) g
             WHERE (%(site)s::uuid IS NULL OR g.site_id = %(site)s) AND (%(section)s::text IS NULL OR g.section = %(section)s)
               AND (%(state)s::text IS NULL OR g.state = %(state)s) AND (%(marked)s::boolean IS NULL OR g.marked = %(marked)s)
             ORDER BY g.url LIMIT %(limit)s OFFSET %(offset)s""",

@@ -12,12 +12,14 @@ import uuid
 from typing import Any, Optional, Sequence
 
 import numpy as np
+import psycopg
 
 from nyra import fetch
 
 from . import db as cloud_db
 from . import logos as cloud_logos
 from . import storage as cloud_storage
+from .schedule import once_per_hour
 
 log = logging.getLogger("nyra.store")
 
@@ -28,6 +30,11 @@ def _vector(value) -> Optional[np.ndarray]:
     if hasattr(value, "to_numpy"):
         return value.to_numpy().astype(np.float32)
     return np.asarray(value, dtype=np.float32)
+
+
+MARK_PAGE = """UPDATE pages SET status = 'done', http_status = %s, crawled_at = now(), links_tracked = %s BETWEEN 200 AND 299 WHERE id = %s"""
+MARK_PAGE_WITH_REDIRECT = """UPDATE pages SET status = 'done', http_status = %s, crawled_at = now(), links_tracked = %s BETWEEN 200 AND 299,
+          redirect_url = %s, redirect_hops = %s, redirect_status = %s, redirect_kind = %s WHERE id = %s"""
 
 
 class CloudCrawlStore:
@@ -53,13 +60,19 @@ class CloudCrawlStore:
             ).fetchone()
         return row["id"]
 
-    def mark_page(self, page_id: uuid.UUID, http_status: int) -> None:
+    def mark_page(self, page_id: uuid.UUID, http_status: int, redirect: Optional[dict] = None) -> None:
+        """Record the read of a page. `redirect` (`url`, `hops`, `status`, `kind`) says where a page that ended elsewhere ended; the columns
+        are written at every read, so a page that stops redirecting loses them. Before migration 20261029000043 they do not exist: the page is
+        then recorded as before (one warning an hour), and the read goes on."""
         with cloud_db.connect(self.database_url) as conn:
-            conn.execute(
-                """UPDATE pages SET status = 'done', http_status = %s, crawled_at = now(),
-                          links_tracked = %s BETWEEN 200 AND 299 WHERE id = %s""",
-                (http_status, http_status, page_id),
-            )
+            try:
+                with conn.transaction():  # a failed statement must not leave the connection's transaction aborted
+                    conn.execute(MARK_PAGE_WITH_REDIRECT, (http_status, http_status, (redirect or {}).get("url"), (redirect or {}).get("hops"),
+                                                           (redirect or {}).get("status"), (redirect or {}).get("kind"), page_id))
+            except psycopg.errors.UndefinedColumn:
+                if once_per_hour("missing-redirect-columns"):
+                    log.warning("the target of a redirected page is not kept: apply migration 20261029000043 (page_redirects)")
+                conn.execute(MARK_PAGE, (http_status, http_status, page_id))
 
     def known_images(self, urls: Sequence[str]) -> dict[str, uuid.UUID]:
         if not urls:

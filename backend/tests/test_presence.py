@@ -222,3 +222,38 @@ def test_a_visual_with_a_match_no_page_is_known_for_is_not_replaced_and_the_home
     assert replaced == {shown}
     rows = [{"reference_id": ref, "filename": str(ref), "expiry_date": "2020-01-01", "confidence": "haut"} for ref in (shown, lone, gone)]
     assert report.dashboard(rows, [], replaced=replaced)["expired_online"] == 2  # the replaced one is no longer online
+
+
+def test_a_page_that_ended_elsewhere_keeps_where_and_stays_unknown(cloud_database_url, cloud_org, cloud_brand):
+    """AXE-641: the target is kept and shown; the state is what it always was (unknown), and a page that stops redirecting loses it."""
+    after = READ + timedelta(minutes=2)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+    store = CloudCrawlStore(org_id=cloud_org, site_id=site, database_url=cloud_database_url, storage_client=None)
+    page = store.upsert_page("https://a.test/p/old")
+    store.link(image, page)
+    store.mark_page(page, 302, {"url": "https://a.test/p/new", "hops": 1, "status": 200, "kind": "clear"})
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE pages SET crawled_at = %s, read_started_at = %s WHERE id = %s", (after, after, page))
+        [row] = presence.pages(conn, cloud_brand, ref)
+        assert (row["state"], row["redirect_url"], row["redirect_hops"], row["redirect_kind"]) == ("unknown", "https://a.test/p/new", 1, "clear")
+    store.mark_page(page, 200)  # read again, no redirection any more
+    with cloud_db.connect(cloud_database_url) as conn:
+        [row] = presence.pages(conn, cloud_brand, ref)
+        assert (row["redirect_url"], row["redirect_hops"], row["redirect_kind"]) == (None, None, None)
+
+
+def test_a_page_is_still_recorded_before_the_redirect_columns_exist(cloud_database_url, cloud_org, cloud_brand, monkeypatch, caplog):
+    """The worker may be deployed before migration 20261029000043: the read goes on, as before, and says so once."""
+    from nyra.cloud import store as store_module
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, _ = _setup(conn, cloud_org, cloud_brand)
+    store = CloudCrawlStore(org_id=cloud_org, site_id=site, database_url=cloud_database_url, storage_client=None)
+    page = store.upsert_page("https://a.test/p/x")
+    monkeypatch.setattr(store_module, "MARK_PAGE_WITH_REDIRECT", "UPDATE pages SET redirect_missing = %s, a = %s, b = %s, c = %s, d = %s, e = %s WHERE id = %s")
+    store.mark_page(page, 200, None)
+    with cloud_db.connect(cloud_database_url) as conn:
+        row = conn.execute("SELECT status, http_status, links_tracked FROM pages WHERE id = %s", (page,)).fetchone()
+    assert (row["status"], row["http_status"], row["links_tracked"]) == ("done", 200, True)
