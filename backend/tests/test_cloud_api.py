@@ -1070,6 +1070,95 @@ def test_packshots_are_a_category_that_leaves_to_qualify_but_never_the_compariso
     assert tab("packshots")["total"] == 0
 
 
+def test_the_nyra_team_judges_the_detector_image_by_image_and_nobody_else_can(
+    client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client, monkeypatch
+):
+    """AXE-668: "c'est / ce n'est pas un packshot", kept with the measures of the moment, read back as false positives and negatives with precision and recall."""
+    from nyra import packshots as detector
+    from nyra.cloud import packshot_feedback
+
+    org_id, base, staff_id, client_id, _ = org_with_users
+    org_admin = uuid.uuid4()  # an administrator of the organization who is not on the Nyra team
+    text = detector._text()
+    product_look, scene_look = text[0], text[len(detector.PRODUCT_PROMPTS)]
+    ids = {}
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (org_admin, f"{org_admin}@x.com"))
+        cloud_db.add_membership(conn, user_id=org_admin, org_id=org_id, role="admin")
+        site = _site(conn, org_id, cloud_brand, "https://t.test/fr/")
+        for name, look, uniform in (("bottle", product_look, 0.99), ("bottle2", product_look, 0.98), ("styled", product_look, 0.2), ("scene", scene_look, 0.99)):
+            ids[name] = conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash, embedding, bg_uniform)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, f"https://t.test/{name}.jpg", f"{org_id}/{name}.jpg", f"{org_id}/thumbs/{name}.jpg", name,
+                 f"{len(ids):016x}", f"{len(ids):016x}", look, uniform),
+            ).fetchone()["id"]
+    staff, org_admin_headers, as_client = _headers(staff_id), _headers(org_admin), _headers(client_id)
+    feedback = f"{base}/packshots/feedback"
+    judge = lambda name, yes, headers=staff, note="": client.put(feedback, headers=headers, json={"site_image_id": str(ids[name]), "is_packshot": yes, "note": note})  # noqa: E731
+    cards = lambda headers: {item["url"].rsplit("/", 1)[1][:-4]: item for item in client.get(f"{base}/site-images", headers=headers, params={"view": "all"}).json()["items"]}  # noqa: E731
+
+    # Needs the category turned on for the brand: there is nothing to judge before.
+    assert judge("bottle", False).status_code == 409
+    assert client.put(f"{base}/packshots/setting", headers=staff, json={"enabled": True}).status_code == 200
+
+    # Only the Nyra team: an administrator of the organization and a client are refused, and see nothing of it on the cards.
+    for headers in (org_admin_headers, as_client):
+        assert judge("bottle", False, headers).status_code == 403
+        assert client.get(feedback, headers=headers).status_code == 403
+        assert client.delete(f"{feedback}/{ids['bottle']}", headers=headers).status_code == 403
+    seen_by_admin = cards(org_admin_headers)["bottle"]
+    assert "packshot_feedback" not in seen_by_admin and "packshot_measures" not in seen_by_admin
+    assert cards(staff)["bottle"]["packshot_measures"]["detected"] is True and cards(staff)["styled"]["packshot_measures"]["detected"] is False
+    assert judge("bottle", False).json() == {"is_packshot": False, "detected": True}  # an intruder: false positive
+    assert judge("bottle2", True, note="vraie bouteille").status_code == 200  # true positive
+    assert judge("styled", True, note="fond dégradé").json()["detected"] is False  # missed: false negative
+    assert judge("scene", False).status_code == 200  # true negative
+    assert client.put(feedback, headers=staff, json={"site_image_id": str(uuid.uuid4()), "is_packshot": True}).status_code == 404
+    assert client.put(feedback, headers=staff, json={"site_image_id": str(ids["bottle"]), "is_packshot": True, "note": "x" * 201}).status_code == 422
+    assert cards(staff)["bottle"]["packshot_feedback"] == {"is_packshot": False, "note": ""}
+    assert cards(staff)["styled"]["packshot_feedback"] == {"is_packshot": True, "note": "fond dégradé"}
+
+    # Read back: the cases with their measures, and the rates with the number of images behind them.
+    report = client.get(feedback, headers=staff).json()
+    assert report["available"] is True and report["feedbacks"] == 4 and report["not_measured"] == 0
+    assert (report["true_positives"], report["false_positives"], report["false_negatives"], report["true_negatives"]) == (1, 1, 1, 1)
+    assert report["precision"] == {"value": 0.5, "of": 2} and report["recall"] == {"value": 0.5, "of": 2}
+    assert report["thresholds"] == {"product": detector.PRODUCT_THRESHOLD, "uniform": detector.UNIFORM_THRESHOLD}
+    (false_positive,), (false_negative,) = report["false_positive_cases"], report["false_negative_cases"]
+    assert false_positive["content_hash"] == "bottle" and false_positive["border"] == pytest.approx(0.99) and false_positive["product"] > 0.9
+    assert false_negative["content_hash"] == "styled" and false_negative["border"] == pytest.approx(0.2) and false_negative["note"] == "fond dégradé"
+
+    # A new feedback of the same person replaces the old one; it can be taken back.
+    assert judge("bottle", True).status_code == 200
+    again = client.get(feedback, headers=staff).json()
+    assert again["feedbacks"] == 4 and again["false_positives"] == 0 and again["precision"] == {"value": 1.0, "of": 2}
+    assert client.delete(f"{feedback}/{ids['bottle']}", headers=staff).json() == {"ok": True}
+    assert client.delete(f"{feedback}/{ids['bottle']}", headers=staff).status_code == 404
+    assert client.get(feedback, headers=staff).json()["feedbacks"] == 3
+
+    # The site is read again: the row of the image is replaced, the feedback stays with the file (same hash).
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DELETE FROM site_images WHERE id = %s", (ids["styled"],))
+        conn.execute(
+            "INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash, embedding, bg_uniform)"
+            " VALUES (%s, %s, 'https://t.test/styled.jpg', 'a', 'b', 'styled', %s, %s, %s, 0.2)",
+            (org_id, site, "f" * 16, "f" * 16, product_look))
+    assert client.get(feedback, headers=staff).json()["false_negatives"] == 1  # still counted, from the measures kept with it
+    assert cards(staff)["styled"]["packshot_feedback"] == {"is_packshot": True, "note": "fond dégradé"}
+
+    # The trace holds identifiers and flags, never the note.
+    with cloud_db.connect(cloud_database_url) as conn:
+        rows = conn.execute("SELECT detail FROM audit_log WHERE action = 'packshots.feedback'").fetchall()
+    assert len(rows) == 5 and "fond" not in str(rows) and "vraie" not in str(rows)
+
+    # Before the migration: nothing is written or listed, the route says why, the cards carry nothing.
+    monkeypatch.setattr(packshot_feedback, "has_table", lambda conn: False)
+    assert judge("scene", False).status_code == 409 and client.delete(f"{feedback}/{ids['scene']}", headers=staff).status_code == 409
+    assert client.get(feedback, headers=staff).json() == {"available": False}
+    assert cards(staff)["scene"]["packshot_feedback"] is None
+
+
 def test_a_change_the_running_job_did_not_see_queues_another_behind_it(org_with_users, cloud_brand, cloud_database_url):
     from nyra.cloud import jobs as cloud_jobs
 

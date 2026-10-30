@@ -442,6 +442,28 @@ def cloud_purge_audit(
     typer.secho(f"{removed} audit row(s) older than {months} months deleted.", fg=typer.colors.GREEN)
 
 
+@app.command("packshots-feedback")
+def packshots_feedback(
+    org: str = typer.Option(..., "--org", help="Organization slug."),
+    brand: str = typer.Option(..., "--brand", help="Brand slug."),
+) -> None:
+    """What the Nyra team said about the packshot detector for a brand (AXE-668), as JSON: the false positives and false negatives with their measures,
+    and the precision and recall of the thresholds in force with the number of images behind each. Read it at the start of a session (docs/MATCHING.md)."""
+    import json
+
+    from nyra.cloud import db as cloud_db
+    from nyra.cloud import packshot_feedback
+
+    with cloud_db.connect(_cloud_env(need_storage=False)["DATABASE_URL"]) as conn:
+        organization = cloud_db.get_organization_by_slug(conn, org)
+        if organization is None:
+            _fail(f"No organization with slug {org!r}.")
+        row = conn.execute("SELECT id FROM brands WHERE org_id = %s AND slug = %s", (organization["id"], brand)).fetchone()
+        if row is None:
+            _fail(f"No brand with slug {brand!r} in {org!r}.")
+        typer.echo(json.dumps(packshot_feedback.report(conn, row["id"]), indent=2, ensure_ascii=False))
+
+
 @app.command("cloud-usage")
 def cloud_usage(
     brands: int = typer.Option(3, "--brands", min=1, help="How many brands to plan for."),

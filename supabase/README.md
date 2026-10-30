@@ -73,6 +73,7 @@ supabase migration repair --status applied 20260920000001 20260920000002 2026092
   20260920000004 20260920000005 20260920000006 20260920000007
   20261029000043_page_redirects.sql                 où a fini une page qui redirige (`pages.redirect_url`, `redirect_hops`, `redirect_status`, `redirect_kind`) (additive, colonnes nulles ; à appliquer avant le déploiement, de préférence)
   20261030000044_packshots.sql                      catégorie Packshots d'« Images en ligne » (`site_images.packshot_score`, `bg_uniform`, `brands.detect_packshots`, réglage par marque désactivé) (additive, colonnes nulles ; le code tourne aussi sans elle, la détection est alors désactivée)
+  20261030000045_packshot_feedback.sql              retours des admins plateforme sur la détection des packshots (table `packshot_feedback`, sans politique de lecture) (additive ; le code tourne aussi sans elle : pas de boutons, la route répond 409)
 supabase db push
 ```
 

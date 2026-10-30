@@ -18,6 +18,7 @@ from nyra.config import Config
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
 from .. import logos as cloud_logos
+from .. import packshot_feedback as cloud_feedback
 from .. import packshots as cloud_packshots
 from .. import storage as cloud_storage
 from .common import (
@@ -196,6 +197,16 @@ def _site_tabs(groups: list[dict]) -> list[dict]:
     return list(sites.values())
 
 
+def _with_calibration(ctx: Ctx, scope: BrandScope, leads: list[dict], items: list[dict]) -> None:
+    """For the Nyra team only (AXE-668): each card's two packshot measures, and the feedback this person already gave on it."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        given = cloud_feedback.of_images(conn, scope.brand_id, scope.member.user_id, leads)
+        measures = cloud_feedback.measures_of(conn, [lead["id"] for lead in leads]) if leads else {}
+    for item in items:
+        item["packshot_feedback"] = given.get(item["id"])
+        item["packshot_measures"] = measures.get(item["id"])
+
+
 @router.get(f"{BRAND}/site-images")
 def site_images(view: str = "qualify", offset: int = Query(0, ge=0), limit: int = Query(60, ge=1, le=200),
                 site: Optional[uuid.UUID] = None, q: str = Query("", max_length=200),
@@ -216,9 +227,12 @@ def site_images(view: str = "qualify", offset: int = Query(0, ge=0), limit: int 
     page = wanted[offset : offset + limit]
     leads = [variant[0] for group in page for variant in _variants(group["rows"])]
     urls = ctx.sign(cloud_storage.BUCKET_SITE_IMAGES, [row["thumb_path"] for row in leads] + [row["storage_path"] for row in leads])
+    items = [_site_image_item(group, urls) for group in page]
+    if packshots_enabled and scope.member.staff and scope.member.role == "admin":
+        _with_calibration(ctx, scope, [group["lead"] for group in page], items)
     return {
         "view": view,
-        "items": [_site_image_item(group, urls) for group in page],
+        "items": items,
         "total": len(wanted),
         "counts": {name: len(groups) for name, groups in tabs.items()},
         "sites": _site_tabs(tabs[view]),

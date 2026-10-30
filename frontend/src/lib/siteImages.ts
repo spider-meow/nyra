@@ -67,6 +67,21 @@ export function usePackshotMutations() {
   };
 }
 
+/** "C'est / ce n'est pas un packshot", for the Nyra team (AXE-668): kept with the detector's measures, never changes the detection. */
+export function usePackshotFeedback() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  const done = () => invalidate("site-images");
+  return {
+    give: useMutation({
+      mutationFn: (input: { id: string; is_packshot: boolean; note: string }) =>
+        api.put(apiPath("/packshots/feedback"), { site_image_id: input.id, is_packshot: input.is_packshot, note: input.note.trim() }),
+      onSuccess: done,
+    }),
+    takeBack: useMutation({ mutationFn: (id: string) => api.del(apiPath(`/packshots/feedback/${id}`)), onSuccess: done }),
+  };
+}
+
 export function useLogoMutations() {
   const { apiPath } = useOrg();
   const invalidate = useInvalidate();

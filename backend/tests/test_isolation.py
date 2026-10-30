@@ -67,7 +67,8 @@ USER_LEVEL = {
 # Their nominal behaviour is tested in test_cloud_api.py, not here.
 
 # Routes whose nominal call is refused to an organization admin: platform admins only (each brand is billed).
-OWN_REFUSED = {("POST", ORG + "/brands"), ("DELETE", BR)}
+OWN_REFUSED = {("POST", ORG + "/brands"), ("DELETE", BR), *((verb, BR + path) for verb, path in (
+    ("GET", "/packshots/feedback"), ("PUT", "/packshots/feedback"), ("DELETE", "/packshots/feedback/{site_image_id}")))}  # the Nyra team's calibration (AXE-668)
 # The job a fresh organization starts with. The five routes that launch a job by hand answer 409 while a job but an
 # `index` waits in the organization, so their witness starts from an `index`. Every other route keeps the default
 # `check`, which does not stop the deletions (an address cannot be removed while a read, a comparison or an index waits).
@@ -118,6 +119,7 @@ BODIES = {
     ("POST", BR + "/exclusions"): lambda t: {"json": {"site_image_id": str(t["image"])}},
     ("PUT", BR + "/logos/setting"): lambda t: {"json": {"enabled": True}},
     ("PUT", BR + "/packshots/setting"): lambda t: {"json": {"enabled": True}},
+    ("PUT", BR + "/packshots/feedback"): lambda t: {"json": {"site_image_id": str(t["image"]), "is_packshot": True}},
     ("POST", BR + "/logos/keep"): lambda t: {"json": {"site_image_ids": [str(t["image"])], "kept": False}},
     ("POST", BR + "/reports"): lambda t: {"json": {}},
     ("PUT", ORG + "/settings"): lambda t: {"json": {"overrides": {"crawl": {"max_pages": 5}}}},
@@ -127,7 +129,7 @@ BODIES = {
 
 # The tenant key whose value fills each path parameter other than the organization and the brand.
 CHILD_IDS = {"site_id": "site", "collection_id": "col", "filename": "filename", "job_id": "job", "reference_id": "ref",
-             "exclusion_id": "excl", "label_id": "label", "user_id": "admin"}
+             "exclusion_id": "excl", "label_id": "label", "user_id": "admin", "site_image_id": "image"}
 OWN_CHILD_IDS = {**CHILD_IDS, "user_id": "client"}  # the only admin cannot be demoted or removed
 # What a body or a query takes from another tenant in a mixed call: the second operand ("the image of B"), or the first
 # ("the reference of B") against the caller's own second operand.
