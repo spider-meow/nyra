@@ -59,6 +59,7 @@ create table if not exists storage.objects (
     name text,
     owner uuid
 );
+alter table storage.objects add column if not exists metadata jsonb;
 do $$
 begin
     if not exists (

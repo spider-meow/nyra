@@ -57,6 +57,7 @@ from . import hostmetrics
 from . import jobs as cloud_jobs
 from . import packshots as cloud_packshots
 from . import presence as cloud_presence
+from . import retention as cloud_retention
 from . import schedule as cloud_schedule
 from . import storage as cloud_storage
 from . import usage as cloud_usage
@@ -68,7 +69,7 @@ log = logging.getLogger("nyra.worker")
 
 HEARTBEAT_SECONDS = 30
 PROGRESS_SECONDS = 1.0
-AUDIT_PURGE_SECONDS = 24 * 3600  # retention of the audit log, see `audit.purge`
+AUDIT_PURGE_SECONDS = 24 * 3600  # retention of the audit log, see `audit.purge`; the working copies of images not seen for two months go at the same pace (`retention.purge_images`)
 SCHEDULE_SECONDS = 300  # how often the monthly reads are looked for, see `schedule.enqueue_due`
 # The longest a job of each kind may run, in minutes, with what the message calls it and what lightens it. A job
 # running longer is taken for hung (a frozen browser keeps the heartbeat thread beating): it is marked failed with that
@@ -659,6 +660,12 @@ class Worker:
                         log.info("audit log: %d row(s) older than %d months deleted", purged, cloud_audit.RETENTION_MONTHS)
                 except Exception:  # noqa: BLE001 - retention is housekeeping; tomorrow's run takes what this one missed
                     log.exception("purging the audit log failed")
+                try:
+                    done = cloud_retention.purge_images(self.database_url, self.storage_client_factory(), between=touch_alive)
+                    if done["batches"]:
+                        log.info("images not seen for %d months: %d file(s) deleted in %d batch(es)", cloud_retention.IMAGE_MONTHS, done["files"], done["batches"])
+                except Exception:  # noqa: BLE001 - same: tomorrow's run takes what this one missed
+                    log.exception("purging the images not seen for a long time failed")
             if time.monotonic() - last_reap > 60:
                 last_reap = time.monotonic()
                 try:

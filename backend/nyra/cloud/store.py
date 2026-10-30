@@ -80,7 +80,7 @@ class CloudCrawlStore:
             return {}
         with cloud_db.connect(self.database_url) as conn:
             rows = conn.execute(
-                "SELECT id, url FROM site_images WHERE site_id = %s AND phash IS NOT NULL AND url = ANY(%s)",
+                "SELECT id, url FROM site_images WHERE site_id = %s AND phash IS NOT NULL AND storage_path IS NOT NULL AND url = ANY(%s)",  # no working copy (purged, AXE-533): read again
                 (self.site_id, list(urls)),
             ).fetchall()
             if rows:
@@ -98,7 +98,7 @@ class CloudCrawlStore:
             return conn.execute(
                 """SELECT storage_path, thumb_path, content_hash, width, height, phash, dhash, embedding, byte_size,
                           format, stored_bytes
-                   FROM site_images WHERE org_id = %s AND content_hash = %s AND phash IS NOT NULL LIMIT 1""",
+                   FROM site_images WHERE org_id = %s AND content_hash = %s AND phash IS NOT NULL AND storage_path IS NOT NULL LIMIT 1""",
                 (self.org_id, digest),
             ).fetchone()
 
@@ -203,7 +203,7 @@ class CloudMatchStore:
             sites = conn.execute(
                 f"""SELECT si.id, si.phash, si.dhash, {"si." + embedding if use_clip else embedding}, si.compared_at,
                            si.storage_path
-                    FROM site_images si JOIN sites s ON s.id = si.site_id WHERE s.brand_id = %s""",
+                    FROM site_images si JOIN sites s ON s.id = si.site_id WHERE s.brand_id = %s AND si.storage_path IS NOT NULL""",  # a purged image is no longer on the site (AXE-533)
                 (self.brand_id,),
             ).fetchall()
         for row in (*refs, *sites):
