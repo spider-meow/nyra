@@ -368,6 +368,32 @@ def cloud_staff(
     typer.secho(f"{email} has back office access{note}.", fg=typer.colors.GREEN)
 
 
+@app.command("cloud-staff-memberships")
+def cloud_staff_memberships(
+    apply: bool = typer.Option(False, "--apply", help="Remove them from the client teams (without it, only list them)."),
+    keep: list[str] = typer.Option([], "--keep", help="E-mail of a platform admin to leave in the team on purpose (repeat for several)."),
+) -> None:
+    """Platform admins who are also members of a client's team (AXE-583): the Nyra team uses the platform access, not a membership.
+
+    Lists them; with --apply removes their membership, except the --keep addresses and any organization that would be left without another administrator."""
+    from nyra.cloud import db as cloud_db
+    from nyra.cloud import insights
+
+    with cloud_db.connect(_cloud_env(need_storage=False)["DATABASE_URL"]) as conn:
+        cases = insights.staff_memberships(conn)
+        if not cases:
+            typer.secho("No platform admin is a member of a client's team.", fg=typer.colors.GREEN)
+            return
+        for case in cases:
+            note = "" if case["org_keeps_an_admin"] else "  (the only administrators are platform admins: kept)"
+            typer.echo(f"{case['email']}  {case['role']}  {case['slug']}{note}")
+        if not apply:
+            typer.echo("Nothing changed. Run again with --apply to remove them (--keep EMAIL to leave someone in).")
+            return
+        removed, kept = insights.drop_staff_memberships(conn, tuple(keep))
+    typer.secho(f"{len(removed)} membership(s) removed, {len(kept)} kept.", fg=typer.colors.GREEN)
+
+
 @app.command("cloud-delete-org")
 def cloud_delete_org(
     slug: str = typer.Argument(..., help="Slug of the organization to erase for good."),

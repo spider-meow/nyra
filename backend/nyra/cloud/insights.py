@@ -73,6 +73,31 @@ def set_staff(conn: psycopg.Connection, user_id: uuid.UUID, staff: bool) -> None
         conn.execute("DELETE FROM platform_staff WHERE user_id = %s", (user_id,))
 
 
+def staff_memberships(conn: psycopg.Connection) -> list[Row]:
+    """The platform admins who are also members of a client's team (AXE-583), and whether the organization keeps an administrator who is not on the Nyra team."""
+    return conn.execute(
+        """SELECT m.user_id, m.org_id, m.role, u.email, o.slug,
+                  EXISTS (SELECT 1 FROM memberships a WHERE a.org_id = m.org_id AND a.role = 'admin'
+                          AND a.user_id NOT IN (SELECT user_id FROM platform_staff)) AS org_keeps_an_admin
+           FROM memberships m JOIN platform_staff ps ON ps.user_id = m.user_id
+           JOIN auth.users u ON u.id = m.user_id JOIN organizations o ON o.id = m.org_id
+           ORDER BY o.slug, u.email"""
+    ).fetchall()
+
+
+def drop_staff_memberships(conn: psycopg.Connection, keep_emails: tuple[str, ...] = ()) -> tuple[list[Row], list[Row]]:
+    """Take the platform admins out of the client teams: they use the platform access instead (AXE-583). (removed, kept): kept are the addresses named in
+    `keep_emails` (a deliberate decision to have them in the team) and the organizations that would be left without another administrator."""
+    keep = {email.lower() for email in keep_emails}
+    removed, kept = [], []
+    for case in staff_memberships(conn):
+        if case["email"].lower() in keep or not case["org_keeps_an_admin"]:
+            kept.append(case)
+        elif conn.execute("DELETE FROM memberships WHERE org_id = %s AND user_id = %s", (case["org_id"], case["user_id"])).rowcount:
+            removed.append(case)
+    return removed, kept
+
+
 # --- building blocks ----------------------------------------------------------------
 
 _RUN_COLUMNS = """
