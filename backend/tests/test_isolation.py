@@ -470,6 +470,67 @@ def test_a_platform_admin_who_is_not_a_member_leaves_no_trace_among_the_members(
     assert {"job.match", "collection.create"} <= {e["action"] for e in team if e["user_id"] == str(staff_outsider)}
 
 
+def test_a_platform_admin_who_was_also_a_member_is_taken_out_of_the_team_and_keeps_the_platform_access(client, world, staff_outsider, cloud_database_url):
+    """AXE-583 (option C): the Nyra team uses the platform access, not a membership; the cleanup keeps who is named, and never leaves an organization without an administrator."""
+    from nyra.cloud import insights
+
+    a, _ = world
+    org, staff = a["org"], _headers(staff_outsider)
+    email = f"{staff_outsider}@nyra.test"
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_db.add_membership(conn, user_id=staff_outsider, org_id=org, role="admin")  # invited before AXE-573, or for a test account
+    members = client.get(f"/api/orgs/{org}/members", headers=_headers(a["admin"])).json()["members"]
+    assert str(staff_outsider) in [m["user_id"] for m in members]  # the case: the client sees them in its team
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        (case,) = [row for row in insights.staff_memberships(conn) if row["org_id"] == org]
+        assert case["email"] == email and case["org_keeps_an_admin"] is True
+        removed, kept = insights.drop_staff_memberships(conn, keep_emails=(email.upper(),))  # a deliberate decision to have them in the team
+        assert [row for row in removed if row["org_id"] == org] == [] and email in [row["email"] for row in kept]
+        removed, _ = insights.drop_staff_memberships(conn)
+        assert [row["email"] for row in removed if row["org_id"] == org] == [email]
+        assert not [row for row in insights.staff_memberships(conn) if row["org_id"] == org]
+
+    members = client.get(f"/api/orgs/{org}/members", headers=_headers(a["admin"])).json()["members"]
+    assert str(staff_outsider) not in [m["user_id"] for m in members]  # gone from the client's team ...
+    assert client.get(f"/api/orgs/{org}/brands/{a['brand']}/library", headers=staff).status_code == 200  # ... and still in the space, through the platform access
+
+    # An organization whose only administrators are platform admins is left alone: nobody is locked out.
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("INSERT INTO platform_staff (user_id) VALUES (%s)", (a["admin"],))
+    try:
+        with cloud_db.connect(cloud_database_url) as conn:
+            removed, kept = insights.drop_staff_memberships(conn)
+            assert [row for row in removed if row["org_id"] == org] == [] and a["admin"] in [row["user_id"] for row in kept]
+            assert conn.execute("SELECT count(*) AS n FROM memberships WHERE org_id = %s AND role = 'admin'", (org,)).fetchone()["n"] >= 1
+    finally:
+        with cloud_db.connect(cloud_database_url) as conn:
+            conn.execute("DELETE FROM platform_staff WHERE user_id = %s", (a["admin"],))
+
+
+def test_the_cleanup_command_lists_first_and_only_removes_with_apply(world, staff_outsider, cloud_database_url, monkeypatch):
+    from typer.testing import CliRunner
+
+    from nyra import cli
+
+    a, _ = world
+    monkeypatch.setattr(cli, "_cloud_env", lambda **kwargs: {"DATABASE_URL": cloud_database_url})
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_db.add_membership(conn, user_id=staff_outsider, org_id=a["org"], role="admin")
+
+    def member():
+        with cloud_db.connect(cloud_database_url) as conn:
+            return conn.execute("SELECT 1 FROM memberships WHERE user_id = %s", (staff_outsider,)).fetchone() is not None
+
+    run = lambda *args: CliRunner().invoke(cli.app, ["cloud-staff-memberships", *args])  # noqa: E731
+
+    listed = run()
+    assert listed.exit_code == 0 and f"{staff_outsider}@nyra.test" in listed.output and "Nothing changed" in listed.output and member()
+    assert run("--apply", "--keep", f"{staff_outsider}@nyra.test").exit_code == 0 and member()  # named on purpose: left in the team
+    done = run("--apply")
+    assert done.exit_code == 0 and "membership(s) removed" in done.output and not member()
+
+
 def test_a_platform_admin_is_named_to_nobody_as_the_author_of_a_job(client, world, staff_outsider, cloud_database_url):
     a, _ = world
     with cloud_db.connect(cloud_database_url) as conn:
