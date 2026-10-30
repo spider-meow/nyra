@@ -276,16 +276,19 @@ Adding a function with a threshold means adding a row here, with its switch and 
 Off by default (`report.conclude_redirected_pages`, the flag rule above). A page that answered with another page is recorded with where it ended and
 what kind of redirect it is (`crawl.redirect_kind`, stored in `pages.redirect_kind`). Without the setting such a page is always « pas relue »
 (unknown), whatever the kind, and it blocks its visual from ever being « remplacé ». With it, only `clear` concludes: a permanent redirect (every hop
-301 or 308), on the same host (`www.` ignored), to a page whose first path segment is the same (`/p/old` to `/p/new`, not `/en-us/x` to `/fr/x`),
-read with a 2xx status, not behind a consent wall, not on a login / age / country path, and inside the address's path (AXE-635). The images read on the
+301 or 308), on the same host (`www.` ignored), to a page whose first path segment is the same (`/p/old` to `/p/new`, not `/en-us/x` to `/fr/x`) and
+that is as deep as the page asked for (a shallower target is the home page or a category: `home`), read with a 2xx status, not behind a consent wall,
+not on a login / age / country path (path and query), inside the address's path (AXE-635), whose images were all downloaded (else `incomplete`), and
+with the status and the hops of the document that ended there (a script or a click after the HTTP redirects is `script`). The images read on the
 target are attached to the page asked for, so that page then reads like any other: « encore en ligne » when the visual is on the target, « retirée »
 when it is not (and the read is not suspect, the page was read after the last full read: the same conditions as any page). Every other kind stays unknown
 and the page says which: `temporary` (302, 303, 307), `script` (no HTTP redirect), `home` (a deleted page often goes there: ambiguous), `other_section`,
-`other_site`, `barrier`, `error`. Nothing is written by a job: the state is worked out from the dates, as for every page.
+`other_site`, `barrier`, `error`, `incomplete`. Nothing is written by a job: the state is worked out from the dates, as for every page.
 
 *Not measured:* the list of kinds and the word list of `BARRIER_PATH` come from the issue, not from real addresses. Known limits: a login or age page
-whose path is not in the list reads as `clear` if the redirect is permanent; a permanent redirect to a page of the same section that is not a
-replacement (a category) says « retirée »; the redirect chain is read from Playwright's `redirected_from`, a hop it cannot tell counts as not permanent.
+whose path is not in the list reads as `clear` if the redirect is permanent; a permanent redirect to a page of the same section and depth that is
+not a replacement says « retirée »; a site with flat addresses (`/old-slug` to `/new-slug`) never reads `clear` (the first segment differs), so the
+rule does nothing there; the target's address is kept without its query and fragment; the redirect chain is read from Playwright's `redirected_from`, a hop it cannot tell counts as not permanent.
 Replay one real address before and after (a page that redirects, the visual it showed) before turning the setting on for a client.
 
 ## Twin references

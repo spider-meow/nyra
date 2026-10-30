@@ -20,6 +20,7 @@ them, so a few hundred thousand pairs is where it needs a cache.
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Optional
 
@@ -33,23 +34,36 @@ Row = dict
 STATES = ("still", "gone", "unknown")
 MAX_PAGES_PER_REQUEST = 100
 
-# A page counts as read when its read succeeded, or (the rule is on: `%(conclude)s`) when it redirected `clear`ly: through to_jsonb, so the query runs
-# before migration 20261029000043 too (the column is then NULL, and the rule concludes nothing).
-_TRACKED = "(p.links_tracked OR (%(conclude)s AND to_jsonb(p) ->> 'redirect_kind' = 'clear'))"
+# Whether migration 20261029000043 (the `pages.redirect_*` columns) is applied. Asked once: true for good once seen, false again after a minute, so
+# the queries run before the migration too (the columns read as NULL and the rule concludes nothing). Reading them through `to_jsonb(p)` instead
+# cost 20 times more on 15,000 pages. ponytail: shared by the process (that is the point); drop it, and read the columns, once 043 is applied everywhere.
+_REDIRECT_COLUMNS = {"seen": False, "asked_at": float("-inf")}
+_REDIRECT_COLUMNS_RECHECK_SECONDS = 60
 
 
-def _pages(only_reference: bool) -> str:
+def has_redirect_columns(conn: psycopg.Connection) -> bool:
+    if not _REDIRECT_COLUMNS["seen"] and time.monotonic() - _REDIRECT_COLUMNS["asked_at"] > _REDIRECT_COLUMNS_RECHECK_SECONDS:
+        _REDIRECT_COLUMNS["asked_at"] = time.monotonic()
+        _REDIRECT_COLUMNS["seen"] = conn.execute(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'pages' AND column_name = 'redirect_kind') AS e"
+        ).fetchone()["e"]
+    return bool(_REDIRECT_COLUMNS["seen"])
+
+
+def _pages(only_reference: bool, redirects: bool) -> str:
     """One row per page and reference (the brand's every reference when `only_reference` is False, so the index on
-    `matches.reference_id` is used for one); `section` is the first segment of the path ("/blogs"), "/" for the home page."""
+    `matches.reference_id` is used for one); `section` is the first segment of the path ("/blogs"), "/" for the home page.
+    `redirects`: the `pages.redirect_*` columns exist (`has_redirect_columns`). A page counts as read when its read succeeded, or (the rule is on:
+    `%(conclude)s`) when it redirected `clear`ly."""
+    tracked = "(p.links_tracked OR (%(conclude)s AND p.redirect_kind = 'clear'))" if redirects else "p.links_tracked"
+    target = "p.redirect_url, p.redirect_hops, p.redirect_kind" if redirects else "NULL::text AS redirect_url, NULL::int AS redirect_hops, NULL::text AS redirect_kind"
     return f"""
     SELECT m.reference_id, p.id AS page_id, p.url, s.id AS site_id, bool_or(pr.page_id IS NOT NULL) AS marked,
            COALESCE(bool_or(p.read_started_at > pr.marked_at), false) AS checked, COALESCE(p.http_status = {CONSENT_WALL}, false) AS walled,
            '/' || split_part(split_part(regexp_replace(p.url, '^https?://[^/]+', ''), '?', 1), '/', 2) AS section,
-           -- where a redirected page ended (AXE-641), read through to_jsonb: the query still runs, with NULLs, before migration 20261029000043
-           to_jsonb(p) ->> 'redirect_url' AS redirect_url, (to_jsonb(p) ->> 'redirect_hops')::int AS redirect_hops,
-           to_jsonb(p) ->> 'redirect_kind' AS redirect_kind,
-           CASE WHEN p.status = 'done' AND {_TRACKED} AND p.crawled_at >= rd.read_at AND COALESCE(bool_or(ip.last_seen >= p.read_started_at), false) THEN 'still'
-                WHEN p.status = 'done' AND ({_TRACKED} OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at AND NOT rd.suspect
+           {target},
+           CASE WHEN p.status = 'done' AND {tracked} AND p.crawled_at >= rd.read_at AND COALESCE(bool_or(ip.last_seen >= p.read_started_at), false) THEN 'still'
+                WHEN p.status = 'done' AND ({tracked} OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at AND NOT rd.suspect
                      AND NOT {interrupted_sql('s.id', 'rd.read_at')} THEN 'gone'
                 ELSE 'unknown' END AS state
     FROM matches m
@@ -71,7 +85,7 @@ def counts(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUI
     (site_id, label, host, section, state, marked, pages)."""
     return conn.execute(
         f"""SELECT g.site_id, COALESCE(NULLIF(st.label, ''), '') AS label, st.url AS site_url, g.section, g.state, g.marked, count(*) AS pages
-            FROM ({_pages(True)}) g JOIN sites st ON st.id = g.site_id
+            FROM ({_pages(True, has_redirect_columns(conn))}) g JOIN sites st ON st.id = g.site_id
             GROUP BY g.site_id, st.label, st.url, g.section, g.state, g.marked""",
         {"ref": reference_id, "brand": brand_id, "conclude": conclude},
     ).fetchall()
@@ -86,7 +100,7 @@ def pages(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID
     the answer to the mark (before that, the state is about the page as it was)."""
     return conn.execute(
         f"""SELECT g.url, g.site_id, g.section, g.state, g.marked, g.checked, g.walled, g.redirect_url, g.redirect_hops, g.redirect_kind
-            FROM ({_pages(True)}) g
+            FROM ({_pages(True, has_redirect_columns(conn))}) g
             WHERE (%(site)s::uuid IS NULL OR g.site_id = %(site)s) AND (%(section)s::text IS NULL OR g.section = %(section)s)
               AND (%(state)s::text IS NULL OR g.state = %(state)s) AND (%(marked)s::boolean IS NULL OR g.marked = %(marked)s)
             ORDER BY g.url LIMIT %(limit)s OFFSET %(offset)s""",
@@ -143,7 +157,7 @@ def by_visual(conn: psycopg.Connection, brand_id: uuid.UUID, *, conclude: bool =
                    (SELECT count(*) FROM matches m LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
                     WHERE m.reference_id = r.id AND v.decision IS DISTINCT FROM 'ecarte'
                       AND NOT EXISTS (SELECT 1 FROM image_pages ip WHERE ip.image_id = m.site_image_id)) AS unlinked
-            FROM reference_images r LEFT JOIN ({_pages(False)}) g ON g.reference_id = r.id
+            FROM reference_images r LEFT JOIN ({_pages(False, has_redirect_columns(conn))}) g ON g.reference_id = r.id
             WHERE r.brand_id = %(brand)s AND NOT r.unlimited_rights AND EXISTS (
                 SELECT 1 FROM matches m JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
                 WHERE m.reference_id = r.id AND v.decision IN ('retenu', 'traite'))
@@ -173,7 +187,7 @@ def replaced_references(conn: psycopg.Connection, brand_id: uuid.UUID, *, conclu
 
 def pages_showing(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID, urls: list[str]) -> dict[str, uuid.UUID]:
     """Among `urls`, the pages that show this visual: address -> page."""
-    rows = conn.execute(f"SELECT g.url, g.page_id FROM ({_pages(True)}) g WHERE g.url = ANY(%(urls)s)",
+    rows = conn.execute(f"SELECT g.url, g.page_id FROM ({_pages(True, has_redirect_columns(conn))}) g WHERE g.url = ANY(%(urls)s)",
                         {"ref": reference_id, "brand": brand_id, "urls": urls, "conclude": False}).fetchall()  # the state is not read here
     return {row["url"]: row["page_id"] for row in rows}
 
