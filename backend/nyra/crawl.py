@@ -47,6 +47,10 @@ TRACKING_PARAMS = {"gclid", "fbclid", "msclkid", "mc_cid", "mc_eid", "_ga", "_gl
 IMAGE_DOWNLOADS_PER_PAGE = 6  # images of a page downloaded, processed and stored together: the bytes of a page never pile up (AXE-643)
 # Chromium or its driver may die under a page (AXE-646): the browser is started again, up to this many times per read, then the read stops.
 MAX_BROWSER_RESTARTS = 3
+# Chromium only grows during a long read: one reader kept a single page for the whole read and one browser for all of it, and a site of 150 heavy pages
+# took the worker past its memory limit (the kernel killed Chromium, then the worker). Each page is read in a page of its own, closed after it, and
+# the browser is started again after this many pages (about 100 to 150 MB each were left behind on a heavy site). Not a death: it is not counted in `browser_restarts`.
+RECYCLE_AFTER_PAGES = 10
 SHUTDOWN_TIMEOUT_SECONDS = 10  # closing a frozen Chromium is given up after this long
 _BROWSER_GONE = ("target closed", "browser has been closed", "connection closed", "context or browser has been closed")
 
@@ -699,6 +703,7 @@ class _Crawl:
         self.in_flight = 0
         self.robots: Optional[urllib.robotparser.RobotFileParser] = None
         self.generation = 0  # counts the browsers started: a reader whose page belongs to an older one asks for a new page
+        self.pages_since_launch = 0  # pages handed to the readers since the browser started: it is started again at RECYCLE_AFTER_PAGES
         self._launch_lock: Optional[asyncio.Lock] = None
         self._playwright = self._browser = self._context = None
 
@@ -767,6 +772,7 @@ class _Crawl:
         self._context = await self._browser.new_context(user_agent=self.config.crawl.user_agent)
         await self._context.route("**/*", self._route)
         self.generation += 1
+        self.pages_since_launch = 0
 
     async def _shutdown(self) -> None:
         for closer in (self._context and self._context.close, self._browser and self._browser.close,
@@ -789,6 +795,15 @@ class _Crawl:
                 raise BrowserUnavailable(
                     f"Le navigateur de lecture s'est arrêté {self.stats.browser_restarts} fois pendant la lecture : les pages déjà lues "
                     "sont conservées. Relancez la lecture, ou prévenez l'équipe Nyra.")
+            await self._shutdown()
+            await self._launch()
+
+    async def _recycle(self) -> None:
+        """Start the browser again (nobody is in the middle of a page), so what Chromium accumulated is given back."""
+        async with self._launch_lock:
+            if self.pages_since_launch < RECYCLE_AFTER_PAGES:
+                return  # another reader already did
+            log.info("starting the browser again after %d pages: Chromium only grows during a long read", self.pages_since_launch)
             await self._shutdown()
             await self._launch()
 
@@ -818,6 +833,11 @@ class _Crawl:
             if self.should_stop() or self.started >= self.max_pages:
                 return None
             if self.queue:
+                if self.pages_since_launch >= RECYCLE_AFTER_PAGES:
+                    if self.in_flight:
+                        await asyncio.sleep(0.2)  # the others end their page first, and none starts another until the browser is new
+                        continue
+                    await self._recycle()
                 url = self.queue.popleft()
                 if url in self.visited:
                     continue
@@ -826,6 +846,7 @@ class _Crawl:
                     self.stats.blocked_by_robots += 1
                     continue
                 self.started += 1
+                self.pages_since_launch += 1
                 return url
             if self.in_flight == 0:
                 return None
@@ -844,9 +865,8 @@ class _Crawl:
                 if self.progress:
                     self.progress(self.stats)  # the page being read is in the heartbeat before it can kill the worker
                 try:
-                    if page is None or seen != self.generation:
-                        seen = self.generation
-                        page = await self._new_page(url)
+                    seen = self.generation
+                    page = await self._new_page(url)  # a page of its own for each address: a long-lived one keeps growing
                     await self._crawl_page(page, http, url)
                     died_before = False
                 except _BrowserDied as exc:
@@ -864,6 +884,8 @@ class _Crawl:
                 finally:
                     self.in_flight -= 1
                     self.stats.reading.remove(url)
+                    await self._close_page(page)
+                    page = None
                 self.stats.pages_queued = len(self.queue) + self.in_flight  # pages in other workers are still to finish
                 if self.progress:
                     self.progress(self.stats)
@@ -871,11 +893,16 @@ class _Crawl:
                     return
                 await asyncio.sleep(max(random.uniform(cfg.delay_seconds_min, cfg.delay_seconds_max), self._robots_delay()))
         finally:
-            if page is not None:
-                try:
-                    await page.close()
-                except Exception as exc:  # noqa: BLE001 - best effort: the browser may be gone, and closing a page must not hide why
-                    log.debug("closing a page failed: %s", exc)
+            await self._close_page(page)
+
+    @staticmethod
+    async def _close_page(page) -> None:
+        if page is None:
+            return
+        try:
+            await page.close()
+        except Exception as exc:  # noqa: BLE001 - best effort: the browser may be gone, and closing a page must not hide why
+            log.debug("closing a page failed: %s", exc)
 
     async def _new_page(self, url: str):
         try:
