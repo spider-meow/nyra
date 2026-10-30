@@ -67,6 +67,16 @@ export function usePackshotMutations() {
   };
 }
 
+/** Take one version out of its group of crops: it is not the same photo (AXE-521). It gets its own card; nothing is hidden. */
+export function useSplitVariant() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (siteImageId: string) => api.post<{ addresses: number; group_dissolved: boolean }>(apiPath("/site-images/split"), { site_image_id: siteImageId }),
+    onSuccess: () => invalidate("site-images", "matches", "overview", "occurrences"),
+  });
+}
+
 /** "C'est / ce n'est pas un packshot", for the Nyra team (AXE-668): kept with the detector's measures, never changes the detection. */
 export function usePackshotFeedback() {
   const { apiPath } = useOrg();

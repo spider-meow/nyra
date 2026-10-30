@@ -199,6 +199,40 @@ def test_a_comparison_groups_the_crops_of_a_photo_and_keeps_the_group_when_anoth
     assert second[late] == first[ids[0]] and {key: second[key] for key in ids} == first
 
 
+def test_an_image_split_from_its_group_by_hand_is_not_put_back_by_the_next_comparison(
+        worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
+    pytest.importorskip("cv2")
+    from test_verify import scene
+
+    from nyra.cloud import splits as cloud_splits
+
+    photo = scene(30)
+    crop = photo.crop((90, 60, 800, 600)).resize((500, 380))
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/")
+        ids = [_add_site_image(conn, fake_storage_client, cloud_org, site, f"https://t.test/{name}.jpg", _jpeg_bytes(img))
+               for name, img in (("photo", photo), ("crop", crop))]
+    _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+
+    def groups():
+        with cloud_db.connect(cloud_database_url) as conn:
+            rows = conn.execute("SELECT id, variant_group FROM site_images WHERE org_id = %s", (cloud_org,)).fetchall()
+        return {row["id"]: row["variant_group"] for row in rows}
+
+    assert groups()[ids[0]] is not None and groups()[ids[0]] == groups()[ids[1]]
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert cloud_splits.split(conn, cloud_org, cloud_brand, ids[1])["group_dissolved"] is True
+    assert set(groups().values()) == {None}
+
+    # A new crop of the same photo arrives: it joins the photo, not the image a person took out.
+    late_crop = photo.crop((0, 0, 700, 500)).resize((420, 300))
+    with cloud_db.connect(cloud_database_url) as conn:
+        late = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://t.test/late.jpg", _jpeg_bytes(late_crop))
+    _run_index(worker, cloud_database_url, cloud_org, cloud_brand)
+    after = groups()
+    assert after[late] is not None and after[late] == after[ids[0]] and after[ids[1]] is None
+
+
 def _reference_row(url, brand_id, name):
     with cloud_db.connect(url) as conn:
         return cloud_db.get_reference_by_filename(conn, brand_id, name)

@@ -1,8 +1,11 @@
 import { useState, type ReactNode } from "react";
 import { LabelChips } from "../../components/Labels";
 import { Button, Card, cx } from "../../components/ui";
-import { Modal } from "../../components/feedback";
+import { Modal, useToast } from "../../components/feedback";
+import { errorMessage } from "../../lib/api";
 import { formatDate, pathOf, plural } from "../../lib/format";
+import { useOrg } from "../../lib/org";
+import { useSplitVariant } from "../../lib/siteImages";
 import type { ImageLabel, SiteImage, SiteImageStatus, SiteImageVariant } from "../../types";
 import { PackshotFeedback } from "./PackshotFeedback";
 
@@ -94,14 +97,15 @@ export function Zoom(props: { item: SiteImage | null; onClose: () => void }) {
   const item = props.item;
   return (
     <Modal open={item !== null} onClose={props.onClose} title={item?.filename ?? ""} wide footer={<Button onClick={props.onClose}>Fermer</Button>}>
-      {item ? <ZoomBody key={item.id} item={item} /> : null}
+      {item ? <ZoomBody key={item.id} item={item} onClose={props.onClose} /> : null}
     </Modal>
   );
 }
 
 /** The chosen version of a photo (the largest at first), the other versions as a strip, and where the chosen one is. */
-function ZoomBody(props: { item: SiteImage }) {
+function ZoomBody(props: { item: SiteImage; onClose: () => void }) {
   const { item } = props;
+  const { admin } = useOrg();
   const [chosen, setChosen] = useState(0);
   const variant = item.variants[chosen] ?? item.variants[0];
   return (
@@ -111,6 +115,7 @@ function ZoomBody(props: { item: SiteImage }) {
           <img src={variant.image || variant.thumb || undefined} alt="" className="max-h-[60vh] w-full object-contain" />
         </a>
         {item.variants.length > 1 ? <VersionStrip variants={item.variants} chosen={chosen} onChoose={setChosen} /> : null}
+        {admin && item.variants.length > 1 ? <SplitVersion id={variant.id} onDone={props.onClose} /> : null}
       </div>
       <div className="grid content-start gap-3 text-sm">
         <p className="text-muted">
@@ -123,6 +128,28 @@ function ZoomBody(props: { item: SiteImage }) {
         ) : null}
       </div>
     </div>
+  );
+}
+
+/** The grouping can join two different photos (a shared banner or template): a person takes the version on screen out of the group. It gets its own card, nothing is hidden. */
+function SplitVersion(props: { id: string; onDone: () => void }) {
+  const split = useSplitVariant();
+  const toast = useToast();
+  const run = () =>
+    split.mutate(props.id, {
+      onSuccess: () => {
+        toast.show({ tone: "success", message: "Version séparée du groupe", description: "Elle a maintenant sa propre carte." });
+        props.onDone();
+      },
+      onError: (error) => toast.show({ tone: "error", message: "La version n'a pas été séparée", description: errorMessage(error) }),
+    });
+  return (
+    <p className="text-xs text-muted">
+      Cette version n'est pas la même photo que les autres ?{" "}
+      <button type="button" disabled={split.isPending} onClick={run} className="font-medium text-ink underline underline-offset-2 disabled:opacity-60">
+        Séparer cette version du groupe
+      </button>
+    </p>
   );
 }
 

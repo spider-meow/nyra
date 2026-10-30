@@ -19,6 +19,7 @@ from nyra.match import MatchStopped
 from nyra.variants import candidate_pairs, link_groups
 
 from . import db as cloud_db
+from . import splits as cloud_splits
 from . import storage as cloud_storage
 from .store import feature_dict
 
@@ -27,8 +28,9 @@ log = logging.getLogger("nyra.variants")
 # New images searched for twins per saved step.
 FRESH_BATCH = 200
 
+# `{split}`: an image a person took out of its group by hand (AXE-521) is left out of the search altogether; before its migration, none is.
 _SELECT = """SELECT si.id, si.content_hash, si.embedding, si.phash, si.storage_path, si.variant_group,
-        si.variants_checked_at IS NULL AS fresh
+        si.variants_checked_at IS NULL AS fresh, {split} AS split
     FROM site_images si JOIN sites s ON s.id = si.site_id
     WHERE s.brand_id = %s AND si.storage_path IS NOT NULL AND si.embedding IS NOT NULL
     ORDER BY si.id"""
@@ -88,7 +90,8 @@ def update_variants(database_url: str, storage: Any, org_id: uuid.UUID, brand_id
         log.warning("OpenCV is missing: site images are not grouped")
         return {"variant_checked": 0}
     with cloud_db.connect(database_url) as conn:
-        images = _distinct_images(conn.execute(_SELECT, (brand_id,)).fetchall())
+        select = _SELECT.format(split="si.variants_split_at IS NOT NULL" if cloud_splits.has_column(conn) else "false")
+        images = _distinct_images([row for row in conn.execute(select, (brand_id,)).fetchall() if not row["split"]])
     fresh = [index for index, image in enumerate(images) if image["fresh"]]
     stats = {"variant_images": len(images), "variant_checked": 0, "variant_pairs": 0, "variant_links": 0}
     if not fresh:

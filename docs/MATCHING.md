@@ -85,6 +85,14 @@ a group keeps its id when another crop joins it). A mirrored copy is not
 looked for. Thresholds changed in Settings do not regroup what is already
 grouped. Ignoring a photo sets aside every one of its versions.
 
+*Splitting a group by hand* (AXE-521). The grouping can join two different photos that share a banner or a template: the group cap (40) limits the damage of a wrong
+link, it does not prevent one. An administrator opens the photo in "Images en ligne" and, on the version on screen, chooses « Séparer cette version du groupe »
+(`POST .../site-images/split`, audit `site_image.split`). That file (and the other addresses serving the same bytes) leaves the group and is marked
+(`site_images.variants_split_at`, migration `20261030000046`): from then on the grouping neither searches it for twins nor offers it to a group, so a later comparison does
+not put it back. A group left with a single file is dissolved. Splitting hides nothing: the version has its own card, there are only more cards. Not measured: how
+often the grouping joins two different photos on a real brand (that needs a set of crops made by hand, with the false and the missed groupings counted), and there is no
+button to put a split version back (the effect of a wrong split is one card too many, never a hidden image).
+
 ## Where is this picture used? (`locate`)
 
 The "Où est-elle utilisée ?" panel of a library picture lists the pages of the
