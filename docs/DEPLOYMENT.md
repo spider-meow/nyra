@@ -284,6 +284,7 @@ traceback is in the worker's log.
 - **Packshot feedback** (AXE-668): migration `20261030000045_packshot_feedback.sql` creates one table (no read policy, written by the backend only): apply it by hand on Supabase before deploying. The reverse order is harmless: until it is applied the cards carry no buttons and `PUT/DELETE/GET .../packshots/feedback` answer 409 or "not available".
 - **Splitting a group** (AXE-521): migration `20261030000046_variant_split.sql` adds one nullable column to `site_images`: apply it by hand on Supabase before deploying. The reverse order is harmless: until it is applied `POST .../site-images/split` answers 409 and the grouping is unchanged.
 - **Platform admins in client teams** (AXE-583): `nyra cloud-staff-memberships` lists the platform admins who are also members of a client's team; run it with `--apply` once (after reading the list) to take them out, `--keep EMAIL` to leave someone in on purpose. They keep their access to the space through the platform access. Nothing to run at deploy time.
+- **Images not seen for two months** (AXE-533): the worker deletes their working copy once a day (`cloud/retention.py`, policy in `COUTS_PRODUCTION.md`); the thumbnail, the row and the hashes stay. No migration, nothing to run at deploy time; the first run after the deploy may delete many files at once (500 images a batch, 20 batches a run, the rest the next day). Turn it off by not deploying: there is no setting.
 - **A hung worker** restarts itself, with no component reading the Docker socket: a watchdog thread of the
   worker exits (code 70) when its alive file has not been touched for 5 minutes (`WATCHDOG_SECONDS`), and
   `restart: unless-stopped` restarts it. This works with plain `docker compose` and on any platform. It covers a
@@ -321,6 +322,10 @@ traceback is in the worker's log.
   | `queue_stalled` | critical | a queued job has waited over N minutes while no job runs anywhere | 5 min (an idle worker claims a job within seconds) | `NYRA_ALERT_QUEUE_MINUTES` (1 to 1440) |
   | `disk_full` | critical | the machine's disk is N % used | 80 % | `NYRA_ALERT_DISK_PERCENT` (1 to 100) |
   | `worker_memory` | warning | a worker uses N % of its memory limit | 85 % | `NYRA_ALERT_WORKER_MEMORY_PERCENT` (1 to 100) |
+  | `storage_plan` | warning, critical | Supabase Storage (sum of `storage.objects`, read at most every 10 minutes) holds N % of what the plan includes | 70 % / 90 % of 100 GB | `NYRA_ALERT_SUPABASE_WARN_PERCENT`, `NYRA_ALERT_SUPABASE_CRITICAL_PERCENT` (1 to 100), `NYRA_PLAN_STORAGE_GB` (1 to 100000) |
+  | `database_plan` | warning, critical | the database (`pg_database_size`) holds N % of what the plan includes | 70 % / 90 % of 8 GB | the same two percentages, `NYRA_PLAN_DATABASE_GB` (1 to 100000) |
+
+  The two plan alerts follow the Supabase Pro plan (100 GB of Storage, 8 GB of database); set the `NYRA_PLAN_*` values if the plan changes. A critical one does not turn the uptime probe to 503. Egress (250 GB included) is not watched: Supabase does not expose it in SQL (check its dashboard).
 
   The memory is judged against the container's own limit (`WORKER_MEM_LIMIT`, 2560m in `docker-compose.yml`, read from
   the cgroup); a worker with no limit is judged against the machine's memory. 85 % of 2560m is 2.1 GiB, above the

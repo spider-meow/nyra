@@ -191,6 +191,33 @@ jour et par organisation laissent cinq organisations sous les 100 e-mails par jo
   non, pour l'envoyer le lendemain. Les invitations faites par l'équipe Nyra elle-même (back office, CLI) ne sont pas
   plafonnées.
 
+## Garde-fous : conservation des images et alertes sur le plan (AXE-533)
+
+**Ce qui est stocké.** Chaque lecture d'un site garde, par image, une copie de travail (JPEG de 1 024 px au plus) et une vignette, rangées par contenu
+(`{org}/work/{hash}.jpg`, `{org}/thumbs/{hash}.jpg`) : le fichier d'origine reste sur le site. Les lignes `site_images` ne sont jamais supprimées quand une image
+quitte un site (l'état d'un visuel se déduit des dates).
+
+**Politique de conservation (décidée le 30 octobre 2026).** Une image non revue depuis plus de **2 mois** est considérée comme n'étant plus sur le site : sa copie
+de travail est supprimée du stockage (`cloud/retention.py`, lancé une fois par jour par le worker, 500 images par lot, 20 lots au plus par passage). Pas de délai
+de réversibilité : l'image revient si le site la montre de nouveau (elle est relue comme une nouvelle). Reste en base : la ligne, les empreintes, le vecteur CLIP, les
+dates et la **vignette**. Ne sont **jamais** purgés :
+- une image qui correspond à un visuel de la bibliothèque, qui a été jugée (« À traiter ») ou localisée (`matches`, `reviews`, `reference_locations`) ;
+- les images d'un site dont la dernière lecture terminée date de plus de 2 mois (un site que personne n'a relu ne dit rien sur ce qu'il montre) ;
+- la bibliothèque elle-même (autre bucket), les rapports et leurs fichiers ;
+- une copie de travail encore utilisée par une autre adresse du même fichier (partagée) : elle part avec la dernière.
+Une image purgée n'est plus proposée dans « Images en ligne » ni comparée à une nouvelle référence (elle n'est plus sur le site). Chaque lot laisse une ligne
+du journal d'audit (`images.purge`: nombre d'images, de fichiers, durée de conservation) visible de l'organisation, sans nom d'utilisateur.
+*Non mesuré :* le gain réel. Sur la base actuelle, le stockage fait environ 0,9 Go (7 800 objets) pour 100 Go inclus : la purge n'est pas urgente, elle empêche la
+croissance sans fin. *Limite connue :* une lecture qui ne visite pas toutes les pages (limite de pages) peut laisser « non vue » une image encore en ligne pendant
+2 mois ; elle revient alors à la lecture suivante qui la voit, mais pas avant. Le seuil de 2 mois est dans `retention.IMAGE_MONTHS`. L'espace occupé par les
+vignettes (`stored_bytes`) n'est pas recalculé.
+
+**Alertes sur le plan Supabase.** Le stockage (somme des objets de `storage.objects`) et la taille de la base (`pg_database_size`) sont comparés à ce que le plan
+inclut : alerte `storage_plan` / `database_plan` en **avertissement à 70 %**, **critique à 90 %**, visible en tête de la page Serveur du back office et dans
+`alerts` de `GET /api/staff/server` et `/api/workerz`. Les valeurs du plan et les seuils se règlent dans `.env` (`DEPLOYMENT.md`). Une alerte critique du plan ne fait
+pas répondre 503 à la sonde d'uptime (le service tourne, il coûte seulement plus cher). **Le trafic sortant (250 Go inclus) n'est pas surveillé** : Supabase ne
+l'expose pas en SQL, il faudrait appeler son API de gestion. À regarder dans le tableau de bord Supabase tant que ce n'est pas fait.
+
 ## Développement restant (coût ponctuel, distinct de l'infra)
 
 | Sujet | État dans le code | Estimation |
