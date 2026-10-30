@@ -15,6 +15,7 @@
     "check:maps": "node scripts/check-maps.mjs",
     "check:paths": "node scripts/check-paths.mjs",
     "check:address": "node scripts/check-address.mjs",
+    "check:busy": "node scripts/check-busy.mjs",
     "check:remember": "node scripts/check-remember.mjs",
     "check:retry": "node scripts/check-retry.mjs",
     "check:emails": "node scripts/check-emails.mjs",

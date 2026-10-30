@@ -98,6 +98,7 @@ cd frontend && npm run size        # budget de taille du premier chargement
 cd frontend && npm run check:scrub # le masquage des données client dans Sentry
 cd frontend && npm run check:rows  # le regroupement par photo de « À traiter »
 cd frontend && npm run check:paths # les adresses de l'interface et la redirection des anciennes
+cd frontend && npm run check:busy # quand le rafraîchissement d'une page est montré : pas avant 200 ms, au moins 300 ms
 cd frontend && npm run check:address # l'adresse de la bibliothèque (collection, visuel) et la page où l'on revient après la connexion : jamais un autre site
 cd frontend && npm run check:retry # le rejeu des requêtes refusées par la limite de débit (429)
 cd frontend && npm run check:drop  # le dépôt de fichiers sur la page : seuls les fichiers comptent, pas de doublon, le survol se termine
@@ -113,6 +114,12 @@ Un avertissement qu'on ne peut pas corriger (bibliothèque tierce) est
 filtré **nommément** dans la configuration, avec un commentaire qui dit
 pourquoi. On ne désactive jamais une règle globalement pour se débarrasser
 d'un cas.
+
+## Chargement des données (interface)
+
+Toute requête dont le résultat s'affiche a ses trois états : premier chargement (squelette à la forme de la page), rafraîchissement avec données
+(le contenu reste, atténué, `aria-busy`, après 200 ms) et erreur (avec « Réessayer »). Ils sont écrits une fois (`components/busy.tsx`) et la page par
+page est dans [`ETATS_DE_CHARGEMENT.md`](ETATS_DE_CHARGEMENT.md). Une ancienne donnée ne se fait jamais passer pour la réponse à la nouvelle demande.
 
 ## Tests
 
