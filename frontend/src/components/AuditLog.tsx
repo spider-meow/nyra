@@ -32,6 +32,8 @@ const ACTION_LABEL: Record<string, string> = {
   "settings.update": "Réglages modifiés",
   "logos.setting": "Réglage des logos",
   "packshots.setting": "Réglage des packshots",
+  "packshots.feedback": "Retour sur la détection des packshots",
+  "packshots.feedback_delete": "Retour sur les packshots retiré",
   "logos.keep": "Logo gardé ou mis de côté",
   "brand.create": "Marque créée",
   "brand.update": "Marque renommée",

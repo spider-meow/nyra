@@ -274,6 +274,9 @@ export type SiteImage = {
   status: SiteImageStatus;
   /** What the logo detector says (null when no image of the entry looks like a logo); `kept`: put back into the comparison. */
   logo: { score: number; kept: boolean } | null;
+  /** The Nyra team only, when the brand turned Packshots on (AXE-668): the detector's two measures, and this person's feedback on the image. */
+  packshot_measures?: { product: number | null; border: number | null; detected: boolean } | null;
+  packshot_feedback?: { is_packshot: boolean; note: string } | null;
 };
 
 export type SiteImageStatus = "qualify" | "found" | "logo" | "packshot" | "ignored";

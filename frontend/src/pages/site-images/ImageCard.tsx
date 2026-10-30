@@ -4,6 +4,7 @@ import { Button, Card, cx } from "../../components/ui";
 import { Modal } from "../../components/feedback";
 import { formatDate, pathOf, plural } from "../../lib/format";
 import type { ImageLabel, SiteImage, SiteImageStatus, SiteImageVariant } from "../../types";
+import { PackshotFeedback } from "./PackshotFeedback";
 
 /** Why an image is listed: its status, in words. */
 const PILLS: Record<SiteImageStatus, { label: string; tone: string }> = {
@@ -66,6 +67,7 @@ export function ImageCard(props: {
           </a>
         ) : null}
         {props.footer ?? (props.onAdd ? <AddOrIgnore onAdd={props.onAdd} onIgnore={props.onIgnore} /> : null)}
+        {item.packshot_measures ? <PackshotFeedback item={item} /> : null}
       </div>
     </Card>
   );

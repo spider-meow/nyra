@@ -332,6 +332,33 @@ thumbnail and nothing else; the route that turns the setting on queues one. That
 
 *Not to confuse with the hand labels* (`labels.DEFAULT_TYPES` has a "packshot" type, switched off with `NYRA_LABELS`): those are a person's examples, this is a detector with its own setting; the two do not read each other.
 
+### Feedback from the Nyra team, and picking the work up again (AXE-668)
+
+The thresholds above come from one site and one person. To see where the detector is wrong on real brands, and to keep it from one working session to the next,
+a platform admin (never a client, never an organization administrator: the routes answer 403) judges images in "Images en ligne" once the brand has turned the
+category on. Each card shows the two measures (`produit`, `bord`) and two buttons, "C'est un packshot" / "Pas un packshot"; pressing the one already given takes it
+back, and a short note (200 characters) can be added. One feedback per person and image: a new one replaces the old one.
+
+A feedback is stored (`packshot_feedback`, migration `20261030000045`) **with what lets the case be replayed**: the image and its `content_hash` (the feedback follows the
+file when the site is read again), the verdict, the product probability and the border measure of that moment, the two thresholds in force, and whether the image was
+detected. It is traced in the audit log as `packshots.feedback` (identifiers and flags, never the note), invisible to the client when the author is not a member.
+**A feedback never changes the detection**: it measures. Moving a threshold stays a decision, taken with these figures.
+
+*At the start of a session* read what the feedbacks say, per brand:
+
+```bash
+nyra packshots-feedback --org <organization slug> --brand <brand slug>
+```
+
+(or `GET /api/orgs/{org}/brands/{brand}/packshots/feedback` as a platform admin). The JSON gives the number of feedbacks, how many have no measure yet (they say nothing about
+the thresholds), the true and false positives and negatives, **the precision and recall of the thresholds in force** with the number of images behind each (`{"value": 0.82, "of": 11}`:
+read the `of` before the value), and the false positives and false negatives with their two measures, the thresholds then in force and the note. Each image is judged again
+with its stored measures against the thresholds in force, so a threshold that was changed since is taken into account; one judgment per image (the latest when several people gave one).
+
+What to do with it: look at the false positives (`product` and `border` both above the thresholds, yet "not a packshot": which of the two lets them through, and by how much) and the
+false negatives (which measure falls short). Try other values on those same cases before proposing a new threshold, say how many images the change rests on, and change
+`PRODUCT_THRESHOLD` / `UNIFORM_THRESHOLD` of `nyra/packshots.py` only when the figures support it; update the measure table above with the new figures and their limits.
+
 ## Twin references
 
 Off by default (`match.group_reference_twins`, the flag rule above). When on, `match.reference_twins` finds, among the brand's references, those
