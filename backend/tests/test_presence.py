@@ -320,3 +320,40 @@ def test_the_rule_is_an_organization_setting_that_starts_off():
     assert Config().report.conclude_redirected_pages is False
     assert validate_overrides({"report": {"conclude_redirected_pages": True}})["report"] == {"conclude_redirected_pages": True}
     assert with_overrides(Config(), {"report": {"conclude_redirected_pages": True}}).report.conclude_redirected_pages is True
+
+
+def test_a_person_validates_a_redirect_to_the_home_page_by_marking_it_replaced_and_only_when_the_rule_is_on(cloud_database_url, cloud_org, cloud_brand):
+    """AXE-641: the algorithm only proposes for a page sent to the home page or a parent page; the person's mark, read again after, decides.
+    Nothing validates any other ambiguous kind, a mark that waits to be checked, or a page when the rule is off."""
+    before_read = READ - timedelta(days=1)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+        for path, kind in (("/p/home", "home"), ("/p/home-unmarked", "home"), ("/p/home-waiting", "home"), ("/p/home-on-target", "home"), ("/p/temporary", "temporary")):
+            _redirected(conn, cloud_org, site, image, path, kind, seen=path == "/p/home-on-target")
+        user = None
+        pages = presence.pages_showing(conn, cloud_brand, ref, [f"https://a.test{path}" for path in ("/p/home", "/p/home-waiting", "/p/home-on-target", "/p/temporary")])
+        presence.set_replaced(conn, cloud_org, ref, list(pages.values()), replaced=True, user_id=user)
+        # Marked before the last read of every page but one: "/p/home-waiting" was marked after it (the mark waits to be checked).
+        conn.execute("UPDATE page_replacements SET marked_at = %s WHERE page_id <> %s", (before_read, pages["https://a.test/p/home-waiting"]))
+        conn.execute("UPDATE page_replacements SET marked_at = %s WHERE page_id = %s", (READ + timedelta(hours=1), pages["https://a.test/p/home-waiting"]))
+        state = lambda conclude: {row["url"].rsplit("/", 1)[1]: row["state"] for row in presence.pages(conn, cloud_brand, ref, conclude=conclude)}  # noqa: E731
+        off, on = state(False), state(True)
+    assert set(off.values()) == {"unknown"}  # the rule is off: a mark never concludes, as before
+    assert on == {"home": "gone", "home-unmarked": "unknown", "home-waiting": "unknown", "home-on-target": "still", "temporary": "unknown"}
+
+
+def test_the_list_of_visuals_says_which_pages_were_sent_elsewhere_and_a_validated_visual_is_replaced(cloud_database_url, cloud_org, cloud_brand):
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, _ = _setup(conn, cloud_org, cloud_brand)
+        ref = _visual(conn, cloud_org, cloud_brand, site, "v", decision="retenu", pages=[("/removed", False, True)])
+        image = conn.execute("SELECT site_image_id FROM matches WHERE reference_id = %s", (ref,)).fetchone()["site_image_id"]
+        _redirected(conn, cloud_org, site, image, "/v/old", "home", seen=False)
+        _redirected(conn, cloud_org, site, image, "/v/other", "temporary", seen=False)
+        [waiting] = presence.visuals(presence.by_visual(conn, cloud_brand, conclude=True))
+        assert waiting["redirected"] == {"home": 1, "temporary": 1} and not waiting["replaced"]  # said, and not silently blocked
+        pages = presence.pages_showing(conn, cloud_brand, ref, ["https://a.test/v/old", "https://a.test/v/other"])
+        presence.set_replaced(conn, cloud_org, ref, [pages["https://a.test/v/old"], pages["https://a.test/v/other"]], replaced=True, user_id=None)
+        conn.execute("UPDATE page_replacements SET marked_at = %s", (READ - timedelta(days=1),))
+        [after] = presence.visuals(presence.by_visual(conn, cloud_brand, conclude=True))
+    assert after["redirected"] == {"temporary": 1} and not after["replaced"]  # the validated page is gone; the temporary redirect still blocks

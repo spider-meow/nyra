@@ -8,8 +8,9 @@ For each page that shows a file matched to the reference (false positives left o
          is suspect (`crawl_runs.suspect`: far fewer known images seen, or many errors): never taken for "gone".
 A page that answered with another page (a redirection) is unknown too, unless the organization turned on `report.conclude_redirected_pages` and the
 redirection is `clear` (`crawl.redirect_kind`: permanent, same section, target read with success): the images of the target are attached to the
-page asked for, so it then reads like any page, "still" if the visual is on the target and "gone" if it is not. Any other kind stays unknown, and
-says why (`redirect_kind`).
+page asked for, so it then reads like any page, "still" if the visual is on the target and "gone" if it is not. A page sent to the home page or a
+parent page (`home`, ambiguous) reads that way only once a person marked it replaced for the visual and it was read again after the mark. Any other kind
+stays unknown, and says why (`redirect_kind`).
 Nothing is stored: the images and links are never deleted when they disappear from a site, so the state is worked out
 from the dates of the last read. A check of one page counts once a full read of its site has finished, and a later full read that does not read the page
 again sets it back to unknown. Every photo not set aside as a false positive counts, confirmed or not. Limits: an image
@@ -54,8 +55,10 @@ def _pages(only_reference: bool, redirects: bool) -> str:
     """One row per page and reference (the brand's every reference when `only_reference` is False, so the index on
     `matches.reference_id` is used for one); `section` is the first segment of the path ("/blogs"), "/" for the home page.
     `redirects`: the `pages.redirect_*` columns exist (`has_redirect_columns`). A page counts as read when its read succeeded, or (the rule is on:
-    `%(conclude)s`) when it redirected `clear`ly."""
-    tracked = "(p.links_tracked OR (%(conclude)s AND p.redirect_kind = 'clear'))" if redirects else "p.links_tracked"
+    `%(conclude)s`) when it redirected `clear`ly, or when it was sent to the home page or a parent page (`home`: ambiguous) and a PERSON marked it
+    replaced for this visual and it was read again after the mark: the person validates what the algorithm only proposes."""
+    tracked = ("(p.links_tracked OR (%(conclude)s AND (p.redirect_kind = 'clear' OR (p.redirect_kind = 'home' AND bool_or(pr.page_id IS NOT NULL) "
+               "AND COALESCE(bool_or(p.read_started_at > pr.marked_at), false)))))") if redirects else "p.links_tracked"
     target = "p.redirect_url, p.redirect_hops, p.redirect_kind" if redirects else "NULL::text AS redirect_url, NULL::int AS redirect_hops, NULL::text AS redirect_kind"
     return f"""
     SELECT m.reference_id, p.id AS page_id, p.url, s.id AS site_id, bool_or(pr.page_id IS NOT NULL) AS marked,
@@ -150,9 +153,9 @@ def total(rows: list[Row], *, site: Optional[uuid.UUID] = None, section: Optiona
 def by_visual(conn: psycopg.Connection, brand_id: uuid.UUID, *, conclude: bool = False) -> list[Row]:
     """The visuals a person confirmed (a photo decided « à retirer » or « retiré »; unlimited rights are never replaced), with
     the pages in each state, marked replaced or not, and one row with no state for a visual no page is known for:
-    (reference, filename, expiry_date, unlimited_rights, thumb_path, storage_path, state, marked, pages, unlinked)."""
+    (reference, filename, expiry_date, unlimited_rights, thumb_path, storage_path, state, marked, redirect_kind, pages, unlinked)."""
     return conn.execute(
-        f"""SELECT r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, g.marked, count(g.url) AS pages,
+        f"""SELECT r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, g.marked, g.redirect_kind, count(g.url) AS pages,
                    -- matches (not set aside) that no page is known for: where they are is unknown, so the visual cannot be replaced
                    (SELECT count(*) FROM matches m LEFT JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
                     WHERE m.reference_id = r.id AND v.decision IS DISTINCT FROM 'ecarte'
@@ -161,7 +164,7 @@ def by_visual(conn: psycopg.Connection, brand_id: uuid.UUID, *, conclude: bool =
             WHERE r.brand_id = %(brand)s AND NOT r.unlimited_rights AND EXISTS (
                 SELECT 1 FROM matches m JOIN reviews v ON v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id
                 WHERE m.reference_id = r.id AND v.decision IN ('retenu', 'traite'))
-            GROUP BY r.id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, g.marked""",
+            GROUP BY r.id, r.filename, r.expiry_date, r.unlimited_rights, r.thumb_path, r.storage_path, g.state, g.marked, g.redirect_kind""",
         {"brand": brand_id, "conclude": conclude},
     ).fetchall()
 
@@ -169,14 +172,16 @@ def by_visual(conn: psycopg.Connection, brand_id: uuid.UUID, *, conclude: bool =
 def visuals(rows: list[Row]) -> list[dict]:
     """One entry per visual from `by_visual`: its pages per state, and whether it is replaced: every page was read again
     and none shows it (a page not read again is never taken for gone, so a visual not measured yet, or with no page known, or with a
-    match no page is known for, is not replaced)."""
+    match no page is known for, is not replaced). `redirected`: the pages still unknown that answered with another page, by kind."""
     found: dict[uuid.UUID, dict] = {}
     for row in rows:
-        item = found.setdefault(row["reference_id"], {"row": row, **dict.fromkeys(STATES, 0), "marked": 0})
+        item = found.setdefault(row["reference_id"], {"row": row, **dict.fromkeys(STATES, 0), "marked": 0, "redirected": {}})
         if row["state"]:
             item[row["state"]] += row["pages"]
             item["marked"] += row["pages"] if row["marked"] else 0
-    return [{"row": item["row"], **{state: item[state] for state in STATES}, "marked": item["marked"], "pages": sum(item[state] for state in STATES),
+            if row["state"] == "unknown" and row["redirect_kind"]:  # pages sent elsewhere that nothing concluded: said, never silent
+                item["redirected"][row["redirect_kind"]] = item["redirected"].get(row["redirect_kind"], 0) + row["pages"]
+    return [{"row": item["row"], **{state: item[state] for state in STATES}, "marked": item["marked"], "redirected": item["redirected"], "pages": sum(item[state] for state in STATES),
              "replaced": sum(item[state] for state in STATES) > 0 and item["still"] == 0 and item["unknown"] == 0 and not item["row"]["unlinked"]} for item in found.values()]
 
 

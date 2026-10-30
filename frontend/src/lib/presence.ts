@@ -39,6 +39,9 @@ export const REDIRECT_TEXT: Record<string, string> = {
 
 export const PAGE_SIZE = 50;
 
+/** What a page sent to the home page or a parent page says once the organization's rule is on: the algorithm only proposes, a person marks it replaced. */
+export const HOME_TO_VALIDATE = "Renvoyée vers l'accueil ou une page parente · marquez-la « Remplacée » pour valider";
+
 /** The pages of a visual still online, gone or unknown, with the counts per site version and section. The key starts
  * with "occurrences": what a finished read refreshes. */
 export function usePresence(referenceId: string, narrowing: Narrowing, offset: number) {
@@ -54,6 +57,8 @@ export function usePresence(referenceId: string, narrowing: Narrowing, offset: n
 
 /** A visual to replace: its pages per state; `replaced` once every page was read again and none shows it. */
 export type VisualItem = Counts & {
+  /** The pages still unknown that answered with another page, by kind of redirect (see `REDIRECT_TEXT`). Absent from an older server. */
+  redirected?: Record<string, number>;
   reference_id: string;
   filename: string;
   expiry_date: string | null;
@@ -70,7 +75,7 @@ export function useVisuals() {
   const { apiPath, brand } = useOrg();
   return useQuery({
     queryKey: ["occurrences", brand.id, "visuals"],
-    queryFn: () => api.get<{ visuals: VisualItem[]; suspect_sites: { site_id: string; label: string; site_url: string; reason: string }[] }>(apiPath("/visuals")),
+    queryFn: () => api.get<{ visuals: VisualItem[]; suspect_sites: { site_id: string; label: string; site_url: string; reason: string }[]; redirects_concluded?: boolean }>(apiPath("/visuals")),
   });
 }
 

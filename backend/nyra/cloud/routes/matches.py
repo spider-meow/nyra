@@ -146,8 +146,8 @@ def visuals(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
         out.append({"reference_id": str(row["reference_id"]), "filename": row["filename"], "expiry_date": expiry,
                     "days_left": left, "status": report_module.rights_status(row, left),
                     "thumb": urls.get(row["thumb_path"] or "") or urls.get(row["storage_path"] or "", ""),
-                    **{key: item[key] for key in (*cloud_presence.STATES, "marked", "pages", "replaced")}})
-    return {"visuals": out, "suspect_sites": [{**row, "site_id": str(row["site_id"])} for row in suspect]}
+                    **{key: item[key] for key in (*cloud_presence.STATES, "marked", "pages", "replaced", "redirected")}})
+    return {"visuals": out, "suspect_sites": [{**row, "site_id": str(row["site_id"])} for row in suspect], "redirects_concluded": conclude}
 
 
 @router.post(f"{BRAND}/visuals/{{reference_id}}/replaced")
