@@ -9,6 +9,7 @@ Migration 20261030000044 adds the columns. Until it is applied everything here a
 from __future__ import annotations
 
 import hashlib
+import logging
 import time
 import uuid
 
@@ -17,6 +18,7 @@ import psycopg
 
 from .. import packshots as detector
 
+log = logging.getLogger("nyra.packshots")
 Row = dict
 SCORE_CHUNK = 500
 BACKGROUND_CHUNK = 200
@@ -113,8 +115,25 @@ def fingerprint(conn: psycopg.Connection, brand_id: uuid.UUID) -> str:
 
 
 def measures(conn: psycopg.Connection, site_image_id: uuid.UUID, embedding: np.ndarray | None, uniform: float | None) -> None:
-    """Keep the two measures of a site image just stored (a crawl knows both at once). Best effort before the migration: nothing is written."""
+    """Keep the two measures of a site image just stored (a crawl knows both at once). Nothing before the migration. A failure here (a descriptions file
+    out of date, an embedding of another model) is logged and the image is kept without them: reading a site must never lose an image for a category
+    that is off by default; the next `index` job of a brand that turned it on measures what is missing."""
     if not has_columns(conn):
         return
-    score = product_scores(np.asarray([embedding]))[0] if embedding is not None else None
-    conn.execute("UPDATE site_images SET packshot_score = %s, bg_uniform = %s WHERE id = %s", (score, uniform, site_image_id))
+    try:
+        score = product_scores(np.asarray([embedding]))[0] if embedding is not None else None
+        with conn.transaction():  # a failed statement must not leave the crawl's transaction aborted
+            conn.execute("UPDATE site_images SET packshot_score = %s, bg_uniform = %s WHERE id = %s", (score, uniform, site_image_id))
+    except Exception:  # noqa: BLE001 - see above: logged, the image is already stored
+        log.exception("keeping the packshot measures of image %s failed", site_image_id)
+
+
+def copy_measures(conn: psycopg.Connection, site_image_id: uuid.UUID) -> None:
+    """A copy of a file already stored (the same bytes under another address, `save_duplicate`) has the measures of its twin."""
+    if not has_columns(conn):
+        return
+    conn.execute(
+        """UPDATE site_images d SET packshot_score = s.packshot_score, bg_uniform = s.bg_uniform FROM site_images s
+           WHERE d.id = %s AND s.org_id = d.org_id AND s.content_hash = d.content_hash AND s.id <> d.id AND s.bg_uniform IS NOT NULL""",
+        (site_image_id,),
+    )

@@ -154,6 +154,7 @@ class CloudCrawlStore:
                 stored_bytes=existing.get("stored_bytes"),
             )
             cloud_db.link_image_page(conn, image_id, page_id)
+            cloud_packshots.copy_measures(conn, image_id)  # the same bytes as a file already measured
         return image_id
 
     def save_image(self, *, url, page_id, data, content_type, processed: fetch.ProcessedImage, embedding) -> uuid.UUID:

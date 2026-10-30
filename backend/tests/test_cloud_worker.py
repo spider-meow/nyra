@@ -1291,3 +1291,29 @@ def test_an_index_job_measures_the_border_of_the_images_read_before_the_setting_
         assert found[bottle] >= 0.99 and found[scene] < 0.9  # a bottle on white has a flat border, the other picture does not
         assert cloud_packshots.ids(conn, cloud_brand) <= {bottle}  # the product probability comes from the embedding the same job stored
         assert conn.execute("SELECT count(*) AS n FROM site_images WHERE id = ANY(%s) AND packshot_score IS NOT NULL", ([bottle, scene],)).fetchone()["n"] == 2
+
+
+def test_the_border_backfill_stops_within_its_time_and_another_job_continues(worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client, monkeypatch):
+    """AXE-527: a brand with thousands of images must not hit the longest duration of the `index` job: the comparison comes first, the measuring has a budget,
+    and the rest is queued as another job (never an endless loop: an image that cannot be read is passed once)."""
+    from nyra.cloud import packshots as cloud_packshots
+
+    plain = Image.new("RGB", (320, 320), "white")
+    buf = io.BytesIO()
+    plain.save(buf, format="JPEG")
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://budget.example")
+        image = _add_site_image(conn, fake_storage_client, cloud_org, site, "https://budget.example/a", buf.getvalue())
+        cloud_packshots.set_enabled(conn, cloud_org, cloud_brand, True)
+        cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="index")
+    monkeypatch.setattr(worker_module, "PACKSHOT_BACKFILL_SECONDS", 0)  # no time to measure
+    assert worker.run_once()
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT bg_uniform FROM site_images WHERE id = %s", (image,)).fetchone()["bg_uniform"] is None
+        waiting = conn.execute("SELECT count(*) AS n FROM jobs WHERE brand_id = %s AND kind = 'index' AND status = 'queued'", (cloud_brand,)).fetchone()["n"]
+    assert waiting == 1  # the rest of the work is another job
+    monkeypatch.setattr(worker_module, "PACKSHOT_BACKFILL_SECONDS", 150)
+    assert worker.run_once()
+    with cloud_db.connect(cloud_database_url) as conn:
+        assert conn.execute("SELECT bg_uniform FROM site_images WHERE id = %s", (image,)).fetchone()["bg_uniform"] >= 0.99
+        assert conn.execute("SELECT count(*) AS n FROM jobs WHERE brand_id = %s AND kind = 'index' AND status = 'queued'", (cloud_brand,)).fetchone()["n"] == 0

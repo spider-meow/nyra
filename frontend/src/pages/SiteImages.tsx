@@ -184,7 +184,7 @@ function ViewTabs(props: { view: SiteImageView; counts: SiteImagesPage["counts"]
             props.view === name ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink",
           )}
         >
-          {label} {props.counts ? <span className="tabular text-muted">{props.counts[name].toLocaleString("fr-FR")}</span> : null}
+          {label} {props.counts?.[name] !== undefined ? <span className="tabular text-muted">{props.counts[name].toLocaleString("fr-FR")}</span> : null}
         </button>
       ))}
     </div>

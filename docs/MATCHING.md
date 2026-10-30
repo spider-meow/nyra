@@ -328,7 +328,9 @@ the place to look (the thresholds are `PRODUCT_THRESHOLD` and `UNIFORM_THRESHOLD
 
 *Where the measures live* (migration `20261030000044`): `site_images.packshot_score` (the product probability, worked out from the stored embedding) and `bg_uniform`
 (the border, measured on the pixels when a crawl reads the image). Images read before the setting was turned on are measured by the next `index` job, which reads their
-thumbnail and nothing else; the route that turns the setting on queues one.
+thumbnail and nothing else; the route that turns the setting on queues one. That job measures after the comparison, for at most 150 s (and 40 % of what is left of its own longest duration), then queues another for the rest. The measure is the same on the 320 px thumbnail (backfill) as on the image a crawl reads (up to 1,024 px): on the 1,113 images above, 0 decisions differ (mean gap 0.005, largest 0.14). A copy of a file already stored (the same bytes under another address) takes its twin's measures. A failure to measure is logged and never loses the image that was read.
+
+*Not to confuse with the hand labels* (`labels.DEFAULT_TYPES` has a "packshot" type, switched off with `NYRA_LABELS`): those are a person's examples, this is a detector with its own setting; the two do not read each other.
 
 ## Twin references
 

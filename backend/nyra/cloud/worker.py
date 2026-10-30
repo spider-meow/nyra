@@ -85,6 +85,8 @@ JOB_LIMITS: dict[str, tuple[int, str, str]] = {
     "check": (30, "La vérification des pages", "le nombre de pages à relire"),
 }
 LIMIT_MIN_MINUTES, LIMIT_MAX_MINUTES = 1, 24 * 60  # what an override may ask for
+# The border of the images read before the Packshots setting is measured for at most this long per index job (and 40 % of what is left of the job's time), then another job continues.
+PACKSHOT_BACKFILL_SECONDS = 150
 # `_time_out` leaves the process after this long even if the database does not answer.
 TIME_OUT_GRACE_SECONDS = 20
 # The worker exits when its alive file is older than this (the image's health check calls 120 s unhealthy).
@@ -267,6 +269,10 @@ class JobContext:
         finally:
             timer.cancel()  # the run had already ended (this worker keeps going), or the exit was simulated by a test
 
+    def seconds_left(self) -> float:
+        """What is left of the job's longest duration (`max_seconds`)."""
+        return self.max_seconds - (time.monotonic() - self._started)
+
     def _heartbeat(self, message: Optional[str] = None, progress: Optional[dict] = None) -> None:
         with self._lock:
             try:
@@ -426,28 +432,34 @@ class _IndexRun:
             lambda row: (cloud_storage.BUCKET_SITE_IMAGES, row["storage_path"], row["content_hash"] or row["phash"]),
             self._prepare_site, _UPDATE_SITE)
 
-    def backfill_packshots(self) -> int:
+    def backfill_packshots(self, budget_seconds: float) -> tuple[int, bool]:
         """The border of the site images read before the brand turned the Packshots tab on (AXE-527): each one's thumbnail is read, nothing else.
-        Nothing unless the setting is on; an image that cannot be read is passed once and tried again at the next job. Returns how many were measured."""
+        Nothing unless the setting is on. It stops after `budget_seconds` (the job has its own longest duration, and the comparison comes first): the
+        caller queues another job for what is left. An image that cannot be read is passed once and tried again at the next job.
+        Returns (how many were measured, whether it got to the end)."""
         with cloud_db.connect(self.database_url) as conn:
             if not cloud_packshots.is_enabled(conn, self.brand_id):
-                return 0
+                return 0, True
             cloud_packshots.score_pending(conn, self.brand_id)  # the embeddings are stored: no image is read for the product score
-        measured, after = 0, _FIRST_ID
+        deadline = time.monotonic() + budget_seconds
+        measured, after, seen = 0, _FIRST_ID, {}  # `seen`: path -> measure, so a file served under several addresses is read once
         while True:  # keyset on `id`: each pass moves forward, so the job always ends
-            if self.ctx.should_stop():
-                return measured
+            if self.ctx.should_stop() or time.monotonic() > deadline:
+                return measured, False
             with cloud_db.connect(self.database_url) as conn:
                 rows = cloud_packshots.pending_background(conn, self.brand_id, after)
             if not rows:
-                return measured
-            found = [(value, row["id"]) for row in rows if (value := self._background_of(row["path"])) is not None]
+                return measured, True
+            for row in rows:
+                if row["path"] not in seen:
+                    seen[row["path"]] = self._background_of(row["path"])
+            found = [(seen[row["path"]], row["id"]) for row in rows if seen[row["path"]] is not None]
             if found:
-                with cloud_db.connect(self.database_url) as conn, conn.cursor() as cur:
-                    cur.executemany("UPDATE site_images SET bg_uniform = %s WHERE id = %s", found)
+                with cloud_db.connect(self.database_url) as conn, conn.cursor() as cur:  # `IS NULL`: a crawl that measured it meanwhile is not overwritten
+                    cur.executemany("UPDATE site_images SET bg_uniform = %s WHERE id = %s AND bg_uniform IS NULL", found)
             measured += len(found)
             after = rows[-1]["id"]
-            self.ctx.report(f"Mesure du fond des images · {measured}", {"phase": "index", "done": measured, "total": measured})
+            self.ctx.report(f"Mesure du fond des images · {measured}", {"phase": "index", "done": measured})
 
     def _background_of(self, path: str) -> Optional[float]:
         try:
@@ -997,17 +1009,24 @@ class Worker:
         run.warm_model()
         run.process_references()
         run.process_sites()
-        measured = run.backfill_packshots()
         result = run.result()
-        if measured:
-            result["packshots_measured"] = measured
         if ctx.cancelled:
             return "Indexation arrêtée.", result
         if not self._has_site_images(brand_id):
             return f"{run.updated} image(s) indexée(s).", result
         result["match_metrics"] = {}
         result["matches"] = self._compare(ctx, org_id, brand_id, config, result["match_metrics"])
+        self._measure_packshots(ctx, run, org_id, brand_id, result)  # after the comparison, which is what the job is for, and within what is left of its time
         return f"{run.updated} image(s) indexée(s), comparaison à jour.", result
+
+    def _measure_packshots(self, ctx: JobContext, run: "_IndexRun", org_id: uuid.UUID, brand_id: uuid.UUID, result: dict) -> None:
+        """The border of the images read before the Packshots setting (AXE-527), as far as the time left allows; another job is queued for the rest."""
+        measured, complete = run.backfill_packshots(min(PACKSHOT_BACKFILL_SECONDS, 0.4 * ctx.seconds_left()))
+        if measured:
+            result["packshots_measured"] = measured
+        if not complete and not ctx.cancelled:
+            with cloud_db.connect(self.database_url) as conn:
+                cloud_jobs.enqueue(conn, org_id=org_id, brand_id=brand_id, kind="index")
 
     def _index_pending(self, brand_id: uuid.UUID) -> tuple[int, bool]:
         """How many reference and site images are still missing an embedding, hashes or a thumbnail, and whether
