@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { Link, useSearchParams } from "react-router";
 import { useToast } from "../components/feedback";
 import { ContentFilter, ContentTagger } from "../components/Labels";
-import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton, cx } from "../components/ui";
+import { LoadError, RefreshFailed, Refreshing, SkeletonGrid } from "../components/busy";
+import { Button, EmptyState, FieldLabel, Input, PageHeader, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
+import { useLastKnown } from "../lib/busy";
 import { plural } from "../lib/format";
 import { LABELS_ENABLED, useAssignments, useLabels } from "../lib/labels";
 import { useOrg } from "../lib/org";
@@ -32,6 +34,9 @@ export function SiteImages() {
   const items = useMemo(() => images.data?.pages.flatMap((page) => page.items) ?? [], [images.data]);
   const last = images.data?.pages.at(-1);
   const page: SiteImagesPage | undefined = last && { ...last, items };
+  // A search, a site or a refresh with cards on screen: they stay (never passed off as the new answer: see `stale`), and so do the counters of the tabs.
+  const refreshing = images.isFetching && !images.isFetchingNextPage && !images.isLoading;
+  const counts = useLastKnown(page?.counts);
   const pick = useSelection();
   const [adding, setAdding] = useState<SiteImage[] | null>(null);
   const [zoom, setZoom] = useState<SiteImage | null>(null);
@@ -49,15 +54,17 @@ export function SiteImages() {
   return (
     <div className={cx(qualifying && chosen.length > 0 && "pb-20")}>
       <PageHeader title="Images en ligne" actions={admin && LABELS_ENABLED ? <Button onClick={() => setTyping(true)}>Étiqueter à la main</Button> : undefined} />
-      <ViewTabs view={view} counts={page?.counts} onChange={changeView} />
+      <ViewTabs view={view} counts={counts} onChange={changeView} />
       <ViewNote view={view} logosSetAside={page?.logos_set_aside} />
       {images.isLoading ? (
-        <ImageSkeletons />
-      ) : images.error || !page ? (
-        <EmptyState title="Impossible de charger les images" body={errorMessage(images.error)} />
+        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" cell="aspect-[4/5]" />
+      ) : !page ? (
+        <LoadError title="Impossible de charger les images" error={images.error} onRetry={() => void images.refetch()} retrying={images.isFetching} />
       ) : (
         <>
-          <FilterBar page={page} search={search} labels={labels} filter={filter} selecting={qualifying ? { selected: pick.selected, onSelect: pick.setSelected, items } : undefined} />
+          {images.error ? <RefreshFailed error={images.error} onRetry={() => void (images.isFetchNextPageError ? images.fetchNextPage() : images.refetch())} retrying={images.isFetching} /> : null}
+          <FilterBar page={page} search={search} labels={labels} filter={filter} stale={images.isPlaceholderData} selecting={qualifying ? { selected: pick.selected, onSelect: pick.setSelected, items } : undefined} />
+          <Refreshing active={refreshing} label="Mise à jour des images…">
           <ImageGrid
             page={page}
             items={filter.visible}
@@ -72,6 +79,7 @@ export function SiteImages() {
             footerFor={admin && view === "logos" ? (item) => <KeepLogo item={item} setAside={page.logos_set_aside} /> : undefined}
             filtered={search.applied !== "" || search.site !== "all"}
           />
+          </Refreshing>
         </>
       )}
       {qualifying && chosen.length ? (
@@ -225,7 +233,7 @@ function SiteTabs(props: { page: SiteImagesPage; search: Search }) {
 
 type Selecting = { selected: Set<string>; onSelect: (ids: Set<string>) => void; items: SiteImage[] };
 
-function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelInfo[]; filter: LabelFilter; selecting: Selecting | undefined }) {
+function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelInfo[]; filter: LabelFilter; selecting: Selecting | undefined; stale: boolean }) {
   const { page, search, filter, selecting } = props;
   return (
     <>
@@ -235,7 +243,8 @@ function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelI
           <FieldLabel htmlFor="img-search">Rechercher</FieldLabel>
           <Input id="img-search" type="search" placeholder="Nom de fichier ou page" value={search.text} onChange={(event) => search.changeText(event.target.value)} />
         </div>
-        <p className="pb-2 text-sm text-muted">{plural(page.total, page.view === "qualify" ? "image à vérifier" : "image", page.view === "qualify" ? "images à vérifier" : "images")}</p>
+        {/* While the answer to a search or a site comes, the count is the previous one: it says so instead of passing for the new one. */}
+        <p className="pb-2 text-sm text-muted">{props.stale ? "Mise à jour…" : plural(page.total, page.view === "qualify" ? "image à vérifier" : "image", page.view === "qualify" ? "images à vérifier" : "images")}</p>
         {selecting && page.items.length ? (
           <button
             type="button"
@@ -317,14 +326,6 @@ function KeepLogo({ item, setAside }: { item: SiteImage; setAside: boolean }) {
           {kept ? "Mettre à part" : "Remettre dans la comparaison"}
         </button>
       ) : null}
-    </div>
-  );
-}
-
-function ImageSkeletons() {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-      {Array.from({ length: 8 }, (_, index) => <Skeleton key={index} className="aspect-[4/5]" />)}
     </div>
   );
 }

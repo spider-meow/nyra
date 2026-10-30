@@ -1,8 +1,9 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Select } from "./Dropdown";
-import { Button, EmptyState, Input, Skeleton } from "./ui";
-import { api, errorMessage } from "../lib/api";
+import { LoadError, RefreshFailed, Refreshing } from "./busy";
+import { Button, Input, Skeleton } from "./ui";
+import { api } from "../lib/api";
 import { decisionLabel, formatDateTime, jobLabel, plural } from "../lib/format";
 import type { AuditEvent, AuditPage } from "../types";
 
@@ -115,7 +116,7 @@ export function AuditLog(props: { path: string; cacheKey: string }) {
   const events = log.data?.pages.flatMap((page) => page.events) ?? [];
   const capped = Boolean(log.data?.pages.at(-1)?.has_more) && !log.hasNextPage;
   return (
-    <div aria-busy={log.isFetching}>
+    <div>
       <div className="flex flex-wrap items-center gap-2 px-5 py-3">
         <Select className="w-64" aria-label="Type d'action" value={action} onChange={(event) => setAction(event.target.value)}>
           <option value="">Toutes les actions</option>
@@ -124,14 +125,10 @@ export function AuditLog(props: { path: string; cacheKey: string }) {
         <Input type="date" aria-label="Depuis le" className="w-44" value={since} onChange={(event) => setSince(event.target.value)} />
       </div>
       {log.isLoading ? <Skeleton className="m-5 h-24" /> : null}
-      {log.error && !log.data ? <EmptyState title="Impossible de charger le journal" body={errorMessage(log.error)} action={<Button size="sm" onClick={() => void log.refetch()}>Réessayer</Button>} /> : null}
-      {log.error && log.data ? (
-        <p role="alert" className="flex flex-wrap items-center gap-3 px-5 py-2 text-sm text-terracotta">
-          {errorMessage(log.error)}
-          <Button size="sm" onClick={() => void (log.isFetchNextPageError ? log.fetchNextPage() : log.refetch())}>Réessayer</Button>
-        </p>
-      ) : null}
+      {log.error && !log.data ? <LoadError title="Impossible de charger le journal" error={log.error} onRetry={() => void log.refetch()} retrying={log.isFetching} /> : null}
+      {log.error && log.data ? <div className="px-5 pt-2"><RefreshFailed error={log.error} onRetry={() => void (log.isFetchNextPageError ? log.fetchNextPage() : log.refetch())} retrying={log.isFetching} /></div> : null}
       {log.data && !events.length ? <p className="px-5 pb-5 text-sm text-muted">Aucune action enregistrée pour ces critères. Le journal garde 12 mois.</p> : null}
+      <Refreshing active={log.isFetching && !log.isFetchingNextPage && !log.isLoading}>
       <ul className="divide-y divide-line">
         {events.map((event) => (
           <li key={event.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-5 py-2.5 text-sm">
@@ -145,6 +142,7 @@ export function AuditLog(props: { path: string; cacheKey: string }) {
           </li>
         ))}
       </ul>
+      </Refreshing>
       {capped ? <p className="px-5 py-3 text-sm text-muted">Affinez par date pour voir la suite.</p> : null}
       {log.hasNextPage ? (
         <div className="px-5 py-3">
