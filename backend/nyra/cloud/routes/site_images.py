@@ -20,6 +20,7 @@ from .. import jobs as cloud_jobs
 from .. import logos as cloud_logos
 from .. import packshot_feedback as cloud_feedback
 from .. import packshots as cloud_packshots
+from .. import splits as cloud_splits
 from .. import storage as cloud_storage
 from .common import (
     BRAND,
@@ -55,6 +56,10 @@ class AdoptBody(BaseModel):
     notes: str = Field(default="", max_length=2000)
     # Optional name per image (site image id -> file name); otherwise taken from the image's address.
     filenames: dict[str, str] = Field(default_factory=dict)
+
+
+class SplitBody(BaseModel):
+    site_image_id: uuid.UUID
 
 
 class ExclusionBody(BaseModel):
@@ -305,6 +310,20 @@ def adopt_site_images(body: AdoptBody, scope: BrandScope = Depends(brand_admin_d
             job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind="index",
                                      created_by=scope.member.user_id)
     return {"added": added, "failed": failed, "job": job}
+
+
+@router.post(f"{BRAND}/site-images/split")
+def split_site_image(body: SplitBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Take one version (a file, and the other addresses serving it) out of its group of crops: it is not the same photo as the rest (AXE-521). It gets its
+    own card; nothing is hidden, and the automatic grouping does not put it back."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        if not cloud_splits.has_column(conn):
+            raise HTTPException(status_code=409, detail="La migration qui permet de séparer un groupe n'est pas appliquée sur la base.")
+        done = cloud_splits.split(conn, scope.org_id, scope.brand_id, body.site_image_id)
+        if done is None:
+            raise HTTPException(status_code=404, detail="Image introuvable.")
+        scope.audit(conn, "site_image.split", "site_image", body.site_image_id, addresses=done["addresses"], group_dissolved=done["group_dissolved"])
+    return done
 
 
 @router.get(f"{BRAND}/exclusions")

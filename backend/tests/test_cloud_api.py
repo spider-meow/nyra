@@ -1159,6 +1159,52 @@ def test_the_nyra_team_judges_the_detector_image_by_image_and_nobody_else_can(
     assert cards(staff)["scene"]["packshot_feedback"] is None
 
 
+def test_an_administrator_splits_a_group_of_crops_by_hand(client, org_with_users, cloud_brand, cloud_database_url, monkeypatch):
+    """AXE-521: a version taken out of its group gets its own card; a group left with one file is no group; nothing is hidden."""
+    from nyra.cloud import splits as cloud_splits
+
+    org_id, base, admin_id, client_id, _ = org_with_users
+    group, ids = uuid.uuid4(), {}
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand, "https://t.test/fr/")
+        for name in ("wide", "square", "banner", "alone"):
+            ids[name] = conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash, variant_group)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, f"https://t.test/{name}.jpg", f"{org_id}/{name}.jpg", f"{org_id}/thumbs/{name}.jpg", name,
+                 f"{len(ids):016x}", f"{len(ids):016x}", None if name == "alone" else group),
+            ).fetchone()["id"]
+    admin = _headers(admin_id)
+    cards = lambda: client.get(f"{base}/site-images", headers=admin, params={"view": "all"}).json()["items"]  # noqa: E731
+    split = lambda name, headers=admin: client.post(f"{base}/site-images/split", headers=headers, json={"site_image_id": str(ids[name])})  # noqa: E731
+    groups = lambda: dict(conn_rows(cloud_database_url))  # noqa: E731
+
+    def conn_rows(url):
+        with cloud_db.connect(url) as conn:
+            return [(row["content_hash"], row["variant_group"]) for row in conn.execute("SELECT content_hash, variant_group FROM site_images WHERE org_id = %s", (org_id,)).fetchall()]
+
+    assert sorted(len(card["variants"]) for card in cards()) == [1, 3]  # three crops of one photo on one card
+
+    assert split("banner", _headers(client_id)).status_code == 403
+    assert client.post(f"{base}/site-images/split", headers=admin, json={"site_image_id": str(uuid.uuid4())}).status_code == 404
+    first = split("banner")
+    assert first.json() == {"addresses": 1, "group_dissolved": False}
+    assert sorted(len(card["variants"]) for card in cards()) == [1, 1, 2]  # the banner has its own card; nothing is gone
+    assert groups()["banner"] is None and groups()["wide"] == group
+
+    # The group left with one file is no group any more: two cards, still all four images.
+    assert split("square").json()["group_dissolved"] is True
+    assert sorted(len(card["variants"]) for card in cards()) == [1, 1, 1, 1] and set(groups().values()) == {None}
+
+    # Before the migration: the route says why, and nothing moves.
+    monkeypatch.setattr(cloud_splits, "has_column", lambda conn: False)
+    assert split("wide").status_code == 409
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        rows = conn.execute("SELECT detail FROM audit_log WHERE action = 'site_image.split'").fetchall()
+    assert sorted(str(row["detail"]) for row in rows) == sorted([str({"addresses": 1, "group_dissolved": False}), str({"addresses": 1, "group_dissolved": True})])
+
+
 def test_a_change_the_running_job_did_not_see_queues_another_behind_it(org_with_users, cloud_brand, cloud_database_url):
     from nyra.cloud import jobs as cloud_jobs
 
