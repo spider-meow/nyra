@@ -33,7 +33,10 @@ reproducible given the same inputs and thresholds.
   taken back by `reap_stale`, lighter and without the pages it was reading, and told why from the heartbeat's
   `progress.diag` (memory, pages in flight). See « Staying up » in `DEPLOYMENT.md`. A page's images are downloaded,
   processed and stored in waves of `IMAGE_DOWNLOADS_PER_PAGE`, and only a working-size copy of each new image
-  waits for its embedding; a Chromium or driver death is survived up to 3 times per read.
+  waits for its embedding; a Chromium or driver death is survived up to 3 times per read. **Chromium is kept small during a long read:** each page is read
+  in a page of its own, closed after it, and the browser is started again every `RECYCLE_AFTER_PAGES` (10) pages, when no reader is in the middle of a page (not a death,
+  not counted in `browser_restarts`). Before this, one page and one browser lived for the whole read and a site of 150 heavy pages took the worker past its memory
+  limit (measured on production, 30 October 2026: the kernel killed Chromium twice, then the worker at page 64 of 163, at one page at a time).
 - The interface polls one cheap endpoint (`jobs/current`) — every 2 s
   while something runs, every 20 s otherwise — and refreshes the lists a
   finished job changed.

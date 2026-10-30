@@ -579,6 +579,76 @@ def test_a_page_closed_by_the_site_does_not_restart_the_browser_until_it_happens
     assert len(launches) == 2 and reading.stats.browser_restarts == 1
 
 
+def _recycling_reading(monkeypatch, pages, every, readers=1):
+    """A crawler over a fake browser that counts its starts and records, for each page read, which browser it was opened in and whether it was closed."""
+    from nyra import crawl as crawl_module
+
+    reading = _crawler(store=_MarkingStore(), max_pages=pages)
+    for n in range(pages):
+        reading.enqueue(f"https://t.test/{n}")
+    log = {"launches": 0, "opened": [], "closed": [], "stale": []}
+    monkeypatch.setattr(crawl_module, "RECYCLE_AFTER_PAGES", every)
+
+    class Page:
+        def __init__(self, generation):
+            self.generation = generation
+
+        async def close(self):
+            log["closed"].append(self)
+
+    class Context:
+        async def new_page(self):
+            page = Page(reading.generation)
+            log["opened"].append(page)
+            return page
+
+    async def launch():
+        log["launches"] += 1
+        reading._context = Context()
+        reading.generation += 1
+        reading.pages_since_launch = 0
+
+    async def shutdown():
+        reading._context = None
+
+    async def crawl_page(page, _http, url):
+        await asyncio.sleep(0.01)  # the readers overlap
+        if page.generation != reading.generation:
+            log["stale"].append(url)  # read in a browser that was already started again
+
+    monkeypatch.setattr(reading, "_launch", launch)
+    monkeypatch.setattr(reading, "_shutdown", shutdown)
+    monkeypatch.setattr(reading, "_crawl_page", crawl_page)
+    reading._launch_lock = asyncio.Lock()
+
+    async def run():
+        await reading._launch()
+        await asyncio.gather(*[reading._worker(None) for _ in range(readers)])
+
+    asyncio.run(run())
+    return reading, log
+
+
+def test_each_page_is_read_in_a_page_of_its_own_and_closed_after_it(monkeypatch):
+    """A page kept for the whole read keeps growing (a heavy site took the worker past its memory limit): one page per address, closed after it."""
+    reading, log = _recycling_reading(monkeypatch, pages=5, every=100)
+    assert len(log["opened"]) == 5 and len(set(map(id, log["opened"]))) == 5
+    assert set(map(id, log["closed"])) == set(map(id, log["opened"])) and reading.stats.reading == []
+
+
+def test_the_browser_is_started_again_after_a_number_of_pages_and_that_is_not_a_death(monkeypatch):
+    reading, log = _recycling_reading(monkeypatch, pages=7, every=3)
+    assert log["launches"] == 3  # the first start, and again before the 4th page and before the 7th
+    assert reading.stats.browser_restarts == 0 and reading.stats.pages_failed == 0 and not log["stale"]
+    assert [page.generation for page in log["opened"]] == [1, 1, 1, 2, 2, 2, 3]
+
+
+def test_with_several_readers_none_is_in_the_middle_of_a_page_when_the_browser_is_started_again(monkeypatch):
+    reading, log = _recycling_reading(monkeypatch, pages=12, every=4, readers=3)
+    assert log["launches"] >= 3 and not log["stale"]  # nobody read in a browser that was closed under it
+    assert len(log["opened"]) == 12 and len(log["closed"]) == 12 and reading.stats.browser_restarts == 0
+
+
 # --- AXE-641: where a page that ended elsewhere ended -------------------------------------------------------------------
 
 SITE = "https://t.test/"
