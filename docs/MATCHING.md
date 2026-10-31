@@ -265,6 +265,21 @@ eye, reference beside site image: 35 pairs.
   0.876, and misses that CLIP also misses; the logo threshold (0.95) on another brand. The judgement is an AI agent's, by eye, on thumbnails; no
   pair was confirmed by a person, and keypoint verification was not run on them.
 
+**Sweep on the same library's decisions (`nyra cloud-calibrate`, 31 Oct 2026).** The labels are the decisions: 553 kept (true), 11
+set aside or false positive (false). "Recall" here is the share of kept pairs that one signal finds on its own, **not** the real
+recall: those pairs were already found by the matcher.
+
+| CLIP cosine | 0.75 (floor) | 0.85 (medium) | 0.88 | 0.92 (high) |
+|---|---|---|---|---|
+| Precision | 0.980 (11 false of 564) | 0.990 (4 false) | 1.000 | 1.000 |
+| Share of kept pairs found | 1.000 | 0.754 | 0.570 | 0.329 |
+
+- Every kept pair is at 0.75 or more: the floor cuts none of this library's good pairs. The 11 rejected pairs are at 0.87 at most,
+  and 4 of them still pass the medium level (0.85): that is what the person reviewing sets aside.
+- dHash alone finds 52 % of the kept pairs at 20 bits, with no false pair; CLIP and the keypoints find the rest.
+- Same limits as above: 11 negatives are too few for a solid precision, the real recall is still unknown, one brand only.
+  No threshold was changed.
+
 **CLIP on real images stays manual.** `nyra calibrate` / `nyra cloud-calibrate` (AXE-526) need real, hand-labelled pairs
 and torch; run it by hand before changing a CLIP threshold or the model, and put the figures in this file. *Proposal, not
 configured:* a nightly or weekly job on a machine that holds a labelled set outside the repository, running `nyra
