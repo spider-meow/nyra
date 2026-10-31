@@ -525,6 +525,25 @@ bucket per user, in the process's memory by default (or in Postgres, below), wit
 | `NYRA_RATE_WRITE_PER_MIN` | `120` | every other method of one user (launching a job, sending files, editing; an upload sends 8 files per request) |
 | `NYRA_RATE_BACKEND` | `memory` | `memory`: one bucket table per web process. `database`: the buckets live in Postgres (`rate_buckets`, migration `20261027000038`), shared by every web process, kept across a restart. Any other value is ignored with a warning |
 
+**Where the counters live: decision (AXE-585).** Postgres, one query per limited request, and a database that fails lets requests through.
+
+| | Postgres (chosen) | Redis | Limit in Caddy |
+|---|---|---|---|
+| Added service | none | one more to run on a 4 GB Droplet | none, but a custom Caddy build (the stock `caddy:2` image has no such module) |
+| Cost per request | one round trip: 0.5 ms (95th percentile 0.6 ms) on a local Postgres, **not measured against Supabase** | one round trip, not measured | none for the app |
+| Who is counted | the verified JWT's user | same | the IP, which Caddy cannot tell from the user (see below) |
+| Storage down | the process falls back on its own memory buckets | would need the same fallback | n/a |
+| Test in CI | yes (`test_rate_buckets`, a real Postgres) | needs a service in CI | no |
+
+- **Open on failure, not closed.** If the database does not answer, the API is already down for most requests; refusing the rest because
+  the counters are unreachable would only add to it. The process's own buckets keep a limit meanwhile (per process, as today).
+- **No batching per person and minute.** It would remove the round trip but let a person overshoot by the size of the batch, and the
+  limit is there to be exact. Revisit only if the round trip measured against Supabase is a problem.
+- **Today's setting stays `memory`**: one `web` process runs, so the database would add a round trip for no gain. Switch to `database` when
+  a second process is added, after measuring the added latency against Supabase on that day.
+- **Not measured**: the latency added per request against Supabase (only a Postgres on the same machine was). Redis was not measured at all.
+- No change to AXE-586/587 (already built on this choice).
+
 **Several web processes: switch to `database`.** In memory, N processes allow N times the limit and a restart gives everyone a full bucket. With
 `NYRA_RATE_BACKEND=database` (apply migration `20261027000038_rate_buckets.sql` first, then set the variable and restart `web`),
 each limited request costs one query (`take_rate_token`, atomic: one statement). Measured on a Postgres on the same machine, one
