@@ -156,8 +156,18 @@ behind it, since the running one has read the old set.
   the fleur-de-lis badge, red and white variants, file names containing "logo"); then 0.92 an institutional red graphic,
   and 0.83 to 0.86 a photograph of a château with a small emblem. Hence `THRESHOLD = 0.95`: setting a real photograph
   aside is the costly mistake.
-- **Not known:** the recall (logos below 0.95 were looked for by eye, not counted), and how it holds on another brand:
-  only one brand had images read. Check another brand's images before relying on it.
+- **A second brand (31 Oct 2026, AXE-526; looked at by eye on thumbnails, by an AI agent, nobody confirmed).** 825 distinct
+  images read, the logo switch **off** for that brand, so its scores were looked at but nothing was set aside. 31 images are at
+  0.95 or more: the large majority are logos, award badges, QR codes and text banners, but **one is a real photograph (a
+  group of people, 0.971)** and four are illustrations or documents (an old certificate 0.985, two illustrated posters 0.962
+  and 0.953, a title graphic 0.986). Below 0.95, 22 images were looked at (0.70 to 0.95): all photographs, maps or posters
+  except two logo-like ones (a title badge 0.860, a QR code 0.749). So 0.95 was not "no photograph above it" on this brand: the
+  first brand's result does not carry over.
+- **What follows.** The switch stays off by default (it is). Turning it on for a brand would set that group photograph aside; the
+  person can put it back (`logo_kept`), nothing is deleted. No threshold was changed: one photograph in 31 is too few to move
+  it, and raising it above 0.971 would not remove the illustrations (0.985, 0.986) anyway.
+- **Not known:** the recall (the 0 to 0.70 range was not looked at, and the two logo-like images below 0.95 show it is not
+  1.0), and the precision on a third brand. Look at a brand's top scores before turning the switch on for it.
 
 ## Exclusions
 
