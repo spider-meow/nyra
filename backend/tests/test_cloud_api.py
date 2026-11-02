@@ -522,6 +522,20 @@ def test_accented_names_get_a_safe_storage_key_and_one_bad_file_spares_the_other
     assert [item["filename"] for item in items] == ["Été n°1 [final].jpg"]
 
 
+def test_an_upload_by_an_administrator_of_the_organization_still_queues_the_indexing(client, org_with_users, cloud_database_url):
+    """AXE-682: the team alone launches a read by hand, but what a client's own action queues goes through `enqueue` on the server."""
+    org_id, base, _, _, _ = org_with_users
+    owner = uuid.uuid4()  # an administrator of the client's organization, not on the team
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (owner, "owner@client.test"))
+        cloud_db.add_membership(conn, user_id=owner, org_id=org_id, role="admin")
+    sent = client.post(f"{base}/library/upload", headers=_headers(owner), files=[("files", ("a.jpg", _upload_bytes(), "image/jpeg"))])
+    assert sent.status_code == 200 and sent.json()["saved"] == ["a.jpg"] and sent.json()["job"]["kind"] == "index"
+    with cloud_db.connect(cloud_database_url) as conn:
+        queued = conn.execute("SELECT kind, status, created_by FROM jobs WHERE org_id = %s", (org_id,)).fetchall()
+    assert [(job["kind"], job["status"]) for job in queued] == [("index", "queued")] and queued[0]["created_by"] == owner
+
+
 def test_upload_replaces_a_visual_of_the_same_name_only_when_asked(client, org_with_users):
     _, base, admin_id, _, _ = org_with_users
     first = _upload(client, base, admin_id, "a.jpg")

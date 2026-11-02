@@ -1351,3 +1351,18 @@ def test_the_border_backfill_stops_within_its_time_and_another_job_continues(wor
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT bg_uniform FROM site_images WHERE id = %s", (image,)).fetchone()["bg_uniform"] >= 0.99
         assert conn.execute("SELECT count(*) AS n FROM jobs WHERE brand_id = %s AND kind = 'index' AND status = 'queued'", (cloud_brand,)).fetchone()["n"] == 0
+
+
+def test_a_scheduled_read_chains_the_comparison_without_anyone_launching_it(worker, cloud_database_url, cloud_org, cloud_brand, monkeypatch):
+    """AXE-682: only the team launches a read by hand, but the monthly one (no author, the schedule's own parameters) still ends with the comparison."""
+    from nyra.cloud import schedule
+
+    _read_pages_of_a_fake_site(monkeypatch)
+    compared = []
+    monkeypatch.setattr(worker_module.Worker, "_compare", lambda self, ctx, org_id, brand_id, config, metrics=None: compared.append(brand_id) or 3)
+    with cloud_db.connect(cloud_database_url) as conn:
+        cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t1.test/")
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="crawl", params=dict(schedule.JOB_PARAMS), created_by=None)
+    assert worker.run_once()
+    done = _job(cloud_database_url, cloud_brand, job["id"])
+    assert done["status"] == "done" and done["result"]["matches"] == 3 and compared == [cloud_brand]
