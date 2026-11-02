@@ -16,7 +16,7 @@ const byUrgency = (a: VisualItem, b: VisualItem) => (a.days_left ?? Infinity) - 
 
 /** The visuals to replace: one line each, soonest expiry first, with how many pages still show it. */
 export function Visuals() {
-  const { admin, link } = useOrg();
+  const { platformAdmin, link } = useOrg();
   const visuals = useVisuals();
   const read = useFullRead();
   const [tab, setTab] = useState<Tab>("todo");
@@ -31,9 +31,9 @@ export function Visuals() {
       {visuals.error ? <RefreshFailed error={visuals.error} onRetry={() => void visuals.refetch()} retrying={visuals.isFetching} /> : null}
       <PageHeader
         title="Visuels à remplacer"
-        actions={admin ? <Button variant="primary" loading={read.busy} disabled={Boolean(read.hold)} {...holdProps(read.hold)} onClick={read.read}>Relire les sites</Button> : undefined}
+        actions={platformAdmin ? <Button variant="primary" loading={read.busy} disabled={Boolean(read.hold)} {...holdProps(read.hold)} onClick={read.read}>Relire les sites</Button> : undefined}
       />
-      {admin && read.hold ? <div className="mb-4"><OrgHoldNotice hold={read.hold} /></div> : null}
+      {platformAdmin && read.hold ? <div className="mb-4"><OrgHoldNotice hold={read.hold} /></div> : null}
       {visuals.data.suspect_sites.map((site) => <SuspectReadNotice key={site.site_id} site={site.label || hostOf(site.site_url)} reason={site.reason} />)}
       <div className="mb-4 flex items-center gap-2">
         <Segmented<Tab>

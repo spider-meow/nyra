@@ -55,7 +55,7 @@ export function Pages(props: { referenceId: string; data: Presence; narrowing: N
   const { data, narrowing } = props;
   const counts = countsFor(data, narrowing);
   const shown = data.pages.slice(0, MAX_CHECKED_PAGES);
-  const { admin } = useOrg();
+  const { platformAdmin } = useOrg(); // a check is a read launched by hand: the Nyra team's (AXE-682)
   const toast = useToast();
   const { check, busy } = useCheckPages();
   const hold = useOrgHold();
@@ -102,7 +102,7 @@ export function Pages(props: { referenceId: string; data: Presence; narrowing: N
           {narrowing.section ? ` dans ${narrowing.section}` : ""}
         </p>
         {data.pages.length ? <Button size="sm" disabled={mark.isPending} onClick={() => setMarked(shown.map((page) => page.url), !allMarked)}>{allMarked ? "Tout démarquer" : "Tout marquer remplacé"}</Button> : null}
-        {admin && data.pages.length ? <Button size="sm" loading={busy} disabled={Boolean(hold)} {...holdProps(hold)} onClick={() => verify(shown.map((page) => page.url))}>Vérifier ces {shown.length} pages</Button> : null}
+        {platformAdmin && data.pages.length ? <Button size="sm" loading={busy} disabled={Boolean(hold)} {...holdProps(hold)} onClick={() => verify(shown.map((page) => page.url))}>Vérifier ces {shown.length} pages</Button> : null}
       </div>
       {data.pages.length ? (
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
@@ -114,7 +114,7 @@ export function Pages(props: { referenceId: string; data: Presence; narrowing: N
                 {page.redirect_url ? <span className="block truncate text-xs text-muted" title={page.redirect_url}>Redirigée vers {redirectLabel(page.url, page.redirect_url)}{page.redirect_hops && page.redirect_hops > 1 ? ` · ${page.redirect_hops} sauts` : ""}</span> : null}
               </a>
               <span className={cx("shrink-0 rounded-md px-2 py-px text-xs font-medium", statusOf(page, Boolean(data.redirects_concluded)).tone)}>{statusOf(page, Boolean(data.redirects_concluded)).label}</span>
-              {admin ? <Button size="sm" variant="ghost" disabled={busy || Boolean(hold)} {...holdProps(hold)} aria-label={`Vérifier la page ${pathOf(page.url)}`} onClick={() => verify([page.url])}>Vérifier</Button> : null}
+              {platformAdmin ? <Button size="sm" variant="ghost" disabled={busy || Boolean(hold)} {...holdProps(hold)} aria-label={`Vérifier la page ${pathOf(page.url)}`} onClick={() => verify([page.url])}>Vérifier</Button> : null}
               <label className="flex shrink-0 items-center gap-2 text-xs text-muted">
                 <input type="checkbox" className="h-[18px] w-[18px] accent-ink" checked={page.marked} disabled={mark.isPending} aria-label={`Page remplacée : ${pathOf(page.url)}`} onChange={(event) => setMarked([page.url], event.target.checked)} />
                 Remplacée

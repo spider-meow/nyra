@@ -57,7 +57,7 @@ function Results(props: { view: ReviewView; compare: ReactNode }) {
 
 /** The missing list, the empty states, or the occurrences beside the comparison panel. */
 function ResultsBody(props: { view: ReviewView; compare: ReactNode }) {
-  const { link } = useOrg();
+  const { link, platformAdmin } = useOrg();
   const { tab, missing, rows, counts } = props.view;
   const noMatches = counts.found + counts.verify === 0;
   if (tab === "missing") return <MissingList items={missing} />;
@@ -65,8 +65,8 @@ function ResultsBody(props: { view: ReviewView; compare: ReactNode }) {
     return (
       <EmptyState
         title={noMatches ? "Aucune correspondance pour l'instant" : "Rien ne correspond à ces filtres"}
-        body={noMatches ? "Lancez une lecture du site pour comparer la bibliothèque à ce qui est en ligne." : "Élargissez l'échéance ou choisissez « Toutes » les décisions."}
-        action={noMatches ? <LinkButton to={link("scans")} variant="primary">Lire le site</LinkButton> : undefined}
+        body={noMatches ? (platformAdmin ? "Lancez une lecture du site pour comparer la bibliothèque à ce qui est en ligne." : "La bibliothèque sera comparée à ce qui est en ligne dès qu'une lecture des sites aura eu lieu.") : "Élargissez l'échéance ou choisissez « Toutes » les décisions."}
+        action={noMatches && platformAdmin ? <LinkButton to={link("scans")} variant="primary">Lire le site</LinkButton> : undefined}
       />
     );
   }

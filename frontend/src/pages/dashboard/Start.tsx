@@ -4,7 +4,7 @@ import { useOrg } from "../../lib/org";
 
 /** The three first steps, shown until there is a library and a first reading. */
 export function Start(props: { noLibrary: boolean; neverCrawled: boolean }) {
-  const { link, admin } = useOrg();
+  const { link, platformAdmin } = useOrg();
   const { noLibrary, neverCrawled } = props;
   return (
     <>
@@ -14,7 +14,7 @@ export function Start(props: { noLibrary: boolean; neverCrawled: boolean }) {
         <p className="mt-1 text-sm text-muted">Trois étapes pour savoir quels visuels retirer du site.</p>
         <ol className="mt-5 grid gap-4 text-[15px]">
           <Step done={!noLibrary} index={1} title="Déposer les visuels sous droits et leur date d'expiration" to={link("library")} cta="Ouvrir la bibliothèque" />
-          <Step done={!neverCrawled} index={2} title="Ajouter les sites sur lesquels ils pourraient encore apparaître, puis les lire" to={link("scans")} cta="Sites et lectures" disabled={noLibrary || !admin} />
+          <Step done={!neverCrawled} index={2} title={platformAdmin ? "Ajouter les sites sur lesquels ils pourraient encore apparaître, puis les lire" : "L'équipe Nyra ajoute les sites sur lesquels ils pourraient encore apparaître, puis les lit"} to={link("scans")} cta="Sites et lectures" disabled={noLibrary} team={platformAdmin} />
           <Step done={false} index={3} title="Traiter les correspondances trouvées" to={link("review")} cta="Voir les correspondances" disabled={neverCrawled} />
         </ol>
       </Card>
@@ -22,7 +22,8 @@ export function Start(props: { noLibrary: boolean; neverCrawled: boolean }) {
   );
 }
 
-function Step(props: { index: number; title: string; done: boolean; to: string; cta: string; disabled?: boolean }) {
+/** `team`: the step has a button only for the Nyra team; for anyone else it says who does it. */
+function Step(props: { index: number; title: string; done: boolean; to: string; cta: string; disabled?: boolean; team?: boolean }) {
   return (
     <li className="flex flex-wrap items-center gap-3">
       <span
@@ -35,7 +36,7 @@ function Step(props: { index: number; title: string; done: boolean; to: string; 
         {props.done ? <Icon name="check" size={14} strokeWidth={2.2} /> : props.index}
       </span>
       <span className={cx("min-w-0 flex-1", props.done && "text-muted line-through decoration-1")}>{props.title}</span>
-      {!props.done ? (
+      {!props.done && props.team !== false ? (
         props.disabled ? (
           <Button size="sm" disabled>{props.cta}</Button>
         ) : (
