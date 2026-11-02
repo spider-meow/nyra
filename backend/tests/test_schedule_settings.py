@@ -1,4 +1,4 @@
-"""The setting of the monthly read of a brand: who reads and who changes it, what it validates, what it traces, and that
+"""The setting of the scheduled reads (twice a month) of a brand: who reads and who changes it, what it validates, what it traces, and that
 it agrees with `schedule.enable`. Cloud tests: they skip unless TEST_DATABASE_URL is set (see conftest.py)."""
 
 # ruff: noqa: F811 (the `org_with_users` fixture of test_cloud_api is imported, then used by name)
@@ -17,6 +17,8 @@ from test_cloud_api import _headers, org_with_users  # noqa: E402, F401
 
 from nyra.cloud import db as cloud_db  # noqa: E402
 from nyra.cloud import schedule  # noqa: E402
+
+MESSAGE = "Le jour de la première lecture doit être compris entre 1 et 3 (la seconde a lieu entre le 13 et le 16)."
 
 
 def _audit_rows(url, org_id, action):
@@ -69,7 +71,8 @@ def test_a_brand_without_a_row_reads_as_off_with_the_default_day_for_every_membe
         answer = client.get(f"{base}/schedule", headers=_headers(user))
         assert answer.status_code == 200
         assert answer.json() == {"enabled": False, "day_of_month": schedule.default_day(cloud_brand),
-                                 "default_day": schedule.default_day(cloud_brand), "next_run_at": None, "last_read_at": None}
+                                 "default_day": schedule.default_day(cloud_brand), "second_day": schedule.second_day(cloud_brand),
+                                 "next_run_at": None, "last_read_at": None}
     assert client.get(f"{base}/schedule", headers=_headers(outsider_id)).status_code == 403
     assert client.get(f"{base}/schedule").status_code == 401
     assert client.get(f"/api/orgs/{org_id}/brands/{uuid.uuid4()}/schedule", headers=_headers(admin_id)).status_code == 404
@@ -78,7 +81,7 @@ def test_a_brand_without_a_row_reads_as_off_with_the_default_day_for_every_membe
 def test_only_an_administrator_changes_it_and_it_is_traced_in_the_same_transaction(client, org_with_users, cloud_brand,
                                                                                   cloud_database_url):
     org_id, base, admin_id, client_id, outsider_id = org_with_users
-    body = {"enabled": True, "day_of_month": 12}
+    body = {"enabled": True, "day_of_month": 2}
     assert client.put(f"{base}/schedule", headers=_headers(client_id), json=body).status_code == 403
     assert client.put(f"{base}/schedule", headers=_headers(outsider_id), json=body).status_code == 403
     assert client.put(f"{base}/schedule", json=body).status_code == 401
@@ -87,39 +90,39 @@ def test_only_an_administrator_changes_it_and_it_is_traced_in_the_same_transacti
     on = client.put(f"{base}/schedule", headers=_headers(admin_id), json=body)
     assert on.status_code == 200
     assert on.json() == client.get(f"{base}/schedule", headers=_headers(client_id)).json()  # the same object, seen by a member
-    assert on.json()["enabled"] is True and on.json()["day_of_month"] == 12
+    assert on.json()["enabled"] is True and on.json()["day_of_month"] == 2
     if _marked(cloud_database_url, cloud_brand) is None:  # the date of this month has not passed: it is this month's
-        assert on.json()["next_run_at"] == schedule.next_run(cloud_brand, 12, None, datetime.now(timezone.utc)).isoformat()
+        assert on.json()["next_run_at"] == schedule.next_run(cloud_brand, 2, None, datetime.now(timezone.utc)).isoformat()
     assert datetime.fromisoformat(on.json()["next_run_at"]).tzinfo is not None
 
-    off = client.put(f"{base}/schedule", headers=_headers(admin_id), json={"enabled": False, "day_of_month": 12})
+    off = client.put(f"{base}/schedule", headers=_headers(admin_id), json={"enabled": False, "day_of_month": 2})
     assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["next_run_at"] is None
-    assert off.json()["day_of_month"] == 12  # the chosen day is kept
+    assert off.json()["day_of_month"] == 2  # the chosen day is kept
 
     [enabled] = _audit_rows(cloud_database_url, org_id, "schedule.enable")
     [disabled] = _audit_rows(cloud_database_url, org_id, "schedule.disable")
     assert enabled["user_id"] == admin_id and enabled["brand_id"] == cloud_brand and enabled["object_id"] == str(cloud_brand)
-    assert enabled["detail"] == {"day_of_month": 12} and disabled["detail"] == {}
+    assert enabled["detail"] == {"day_of_month": 2} and disabled["detail"] == {}
 
 
 def test_the_body_is_validated_with_a_sentence_and_nothing_is_written(client, org_with_users, cloud_database_url):
     org_id, base, admin_id, _, _ = org_with_users
     headers = _headers(admin_id)
-    for day in (0, 29, -3, 400):
+    for day in (0, 4, 28, 29, -3, 400):
         answer = client.put(f"{base}/schedule", headers=headers, json={"enabled": True, "day_of_month": day})
-        assert answer.status_code == 400 and answer.json()["detail"] == "Le jour du mois doit être compris entre 1 et 28."
+        assert answer.status_code == 400 and answer.json()["detail"] == MESSAGE
     for bad in ({"enabled": True, "day_of_month": "5"}, {"enabled": True, "day_of_month": 5.5}, {"enabled": True, "day_of_month": True},
                 {"enabled": "yes", "day_of_month": 5}, {"day_of_month": 5}, {"enabled": False, "day_of_month": "5"},
                 {"enabled": True, "day_of_month": 5, "org_id": str(uuid.uuid4())}):
         assert client.put(f"{base}/schedule", headers=headers, json=bad).status_code == 422, bad
     for incomplete in ({"enabled": True}, {"enabled": True, "day_of_month": None}):  # a day is needed to switch on
         answer = client.put(f"{base}/schedule", headers=headers, json=incomplete)
-        assert answer.status_code == 400 and answer.json()["detail"] == "Le jour du mois doit être compris entre 1 et 28."
+        assert answer.status_code == 400 and answer.json()["detail"] == MESSAGE
     assert client.put(f"{base}/schedule", headers=headers, json={"enabled": False, "day_of_month": 29}).status_code == 400
-    for edge in (1, 28):
+    for edge in (1, 3):
         assert client.put(f"{base}/schedule", headers=headers, json={"enabled": True, "day_of_month": edge}).status_code == 200
     off = client.put(f"{base}/schedule", headers=headers, json={"enabled": False})  # no day needed to switch off
-    assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["day_of_month"] == 28
+    assert off.status_code == 200 and off.json()["enabled"] is False and off.json()["day_of_month"] == 3
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT count(*) AS n FROM audit_log WHERE org_id = %s AND action LIKE 'schedule.%%'",
                             (org_id,)).fetchone()["n"] == 3  # only the valid calls that changed something
@@ -134,16 +137,16 @@ def test_a_put_that_changes_nothing_writes_no_trace(client, org_with_users, clou
     assert first.status_code == 200 and first.json()["enabled"] is False and count("schedule.disable") == 0
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT count(*) AS n FROM brand_schedules WHERE brand_id = %s", (cloud_brand,)).fetchone()["n"] == 0
-    on = put(enabled=True, day_of_month=9)
-    assert on.status_code == 200 and put(enabled=True, day_of_month=9).json() == on.json() and count("schedule.enable") == 1
-    assert put(enabled=True, day_of_month=15).json()["day_of_month"] == 15  # only the day changes: one more trace, the new day
-    assert [row["detail"] for row in _audit_rows(cloud_database_url, org_id, "schedule.enable")].count({"day_of_month": 15}) == 1
+    on = put(enabled=True, day_of_month=1)
+    assert on.status_code == 200 and put(enabled=True, day_of_month=1).json() == on.json() and count("schedule.enable") == 1
+    assert put(enabled=True, day_of_month=3).json()["day_of_month"] == 3  # only the day changes: one more trace, the new day
+    assert [row["detail"] for row in _audit_rows(cloud_database_url, org_id, "schedule.enable")].count({"day_of_month": 3}) == 1
     assert count("schedule.enable") == 2
     off = put(enabled=False)
-    assert off.status_code == 200 and off.json()["day_of_month"] == 15 and put(enabled=False).json() == off.json()
-    assert put(enabled=False, day_of_month=3).json() == off.json()  # a day sent with the switch off changes nothing
+    assert off.status_code == 200 and off.json()["day_of_month"] == 3 and put(enabled=False).json() == off.json()
+    assert put(enabled=False, day_of_month=1).json() == off.json()  # a day sent with the switch off changes nothing
     assert count("schedule.disable") == 1
-    assert put(enabled=True, day_of_month=15).status_code == 200 and count("schedule.enable") == 3  # on again: a change
+    assert put(enabled=True, day_of_month=3).status_code == 200 and count("schedule.enable") == 3  # on again: a change
 
 
 def test_putting_twice_is_the_same_and_it_agrees_with_enable(client, org_with_users, cloud_brand, cloud_database_url):
@@ -153,18 +156,17 @@ def test_putting_twice_is_the_same_and_it_agrees_with_enable(client, org_with_us
     second = client.put(f"{base}/schedule", headers=_headers(admin_id), json=body).json()
     assert first == second
     now = datetime.now(timezone.utc)
-    passed = schedule.due_date(cloud_brand, 1, now.year, now.month) <= now
-    # A brand never read whose date of the month has passed is marked as read: its first read is next month's.
+    passed = schedule.period_start(cloud_brand, 1, now) is not None
+    # A brand never read, switched on after one of its dates of the month, is marked as read: its first read is the next date.
     assert (_marked(cloud_database_url, cloud_brand) is not None) is passed
     assert first["last_read_at"] is None  # the mark is not a read
     month_ahead = datetime.fromisoformat(first["next_run_at"])
-    if passed:
-        assert (month_ahead.year, month_ahead.month) > (now.year, now.month)
+    assert month_ahead > now or not passed
     with cloud_db.connect(cloud_database_url) as conn:
         assert conn.execute("SELECT count(*) AS n FROM brand_schedules WHERE brand_id = %s", (cloud_brand,)).fetchone()["n"] == 1
     # A brand read a while ago keeps its last read when the day changes; the date shown follows the ordinary rule.
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE brand_schedules SET last_run_at = %s WHERE brand_id = %s", (datetime(2020, 1, 5, tzinfo=timezone.utc), cloud_brand))
-    late = client.put(f"{base}/schedule", headers=_headers(admin_id), json={"enabled": True, "day_of_month": 20}).json()
+    late = client.put(f"{base}/schedule", headers=_headers(admin_id), json={"enabled": True, "day_of_month": 3}).json()
     assert _marked(cloud_database_url, cloud_brand).year == 2020 and late["last_read_at"] is None
-    assert datetime.fromisoformat(late["next_run_at"]) == schedule.due_date(cloud_brand, 20, now.year, now.month)
+    assert datetime.fromisoformat(late["next_run_at"]) == schedule.next_run(cloud_brand, 3, datetime(2020, 1, 5, tzinfo=timezone.utc), now)

@@ -194,7 +194,7 @@ def transport(answer=200, delay=0.0, idempotent=False):
     return t
 
 
-def make_org(conn, *, brands=1, admins=1, clients=1, day=10, enabled=True):
+def make_org(conn, *, brands=1, admins=1, clients=1, day=2, enabled=True):
     """(org_id, [brand ids], [admin e-mails], [client e-mails]). The monthly read of every brand is marked done for the month."""
     org = cloud_db.create_organization(conn, name="Maison Test", slug=f"d-{uuid.uuid4().hex[:10]}")
     ids = [conn.execute("SELECT id FROM brands WHERE org_id = %s", (org,)).fetchone()["id"]]
@@ -510,19 +510,19 @@ def due(url, now=NOW):
 
 def test_an_organization_is_due_after_the_date_of_its_latest_brand(url):
     with cloud_db.connect(url) as conn:
-        org, (b1, b2), *_ = make_org(conn, brands=2, day=5)
-        conn.execute("UPDATE brand_schedules SET day_of_month = 25 WHERE brand_id = %s", (b2,))
-    assert org not in due(url, schedule.due_date(b2, 25, 2026, 11) - timedelta(minutes=1))
-    assert org in due(url, schedule.due_date(b2, 25, 2026, 11))
-    assert org not in due(url, schedule.due_date(b2, 25, 2026, 11).replace(month=12, day=1, hour=0))   # next month: not yet
+        org, (b1, b2), *_ = make_org(conn, brands=2, day=1)
+        conn.execute("UPDATE brand_schedules SET day_of_month = 3 WHERE brand_id = %s", (b2,))
+    latest = max(schedule.last_due_date(b, 2, 2026, 11) for b in (b1, b2))   # the second read of the month, 13th to 16th: the mail follows the last one
+    assert org not in due(url, latest - timedelta(minutes=1))
+    assert org in due(url, latest)
+    assert org not in due(url, latest.replace(month=12, day=1, hour=0))   # next month: not yet
 
 
 def test_an_organization_without_an_active_monthly_read_is_never_due(url):
     with cloud_db.connect(url) as conn:
         off, _, *_ = make_org(conn, enabled=False)
         mixed, (b1, b2), *_ = make_org(conn, brands=2)
-        conn.execute("UPDATE brand_schedules SET enabled = false WHERE brand_id = %s", (b2,))
-        conn.execute("UPDATE brand_schedules SET day_of_month = 28 WHERE brand_id = %s", (b2,))          # off: its late date does not count
+        conn.execute("UPDATE brand_schedules SET enabled = false WHERE brand_id = %s", (b2,))            # off: its date does not count
     found = due(url)
     assert off not in found and mixed in found
 
@@ -530,7 +530,7 @@ def test_an_organization_without_an_active_monthly_read_is_never_due(url):
 def test_it_waits_for_the_scheduled_reads_of_the_organization_but_only_48_hours(url):
     with cloud_db.connect(url) as conn:
         org, (b1,), *_ = make_org(conn)
-        latest = schedule.due_date(b1, 10, 2026, 11)
+        latest = schedule.last_due_date(b1, 2, 2026, 11)
         conn.commit()      # `due` reads on its own connection
         for status in ("queued", "running"):
             conn.execute("DELETE FROM jobs WHERE org_id = %s", (org,))
@@ -548,11 +548,11 @@ def test_it_waits_for_the_scheduled_reads_of_the_organization_but_only_48_hours(
 def test_a_brand_switched_on_after_its_date_does_not_count_this_month_but_does_the_next(url):
     with cloud_db.connect(url) as conn:
         org, (b1,), *_ = make_org(conn)
-        conn.execute("UPDATE brand_schedules SET created_at = %s WHERE org_id = %s", (NOW - timedelta(hours=1), org))   # after the 10th
+        conn.execute("UPDATE brand_schedules SET created_at = %s WHERE org_id = %s", (NOW - timedelta(hours=1), org))   # after its second read
     assert org not in due(url)                                                      # no read this month, so no mail either
-    assert org in due(url, schedule.due_date(b1, 10, 2026, 12))                     # next month: the read ran, the mail follows
+    assert org in due(url, schedule.last_due_date(b1, 2, 2026, 12))                     # next month: the read ran, the mail follows
     with cloud_db.connect(url) as conn:
-        conn.execute("UPDATE brand_schedules SET created_at = %s WHERE org_id = %s", (schedule.due_date(b1, 10, 2026, 11) - timedelta(seconds=1), org))
+        conn.execute("UPDATE brand_schedules SET created_at = %s WHERE org_id = %s", (schedule.last_due_date(b1, 2, 2026, 11) - timedelta(seconds=1), org))
     assert org in due(url)                                                          # existed just before the date: it counts
 
 
@@ -560,12 +560,12 @@ def test_a_brand_switched_off_and_on_again_keeps_its_place(url):
     with cloud_db.connect(url) as conn:
         org, (b1,), *_ = make_org(conn)
         schedule.disable(conn, b1)
-        schedule.enable(conn, b1, org, 10, now=NOW)
+        schedule.enable(conn, b1, org, 2, now=NOW)
         assert conn.execute("SELECT created_at = %s AS same FROM brand_schedules WHERE brand_id = %s", (OLD, b1)).fetchone()["same"]
     assert org in due(url)
 
 
-def bare_org(conn, brands, day, org_id=None):
+def bare_org(conn, brands, day, org_id=None, created=OLD):
     """An organization with `brands` schedules and nothing else (no site, no member)."""
     if org_id is None:
         org_id = uuid.uuid4()
@@ -573,20 +573,26 @@ def bare_org(conn, brands, day, org_id=None):
     for i in range(brands):
         brand = cloud_db.create_brand(conn, org_id=org_id, name=f"M{i}", slug=f"m{i}")
         schedule.enable(conn, brand, org_id, day, now=NOW)
-    conn.execute("UPDATE brand_schedules SET created_at = %s, last_run_at = %s WHERE org_id = %s", (OLD, NOW, org_id))
+    conn.execute("UPDATE brand_schedules SET created_at = %s, last_run_at = %s WHERE org_id = %s", (created, NOW, org_id))
     return org_id
 
 
-def test_hundreds_of_brands_of_organizations_not_ready_do_not_hide_a_ready_one(url, monkeypatch):
+def test_hundreds_of_brands_of_organizations_already_handled_do_not_hide_a_ready_one(url, monkeypatch):
     monkeypatch.setattr(digest, "ORG_LIMIT", 20)
     monkeypatch.setattr(digest, "MAX_PAGES", 1)
-    last = uuid.UUID("ffffffff-ffff-4fff-8fff-" + uuid.uuid4().hex[:12])          # sorts after the others: the old scan never reached it
+    last = uuid.UUID("ffffffff-ffff-4fff-8fff-" + uuid.uuid4().hex[:12])          # sorts after the others: a scan that reads them first never reaches it
     with cloud_db.connect(url) as conn:
         for _ in range(60):
-            bare_org(conn, 10, day=28)                                              # 600 rows, the 28th has not come
-        ready = bare_org(conn, 2, day=10, org_id=last)
+            conn.execute("INSERT INTO monthly_digests (org_id, month, status) VALUES (%s, %s, 'sent')", (bare_org(conn, 10, day=2), MONTH))   # 600 rows, the month is done
+        ready = bare_org(conn, 2, day=2, org_id=last)
     found = due(url)
     assert list(found) == [ready] and len(found[ready]["schedules"]) == 2
+
+
+def test_no_mail_is_due_before_the_13th_the_earliest_day_of_a_second_read(url):
+    with cloud_db.connect(url) as conn:
+        org, *_ = make_org(conn)
+    assert org not in due(url, datetime(2026, 11, 12, 23, 59, tzinfo=timezone.utc)) and org in due(url, datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc))
 
 
 def test_organizations_are_read_whole_and_page_after_page_up_to_the_bounds(url, monkeypatch):
@@ -594,7 +600,7 @@ def test_organizations_are_read_whole_and_page_after_page_up_to_the_bounds(url, 
     monkeypatch.setattr(digest, "MAX_PAGES", 10)
     monkeypatch.setattr(digest, "MAX_PER_PASS", 100)
     with cloud_db.connect(url) as conn:
-        orgs = {bare_org(conn, 3, day=10) for _ in range(5)}
+        orgs = {bare_org(conn, 3, day=2) for _ in range(5)}
     found = due(url)
     assert set(found) == orgs and all(len(item["schedules"]) == 3 for item in found.values())   # never half an organization
     monkeypatch.setattr(digest, "MAX_PAGES", 2)
