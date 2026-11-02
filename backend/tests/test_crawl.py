@@ -640,6 +640,7 @@ def test_the_browser_is_started_again_after_a_number_of_pages_and_that_is_not_a_
     reading, log = _recycling_reading(monkeypatch, pages=7, every=3)
     assert log["launches"] == 3  # the first start, and again before the 4th page and before the 7th
     assert reading.stats.browser_restarts == 0 and reading.stats.pages_failed == 0 and not log["stale"]
+    assert reading.stats.browser_recycles == 2  # counted apart from the deaths, so a measure of the interval can say how many
     assert [page.generation for page in log["opened"]] == [1, 1, 1, 2, 2, 2, 3]
 
 
@@ -815,3 +816,18 @@ def test_the_target_is_kept_without_its_query_and_an_image_that_failed_to_downlo
     redirect = _redirecting_page(monkeypatch, response_url="https://t.test/p/new?token=secret")
     assert redirect["url"] == "https://t.test/p/new"  # no token, no return address, no fragment
     assert _redirecting_page(monkeypatch, response_url="https://t.test/p/new?token=secret", failed_images=True)["kind"] == "incomplete"
+
+
+def test_the_recycling_interval_comes_from_the_environment_and_a_wrong_value_keeps_the_default(monkeypatch, caplog):
+    from nyra import crawl as crawl_module
+
+    monkeypatch.delenv("NYRA_RECYCLE_AFTER_PAGES", raising=False)
+    assert crawl_module.recycle_after_pages() == 10
+    for raw, expected in (("25", 25), ("3", 3), ("200", 200), (" 7 ", 7)):
+        monkeypatch.setenv("NYRA_RECYCLE_AFTER_PAGES", raw)
+        assert crawl_module.recycle_after_pages() == expected
+    caplog.clear()
+    for raw in ("2", "201", "0", "-5", "ten", "1.5"):  # under 3 a read spends its time starting Chromium; none of these is a whole number in range
+        monkeypatch.setenv("NYRA_RECYCLE_AFTER_PAGES", raw)
+        assert crawl_module.recycle_after_pages() == 10
+    assert len([r for r in caplog.records if "NYRA_RECYCLE_AFTER_PAGES" in r.getMessage()]) == 6
