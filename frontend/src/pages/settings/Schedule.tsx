@@ -5,7 +5,7 @@ import { errorMessage } from "../../lib/api";
 import { useOrg } from "../../lib/org";
 import { useSchedule, useSetSchedule } from "../../lib/queries";
 
-const DAYS = Array.from({ length: 28 }, (_, index) => index + 1);
+const DAYS = [1, 2, 3]; // the day of the first read; the second one falls between the 13th and the 16th (`second_day`)
 // The reads start between 02:00 and 05:00 UTC: the same calendar day in Paris, winter and summer.
 const dayFormat = new Intl.DateTimeFormat("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Paris" });
 
@@ -19,7 +19,7 @@ function nextText(iso: string): string {
   return new Date(iso).getTime() > Date.now() ? `le ${frenchDay(iso)}, tôt le matin` : "très prochainement";
 }
 
-/** The brand's monthly read: everyone sees it, the administrators change it. */
+/** The brand's scheduled reads, twice a month: the team changes it (the card is hidden from the others). */
 export function Schedule() {
   const { admin } = useOrg();
   const query = useSchedule();
@@ -27,24 +27,24 @@ export function Schedule() {
   const data = query.data;
 
   if (query.isLoading) return <Skeleton className="h-40" />;
-  if (!data) return <LoadError title="Lecture mensuelle indisponible" error={query.error} onRetry={() => void query.refetch()} retrying={query.isFetching} />;
+  if (!data) return <LoadError title="Lectures automatiques indisponibles" error={query.error} onRetry={() => void query.refetch()} retrying={query.isFetching} />;
   const locked = !admin || save.isPending;
   return (
-    <SettingsBlock title="Lecture mensuelle automatique">
+    <SettingsBlock title="Lectures automatiques">
       <div className="grid gap-4 p-5" aria-busy={save.isPending}>
         <Checkbox
           checked={data.enabled}
           disabled={locked}
           onChange={(enabled) => save.mutate(enabled ? { enabled, day_of_month: data.day_of_month } : { enabled })}
-          label="Lire les sites de cette marque chaque mois"
-          hint="Nyra relit les sites de la marque une fois par mois, tôt le matin, puis envoie aux administrateurs un e-mail de résumé : nouveaux visuels à traiter et visuels qui expirent dans 30 et 90 jours."
+          label="Lire les sites de cette marque deux fois par mois"
+          hint="Nyra relit les sites de la marque deux fois par mois, tôt le matin (entre le 1er et le 3, puis entre le 13 et le 16). Une fois par mois, après la seconde lecture, les administrateurs reçoivent un e-mail de résumé : nouveaux visuels à traiter et visuels qui expirent dans 30 et 90 jours."
         />
         {admin ? null : <p className="text-[13px] text-muted">Seuls les administrateurs peuvent modifier ce réglage.</p>}
         {save.error ? <p role="alert" className="text-sm text-terracotta">{errorMessage(save.error)}</p> : null}
       </div>
-      <SettingsRow label="Jour du mois" hint="Du 1 au 28, pour que chaque mois ait ce jour.">
+      <SettingsRow label="Première lecture" hint="Le 1er, le 2 ou le 3 de chaque mois.">
         <select
-          aria-label="Jour du mois"
+          aria-label="Jour de la première lecture"
           className={`${fieldClass} w-24`}
           value={data.day_of_month}
           disabled={locked || !data.enabled}
@@ -53,6 +53,7 @@ export function Schedule() {
           {DAYS.map((day) => <option key={day} value={day}>{day}</option>)}
         </select>
       </SettingsRow>
+      <SettingsRow label={`Seconde lecture : le ${data.second_day} de chaque mois`} hint="Fixée pour cette marque, entre le 13 et le 16." />
       {data.next_run_at ? <SettingsRow label={`Prochaine lecture : ${nextText(data.next_run_at)}`} /> : null}
       {data.last_read_at ? <SettingsRow label={`Dernière lecture automatique : ${frenchDay(data.last_read_at)}`} /> : null}
     </SettingsBlock>
