@@ -12,12 +12,14 @@ export type NavItem = { to: string; label: string; icon: IconName; count?: numbe
 
 /** The main entries (with their counters) and the rarely needed ones that sit at the bottom, next to the account. */
 export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
-  const { link, admin } = useOrg();
+  const { link, admin, platformAdmin } = useOrg();
   const me = useMe();
   const overview = useOverview();
   const pending = overview.data?.dashboard.pending_review ?? 0;
   const expired = overview.data?.dashboard.expired_online ?? 0;
   const staffItems: NavItem[] = me.data?.staff ? [{ to: "/back-office", label: "Back office Nyra", icon: "backoffice", newTab: true }] : [];
+  // Launching reads is the Nyra team's (AXE-682/683): « Sites et lectures » holds the launcher and the addresses.
+  const teamItems: NavItem[] = platformAdmin ? [{ to: link("scans"), label: "Sites et lectures", icon: "scan" }] : [];
   const adminFooterItems: NavItem[] = admin ? [{ to: link("statistics"), label: "Stats pour les nerds", icon: "stats" }] : [];
   return {
     items: [
@@ -26,7 +28,7 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
       { to: link("visuals"), label: "Visuels à remplacer", icon: "report" },
       { to: link("library"), label: "Bibliothèque", icon: "library", count: overview.data?.stats.reference_images, tone: "muted" },
       { to: link("online-images"), label: "Images en ligne", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
-      { to: link("scans"), label: "Sites et lectures", icon: "scan" },
+      ...teamItems,
     ],
     footerItems: [
       { to: link("reports"), label: "Rapports", icon: "report" },

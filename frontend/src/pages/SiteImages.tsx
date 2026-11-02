@@ -334,13 +334,13 @@ function KeepLogo({ item, setAside }: { item: SiteImage; setAside: boolean }) {
 
 /** A tab with nothing in it: for "À qualifier" that is good news. */
 function EmptyTab({ view, filtered }: { view: SiteImageView; filtered: boolean }) {
-  const { link } = useOrg();
+  const { link, platformAdmin } = useOrg();
   if (view === "qualify" && !filtered) {
     return (
       <EmptyState
         title="Toutes les images en ligne ont des droits vérifiés"
-        body="Chaque image trouvée sur les sites correspond à un visuel de la bibliothèque, a été ignorée ou est un logo. Relisez les sites pour vérifier les nouveautés."
-        action={<Link className="text-sm underline" to={link("scans")}>Sites et lectures</Link>}
+        body="Chaque image trouvée sur les sites correspond à un visuel de la bibliothèque, a été ignorée ou est un logo. Les nouveautés apparaissent après chaque lecture des sites."
+        action={platformAdmin ? <Link className="text-sm underline" to={link("scans")}>Sites et lectures</Link> : undefined}
       />
     );
   }

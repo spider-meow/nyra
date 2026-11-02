@@ -1,11 +1,21 @@
 import { useState } from "react";
-import { PageHeader } from "../components/ui";
+import { Navigate } from "react-router";
+import { PageHeader, Skeleton } from "../components/ui";
+import { useMe, useOrg } from "../lib/org";
 import { useSites } from "../lib/queries";
 import { ScanHistory } from "./scans/History";
 import { RunCard } from "./scans/RunCard";
 import { SitesCard } from "./scans/SitesCard";
 
+/** The launcher, the addresses and the history of the reads: the Nyra team's. Anyone else asking for the address lands on the dashboard (AXE-683). */
 export function Scans() {
+  const { platformAdmin, link } = useOrg();
+  const me = useMe();
+  if (me.isPending) return <Skeleton className="h-40" />; // on a first load the team is not known yet: deciding now would send the team away too
+  return platformAdmin ? <TeamScans /> : <Navigate to={link("dashboard")} replace />;
+}
+
+function TeamScans() {
   const sites = useSites();
   // Every address is read unless unticked.
   const [skipped, setSkipped] = useState<Set<string>>(new Set());

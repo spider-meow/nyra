@@ -10,7 +10,7 @@ import { Start } from "./dashboard/Start";
 import { Upcoming } from "./dashboard/Upcoming";
 
 export function Dashboard() {
-  const { link, admin } = useOrg();
+  const { link, platformAdmin } = useOrg();
   const overview = useOverview();
 
   if (overview.isLoading) {
@@ -42,7 +42,7 @@ export function Dashboard() {
         actions={
           <>
             <LinkButton to={link("reports")}>Rapports</LinkButton>
-            {admin ? <LinkButton to={link("scans")} variant="primary">Relire les sites</LinkButton> : null}
+            {platformAdmin ? <LinkButton to={link("scans")} variant="primary">Relire les sites</LinkButton> : null}
           </>
         }
       />

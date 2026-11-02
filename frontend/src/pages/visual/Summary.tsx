@@ -1,6 +1,7 @@
 import { InfoTip } from "../../components/SettingsBlock";
 import { Button, StatusBadge, Thumb } from "../../components/ui";
 import { daysText, plural } from "../../lib/format";
+import { useOrg } from "../../lib/org";
 import type { Presence } from "../../lib/presence";
 import type { MatchGroup } from "../../types";
 
@@ -24,6 +25,7 @@ export function Summary(props: { group: MatchGroup; presence: Presence | undefin
 
 function Headline(props: { totals: Presence["totals"] }) {
   const { still, gone, unknown, marked, pages } = props.totals;
+  const { platformAdmin } = useOrg();
   const share = (count: number) => `${(count / Math.max(pages, 1)) * 100}%`;
   // Pages not read since are not "gone": with none read, there is no figure yet.
   const unmeasured = unknown === pages;
@@ -38,7 +40,7 @@ function Headline(props: { totals: Presence["totals"] }) {
         </InfoTip>
       </p>
       <p className="text-[13px] text-muted">
-        {unmeasured ? "Lancez une lecture complète" : unknown && !still ? `confirmée en ligne · ${unknown.toLocaleString("fr-FR")} à relire` : `encore en ligne, sur ${pages.toLocaleString("fr-FR")}`}
+        {unmeasured ? (platformAdmin ? "Lancez une lecture complète" : "En attente d'une lecture complète") : unknown && !still ? `confirmée en ligne · ${unknown.toLocaleString("fr-FR")} à relire` : `encore en ligne, sur ${pages.toLocaleString("fr-FR")}`}
       </p>
       <div aria-hidden className="mt-2 flex h-1.5 overflow-hidden rounded-full bg-line">
         <span className="bg-expired" style={{ width: share(still) }} />

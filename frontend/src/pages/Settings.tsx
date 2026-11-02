@@ -30,15 +30,15 @@ type Section = { id: string; label: string; icon: IconName; group: Group; adminO
 
 /** The brand's page: its identity, then what is set aside, then the rare actions. */
 function General() {
-  const { admin } = useOrg();
+  const { admin, platformAdmin } = useOrg();
   return (
     <>
       <Profile />
       {admin ? <Logos /> : null}
       {admin ? <Packshots /> : null}
       <Exclusions />
-      <Schedule />
-      {admin ? <Indexation /> : null}
+      {platformAdmin ? <Schedule /> : null}
+      {platformAdmin ? <Indexation /> : null}
       <DangerZone />
     </>
   );
