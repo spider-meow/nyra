@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useQuery, type UseQueryResult } from "@tanstack/react-query";
+import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { useToast } from "../../components/feedback";
 import { Icon } from "../../components/icons";
 import { Button, Spinner } from "../../components/ui";
@@ -34,6 +34,32 @@ function Row(props: { choice: DownloadChoice; busy: boolean; disabled: boolean; 
         {props.busy ? <span role="status" aria-label="Préparation du fichier" className="h-4 w-4 animate-spin rounded-full border-2 border-line-strong border-t-bark" /> : <Icon name="download" size={17} />}
       </button>
     </li>
+  );
+}
+
+/** The popover above the button: the sizes, or the wait, or the error with « Réessayer ». */
+function Sizes(props: { query: UseQueryResult<{ choices: DownloadChoice[] }>; list: RefObject<HTMLUListElement | null>; busy: string | null; onPick: (choice: DownloadChoice) => void; onClose: () => void }) {
+  const { query } = props;
+  return (
+    <>
+      <div className="fixed inset-0 z-30" onMouseDown={props.onClose} />
+      <div className="absolute bottom-full left-0 z-40 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-line-strong bg-paper p-1.5 shadow-float">
+        {query.data ? (
+          <ul ref={props.list} role="menu" aria-label="Taille du téléchargement" className="grid gap-0.5">
+            {query.data.choices.map((choice) => (
+              <Row key={choice.key} choice={choice} busy={props.busy === choice.key} disabled={props.busy !== null} onPick={() => props.onPick(choice)} />
+            ))}
+          </ul>
+        ) : query.isError ? (
+          <p className="grid gap-2 px-3 py-2 text-[13px] text-muted">
+            {errorMessage(query.error)}
+            <Button size="sm" onClick={() => void query.refetch()}>Réessayer</Button>
+          </p>
+        ) : (
+          <p className="px-3 py-2"><Spinner label="Tailles disponibles…" /></p>
+        )}
+      </div>
+    </>
   );
 }
 
@@ -84,27 +110,7 @@ export function DownloadMenu({ item }: { item: LibraryItem }) {
       <Button aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         <Icon name="download" size={16} /> Télécharger <Icon name="down" size={14} />
       </Button>
-      {open ? (
-        <>
-          <div className="fixed inset-0 z-30" onMouseDown={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 z-40 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-line-strong bg-paper p-1.5 shadow-float">
-            {sizes.data ? (
-              <ul ref={list} role="menu" aria-label="Taille du téléchargement" className="grid gap-0.5">
-                {sizes.data.choices.map((choice) => (
-                  <Row key={choice.key} choice={choice} busy={busy === choice.key} disabled={busy !== null} onPick={() => void pick(choice)} />
-                ))}
-              </ul>
-            ) : sizes.isError ? (
-              <p className="grid gap-2 px-3 py-2 text-[13px] text-muted">
-                {errorMessage(sizes.error)}
-                <Button size="sm" onClick={() => void sizes.refetch()}>Réessayer</Button>
-              </p>
-            ) : (
-              <p className="px-3 py-2"><Spinner label="Tailles disponibles…" /></p>
-            )}
-          </div>
-        </>
-      ) : null}
+      {open ? <Sizes query={sizes} list={list} busy={busy} onPick={(choice) => void pick(choice)} onClose={() => setOpen(false)} /> : null}
     </div>
   );
 }

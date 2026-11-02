@@ -2398,7 +2398,7 @@ def test_a_member_downloads_an_image_at_a_size_made_on_the_fly_and_nothing_is_ke
 
     assert fake_storage_client.store == before  # no copy kept
     with cloud_db.connect(cloud_database_url) as conn:
-        rows = conn.execute("SELECT detail FROM audit_log WHERE action = 'library.download' ORDER BY created_at").fetchall()
+        rows = conn.execute("SELECT detail FROM audit_log WHERE org_id = %s AND action = 'library.download' ORDER BY created_at", (org_id,)).fetchall()
     assert [row["detail"] for row in rows] == [{"count": 1, "size": "web"}, {"count": 1, "size": "original"}]  # the choice, never the name
     assert client.get(f"{base}/library/big.jpg/download", headers=_headers(outsider_id)).status_code == 403
 
