@@ -27,74 +27,96 @@ def at(year, month, day, hour=0, minute=0):
     return datetime(year, month, day, hour, minute, tzinfo=UTC)
 
 
-def row(day=10, last=None, enabled=True, brand=BRAND):
+def row(day=2, last=None, enabled=True, brand=BRAND):
     return {"brand_id": brand, "enabled": enabled, "day_of_month": day, "last_run_at": last}
 
 
-# --- the day and the hour: a deterministic spread --------------------------------------------------------------------
+# --- the days and the hour: a deterministic spread -------------------------------------------------------------------
 
-def test_the_default_day_and_the_hour_come_from_the_uuid_and_spread_over_every_slot():
+def test_the_days_and_the_hour_come_from_the_uuid_and_spread_over_every_slot():
     brands = [uuid.uuid5(uuid.NAMESPACE_DNS, f"brand-{i}") for i in range(1000)]
     assert [schedule.default_day(b) for b in brands[:5]] == [schedule.default_day(b) for b in brands[:5]]  # no hash(): stable
     assert schedule.default_day(BRAND) == schedule.default_day(uuid.UUID(str(BRAND)))
-    days = Counter(schedule.default_day(b) for b in brands)
+    firsts, seconds = Counter(schedule.default_day(b) for b in brands), Counter(schedule.second_day(b) for b in brands)
     slots = Counter(schedule.slot_time(b) for b in brands)
-    assert sorted(days) == list(range(1, 8)) and len(slots) == schedule.SLOTS
-    assert max(days.values()) <= 2 * 1000 / 7 and max(slots.values()) <= 2 * 1000 / schedule.SLOTS
+    assert sorted(firsts) == [1, 2, 3] and sorted(seconds) == [13, 14, 15, 16] and len(slots) == schedule.SLOTS  # the 1st to the 3rd, the 13th to the 16th
+    assert max(firsts.values()) <= 2 * 1000 / 3 and max(seconds.values()) <= 2 * 1000 / 4 and max(slots.values()) <= 2 * 1000 / schedule.SLOTS
     assert all((2, 0) <= slot < (5, 0) for slot in slots)  # between 02:00 and 05:00 UTC
+    # the two days are not tied to each other: every first day meets every second day
+    assert len({(schedule.default_day(b), schedule.second_day(b)) for b in brands}) == 12
+
+
+def test_a_day_outside_the_first_window_is_the_default_one():
+    assert schedule.first_day(BRAND, 3) == 3 and schedule.first_day(BRAND, 10) == schedule.default_day(BRAND)  # a schedule from the days when 1 to 28 was allowed
+    first, second = schedule.reads_of_month(BRAND, 28, 2026, 11)
+    assert first.day == schedule.default_day(BRAND) and second.day == schedule.second_day(BRAND) and first.month == second.month == 11
 
 
 # --- is_due: pure -----------------------------------------------------------------------------------------------------
 
-def due(year, month, day=10):
-    return schedule.due_date(BRAND, day, year, month)
+def first(year, month, day=2):
+    return schedule.reads_of_month(BRAND, day, year, month)[0]
 
 
-def test_a_brand_is_due_from_its_date_and_hour_of_the_month_and_not_before():
-    d = due(2026, 3)
-    assert not schedule.is_due(row(), d - timedelta(seconds=1))
-    assert schedule.is_due(row(), d)
-    assert schedule.is_due(row(), d + timedelta(days=15))
-    assert not schedule.is_due(row(enabled=False), d)
+def second(year, month, day=2):
+    return schedule.reads_of_month(BRAND, day, year, month)[1]
 
 
-def test_a_brand_runs_once_a_month_whatever_the_restarts():
-    d = due(2026, 3)
-    ran = row(last=d + timedelta(minutes=3))
-    for minutes in (3, 10, 600, 60 * 24 * 20):  # the worker restarts and looks again
-        assert not schedule.is_due(ran, d + timedelta(minutes=minutes))
-    assert not schedule.is_due(row(day=20, last=due(2026, 3, 5)), due(2026, 3, 20))  # a day changed after the run: still this month's
+def test_a_brand_is_due_from_each_of_its_two_dates_of_the_month_and_not_before():
+    a, b = first(2026, 3), second(2026, 3)
+    assert not schedule.is_due(row(), a - timedelta(seconds=1))
+    assert schedule.is_due(row(), a)
+    assert schedule.is_due(row(last=a), b) and not schedule.is_due(row(last=a), b - timedelta(seconds=1))  # the second read, once the first is done
+    assert schedule.is_due(row(), b + timedelta(days=10))
+    assert not schedule.is_due(row(enabled=False), a)
+
+
+def test_a_brand_runs_once_in_each_period_whatever_the_restarts():
+    a, b = first(2026, 3), second(2026, 3)
+    for minutes in (3, 10, 600, 60 * 24 * 8):  # the worker restarts and looks again, up to the second date
+        assert not schedule.is_due(row(last=a + timedelta(minutes=3)), min(a + timedelta(minutes=minutes), b - timedelta(seconds=1))), minutes
+    for minutes in (3, 10, 600, 60 * 24 * 14):  # then up to the end of the month
+        assert not schedule.is_due(row(last=b + timedelta(minutes=3)), min(b + timedelta(minutes=minutes), at(2026, 3, 31, 23, 59))), minutes
+    assert not schedule.is_due(row(day=3, last=first(2026, 3, 1)), first(2026, 3, 3))  # a day changed after the run: still this period's
 
 
 def test_a_worker_stopped_on_the_day_catches_up_once_when_it_returns():
-    last_month = due(2026, 2)
-    assert schedule.is_due(row(last=last_month), due(2026, 3) + timedelta(days=4))
-    assert not schedule.is_due(row(last=due(2026, 3) + timedelta(days=4)), due(2026, 3) + timedelta(days=4, hours=1))
+    assert schedule.is_due(row(last=first(2026, 2)), first(2026, 3) + timedelta(days=1))
+    assert not schedule.is_due(row(last=first(2026, 3) + timedelta(days=1)), first(2026, 3) + timedelta(days=1, hours=1))
+    assert schedule.is_due(row(last=second(2026, 2)), second(2026, 3))  # stopped from the 1st to the 20th: one read at the second date, not two
+    assert not schedule.is_due(row(last=second(2026, 3) + timedelta(days=5)), at(2026, 3, 31, 23, 59))
+
+
+def test_a_read_missed_at_the_end_of_a_month_is_not_made_up_before_the_next_first_date():
+    assert not schedule.is_due(row(last=first(2026, 3)), at(2026, 4, 1))    # the second read of March was missed: April's first date comes first
+    assert schedule.is_due(row(last=first(2026, 3)), first(2026, 4))
 
 
 def test_month_and_year_changes():
-    assert not schedule.is_due(row(last=due(2026, 12)), at(2027, 1, 9))
-    assert schedule.is_due(row(last=due(2026, 12)), due(2027, 1))
-    assert not schedule.is_due(row(last=due(2027, 1)), at(2027, 1, 31, 23, 59))
+    assert not schedule.is_due(row(last=second(2026, 12)), at(2027, 1, 1))
+    assert schedule.is_due(row(last=second(2026, 12)), first(2027, 1))
+    assert schedule.is_due(row(last=first(2027, 1)), second(2027, 1))
+    assert not schedule.is_due(row(last=second(2027, 1)), at(2027, 1, 31, 23, 59))
 
 
-@pytest.mark.parametrize("year", [2027, 2028])  # not a leap year, then a leap year
-def test_the_28th_exists_in_february(year):
-    d = due(year, 2, 28)
-    assert d.month == 2 and d.day == 28
-    assert not schedule.is_due(row(day=28), d - timedelta(minutes=1))
-    assert schedule.is_due(row(day=28), d)
-    assert not schedule.is_due(row(day=28, last=d), at(year, 3, 20))  # next due: 28 March
+def test_both_dates_exist_in_february_of_every_kind_of_year():
+    for year in (2027, 2028):  # not a leap year, then a leap year
+        a, b = first(year, 2), second(year, 2)
+        assert a.month == b.month == 2 and a.day <= 3 and 13 <= b.day <= 16
+        assert not schedule.is_due(row(), a - timedelta(minutes=1)) and schedule.is_due(row(), a)
+        assert not schedule.is_due(row(last=b), at(year, 3, 1))
 
 
-def test_one_year_of_ticks_launches_twelve_times_never_twice_in_a_month():
-    state, launches, now = row(day=28), [], at(2026, 6, 1)
+def test_one_year_of_ticks_launches_twenty_four_times_twice_in_each_month():
+    state, launches, now = row(day=3), [], at(2026, 6, 1)
     while now < at(2027, 6, 1):
         if schedule.is_due(state, now):
             state["last_run_at"] = now
             launches.append(now)
         now += timedelta(minutes=30)
-    assert len(launches) == 12 and len({(d.year, d.month) for d in launches}) == 12
+    months = Counter((d.year, d.month) for d in launches)
+    assert len(launches) == 24 and set(months.values()) == {2} and len(months) == 12
+    assert all(d.day <= 3 for d in launches[::2]) and all(13 <= d.day <= 16 for d in launches[1::2])  # the 1st to the 3rd, then the 13th to the 16th
 
 
 # --- the database ------------------------------------------------------------------------------------------------------
@@ -264,17 +286,17 @@ def test_a_failure_rolls_the_brand_back_logs_it_and_the_brand_is_tried_again(qui
 def test_enable_waits_for_the_next_date_when_this_month_s_has_passed(quiet):
     with cloud_db.connect(quiet) as conn:
         org, brand = make_brand(conn)
-        d = schedule.due_date(brand, 10, 2026, 6)
-        schedule.enable(conn, brand, org, 10, now=d + timedelta(days=1))  # the 10th has passed
+        d = schedule.due_date(brand, 2, 2026, 6)
+        schedule.enable(conn, brand, org, 2, now=d + timedelta(days=1))  # the first date of June has passed
         assert schedule.enqueue_due(conn, d + timedelta(days=2)) == []
-        assert len(schedule.enqueue_due(conn, schedule.due_date(brand, 10, 2026, 7))) == 1
+        assert len(schedule.enqueue_due(conn, schedule.last_due_date(brand, 2, 2026, 6))) == 1  # its first read is the next date: the second of June
 
 
 def test_enable_before_the_date_reads_on_that_date(quiet):
     with cloud_db.connect(quiet) as conn:
         org, brand = make_brand(conn)
-        d = schedule.due_date(brand, 10, 2026, 6)
-        schedule.enable(conn, brand, org, 10, now=d - timedelta(days=1))
+        d = schedule.due_date(brand, 3, 2026, 6)
+        schedule.enable(conn, brand, org, 3, now=d - timedelta(days=1))
         assert schedule_row(conn, brand)["last_run_at"] is None
         assert schedule.enqueue_due(conn, d - timedelta(minutes=1)) == []
         assert len(schedule.enqueue_due(conn, d)) == 1
@@ -285,7 +307,7 @@ def test_enable_without_a_day_takes_the_brands_own_and_a_bad_day_is_refused(quie
         org, brand = make_brand(conn)
         schedule.enable(conn, brand, org, None, now=JUNE_FIRST)
         assert schedule_row(conn, brand)["day_of_month"] == schedule.default_day(brand)
-        for bad in (0, 29, -1):
+        for bad in (0, 4, 10, 28, -1):
             with pytest.raises(ValueError):
                 schedule.enable(conn, brand, org, bad, now=JUNE_FIRST)
         schedule.disable(conn, brand)
@@ -297,7 +319,7 @@ def test_a_schedule_cannot_point_at_another_organizations_brand(quiet):
         _, brand = make_brand(conn)
         other, _ = make_brand(conn)
         with pytest.raises(psycopg.errors.ForeignKeyViolation):
-            schedule.enable(conn, brand, other, 5, now=JUNE_FIRST)
+            schedule.enable(conn, brand, other, 2, now=JUNE_FIRST)
 
 
 # --- the switch ----------------------------------------------------------------------------------------------------------
@@ -405,13 +427,13 @@ def test_a_queued_scheduled_read_does_not_stop_a_manual_launch_which_goes_first_
 def test_changing_the_day_of_a_brand_already_read_does_not_skip_a_month(quiet):
     with cloud_db.connect(quiet) as conn:
         org, brand = make_brand(conn)
-        schedule.enable(conn, brand, org, 25, now=at(2026, 8, 1))
-        assert len(schedule.enqueue_due(conn, at(2026, 9, 26))) == 1  # read on 25 September
+        schedule.enable(conn, brand, org, 3, now=at(2026, 8, 1))
+        assert len(schedule.enqueue_due(conn, at(2026, 9, 20))) == 1  # read on 20 September (a worker late for the second read)
         conn.execute("UPDATE jobs SET status = 'done' WHERE brand_id = %s", (brand,))
         read = schedule_row(conn, brand)["last_run_at"]
-        schedule.enable(conn, brand, org, 10, now=at(2026, 10, 24))  # on 24 October, day 10 has passed
+        schedule.enable(conn, brand, org, 1, now=at(2026, 10, 24))  # on 24 October, both dates of the month have passed
         assert schedule_row(conn, brand)["last_run_at"] == read  # untouched
-        assert len(schedule.enqueue_due(conn, at(2026, 10, 24, 12))) == 1  # October is read at the next pass
+        assert len(schedule.enqueue_due(conn, at(2026, 10, 24, 12))) == 1  # October is read at the next pass, once
         assert schedule.enqueue_due(conn, at(2026, 10, 24, 13)) == []
 
 
@@ -428,7 +450,7 @@ def test_enabling_again_after_a_read_this_month_waits_and_a_never_read_brand_wai
         # Never read, enabled with its date passed: the first read is the next date, and a change of day keeps that.
         other_org, other = make_brand(conn)
         schedule.enable(conn, other, other_org, 3, now=at(2026, 6, 20))
-        schedule.enable(conn, other, other_org, 4, now=at(2026, 6, 21))
+        schedule.enable(conn, other, other_org, 1, now=at(2026, 6, 21))
         assert schedule_row(conn, other)["last_run_at"] == at(2026, 6, 20)
         assert schedule.enqueue_due(conn, at(2026, 6, 25)) == []
 
@@ -495,19 +517,82 @@ def test_the_longest_unread_brands_go_first_and_a_failing_brand_traces_once_an_h
 
 # --- next_run: pure, the date shown to the person ----------------------------------------------------------------------
 
-def test_next_run_is_this_months_date_before_it_and_for_a_brand_not_read_this_month():
-    d = due(2026, 3)
-    assert schedule.next_run(BRAND, 10, None, d - timedelta(days=5)) == d  # never read, date to come
-    assert schedule.next_run(BRAND, 10, due(2026, 2), d - timedelta(minutes=1)) == d  # read last month, date to come
-    # read last month and this month's date has passed: due at the next pass of the worker (the date is in the past)
-    assert schedule.next_run(BRAND, 10, due(2026, 2), d + timedelta(days=3)) == d
+def test_next_run_is_the_next_date_to_come_or_the_one_a_late_brand_is_due_for():
+    a, b = first(2026, 3), second(2026, 3)
+    assert schedule.next_run(BRAND, 2, None, a - timedelta(hours=2)) == a  # never read, first date to come
+    assert schedule.next_run(BRAND, 2, first(2026, 2), a - timedelta(minutes=1)) == a  # read last month, date to come
+    # read last month and the first date has passed: due at the next pass of the worker (the date is in the past)
+    assert schedule.next_run(BRAND, 2, second(2026, 2), a + timedelta(days=3)) == a
+    assert schedule.next_run(BRAND, 2, a + timedelta(minutes=3), a + timedelta(days=1)) == b  # the first read of March is done: the second comes
+    assert schedule.next_run(BRAND, 2, a, b - timedelta(minutes=1)) == b
+    assert schedule.next_run(BRAND, 2, a, b + timedelta(days=1)) == b  # the first of March only: the second is due now
 
 
-def test_next_run_is_next_months_date_once_the_month_is_read_and_crosses_the_year():
-    read = due(2026, 3) + timedelta(minutes=3)
-    assert schedule.next_run(BRAND, 10, read, read + timedelta(days=1)) == due(2026, 4)
-    assert schedule.next_run(BRAND, 10, read, due(2026, 3) - timedelta(days=1)) == due(2026, 4)  # read this month (day changed later)
-    december = due(2026, 12) + timedelta(minutes=3)
-    assert schedule.next_run(BRAND, 10, december, december + timedelta(days=2)) == due(2027, 1)
-    assert schedule.next_run(BRAND, 28, None, at(2026, 12, 29)) == due(2026, 12, 28)  # never read, passed: the (past) date
-    assert schedule.next_run(BRAND, 10, None, at(2026, 12, 1)).tzinfo is not None
+def test_next_run_is_next_months_first_date_once_the_month_is_read_and_crosses_the_year():
+    read = second(2026, 3) + timedelta(minutes=3)
+    assert schedule.next_run(BRAND, 2, read, read + timedelta(days=1)) == first(2026, 4)
+    december = second(2026, 12) + timedelta(minutes=3)
+    assert schedule.next_run(BRAND, 2, december, december + timedelta(days=2)) == first(2027, 1)
+    assert schedule.next_run(BRAND, 3, None, at(2026, 12, 29)) == second(2026, 12, 3)  # never read, both passed: the latest (past) date
+    assert schedule.next_run(BRAND, 2, None, at(2026, 12, 1)).tzinfo is not None
+    assert schedule.next_run(BRAND, 2, second(2026, 11), at(2026, 12, 1)) == first(2026, 12)  # a read missed at the end of the month is not made up
+
+
+# --- a brand is always read by itself, or the team is told (AXE-684) ------------------------------------------------------
+
+def test_coverage_counts_the_brands_with_a_site_that_nothing_reads_and_the_ones_late(quiet):
+    with cloud_db.connect(quiet) as conn:
+        before = schedule.coverage(conn, 30)
+        _, on = make_brand(conn)
+        _, off = make_brand(conn)
+        make_brand(conn)  # a brand with a site and no schedule row
+        make_brand(conn, site=False)  # no site: nothing to read, never counted
+        _, late = make_brand(conn)
+        _, fresh = make_brand(conn)
+        for brand in (on, off, late, fresh):
+            schedule.enable(conn, brand, conn.execute("SELECT org_id FROM brands WHERE id = %s", (brand,)).fetchone()["org_id"])
+        schedule.disable(conn, off)
+        for brand in (on, late, fresh):  # old brands: the 30 days are counted from the brand's age too
+            conn.execute("UPDATE brands SET created_at = now() - interval '90 days' WHERE id = %s", (brand,))
+        for brand, age in ((late, "40 days"), (fresh, "3 days")):
+            site = conn.execute("SELECT id FROM sites WHERE brand_id = %s", (brand,)).fetchone()["id"]
+            conn.execute(f"INSERT INTO crawl_runs (org_id, site_id, status, started_at, finished_at) "
+                         f"SELECT org_id, id, 'done', now() - interval '{age}', now() - interval '{age}' FROM sites WHERE id = %s", (site,))
+        after = schedule.coverage(conn, 30)
+        assert after["unscheduled"] - before["unscheduled"] == 2  # the one switched off and the one with no schedule
+        assert after["late"] - before["late"] == 2  # `late` (read 40 days ago) and `on` (an active schedule, never read, 90 days old)
+        assert schedule.coverage(conn, 0)["late"] == 0  # no threshold, no late count
+
+
+def test_enable_unscheduled_gives_a_row_to_the_brands_that_have_none_and_leaves_the_ones_switched_off(quiet):
+    with cloud_db.connect(quiet) as conn:
+        _, none = make_brand(conn)
+        org, off = make_brand(conn)
+        _, no_site = make_brand(conn, site=False)
+        schedule.enable(conn, off, org)
+        schedule.disable(conn, off)
+        done = schedule.enable_unscheduled(conn, now=at(2026, 11, 20))
+        assert done >= 1 and schedule_row(conn, none)["enabled"] and schedule_row(conn, none)["day_of_month"] == schedule.default_day(none)
+        assert not schedule_row(conn, off)["enabled"] and schedule_row(conn, no_site) is None  # a choice is not undone, nothing to read is not scheduled
+        assert schedule.enable_unscheduled(conn, now=at(2026, 11, 20)) == 0  # twice changes nothing
+        events = conn.execute("SELECT user_id, detail FROM audit_log WHERE action = 'schedule.enable' AND brand_id = %s", (none,)).fetchall()
+        assert len(events) == 1 and events[0]["user_id"] is None and events[0]["detail"]["default"] is True
+
+
+def test_the_command_counts_without_names_and_switches_on_only_when_asked(quiet, monkeypatch):
+    from typer.testing import CliRunner
+
+    from nyra import cli
+
+    monkeypatch.setenv("DATABASE_URL", quiet)
+    with cloud_db.connect(quiet) as conn:
+        _, none = make_brand(conn)
+    run = lambda *args: CliRunner().invoke(cli.app, ["cloud-schedules", *args])  # noqa: E731
+    counted = run()
+    assert counted.exit_code == 0 and "with no schedule" in counted.output and "Nothing changed" in counted.output and "s-" not in counted.output  # no slug, no name
+    with cloud_db.connect(quiet) as conn:
+        assert schedule_row(conn, none) is None
+    applied = run("--apply")
+    assert applied.exit_code == 0 and "schedule(s) switched on" in applied.output
+    with cloud_db.connect(quiet) as conn:
+        assert schedule_row(conn, none)["enabled"]

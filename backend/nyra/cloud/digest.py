@@ -260,7 +260,7 @@ _CANDIDATES = """
     WHERE s.enabled AND s.org_id > %s AND NOT EXISTS (
         SELECT 1 FROM monthly_digests d WHERE d.org_id = s.org_id AND d.month = %s
           AND (d.status <> 'sending' OR d.attempts >= %s OR d.updated_at > now() - make_interval(mins => %s)))
-    GROUP BY s.org_id HAVING max(s.day_of_month) <= %s
+    GROUP BY s.org_id HAVING %s::int >= 13
     ORDER BY s.org_id LIMIT %s"""
 
 
@@ -270,9 +270,9 @@ def _ready(conn, org_ids: list[uuid.UUID], now: datetime) -> list[dict]:
     by_org: dict[uuid.UUID, list[dict]] = {}
     for row in conn.execute("SELECT brand_id, org_id, enabled, day_of_month, last_run_at, created_at FROM brand_schedules "
                             "WHERE enabled AND org_id = ANY(%s) ORDER BY org_id, brand_id", (org_ids,)).fetchall():
-        if row["created_at"] < schedule.due_date(row["brand_id"], row["day_of_month"], now.year, now.month):
+        if row["created_at"] < schedule.last_due_date(row["brand_id"], row["day_of_month"], now.year, now.month):
             by_org.setdefault(row["org_id"], []).append(row)
-    latest = {org: max(schedule.due_date(r["brand_id"], r["day_of_month"], now.year, now.month) for r in rows) for org, rows in by_org.items()}
+    latest = {org: max(schedule.last_due_date(r["brand_id"], r["day_of_month"], now.year, now.month) for r in rows) for org, rows in by_org.items()}
     passed = [org for org, at in latest.items() if at <= now]
     waiting = {r["org_id"]: r["n"] for r in conn.execute(
         """SELECT org_id, count(*) AS n FROM jobs WHERE org_id = ANY(%s) AND kind = 'crawl' AND status IN ('queued', 'running')
@@ -282,9 +282,9 @@ def _ready(conn, org_ids: list[uuid.UUID], now: datetime) -> list[dict]:
 
 def due_orgs(conn, now: datetime) -> list[dict]:
     """The organizations whose mail of this month may leave, `{org_id, schedules}`. The filter is per ORGANIZATION, in SQL:
-    those with the monthly read on whose latest day of the month has come and that are not handled, claimed or given up yet,
-    `ORG_LIMIT` per page in `org_id` order, at most `MAX_PAGES` pages, and it stops once `MAX_PER_PASS` are ready. An
-    organization is always read whole. (Day only: the hour is checked in Python by `_ready`.)"""
+    those with the scheduled reads on that are not handled, claimed or given up yet, from the 13th (the earliest day of the
+    second read of any brand: the exact date is checked in Python by `_ready`), `ORG_LIMIT` per page in `org_id` order, at
+    most `MAX_PAGES` pages, and it stops once `MAX_PER_PASS` are ready. An organization is always read whole."""
     month, after, ready = date(now.year, now.month, 1), uuid.UUID(int=0), []
     for _ in range(MAX_PAGES):
         ids = [r["org_id"] for r in conn.execute(_CANDIDATES, (after, month, MAX_ATTEMPTS, RESUME_MINUTES, now.day, ORG_LIMIT)).fetchall()]

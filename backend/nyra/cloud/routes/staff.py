@@ -21,6 +21,7 @@ from .. import db as cloud_db
 from .. import hostmetrics
 from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
+from .. import schedule as cloud_schedule
 from .. import usage as cloud_usage
 from .common import Ctx, brand_json, get_ctx, iso, staff_dep
 from .members import find_or_invite_user
@@ -105,6 +106,8 @@ def create_organization(body: OrganizationBody, claims=Depends(staff_dep), ctx: 
         org_id = cloud_db.create_organization(conn, name=name, slug=slug, created_by=claims.user_id)
         cloud_db.add_membership(conn, user_id=user_id, org_id=org_id, role="admin")
         cloud_audit.record(conn, org_id, claims.user_id, "organization.create", "organization", org_id, invited=invited)
+        for brand in cloud_db.list_brands(conn, [org_id]):  # its first brand is read by itself from the start (AXE-684)
+            cloud_schedule.enable_new_brand(conn, org_id, brand["id"], claims.user_id)
     return {"id": str(org_id), "slug": slug, "invited": invited}
 
 

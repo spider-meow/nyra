@@ -15,7 +15,7 @@ from typing import Optional
 
 import psycopg
 
-from . import hostmetrics
+from . import hostmetrics, schedule
 from . import jobs as cloud_jobs
 
 log = logging.getLogger(__name__)
@@ -31,6 +31,7 @@ class Thresholds:
     plan_database: int = 8 * 1000**3  # bytes of database the Supabase plan includes
     usage_warn: float = 0.7  # share of the plan at which Storage and the database raise a warning ...
     usage_critical: float = 0.9  # ... and a critical alert
+    read_late_days: int = 0  # an active schedule with no finished read for this many days raises an alert; 0 (default): off until measured (AXE-684)
 
 
 # Name, default, lowest, highest: whole numbers, anything else is ignored with a warning (as NYRA_JOB_LIMIT_<KIND>_MIN).
@@ -49,6 +50,8 @@ SETTINGS = {
     "plan_database_gb": ("NYRA_PLAN_DATABASE_GB", 8, 1, 100_000),
     "usage_warn": ("NYRA_ALERT_SUPABASE_WARN_PERCENT", 70, 1, 100),
     "usage_critical": ("NYRA_ALERT_SUPABASE_CRITICAL_PERCENT", 90, 1, 100),
+    # 0 = no « late read » alert. Off until someone has looked at how long the real reads take (docs/DEPLOYMENT.md, « Reads that do not happen »).
+    "read_late_days": ("NYRA_ALERT_READ_LATE_DAYS", 0, 0, 365),
 }
 
 
@@ -67,7 +70,8 @@ def thresholds() -> Thresholds:
     return Thresholds(disk=_setting("disk") / 100, worker_memory=_setting("worker_memory") / 100,
                       queue_seconds=_setting("queue_minutes") * 60, silent_seconds=_setting("silent_seconds"),
                       plan_storage=_setting("plan_storage_gb") * 1000**3, plan_database=_setting("plan_database_gb") * 1000**3,
-                      usage_warn=_setting("usage_warn") / 100, usage_critical=_setting("usage_critical") / 100)
+                      usage_warn=_setting("usage_warn") / 100, usage_critical=_setting("usage_critical") / 100,
+                      read_late_days=_setting("read_late_days"))
 
 
 def _alert(code: str, severity: str, message: str, instance: Optional[str] = None) -> dict:
@@ -105,8 +109,23 @@ def _plan_alert(code: str, what: str, used: Optional[int], plan: int, limits: Th
     return [_alert(code, severity, f"{what} de Supabase est à {used / plan * 100:.0f} % de ce que le plan inclut ({used / 1000**3:.1f} Go sur {plan / 1000**3:.0f} Go) : au-delà, c'est payant.")]
 
 
+def _reads_alerts(reads: Optional[dict], limits: Thresholds) -> list[dict]:
+    """Brands that are not read by themselves (AXE-684). With nobody able to launch a read by hand but the Nyra team, a brand with no active schedule
+    is never read and its expired images are never found: the team is told, with a number and no name."""
+    found: list[dict] = []
+    if reads and reads.get("unscheduled"):
+        count = reads["unscheduled"]
+        found.append(_alert("reads_unscheduled", "warning",
+                            "1 marque avec un site n'a aucune lecture automatique active : ses images expirées ne seront pas détectées." if count == 1
+                            else f"{count} marques avec un site n'ont aucune lecture automatique active : leurs images expirées ne seront pas détectées."))
+    if reads and reads.get("late"):
+        count = reads["late"]
+        found.append(_alert("reads_late", "warning", f"{count} marque{'' if count == 1 else 's'} programmée{'' if count == 1 else 's'} sans lecture terminée depuis plus de {limits.read_late_days} jours."))
+    return found
+
+
 def evaluate(services: list[dict], stalled_seconds: float, disk: Optional[float], limits: Thresholds,
-             supabase: Optional[dict] = None) -> list[dict]:
+             supabase: Optional[dict] = None, reads: Optional[dict] = None) -> list[dict]:
     """`services`: the latest reading of each service (`hostmetrics.published`); `stalled_seconds`: `jobs.stalled_seconds`;
     `disk`: the used share of the disk, None if unreadable; `supabase`: `{storage, database}` in bytes (`supabase_usage`), None if unknown.
     Missing data never raises: no reading is « worker absent »."""
@@ -129,7 +148,7 @@ def evaluate(services: list[dict], stalled_seconds: float, disk: Optional[float]
     usage = supabase or {}
     found += _plan_alert("storage_plan", "Le stockage", usage.get("storage"), limits.plan_storage, limits)
     found += _plan_alert("database_plan", "La base", usage.get("database"), limits.plan_database, limits)
-    return found
+    return found + _reads_alerts(reads, limits)
 
 
 _USAGE_SECONDS = 600  # reading the size of Storage adds up every object: once in ten minutes at most, whoever asks
@@ -154,6 +173,16 @@ def supabase_usage(conn: psycopg.Connection) -> Optional[dict]:
     return _usage["value"]
 
 
+def reads_coverage(conn: psycopg.Connection, limits: Thresholds) -> Optional[dict]:
+    """`schedule.coverage` for the alerts; None when it cannot be read (the table is missing before its migration, logged)."""
+    try:
+        return schedule.coverage(conn, limits.read_late_days)
+    except psycopg.Error:
+        log.exception("counting the brands that are not read by themselves failed")
+        conn.rollback()
+        return None
+
+
 def current(conn: psycopg.Connection, services: Optional[list[dict]] = None) -> dict:
     """What `/api/workerz` and the Serveur page show: `alerts`, plus the two figures behind them. `services` if already read."""
     stalled = cloud_jobs.stalled_seconds(conn)
@@ -162,5 +191,6 @@ def current(conn: psycopg.Connection, services: Optional[list[dict]] = None) -> 
     except OSError:
         log.exception("reading the disk failed")  # the probe must still answer about the worker
         disk = None
-    found = evaluate(hostmetrics.published(conn) if services is None else services, stalled, disk, thresholds(), supabase_usage(conn))
+    limits = thresholds()
+    found = evaluate(hostmetrics.published(conn) if services is None else services, stalled, disk, limits, supabase_usage(conn), reads_coverage(conn, limits))
     return {"alerts": found, "queued_wait_seconds": round(stalled), "disk_percent": None if disk is None else round(disk * 100)}
