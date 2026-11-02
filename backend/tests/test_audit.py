@@ -225,7 +225,7 @@ def test_a_day_of_changes_leaves_one_row_each(client, org_with_users, second_adm
         client.put(f"{base}/packshots/setting", headers=as_admin, json={"enabled": True}),
         client.post(f"{base}/reviews", headers=as_client, json={"reference_id": str(ref), "site_image_ids": [str(images[0])], "decision": "ecarte"}),
         client.put(f"/api/orgs/{org_id}/settings", headers=as_admin, json={"overrides": {"match": {"phash_threshold": 5}}}),
-        client.post(f"{base}/jobs/index", headers=as_admin),
+        client.post(f"{base}/jobs/index", headers=_headers(admin_id)),  # the Nyra team launches (AXE-682), a member of this organization here
         client.post(f"/api/orgs/{org_id}/members", headers=as_admin, json={"email": "new@client.test"}),
         client.post(f"{base}/library/delete", headers=as_admin, json={"filenames": ["a.jpg"]}),
     ]

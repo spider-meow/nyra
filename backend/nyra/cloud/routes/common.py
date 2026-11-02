@@ -184,6 +184,13 @@ def brand_admin_dep(brand_id: uuid.UUID, member: cloud_auth.Member = Depends(adm
     return _scope_for(ctx, member, brand_id)
 
 
+def brand_staff_dep(scope: BrandScope = Depends(brand_admin_dep)) -> BrandScope:
+    """A route of the Nyra team in a brand's space (calibrating the detector, launching a read): an administrator of the organization is refused."""
+    if not scope.member.staff:
+        raise HTTPException(status_code=403, detail="Réservé à l'équipe Nyra.")
+    return scope
+
+
 def iso(value) -> Optional[str]:
     if value is None:
         return None

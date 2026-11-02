@@ -11,7 +11,7 @@ from .. import db as cloud_db
 from .. import jobs as cloud_jobs
 from .. import packshot_feedback as cloud_feedback
 from .. import packshots as cloud_packshots
-from .common import BRAND, BrandScope, Ctx, brand_admin_dep, get_ctx
+from .common import BRAND, BrandScope, Ctx, brand_admin_dep, brand_staff_dep, get_ctx
 
 router = APIRouter()
 
@@ -24,13 +24,6 @@ class FeedbackBody(BaseModel):
     site_image_id: uuid.UUID
     is_packshot: bool
     note: str = Field(default="", max_length=cloud_feedback.MAX_NOTE)
-
-
-def staff_dep(scope: BrandScope = Depends(brand_admin_dep)) -> BrandScope:
-    """Calibrating the detector is the Nyra team's work, not a function of the client: an administrator of the organization is refused."""
-    if not scope.member.staff:
-        raise HTTPException(status_code=403, detail="Réservé à l'équipe Nyra.")
-    return scope
 
 
 @router.get(f"{BRAND}/packshots")
@@ -67,7 +60,7 @@ def _require_feedback(conn, scope: BrandScope) -> None:
 
 
 @router.put(f"{BRAND}/packshots/feedback")
-def give_feedback(body: FeedbackBody, scope: BrandScope = Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def give_feedback(body: FeedbackBody, scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """« C'est un packshot » or « ce n'est pas un packshot » about an image, kept with the measures and thresholds of the moment. A new feedback of the same person
     on the same image replaces the old one. It never changes the detection."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
@@ -80,7 +73,7 @@ def give_feedback(body: FeedbackBody, scope: BrandScope = Depends(staff_dep), ct
 
 
 @router.delete(f"{BRAND}/packshots/feedback/{{site_image_id}}")
-def take_back_feedback(site_image_id: uuid.UUID, scope: BrandScope = Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def take_back_feedback(site_image_id: uuid.UUID, scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         _require_feedback(conn, scope)
         if not cloud_feedback.remove(conn, scope.brand_id, scope.member.user_id, site_image_id):
@@ -90,7 +83,7 @@ def take_back_feedback(site_image_id: uuid.UUID, scope: BrandScope = Depends(sta
 
 
 @router.get(f"{BRAND}/packshots/feedback")
-def feedback_report(scope: BrandScope = Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def feedback_report(scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """What the feedbacks of the brand say about the detector: false positives and negatives with their measures, precision and recall of the thresholds in force."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         return cloud_feedback.report(conn, scope.brand_id)

@@ -68,7 +68,9 @@ USER_LEVEL = {
 
 # Routes whose nominal call is refused to an organization admin: platform admins only (each brand is billed).
 OWN_REFUSED = {("POST", ORG + "/brands"), ("DELETE", BR), *((verb, BR + path) for verb, path in (
-    ("GET", "/packshots/feedback"), ("PUT", "/packshots/feedback"), ("DELETE", "/packshots/feedback/{site_image_id}")))}  # the Nyra team's calibration (AXE-668)
+    ("GET", "/packshots/feedback"), ("PUT", "/packshots/feedback"), ("DELETE", "/packshots/feedback/{site_image_id}"),  # the Nyra team's calibration (AXE-668)
+    ("GET", "/jobs/estimate"), ("POST", "/jobs/crawl"), ("POST", "/jobs/check"), ("POST", "/jobs/match"), ("POST", "/jobs/index"),
+    ("POST", "/jobs/{job_id}/cancel")))}  # launching and stopping a read by hand is the Nyra team's (AXE-682)
 # The job a fresh organization starts with. The five routes that launch a job by hand answer 409 while a job but an
 # `index` waits in the organization, so their witness starts from an `index`. Every other route keeps the default
 # `check`, which does not stop the deletions (an address cannot be removed while a read, a comparison or an index waits).
@@ -538,7 +540,8 @@ def test_a_platform_admin_is_named_to_nobody_as_the_author_of_a_job(client, worl
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE jobs SET status = 'cancelled' WHERE org_id = %s", (a["org"],))
     assert client.post(f"/api/orgs/{a['org']}/brands/{a['brand']}/jobs/match", headers=_headers(staff_outsider)).status_code == 200
-    refused = client.post(f"/api/orgs/{a['org']}/brands/{a['brand']}/jobs/match", headers=_headers(a["admin"]))
+    # An administrator of the organization cannot launch a read any more (AXE-682); `locate`, which they still can, meets the team's job.
+    refused = client.post(f"/api/orgs/{a['org']}/brands/{a['brand']}/library/{a['filename']}/locate", headers=_headers(a["admin"]))
     assert refused.status_code == 409 and "l'équipe Nyra" in refused.json()["detail"] and "@nyra.test" not in refused.json()["detail"]
 
 
