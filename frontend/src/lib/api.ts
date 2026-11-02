@@ -36,8 +36,9 @@ function fallbackMessage(status: number): string {
   return status >= 500 ? SERVER_ERROR : "La requête a échoué.";
 }
 
-/** `replay` false: a 429 is final, whatever its Retry-After (an action that says to come back in minutes, not in seconds). */
-async function request<T>(path: string, init: RequestInit = {}, replay = true): Promise<T> {
+/** `replay` false: a 429 is final, whatever its Retry-After (an action that says to come back in minutes, not in seconds).
+ *  `raw`: a successful answer is handed back as the `Response` itself (a file to read as a blob); a refusal is still read as text. */
+async function request<T>(path: string, init: RequestInit = {}, replay = true, raw = false): Promise<T> {
   let token: string | null;
   let response: Response;
   for (let left = 3; ; left--) {
@@ -58,6 +59,7 @@ async function request<T>(path: string, init: RequestInit = {}, replay = true): 
     if (response.status !== 429 || !(seconds > 0) || init.body instanceof FormData || !replay || !left) break;
     await new Promise((resume) => setTimeout(resume, Math.min(seconds * 1000, 3e4)));
   }
+  if (raw && response.ok) return response as T; // `raw` callers ask for a Response
   const text = await response.text();
   let data: unknown = null;
   if (text) {
@@ -83,6 +85,11 @@ export const api = {
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PUT", body: body instanceof FormData ? body : JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
+  /** A file the server sends as an attachment (with the session's token, which a plain link cannot carry) and the name it gives it. */
+  file: async (path: string): Promise<{ blob: Blob; name: string }> => {
+    const response = await request<Response>(path, {}, true, true);
+    return { blob: await response.blob(), name: /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ?? "image" };
+  },
 };
 
 export function errorMessage(error: unknown): string {

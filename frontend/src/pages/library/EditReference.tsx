@@ -10,6 +10,7 @@ import { useLibraryMutations } from "../../lib/queries";
 import type { LibraryItem } from "../../types";
 import { visualLink } from "./address";
 import { useCopyLink } from "./copyLink";
+import { DownloadMenu } from "./DownloadMenu";
 import { OccurrencesSection } from "./Occurrences";
 
 type Form = { expiry_date: string; unlimited_rights: boolean; credit: string; notes: string; tags: string[] };
@@ -58,6 +59,7 @@ export function EditReference(props: { item: LibraryItem | null; thumbUrl: strin
         admin ? (
           <>
             <Button onClick={() => void copyLink(visualLink(window.location.origin, link("library"), item.id))}>Copier le lien</Button>
+            <DownloadMenu item={item} />
             <button type="button" onClick={() => props.onDelete(item)} className="mr-auto inline-flex h-8 items-center rounded-lg px-2.5 text-[13px] font-medium text-expired transition-colors hover:bg-expired-soft">
               Supprimer
             </button>
@@ -70,7 +72,8 @@ export function EditReference(props: { item: LibraryItem | null; thumbUrl: strin
           </>
         ) : (
           <>
-            <Button className="mr-auto" onClick={() => void copyLink(visualLink(window.location.origin, link("library"), item.id))}>Copier le lien</Button>
+            <Button onClick={() => void copyLink(visualLink(window.location.origin, link("library"), item.id))}>Copier le lien</Button>
+            <span className="mr-auto"><DownloadMenu item={item} /></span>
             <Button onClick={props.onClose}>Fermer</Button>
           </>
         )
