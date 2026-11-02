@@ -141,3 +141,29 @@ def test_the_late_read_alert_is_off_until_a_number_of_days_is_set(monkeypatch):
     assert alerts.thresholds().read_late_days == 20
     monkeypatch.setenv("NYRA_ALERT_READ_LATE_DAYS", "many")
     assert alerts.thresholds().read_late_days == 0  # ignored with a warning, like the others
+
+
+# --- organizations near their month's pages (AXE-708) -------------------------------------------------------------------
+
+def test_organizations_near_their_pages_are_a_warning_with_a_number_and_no_name():
+    limits = alerts.Thresholds(disk=0.8, worker_memory=0.85, queue_seconds=300, silent_seconds=300, pages_percent=90)
+    found = alerts.evaluate([worker()], 0.0, 0.1, limits, pages_near=3)
+    assert [(a["code"], a["severity"]) for a in found] == [("pages_quota", "warning")]
+    assert "3 organisations ont lu 90 % ou plus des pages de leur mois" in found[0]["message"]
+    assert "1 organisation a lu 90 %" in alerts.evaluate([worker()], 0.0, 0.1, limits, pages_near=1)[0]["message"]
+    assert alerts.evaluate([worker()], 0.0, 0.1, limits, pages_near=0) == [] and alerts.evaluate([worker()], 0.0, 0.1, limits, pages_near=None) == []
+
+
+def test_what_is_about_the_customers_never_reaches_the_public_probe():
+    found = alerts.evaluate([worker(age=900)], 0.0, 0.95, LIMITS, reads={"unscheduled": 2, "late": 0}, pages_near=1)
+    assert {"reads_unscheduled", "pages_quota", "worker_absent", "disk_full"} <= {a["code"] for a in found}
+    assert sorted(a["code"] for a in alerts.public(found)) == ["disk_full", "worker_absent"]  # the team sees all, the probe only the machine
+
+
+def test_the_pages_alert_is_off_until_a_share_is_set(monkeypatch):
+    monkeypatch.delenv("NYRA_ALERT_PAGES_PERCENT", raising=False)
+    assert alerts.thresholds().pages_percent == 0
+    monkeypatch.setenv("NYRA_ALERT_PAGES_PERCENT", "90")
+    assert alerts.thresholds().pages_percent == 90
+    monkeypatch.setenv("NYRA_ALERT_PAGES_PERCENT", "101")
+    assert alerts.thresholds().pages_percent == 0  # out of range: ignored with a warning

@@ -247,6 +247,11 @@ def pages_outlook(conn: psycopg.Connection, base: QuotaConfig, reads_per_month: 
     }
 
 
+def pages_near_limit(conn: psycopg.Connection, base: QuotaConfig, percent: int) -> int:
+    """How many organizations have read `percent` % or more of their month's pages (a limit of 0 is left out): a number, no name (AXE-708)."""
+    return sum(1 for r in _pages_by_organization(conn, base) if r["limit"] > 0 and r["this_month"] * 100 >= percent * r["limit"])
+
+
 def pages_note(used: int, limit: int) -> str:
     """The sentence a finished read adds once the month is at 80 % of its limit (nothing before)."""
     if level(used, limit) == "ok":

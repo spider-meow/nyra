@@ -335,6 +335,7 @@ traceback is in the worker's log.
   | `database_plan` | warning, critical | the database (`pg_database_size`) holds N % of what the plan includes | 70 % / 90 % of 8 GB | the same two percentages, `NYRA_PLAN_DATABASE_GB` (1 to 100000) |
   | `reads_unscheduled` | warning | N brands with a site have no active schedule (none, or switched off): since only the Nyra team launches a read by hand, nothing reads them | at least 1 | none (always on; a number, never a name) |
   | `reads_late` | warning | N brands with an active schedule have had no finished read for the last D days | off | `NYRA_ALERT_READ_LATE_DAYS` (0 to 365; 0 = off until someone has looked at how long the real reads take) |
+  | `pages_quota` | warning | N organizations have read P % or more of their month's pages (each against its own limit; a limit of 0 is left out) | off | `NYRA_ALERT_PAGES_PERCENT` (0 to 100; 0 = off until P is chosen from `nyra cloud-pages-quota`) |
 
   The two plan alerts follow the Supabase Pro plan (100 GB of Storage, 8 GB of database); set the `NYRA_PLAN_*` values if the plan changes. A critical one does not turn the uptime probe to 503. Egress (250 GB included) is not watched: Supabase does not expose it in SQL (check its dashboard).
 
