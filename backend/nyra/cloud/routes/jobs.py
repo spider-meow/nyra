@@ -12,7 +12,7 @@ from nyra import estimate
 
 from .. import db as cloud_db
 from .. import jobs as cloud_jobs
-from .common import BRAND, BrandScope, Ctx, brand_admin_dep, brand_member_dep, enforce, enqueue, get_ctx, iso
+from .common import BRAND, BrandScope, Ctx, brand_member_dep, brand_staff_dep, enforce, enqueue, get_ctx, iso
 
 router = APIRouter()
 
@@ -47,7 +47,7 @@ def current_jobs(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depen
 @router.get(f"{BRAND}/jobs/estimate")
 def estimate_crawl(site_ids: list[uuid.UUID] = Query(default=[], max_length=50), max_pages: Optional[int] = Query(default=None, ge=1),
                    fresh: bool = False, then_match: bool = True,
-                   scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+                   scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """How long a read of these addresses would take, from the brand's past reads (all addresses when none is given).
     An address with no usable history is None (the interface says so rather than leave it out of a total);
     `compare_seconds` is None when the comparison has never run."""
@@ -72,7 +72,7 @@ def recent_jobs(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depend
 
 
 @router.post(f"{BRAND}/jobs/crawl")
-def start_crawl(body: CrawlBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def start_crawl(body: CrawlBody, scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """Read the chosen addresses of the brand, all of them when none is chosen."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)
@@ -88,7 +88,7 @@ def start_crawl(body: CrawlBody, scope: BrandScope = Depends(brand_admin_dep), c
 
 
 @router.post(f"{BRAND}/jobs/check")
-def start_check(body: CheckBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def start_check(body: CheckBody, scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """Read again only these pages (at most `MAX_CHECKED_PAGES`), each of them a page already read for this brand."""
     _enforce_can_read(ctx, scope)
     urls = list(dict.fromkeys(body.urls))
@@ -106,19 +106,19 @@ def start_check(body: CheckBody, scope: BrandScope = Depends(brand_admin_dep), c
 
 
 @router.post(f"{BRAND}/jobs/match")
-def start_match(scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def start_match(scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     return enqueue(ctx, scope, "match", {})
 
 
 @router.post(f"{BRAND}/jobs/index")
-def start_index(scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def start_index(scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """Index everything still waiting (the library and the images read on the sites): what an upload asks for, on demand.
     Asked while one is already queued, it joins that one."""
     return enqueue(ctx, scope, "index", {})
 
 
 @router.post(f"{BRAND}/jobs/{{job_id}}/cancel")
-def cancel_job(job_id: uuid.UUID, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+def cancel_job(job_id: uuid.UUID, scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         job = cloud_jobs.request_cancel(conn, scope.brand_id, job_id)
         if job is not None:

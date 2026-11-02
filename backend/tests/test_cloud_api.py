@@ -2431,3 +2431,28 @@ def test_a_download_waits_for_no_one_and_decodes_no_more_than_the_cap(client, or
     too_big = client.get(f"{base}/library/big.png/download?size=web", headers=_headers(admin_id))
     assert too_big.status_code == 422 and "trop grande" in too_big.json()["detail"]
     assert client.get(f"{base}/library/big.png/download?size=web", headers=_headers(admin_id)).status_code == 422  # and the place was released
+
+
+# --- launching a read by hand is the Nyra team's (AXE-682) ------------------------------------------
+
+def test_only_the_nyra_team_launches_estimates_and_stops_a_read(client, org_with_users, cloud_database_url):
+    org_id, base, team_id, client_id, _ = org_with_users  # `team_id` is a member and a platform admin
+    owner = uuid.uuid4()  # an administrator of the client's organization, not on the team
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (owner, "owner@client.test"))
+        cloud_db.add_membership(conn, user_id=owner, org_id=org_id, role="admin")
+    job = uuid.uuid4()
+    calls = [("post", "/jobs/crawl", {}), ("post", "/jobs/check", {"urls": ["https://x.test/"]}), ("post", "/jobs/match", {}),
+             ("post", "/jobs/index", {}), ("post", f"/jobs/{job}/cancel", {}), ("get", "/jobs/estimate", None)]
+    for who in (owner, client_id):  # an administrator of the organization, and a client: both refused, with a sentence
+        for verb, path, body in calls:
+            got = client.request(verb.upper(), f"{base}{path}", headers=_headers(who), **({"json": body} if body is not None else {}))
+            assert got.status_code == 403, (verb, path, got.text)
+    assert client.post(f"{base}/jobs/match", headers=_headers(owner)).json()["detail"] == "Réservé à l'équipe Nyra."
+    assert client.post(f"{base}/jobs/index", headers=_headers(team_id)).status_code == 200  # the team passes
+    assert client.post(f"{base}/jobs/{job}/cancel", headers=_headers(team_id)).status_code == 404  # an unknown job, not a refusal
+    assert client.get(f"{base}/jobs/estimate", headers=_headers(team_id)).status_code == 200
+    with cloud_db.connect(cloud_database_url) as conn:  # a refusal writes nothing
+        assert conn.execute("SELECT count(*) AS n FROM audit_log WHERE org_id = %s AND action LIKE 'job.%%'", (org_id,)).fetchone()["n"] == 1
+    for path in ("/jobs/current", "/jobs", "/scans"):  # following a read stays open to every member
+        assert client.get(f"{base}{path}", headers=_headers(client_id)).status_code == 200, path
