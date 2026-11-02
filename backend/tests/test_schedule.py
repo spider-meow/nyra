@@ -596,3 +596,70 @@ def test_the_command_counts_without_names_and_switches_on_only_when_asked(quiet,
     assert applied.exit_code == 0 and "schedule(s) switched on" in applied.output
     with cloud_db.connect(quiet) as conn:
         assert schedule_row(conn, none)["enabled"]
+
+
+# --- the next date is written: no number of schedules is left out (AXE-709) ------------------------------------------------
+
+def test_the_migrations_column_is_there_and_a_switch_on_clears_the_date_worked_out_for_the_former_day(quiet):
+    with cloud_db.connect(quiet) as conn:
+        assert schedule.has_next_due(conn)
+        org, brand = make_brand(conn)
+        schedule.enable(conn, brand, org, 2, now=at(2026, 6, 1))
+        conn.execute("UPDATE brand_schedules SET next_due_at = %s WHERE brand_id = %s", (at(2030, 1, 1), brand))
+        schedule.enable(conn, brand, org, 3, now=at(2026, 6, 1))
+        assert schedule_row(conn, brand)["next_due_at"] is None
+
+
+def test_a_pass_gives_each_schedule_its_next_date_and_a_pass_with_nothing_due_reads_nothing(quiet, monkeypatch):
+    with cloud_db.connect(quiet) as conn:
+        org, brand = make_brand(conn)
+        schedule.enable(conn, brand, org, 2, now=at(2026, 6, 1))
+        assert schedule.enqueue_due(conn, at(2026, 6, 1, 12)) == []
+        expected = schedule.next_run(brand, 2, schedule_row(conn, brand)["last_run_at"], at(2026, 6, 1, 12))
+        assert schedule_row(conn, brand)["next_due_at"] == expected and expected > at(2026, 6, 1, 12)
+        read = []
+        real = schedule._due_rows
+        monkeypatch.setattr(schedule, "_due_rows", lambda c, now, tracked: [read.append(r) or r for r in real(c, now, tracked)])
+        assert schedule.enqueue_due(conn, at(2026, 6, 1, 13)) == [] and read == []  # nothing due, nothing worked out: nothing read
+        due = schedule.enqueue_due(conn, expected)  # its date has come
+        assert [j["brand_id"] for j in due] == [str(brand)] and schedule_row(conn, brand)["next_due_at"] > expected  # launched, and the next date written with the claim
+
+
+def make_many(conn, due_second_day_at_most, n):
+    """An organization with `n` + 1 schedules, all with a site-less brand but one: the last one has a site and is due on 14 November 2026 at noon, the
+    others are not (their second read is on the 15th or the 16th) but were read earlier than it, so a scan in the order of the reads meets them first."""
+    org = cloud_db.create_organization(conn, name="Many", slug=f"many-{uuid.uuid4().hex[:8]}")
+    ids = []
+    while len(ids) < n:
+        candidate = uuid.uuid4()
+        if schedule.second_day(candidate) >= 15:
+            ids.append(candidate)
+    due_brand = next(candidate for candidate in (uuid.uuid4() for _ in range(1000)) if schedule.second_day(candidate) <= due_second_day_at_most)
+    everyone = ids + [due_brand]
+    conn.execute("INSERT INTO brands (id, org_id, name, slug) SELECT x, %s, 'b', 'b-' || x::text FROM unnest(%s::uuid[]) AS x", (org, everyone))
+    conn.execute("""INSERT INTO brand_schedules (brand_id, org_id, enabled, day_of_month, last_run_at)
+                    SELECT x, %s, true, 2, CASE WHEN x = %s THEN %s::timestamptz ELSE %s::timestamptz END FROM unnest(%s::uuid[]) AS x""",
+                 (org, due_brand, at(2026, 11, 2, 10), at(2026, 11, 2, 4), everyone))
+    cloud_db.create_site(conn, org_id=org, brand_id=due_brand, url=f"https://{uuid.uuid4().hex[:8]}.test/")
+    return due_brand
+
+
+def test_a_due_brand_is_found_among_more_schedules_than_a_pass_can_scan(quiet):
+    now = at(2026, 11, 14, 12)
+    with cloud_db.connect(quiet) as conn:
+        due_brand = make_many(conn, 13, 2500)  # 2 500 schedules that are not due, read before it: the former scan stopped at 2 000
+        first = schedule.enqueue_due(conn, now)
+        second = schedule.enqueue_due(conn, now)  # the first pass worked out 2 000 dates; this one the rest, and finds the brand
+        assert [j["brand_id"] for j in first + second] == [str(due_brand)]
+        assert conn.execute("SELECT count(*) AS n FROM brand_schedules WHERE enabled AND next_due_at IS NULL").fetchone()["n"] == 0
+        assert schedule.enqueue_due(conn, now + timedelta(minutes=5)) == []
+
+
+def test_without_the_column_the_former_scan_runs_and_says_which_migration_is_missing(quiet, monkeypatch, caplog):
+    now = at(2026, 11, 14, 12)
+    monkeypatch.setattr(schedule, "has_next_due", lambda conn: False)
+    monkeypatch.setattr(schedule, "_LAST_TOLD", {})
+    with cloud_db.connect(quiet) as conn, caplog.at_level(logging.WARNING, logger="nyra.cloud.schedule"):
+        make_many(conn, 13, 2100)
+        assert schedule.enqueue_due(conn, now) == [] and schedule.enqueue_due(conn, now) == []  # the scan stops at 2 000: that is the limit the column lifts
+    assert caplog.text.count("20261102000047") == 1  # once an hour, not at every pass

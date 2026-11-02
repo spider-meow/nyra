@@ -155,6 +155,8 @@ def enable(conn, brand_id: uuid.UUID, org_id: uuid.UUID, day_of_month: Optional[
                last_run_at = COALESCE(brand_schedules.last_run_at, EXCLUDED.last_run_at)""",
         (brand_id, org_id, day, now if passed else None),
     )
+    if has_next_due(conn):  # the date worked out for the former day is not this one's: the worker works it out again
+        conn.execute("UPDATE brand_schedules SET next_due_at = NULL WHERE brand_id = %s", (brand_id,))
 
 
 def enable_new_brand(conn, org_id: uuid.UUID, brand_id: uuid.UUID, user_id: Optional[uuid.UUID], now: Optional[datetime] = None) -> None:
@@ -168,9 +170,9 @@ def disable(conn, brand_id: uuid.UUID) -> None:
     conn.execute("UPDATE brand_schedules SET enabled = false, updated_at = now() WHERE brand_id = %s", (brand_id,))
 
 
-def _launch(conn, row: dict, now: datetime) -> Optional[dict]:
+def _launch(conn, row: dict, now: datetime, tracked: bool = False) -> Optional[dict]:
     """Claim the brand for this period and queue its read, in the caller's transaction (a savepoint). The claim repeats
-    the due test: of two workers only the one that gets the row first sees it still due."""
+    the due test: of two workers only the one that gets the row first sees it still due. `tracked`: the next date is written with the claim."""
     claimed = conn.execute(
         """UPDATE brand_schedules SET last_run_at = %s, updated_at = now()
            WHERE brand_id = %s AND enabled AND day_of_month = %s AND (last_run_at IS NULL OR last_run_at < %s)
@@ -179,6 +181,8 @@ def _launch(conn, row: dict, now: datetime) -> Optional[dict]:
     ).fetchone()
     if claimed is None:
         return None
+    if tracked:
+        _remember(conn, row, now, now)
     job, reason = None, ""
     if conn.execute("SELECT 1 FROM sites WHERE brand_id = %s LIMIT 1", (row["brand_id"],)).fetchone() is None:
         reason = "no_site"
@@ -198,11 +202,17 @@ def _launch(conn, row: dict, now: datetime) -> Optional[dict]:
     return job
 
 
-def _due_rows(conn, now: datetime):
-    """The active schedules, the longest unread first, a page of `SCAN_LIMIT` at a time and at most `MAX_SCAN_PAGES` pages. Which brands are due
+def has_next_due(conn) -> bool:
+    """Whether migration 20261102000047 (`brand_schedules.next_due_at`) is applied. Asked once a pass and once a switch on: cheap, and the code runs before it is."""
+    return conn.execute("SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'brand_schedules' "
+                        "AND column_name = 'next_due_at'").fetchone() is not None
+
+
+def _scan_all(conn):
+    """Without the column: the active schedules, the longest unread first, `SCAN_LIMIT` at a time and at most `MAX_SCAN_PAGES` pages. Which brands are due
     depends on dates drawn from each brand's own uuid (`is_due`), so the database cannot narrow it down: it is looked at here, in order.
     ponytail: offset paging while the launches move rows to the back of the order can skip a brand for one pass (it is found at the next); past
-    `SCAN_LIMIT * MAX_SCAN_PAGES` = 2,000 active schedules the newest ones are not looked at. Upgrade: a `next_due_at` column, which is a migration."""
+    `SCAN_LIMIT * MAX_SCAN_PAGES` = 2,000 active schedules the newest ones are not looked at. Upgrade: the column, see `_due_rows`."""
     for page in range(MAX_SCAN_PAGES):
         rows = conn.execute(
             """SELECT brand_id, org_id, enabled, day_of_month, last_run_at FROM brand_schedules WHERE enabled
@@ -214,19 +224,53 @@ def _due_rows(conn, now: datetime):
             return
 
 
+def _due_rows(conn, now: datetime, tracked: bool):
+    """The schedules to look at. With `next_due_at` (AXE-709): only those whose date has passed or has not been worked out yet (null), `SCAN_LIMIT`
+    at a time and not twice in a pass, so a pass on which nothing is due reads almost nothing and no number of schedules is left out. Each one is
+    then either launched or given its next date (`_remember`), which takes it out of what is read. Without the column (migration not applied):
+    the full scan of `_scan_all`, told once an hour."""
+    if not tracked:
+        if once_per_hour("missing-next-due"):
+            log.warning("scheduled reads: column brand_schedules.next_due_at is missing, apply migration 20261102000047; every active schedule is looked at, up to %d",
+                        SCAN_LIMIT * MAX_SCAN_PAGES)
+        yield from _scan_all(conn)
+        return
+    seen: list[uuid.UUID] = []
+    for _ in range(MAX_SCAN_PAGES):
+        rows = conn.execute(
+            """SELECT brand_id, org_id, enabled, day_of_month, last_run_at FROM brand_schedules
+               WHERE enabled AND (next_due_at IS NULL OR next_due_at <= %s) AND brand_id <> ALL(%s)
+               ORDER BY next_due_at NULLS FIRST, last_run_at NULLS FIRST, brand_id LIMIT %s""",
+            (now, seen, SCAN_LIMIT),
+        ).fetchall()
+        yield from rows
+        if len(rows) < SCAN_LIMIT:
+            return
+        seen += [row["brand_id"] for row in rows]
+
+
+def _remember(conn, row: dict, last_run_at, now: datetime) -> None:
+    """Write the brand's next date (`next_run`) so that it is not looked at again before it."""
+    conn.execute("UPDATE brand_schedules SET next_due_at = %s WHERE brand_id = %s",
+                 (next_run(row["brand_id"], row["day_of_month"], last_run_at, now), row["brand_id"]))
+
+
 def enqueue_due(conn, now: datetime, limit: int = MAX_PER_TICK) -> list[dict]:
     """Queue the scheduled read of the brands that are due, at most `limit` of them: the jobs queued. A brand whose launch
     fails is rolled back alone (it stays due and is tried again at the next pass), logged, and the others go on."""
     now = now.astimezone(timezone.utc)
     queued: list[dict] = []
-    for row in _due_rows(conn, now):
+    tracked = has_next_due(conn)
+    for row in _due_rows(conn, now, tracked):
         if len(queued) >= limit:
             break
         if not is_due(row, now):
+            if tracked:
+                _remember(conn, row, row["last_run_at"], now)
             continue
         try:
             with conn.transaction():
-                job = _launch(conn, row, now)
+                job = _launch(conn, row, now, tracked)
         except _Deferred as way:
             log.debug("scheduled read of brand %s: job %s is in the way, tried again at the next pass", row["brand_id"], way)
             continue
