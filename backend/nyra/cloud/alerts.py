@@ -15,7 +15,9 @@ from typing import Optional
 
 import psycopg
 
-from . import hostmetrics, schedule
+from nyra.config import QuotaConfig
+
+from . import hostmetrics, schedule, usage
 from . import jobs as cloud_jobs
 
 log = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ class Thresholds:
     plan_database: int = 8 * 1000**3  # bytes of database the Supabase plan includes
     usage_warn: float = 0.7  # share of the plan at which Storage and the database raise a warning ...
     usage_critical: float = 0.9  # ... and a critical alert
+    pages_percent: int = 0  # organizations that read this share of their month's pages raise an alert; 0 (default): off until measured (AXE-708)
     read_late_days: int = 0  # an active schedule with no finished read for this many days raises an alert; 0 (default): off until measured (AXE-684)
 
 
@@ -52,6 +55,8 @@ SETTINGS = {
     "usage_critical": ("NYRA_ALERT_SUPABASE_CRITICAL_PERCENT", 90, 1, 100),
     # 0 = no « late read » alert. Off until someone has looked at how long the real reads take (docs/DEPLOYMENT.md, « Reads that do not happen »).
     "read_late_days": ("NYRA_ALERT_READ_LATE_DAYS", 0, 0, 365),
+    # 0 = no alert. With two reads a month the pages of the month go twice as fast (docs/DEPLOYMENT.md, « Pages of the month »): off until the share is chosen from `nyra cloud-pages-quota`.
+    "pages_percent": ("NYRA_ALERT_PAGES_PERCENT", 0, 0, 100),
 }
 
 
@@ -71,7 +76,7 @@ def thresholds() -> Thresholds:
                       queue_seconds=_setting("queue_minutes") * 60, silent_seconds=_setting("silent_seconds"),
                       plan_storage=_setting("plan_storage_gb") * 1000**3, plan_database=_setting("plan_database_gb") * 1000**3,
                       usage_warn=_setting("usage_warn") / 100, usage_critical=_setting("usage_critical") / 100,
-                      read_late_days=_setting("read_late_days"))
+                      read_late_days=_setting("read_late_days"), pages_percent=_setting("pages_percent"))
 
 
 def _alert(code: str, severity: str, message: str, instance: Optional[str] = None) -> dict:
@@ -89,9 +94,13 @@ def probe_problems(found: list[dict]) -> list[str]:
     return list(dict.fromkeys(LEGACY_PROBLEMS[a["code"]] for a in found if a["severity"] == "critical" and a["code"] in LEGACY_PROBLEMS))
 
 
+# What is about the customers (how many brands are not read, how many organizations are near their pages) is for the Nyra team: the probe is public.
+TEAM_ONLY = frozenset({"reads_unscheduled", "reads_late", "pages_quota"})
+
+
 def public(found: list[dict]) -> list[dict]:
-    """The alerts without the host name, for the unauthenticated probe."""
-    return [{key: value for key, value in alert.items() if key != "instance"} for alert in found]
+    """The alerts without the host name, and without those about the customers, for the unauthenticated probe."""
+    return [{key: value for key, value in alert.items() if key != "instance"} for alert in found if alert["code"] not in TEAM_ONLY]
 
 
 def _memory_ratio(reading: dict) -> Optional[float]:
@@ -124,8 +133,16 @@ def _reads_alerts(reads: Optional[dict], limits: Thresholds) -> list[dict]:
     return found
 
 
+def _pages_alerts(near: Optional[int], limits: Thresholds) -> list[dict]:
+    """Organizations close to their month's pages (AXE-708): a read that reaches the limit stops there, so the team is told before, with a number and no name."""
+    if not near:
+        return []
+    who = "1 organisation a lu" if near == 1 else f"{near} organisations ont lu"
+    return [_alert("pages_quota", "warning", f"{who} {limits.pages_percent} % ou plus des pages de leur mois : une lecture de plus risque de s'arrêter à la limite.")]
+
+
 def evaluate(services: list[dict], stalled_seconds: float, disk: Optional[float], limits: Thresholds,
-             supabase: Optional[dict] = None, reads: Optional[dict] = None) -> list[dict]:
+             supabase: Optional[dict] = None, reads: Optional[dict] = None, pages_near: Optional[int] = None) -> list[dict]:
     """`services`: the latest reading of each service (`hostmetrics.published`); `stalled_seconds`: `jobs.stalled_seconds`;
     `disk`: the used share of the disk, None if unreadable; `supabase`: `{storage, database}` in bytes (`supabase_usage`), None if unknown.
     Missing data never raises: no reading is « worker absent »."""
@@ -148,7 +165,7 @@ def evaluate(services: list[dict], stalled_seconds: float, disk: Optional[float]
     usage = supabase or {}
     found += _plan_alert("storage_plan", "Le stockage", usage.get("storage"), limits.plan_storage, limits)
     found += _plan_alert("database_plan", "La base", usage.get("database"), limits.plan_database, limits)
-    return found + _reads_alerts(reads, limits)
+    return found + _reads_alerts(reads, limits) + _pages_alerts(pages_near, limits)
 
 
 _USAGE_SECONDS = 600  # reading the size of Storage adds up every object: once in ten minutes at most, whoever asks
@@ -183,7 +200,19 @@ def reads_coverage(conn: psycopg.Connection, limits: Thresholds) -> Optional[dic
         return None
 
 
-def current(conn: psycopg.Connection, services: Optional[list[dict]] = None) -> dict:
+def pages_near(conn: psycopg.Connection, limits: Thresholds, quota: Optional[QuotaConfig]) -> Optional[int]:
+    """`usage.pages_near_limit` for the alerts; None when it is off (0 %), the default quota is not given, or it cannot be read (logged)."""
+    if not limits.pages_percent or quota is None:
+        return None
+    try:
+        return usage.pages_near_limit(conn, quota, limits.pages_percent)
+    except psycopg.Error:
+        log.exception("counting the organizations near their month's pages failed")
+        conn.rollback()
+        return None
+
+
+def current(conn: psycopg.Connection, services: Optional[list[dict]] = None, quota: Optional[QuotaConfig] = None) -> dict:
     """What `/api/workerz` and the Serveur page show: `alerts`, plus the two figures behind them. `services` if already read."""
     stalled = cloud_jobs.stalled_seconds(conn)
     try:
@@ -192,5 +221,5 @@ def current(conn: psycopg.Connection, services: Optional[list[dict]] = None) -> 
         log.exception("reading the disk failed")  # the probe must still answer about the worker
         disk = None
     limits = thresholds()
-    found = evaluate(hostmetrics.published(conn) if services is None else services, stalled, disk, limits, supabase_usage(conn), reads_coverage(conn, limits))
+    found = evaluate(hostmetrics.published(conn) if services is None else services, stalled, disk, limits, supabase_usage(conn), reads_coverage(conn, limits), pages_near(conn, limits, quota))
     return {"alerts": found, "queued_wait_seconds": round(stalled), "disk_percent": None if disk is None else round(disk * 100)}

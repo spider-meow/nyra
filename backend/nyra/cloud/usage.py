@@ -16,7 +16,7 @@ import json
 import logging
 import uuid
 from dataclasses import asdict, replace
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 import psycopg
@@ -210,6 +210,46 @@ def pages_used(conn: psycopg.Connection, base: QuotaConfig, org_id: uuid.UUID) -
     row = conn.execute("SELECT amount FROM usage_counters WHERE org_id = %s AND period = %s AND kind = 'pages_read'",
                        (org_id, month_start())).fetchone()
     return (row["amount"] if row else 0), quota_for(conn, base, org_id).pages_per_month
+
+
+_PAGES_BY_ORGANIZATION = """
+SELECT o.id, o.quota_overrides,
+       COALESCE(SUM(c.amount) FILTER (WHERE c.period = %(this)s), 0)::bigint AS this_month,
+       COALESCE(SUM(c.amount) FILTER (WHERE c.period = %(last)s), 0)::bigint AS last_month
+FROM organizations o LEFT JOIN usage_counters c ON c.org_id = o.id AND c.kind = 'pages_read' AND c.period IN (%(this)s, %(last)s)
+GROUP BY o.id ORDER BY o.id LIMIT %(limit)s"""
+# The pages of every organization, read in one pass by the alert and the count: a plain bound, far above the number of customers.
+PAGES_ORGS_LIMIT = 5000
+
+
+def _pages_by_organization(conn: psycopg.Connection, base: QuotaConfig) -> list[Row]:
+    """`{this_month, last_month, limit}` for each organization: the pages read, and the month's limit with the organization's own override."""
+    this = month_start()
+    last = (this - timedelta(days=1)).replace(day=1)
+    out = []
+    for row in conn.execute(_PAGES_BY_ORGANIZATION, {"this": this, "last": last, "limit": PAGES_ORGS_LIMIT}).fetchall():
+        out.append({"this_month": int(row["this_month"]), "last_month": int(row["last_month"]),
+                    "limit": replace(base, **_overrides(row["quota_overrides"], row["id"])).pages_per_month})
+    return out
+
+
+def pages_outlook(conn: psycopg.Connection, base: QuotaConfig, reads_per_month: int = 2) -> dict[str, int]:
+    """How the organizations stand against their month's pages, in numbers only (no name): how many there are, how many read pages last month,
+    how many would pass their limit if they read `reads_per_month` times what they read last month (a rough projection: last month also holds
+    reads started by hand), and where this month stands (80 % or more of the limit, limit reached)."""
+    rows = _pages_by_organization(conn, base)
+    return {
+        "organizations": len(rows),
+        "read_last_month": sum(1 for r in rows if r["last_month"] > 0),
+        "would_exceed": sum(1 for r in rows if r["last_month"] * reads_per_month > r["limit"]),
+        "warning_this_month": sum(1 for r in rows if level(r["this_month"], r["limit"]) == "warning"),
+        "reached_this_month": sum(1 for r in rows if level(r["this_month"], r["limit"]) == "reached"),
+    }
+
+
+def pages_near_limit(conn: psycopg.Connection, base: QuotaConfig, percent: int) -> int:
+    """How many organizations have read `percent` % or more of their month's pages (a limit of 0 is left out): a number, no name (AXE-708)."""
+    return sum(1 for r in _pages_by_organization(conn, base) if r["limit"] > 0 and r["this_month"] * 100 >= percent * r["limit"])
 
 
 def pages_note(used: int, limit: int) -> str:
