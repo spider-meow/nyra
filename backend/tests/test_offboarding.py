@@ -55,7 +55,7 @@ def _seed(conn, name: str):
     conn.execute("INSERT INTO brand_logos (brand_id, data_uri) VALUES (%s, 'data:image/png;base64,AA==')", (brand_id,))
     cloud_db.set_overrides(conn, org_id, {"match": {"phash_threshold": 5}}, sole)
     cloud_db.set_match_signature(conn, org_id, brand_id, "sig")
-    schedule.enable(conn, brand_id, org_id, 10)
+    schedule.enable(conn, brand_id, org_id, 2)
     conn.execute("INSERT INTO monthly_digests (org_id, month, status, attempts, sent_at) VALUES (%s, '2026-10-01', 'sent', 1, now())", (org_id,))
     cloud_audit.record(conn, org_id, sole, "library.upload", "reference", brand_id=brand_id, saved=1)
     return org_id, brand_id, sole, shared
