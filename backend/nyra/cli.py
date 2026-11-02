@@ -422,6 +422,25 @@ def cloud_schedules(
     typer.secho(f"{switched} schedule(s) switched on.", fg=typer.colors.GREEN)
 
 
+@app.command("cloud-pages-quota")
+def cloud_pages_quota(
+    reads: int = typer.Option(2, "--reads", min=1, help="Reads a month to project (default 2: the first between the 1st and the 3rd, the second between the 13th and the 16th)."),
+    config: Optional[Path] = ConfigOption,
+) -> None:
+    """How the organizations stand against their month's pages (AXE-708): numbers only, no name.
+
+    Says how many would pass their limit if they read `--reads` times what they read last month, and where this month stands. A projection:
+    last month also holds reads started by hand, and a read stops at the limit instead of passing it."""
+    from nyra.cloud import db as cloud_db
+    from nyra.cloud import usage as cloud_usage
+
+    with cloud_db.connect(_cloud_env(need_storage=False)["DATABASE_URL"]) as conn:
+        found = cloud_usage.pages_outlook(conn, load_config(config).quota, reads)
+    typer.echo(f"{found['organizations']} organization(s), {found['read_last_month']} read pages last month; "
+               f"{found['would_exceed']} would pass their limit at {reads} read(s) a month; "
+               f"this month: {found['warning_this_month']} at 80 % or more, {found['reached_this_month']} at the limit.")
+
+
 @app.command("cloud-delete-org")
 def cloud_delete_org(
     slug: str = typer.Argument(..., help="Slug of the organization to erase for good."),
