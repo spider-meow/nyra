@@ -230,11 +230,13 @@ export type ImportRow = {
   message: string;
 };
 
-/** The monthly read of a brand. `next_run_at` is null when it is off; in the past, the read goes at the next pass of the worker. */
+/** The scheduled reads of a brand (twice a month). `next_run_at` is null when it is off; in the past, the read goes at the next pass of the worker. */
 export type BrandSchedule = {
   enabled: boolean;
   day_of_month: number;
   default_day: number;
+  /** The day of the second read of the month (13 to 16), fixed by the brand; `day_of_month` is the day of the first (1 to 3). */
+  second_day: number;
   next_run_at: string | null;
   last_read_at: string | null;
 };

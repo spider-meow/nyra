@@ -1,12 +1,14 @@
-"""The monthly read: every brand whose schedule is on is read once a month, by the worker, through the ordinary queue.
+"""The scheduled reads: every brand whose schedule is on is read twice a month, by the worker, through the ordinary queue.
 
-A brand has a day of the month (1 to 28, so every month has it) and an hour, a quarter-hour slot between 02:00 and 05:00
-UTC. Both are a spread, so that the brands of all the customers do not start at the same minute: the default day
-(first week) and the slot come from the brand's uuid, never from `hash()`, which differs from one process to the next.
+A brand has two dates in the month: the first read between the 1st and the 3rd, the second between the 13th and the 16th (and
+an hour, a quarter-hour slot between 02:00 and 05:00 UTC). The dates are a spread, so that the brands of all the customers do not
+start at the same minute: the first day (1 to 3, the one the team may change), the second (13 to 16) and the slot come from the
+brand's uuid, never from `hash()`, which differs from one process to the next.
 
-A brand is due from its date and hour of the current month on, if it was not queued already this month. A worker that
-was stopped on the day thus queues the read as soon as it is back, once; and a month is never read twice, whatever the
-restarts or a change of day.
+A brand is due from the date of its latest read of the month that has passed, if it was not queued since the start of that date's
+half of the month (the 1st or the 13th): the month holds two periods. A worker that was stopped on the day thus queues the read as
+soon as it is back, once; a period is never read twice, whatever the restarts or a change of day, and a read missed in one half is not
+made up in the next: the next date comes first.
 
 The launch is atomic: `enqueue_due` claims a brand with an `UPDATE ... WHERE <the due test>` and queues its `crawl` in
 the same transaction, so two workers cannot queue the same brand and a failure queues nothing and leaves the brand due.
@@ -29,12 +31,14 @@ from . import audit, jobs
 
 log = logging.getLogger("nyra.cloud.schedule")
 
-DEFAULT_DAYS = 7  # the default day is in the first week
+FIRST_DAYS = (1, 2, 3)        # the first read of the month, between the 1st and the 3rd
+SECOND_DAYS = (13, 14, 15, 16)  # the second, between the 13th and the 16th
+SLOT_SPREAD = 7               # the slot is drawn from the uuid divided by this (it was the number of default days: kept so that no brand changes slot)
 FIRST_HOUR, SLOT_MINUTES, SLOTS = 2, 15, 12  # 12 quarter-hours: 02:00 to 04:45 UTC
 # After a long stop of the worker, dozens of brands can be due at once. Each pass queues at most this many; the rest go
 # at the next pass (5 minutes later), so the queue is not flooded.
 MAX_PER_TICK = 3
-SCAN_LIMIT = 100  # rows looked at in a pass (the due ones come first)
+SCAN_LIMIT, MAX_SCAN_PAGES = 100, 20  # rows read at a time, and pages looked at in a pass (the longest unread first)
 JOB_PARAMS = {"fresh": True, "then_match": True, "scheduled": True}
 _OFF, _ON = ("0", "false", "off"), ("", "1", "true", "on")
 # What was told lately, so that a failure repeated at every pass (every 5 minutes) is told once an hour, not 12 times.
@@ -59,59 +63,92 @@ class _Deferred(Exception):
 
 
 def default_day(brand_id: uuid.UUID) -> int:
-    return 1 + uuid.UUID(str(brand_id)).int % DEFAULT_DAYS
+    """The brand's own day for its first read (1 to 3)."""
+    return FIRST_DAYS[uuid.UUID(str(brand_id)).int % len(FIRST_DAYS)]
+
+
+def second_day(brand_id: uuid.UUID) -> int:
+    """The brand's day for its second read (13 to 16), drawn apart from the first so that the two spreads are not tied."""
+    return SECOND_DAYS[(uuid.UUID(str(brand_id)).int // len(FIRST_DAYS)) % len(SECOND_DAYS)]
+
+
+def first_day(brand_id: uuid.UUID, day: int) -> int:
+    """The day of the first read: the stored one, or the default when it is outside 1 to 3 (a schedule made when a day from 1 to 28 was allowed)."""
+    return day if day in FIRST_DAYS else default_day(brand_id)
 
 
 def slot_time(brand_id: uuid.UUID) -> tuple[int, int]:
     """(hour, minute) UTC of the brand's slot."""
-    slot = (uuid.UUID(str(brand_id)).int // DEFAULT_DAYS) % SLOTS
+    slot = (uuid.UUID(str(brand_id)).int // SLOT_SPREAD) % SLOTS
     minutes = FIRST_HOUR * 60 + slot * SLOT_MINUTES
     return minutes // 60, minutes % 60
 
 
-def due_date(brand_id: uuid.UUID, day: int, year: int, month: int) -> datetime:
+def reads_of_month(brand_id: uuid.UUID, day: int, year: int, month: int) -> tuple[datetime, datetime]:
+    """The dates of the brand's two reads of the month (the first on `day`, see `first_day`)."""
     hour, minute = slot_time(brand_id)
-    return datetime(year, month, day, hour, minute, tzinfo=timezone.utc)
+    return (datetime(year, month, first_day(brand_id, day), hour, minute, tzinfo=timezone.utc),
+            datetime(year, month, second_day(brand_id), hour, minute, tzinfo=timezone.utc))
 
 
-def _month_start(now: datetime) -> datetime:
-    return datetime(now.year, now.month, 1, tzinfo=timezone.utc)
+def due_date(brand_id: uuid.UUID, day: int, year: int, month: int) -> datetime:
+    """The date of the first read of the month."""
+    return reads_of_month(brand_id, day, year, month)[0]
+
+
+def last_due_date(brand_id: uuid.UUID, day: int, year: int, month: int) -> datetime:
+    """The date of the last read of the month: the monthly e-mail waits for it."""
+    return reads_of_month(brand_id, day, year, month)[1]
+
+
+def period_start(brand_id: uuid.UUID, day: int, now: datetime) -> Optional[datetime]:
+    """Pure: the date of the latest read of this month that has passed, None before the first one."""
+    now = now.astimezone(timezone.utc)
+    passed = [at for at in reads_of_month(brand_id, day, now.year, now.month) if at <= now]
+    return passed[-1] if passed else None
+
+
+def due_since(brand_id: uuid.UUID, day: int, now: datetime) -> Optional[datetime]:
+    """Pure: the start of the half of the month the latest passed read date belongs to (the 1st or the 13th, at 00:00 UTC), None before the first
+    date. A brand is due when it was not queued since: a read on the 1st is the half's read even if the team then moves the brand's day to the 3rd."""
+    latest = period_start(brand_id, day, now)
+    return None if latest is None else latest.replace(day=1 if latest.day < SECOND_DAYS[0] else SECOND_DAYS[0], hour=0, minute=0)
 
 
 def is_due(row: dict, now: datetime) -> bool:
-    """Pure: scheduled on, this month's date and hour passed, and not queued yet this month."""
-    now = now.astimezone(timezone.utc)
-    if not row["enabled"] or due_date(row["brand_id"], row["day_of_month"], now.year, now.month) > now:
-        return False
-    return row["last_run_at"] is None or row["last_run_at"] < _month_start(now)
+    """Pure: scheduled on, a read date of this month passed, and not queued since the start of that date's half of the month."""
+    since = due_since(row["brand_id"], row["day_of_month"], now) if row["enabled"] else None
+    return since is not None and (row["last_run_at"] is None or row["last_run_at"] < since)
 
 
 def next_run(brand_id: uuid.UUID, day: int, last_run_at: Optional[datetime], now: datetime) -> datetime:
-    """Pure: when a brand whose schedule is on is read next. A brand not read this month gets this month's date (already
-    past if it is late: it then goes at the next pass of the worker, see `is_due`); one read this month gets next month's."""
+    """Pure: when a brand whose schedule is on is read next. A brand due now gets its latest date (already past if it is late: it then goes
+    at the next pass of the worker, see `is_due`); otherwise the next date to come."""
     now = now.astimezone(timezone.utc)
-    if last_run_at is None or last_run_at < _month_start(now):
-        return due_date(brand_id, day, now.year, now.month)
+    since = due_since(brand_id, day, now)
+    if since is not None and (last_run_at is None or last_run_at < since):
+        return period_start(brand_id, day, now)
     year, month = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
-    return due_date(brand_id, day, year, month)
+    coming = [*reads_of_month(brand_id, day, now.year, now.month), due_date(brand_id, day, year, month)]
+    return next(at for at in coming if at > now)
 
 
 def _check_day(day: int) -> int:
-    if not isinstance(day, int) or isinstance(day, bool) or not 1 <= day <= 28:
-        raise ValueError(f"day of the month must be from 1 to 28: {day!r}")
+    if not isinstance(day, int) or isinstance(day, bool) or day not in FIRST_DAYS:
+        raise ValueError(f"day of the first read must be {FIRST_DAYS[0]} to {FIRST_DAYS[-1]}: {day!r}")
     return day
 
 
 def enable(conn, brand_id: uuid.UUID, org_id: uuid.UUID, day_of_month: Optional[int] = None,
            now: Optional[datetime] = None) -> None:
-    """Switch the monthly read on (the brand's own default day if none is given). A brand NEVER read whose date of this
-    month has already passed is marked as read now: its first read is on the chosen day of the next month, not at once.
-    A brand already read (even months ago) keeps its `last_run_at`, whatever the day chosen or a switch off and on: the
-    ordinary rule applies, so if the new date has passed and it was not read this month it is read at the next pass,
-    and if it was read this month it waits for the next one. Nothing is skipped and nothing is read twice."""
+    """Switch the scheduled reads on (the brand's own default day if none is given). A brand NEVER read, switched on after one of the
+    dates of this month, is marked as read now: its first read is the next date, not at once. A brand already read (even months
+    ago) keeps its `last_run_at`, whatever the day chosen or a switch off and on: the ordinary rule applies, so if a date has
+    passed since its last read it is read at the next pass, and if not it waits for the next date. Nothing is skipped and nothing
+    is read twice."""
     day = _check_day(default_day(brand_id) if day_of_month is None else day_of_month)
     now = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    passed = due_date(brand_id, day, now.year, now.month) <= now
+    passed = period_start(brand_id, day, now) is not None
     conn.execute(
         """INSERT INTO brand_schedules (brand_id, org_id, enabled, day_of_month, last_run_at) VALUES (%s, %s, true, %s, %s)
            ON CONFLICT (brand_id) DO UPDATE SET enabled = true, day_of_month = EXCLUDED.day_of_month, updated_at = now(),
@@ -132,47 +169,57 @@ def disable(conn, brand_id: uuid.UUID) -> None:
 
 
 def _launch(conn, row: dict, now: datetime) -> Optional[dict]:
-    """Claim the brand for this month and queue its read, in the caller's transaction (a savepoint). The claim repeats
+    """Claim the brand for this period and queue its read, in the caller's transaction (a savepoint). The claim repeats
     the due test: of two workers only the one that gets the row first sees it still due."""
     claimed = conn.execute(
         """UPDATE brand_schedules SET last_run_at = %s, updated_at = now()
            WHERE brand_id = %s AND enabled AND day_of_month = %s AND (last_run_at IS NULL OR last_run_at < %s)
            RETURNING brand_id""",
-        (now, row["brand_id"], row["day_of_month"], _month_start(now)),
+        (now, row["brand_id"], row["day_of_month"], due_since(row["brand_id"], row["day_of_month"], now)),
     ).fetchone()
     if claimed is None:
         return None
     job, reason = None, ""
     if conn.execute("SELECT 1 FROM sites WHERE brand_id = %s LIMIT 1", (row["brand_id"],)).fetchone() is None:
         reason = "no_site"
-        log.warning("monthly read of brand %s: no site to read, marked as done for the month", row["brand_id"])
+        log.warning("scheduled read of brand %s: no site to read, marked as done until the next date", row["brand_id"])
     else:
         try:
             job = jobs.enqueue(conn, org_id=row["org_id"], brand_id=row["brand_id"], kind="crawl", params=JOB_PARAMS)
         except jobs.JobConflict as conflict:
-            # Only a scheduled read of this brand is the month's read. A read started by hand may be partial (some
+            # Only a scheduled read of this brand is this period's read. A read started by hand may be partial (some
             # addresses): the pass is cancelled, `last_run_at` stays, and the brand is tried again at the next pass.
             if not conflict.job["params"].get("scheduled") or conflict.job["kind"] != "crawl":
                 raise _Deferred(conflict.job["id"]) from None
             reason = "waiting"
-            log.info("monthly read of brand %s: a scheduled read already waits, none added", row["brand_id"])
+            log.info("scheduled read of brand %s: a scheduled read already waits, none added", row["brand_id"])
     audit.record(conn, row["org_id"], None, "schedule.run", "brand_schedule", row["brand_id"],
                  brand_id=row["brand_id"], queued=int(job is not None), reason=reason)
     return job
 
 
+def _due_rows(conn, now: datetime):
+    """The active schedules, the longest unread first, a page of `SCAN_LIMIT` at a time and at most `MAX_SCAN_PAGES` pages. Which brands are due
+    depends on dates drawn from each brand's own uuid (`is_due`), so the database cannot narrow it down: it is looked at here, in order.
+    ponytail: offset paging while the launches move rows to the back of the order can skip a brand for one pass (it is found at the next); past
+    `SCAN_LIMIT * MAX_SCAN_PAGES` = 2,000 active schedules the newest ones are not looked at. Upgrade: a `next_due_at` column, which is a migration."""
+    for page in range(MAX_SCAN_PAGES):
+        rows = conn.execute(
+            """SELECT brand_id, org_id, enabled, day_of_month, last_run_at FROM brand_schedules WHERE enabled
+               ORDER BY last_run_at NULLS FIRST, day_of_month, brand_id LIMIT %s OFFSET %s""",
+            (SCAN_LIMIT, page * SCAN_LIMIT),
+        ).fetchall()
+        yield from rows
+        if len(rows) < SCAN_LIMIT:
+            return
+
+
 def enqueue_due(conn, now: datetime, limit: int = MAX_PER_TICK) -> list[dict]:
-    """Queue the monthly read of the brands that are due, at most `limit` of them: the jobs queued. A brand whose launch
+    """Queue the scheduled read of the brands that are due, at most `limit` of them: the jobs queued. A brand whose launch
     fails is rolled back alone (it stays due and is tried again at the next pass), logged, and the others go on."""
     now = now.astimezone(timezone.utc)
-    rows = conn.execute(
-        """SELECT brand_id, org_id, enabled, day_of_month, last_run_at FROM brand_schedules
-           WHERE enabled AND day_of_month <= %s AND (last_run_at IS NULL OR last_run_at < %s)
-           ORDER BY last_run_at NULLS FIRST, day_of_month, brand_id LIMIT %s""",
-        (now.day, _month_start(now), SCAN_LIMIT),
-    ).fetchall()
     queued: list[dict] = []
-    for row in rows:
+    for row in _due_rows(conn, now):
         if len(queued) >= limit:
             break
         if not is_due(row, now):
@@ -181,16 +228,16 @@ def enqueue_due(conn, now: datetime, limit: int = MAX_PER_TICK) -> list[dict]:
             with conn.transaction():
                 job = _launch(conn, row, now)
         except _Deferred as way:
-            log.debug("monthly read of brand %s: job %s is in the way, tried again at the next pass", row["brand_id"], way)
+            log.debug("scheduled read of brand %s: job %s is in the way, tried again at the next pass", row["brand_id"], way)
             continue
         except Exception:  # noqa: BLE001 - one brand's failure must not stop the others; it is logged and retried
-            # ponytail: a brand that fails for good stays in the first SCAN_LIMIT rows (the oldest read come first), so
-            # 100 such brands would hold back the next ones. Upgrade: a failure counter or a last-attempt date. Until then
-            # the noise is bounded: one full trace per brand and hour, the other passes only a line.
+            # ponytail: a brand that fails for good stays among the oldest read, so 100 such brands would hold back the next ones
+            # (`limit` per pass). Upgrade: a failure counter or a last-attempt date. Until then the noise is bounded: one full
+            # trace per brand and hour, the other passes only a line.
             if once_per_hour(f"fail:{row['brand_id']}"):
-                log.exception("monthly read of brand %s failed; it will be tried again", row["brand_id"])
+                log.exception("scheduled read of brand %s failed; it will be tried again", row["brand_id"])
             else:
-                log.warning("monthly read of brand %s failed again; it will be tried again", row["brand_id"])
+                log.warning("scheduled read of brand %s failed again; it will be tried again", row["brand_id"])
             continue
         if job is not None:
             queued.append(job)
@@ -233,10 +280,10 @@ def _switch(raw: str) -> bool:
     if value in _OFF:
         return False
     if value not in _ON:
-        log.warning("NYRA_SCHEDULER=%r is not one of 0/false/off or 1/true/on: the monthly read stays on", raw)
+        log.warning("NYRA_SCHEDULER=%r is not one of 0/false/off or 1/true/on: the scheduled reads stay on", raw)
     return True
 
 
 def scheduler_enabled() -> bool:
-    """The general switch `NYRA_SCHEDULER`: `0`, `false` or `off` stops the monthly reads; anything else keeps them on."""
+    """The general switch `NYRA_SCHEDULER`: `0`, `false` or `off` stops the scheduled reads; anything else keeps them on."""
     return _switch(os.environ.get("NYRA_SCHEDULER", ""))
