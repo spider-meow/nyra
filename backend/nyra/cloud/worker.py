@@ -826,7 +826,7 @@ class Worker:
         result = {
             "runs": [run["run_id"] for run in runs], "quota_reached": capped,
             **{key: sum(run[key] for run in runs)
-               for key in ("pages_visited", "images_found", "images_stored", "images_new", "blocked_by_robots")},
+               for key in ("pages_visited", "images_found", "images_stored", "images_new", "blocked_by_robots", "browser_recycles", "browser_restarts")},
             "errors": [error for run in runs for error in run["errors"]][:8],
             "pages_skipped": sorted(params.get("skip_pages") or []),
         }
@@ -929,6 +929,7 @@ class Worker:
         return {"suspect": suspect, "site": site["label"] or site["url"],
             "run_id": str(run_id), "pages_visited": stats.pages_visited, "pages_queued": stats.pages_queued, "images_found": stats.images_found,
             "images_stored": stats.images_stored, "images_new": stats.images_new,
+            "browser_recycles": stats.browser_recycles, "browser_restarts": stats.browser_restarts,
             "blocked_by_robots": stats.blocked_by_robots, "pages_left_scope": stats.pages_left_scope, "errors": stats.errors[:8],
         }
 

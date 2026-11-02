@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import gzip
 import logging
+import os
 import random
 import re
 import threading
@@ -50,11 +51,30 @@ MAX_BROWSER_RESTARTS = 3
 # Chromium only grows during a long read: one reader kept a single page for the whole read and one browser for all of it, and a site of 150 heavy pages
 # took the worker past its memory limit (the kernel killed Chromium, then the worker). Each page is read in a page of its own, closed after it, and
 # the browser is started again after this many pages (about 100 to 150 MB each were left behind on a heavy site). Not a death: it is not counted in `browser_restarts`.
-RECYCLE_AFTER_PAGES = 10
+# The interval: RECYCLE_AFTER_PAGES, below (`recycle_after_pages`, from the environment).
 SHUTDOWN_TIMEOUT_SECONDS = 10  # closing a frozen Chromium is given up after this long
 _BROWSER_GONE = ("target closed", "browser has been closed", "connection closed", "context or browser has been closed")
 
 log = logging.getLogger("nyra.crawl")
+
+
+RECYCLE_AFTER_PAGES_DEFAULT = 10
+MIN_RECYCLE_PAGES, MAX_RECYCLE_PAGES = 3, 200  # under 3 a read spends its time starting Chromium; over 200 it is no recycling at that size
+
+
+def recycle_after_pages() -> int:
+    """`NYRA_RECYCLE_AFTER_PAGES` (default 10), so the interval can be tuned from what a long read measured without a new image.
+    A value that is not a whole number between `MIN_RECYCLE_PAGES` and `MAX_RECYCLE_PAGES` is logged and the default kept."""
+    raw = os.environ.get("NYRA_RECYCLE_AFTER_PAGES", "").strip()
+    if not raw:
+        return RECYCLE_AFTER_PAGES_DEFAULT
+    if raw.isdigit() and MIN_RECYCLE_PAGES <= int(raw) <= MAX_RECYCLE_PAGES:
+        return int(raw)
+    log.warning("NYRA_RECYCLE_AFTER_PAGES=%r is not a whole number from %d to %d; keeping %d", raw, MIN_RECYCLE_PAGES, MAX_RECYCLE_PAGES, RECYCLE_AFTER_PAGES_DEFAULT)
+    return RECYCLE_AFTER_PAGES_DEFAULT
+
+
+RECYCLE_AFTER_PAGES = recycle_after_pages()
 
 
 class BrowserUnavailable(RuntimeError):
@@ -575,6 +595,7 @@ class CrawlStats:
     pages_ok: int = 0              # read with success: 2xx, the page asked for, no consent wall
     pages_walled: int = 0          # a consent notice still hid the page after we tried to close it (CONSENT_WALL)
     browser_restarts: int = 0      # Chromium (or its driver) died and was started again
+    browser_recycles: int = 0      # Chromium was started again on purpose, every RECYCLE_AFTER_PAGES pages (what a measure of the interval counts)
     reading: list[str] = field(default_factory=list)  # the pages being read now: what a stopped worker's last heartbeat says (AXE-644)
     http_statuses: dict[str, int] = field(default_factory=dict)
     images_known: int = 0          # already stored under this URL: not downloaded again
@@ -804,6 +825,7 @@ class _Crawl:
             if self.pages_since_launch < RECYCLE_AFTER_PAGES:
                 return  # another reader already did
             log.info("starting the browser again after %d pages: Chromium only grows during a long read", self.pages_since_launch)
+            self.stats.browser_recycles += 1
             await self._shutdown()
             await self._launch()
 
