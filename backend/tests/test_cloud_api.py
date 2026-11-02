@@ -2370,3 +2370,64 @@ def test_an_invitation_the_provider_refused_gives_its_place_back(client, org_wit
     for _ in range(2):  # the same place is available again: a 502 each time, never a 429
         failed = client.post(f"/api/orgs/{org_id}/members", headers=_headers(admin_id), json={"email": f"{uuid.uuid4().hex}@x.com"})
         assert failed.status_code == 502
+
+
+# --- downloading an image at a chosen size (AXE-677) --------------------------------------------
+
+def _upload_sized(client, base, admin_id, name, width, height, fmt="JPEG"):
+    img = Image.linear_gradient("L").resize((width, height)).convert("RGB")
+    buf = io.BytesIO()
+    img.save(buf, format=fmt)
+    sent = client.post(f"{base}/library/upload", headers=_headers(admin_id), files=[("files", (name, buf.getvalue(), "image/" + fmt.lower()))])
+    assert sent.json()["saved"] == [name], sent.json()
+
+
+def test_a_member_downloads_an_image_at_a_size_made_on_the_fly_and_nothing_is_kept(client, org_with_users, fake_storage_client, cloud_database_url):
+    org_id, base, admin_id, client_id, outsider_id = org_with_users
+    _upload_sized(client, base, admin_id, "big.jpg", 3000, 2000)
+    offered = client.get(f"{base}/library/big.jpg/downloads", headers=_headers(client_id)).json()["choices"]  # a client member too
+    assert [(o["key"], o["width"], o["height"]) for o in offered] == [("original", 2048, 1365), ("large", 2000, 1333), ("medium", 1200, 800), ("web", 800, 533)]
+    before = dict(fake_storage_client.store)
+
+    web = client.get(f"{base}/library/big.jpg/download?size=web", headers=_headers(client_id))
+    assert web.status_code == 200 and web.headers["content-disposition"] == 'attachment; filename="big_800w.jpg"'
+    assert Image.open(io.BytesIO(web.content)).size == (800, 533) and web.headers["content-type"] == "image/jpeg"
+    original = client.get(f"{base}/library/big.jpg/download", headers=_headers(client_id))
+    stored = next(data for (_, path), data in fake_storage_client.store.items() if path.endswith("/big.jpg"))
+    assert original.content == stored and original.headers["content-disposition"] == 'attachment; filename="big.jpg"'  # byte for byte
+
+    assert fake_storage_client.store == before  # no copy kept
+    with cloud_db.connect(cloud_database_url) as conn:
+        rows = conn.execute("SELECT detail FROM audit_log WHERE org_id = %s AND action = 'library.download' ORDER BY created_at", (org_id,)).fetchall()
+    assert [row["detail"] for row in rows] == [{"count": 1, "size": "web"}, {"count": 1, "size": "original"}]  # the choice, never the name
+    assert client.get(f"{base}/library/big.jpg/download", headers=_headers(outsider_id)).status_code == 403
+
+
+def test_a_size_that_is_not_offered_a_missing_original_and_an_unknown_image_are_told_plainly(client, org_with_users, fake_storage_client):
+    _, base, admin_id, _, _ = org_with_users
+    _upload_sized(client, base, admin_id, "small.jpg", 600, 400)
+    assert [o["key"] for o in client.get(f"{base}/library/small.jpg/downloads", headers=_headers(admin_id)).json()["choices"]] == ["original"]
+    refused = client.get(f"{base}/library/small.jpg/download?size=large", headers=_headers(admin_id))  # never enlarged
+    assert (refused.status_code, refused.json()["detail"]) == (400, "Cette taille n'est pas proposée pour cette image.")
+    assert client.get(f"{base}/library/small.jpg/download?size=../x", headers=_headers(admin_id)).status_code == 400
+    assert client.get(f"{base}/library/nope.jpg/download", headers=_headers(admin_id)).status_code == 404
+    for key in [key for key in fake_storage_client.store if key[1].endswith("/small.jpg")]:
+        del fake_storage_client.store[key]  # purged: the row stays, the file is gone
+    gone = client.get(f"{base}/library/small.jpg/download", headers=_headers(admin_id))
+    assert (gone.status_code, gone.json()["detail"]) == (404, "L'original de ce visuel n'est plus disponible.")
+
+
+def test_a_download_waits_for_no_one_and_decodes_no_more_than_the_cap(client, org_with_users, monkeypatch):
+    from nyra.cloud.routes import common, library
+
+    _, base, admin_id, _, _ = org_with_users
+    _upload_sized(client, base, admin_id, "big.png", 3000, 2000, "PNG")
+    monkeypatch.setattr(library, "DOWNLOAD_WAIT_SECONDS", 0.05)
+    with common.heavy_image():  # an upload is converting: a download answers 503 at once instead of queueing behind it
+        busy = client.get(f"{base}/library/big.png/download?size=web", headers=_headers(admin_id))
+        assert busy.status_code == 503 and "déjà une image" in busy.json()["detail"]
+        assert client.get(f"{base}/library/big.png/download", headers=_headers(admin_id)).status_code == 200  # the original needs no conversion
+    monkeypatch.setattr(library, "upload_pixel_limit", lambda config: 1_000_000)  # the cap: a PNG cannot be decoded smaller, so it is refused
+    too_big = client.get(f"{base}/library/big.png/download?size=web", headers=_headers(admin_id))
+    assert too_big.status_code == 422 and "trop grande" in too_big.json()["detail"]
+    assert client.get(f"{base}/library/big.png/download?size=web", headers=_headers(admin_id)).status_code == 422  # and the place was released

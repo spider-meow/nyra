@@ -12,6 +12,7 @@ const PAGE = 50;
 /** The stable action codes of the API, in the words of the interface. An unknown code is shown as it is. */
 const ACTION_LABEL: Record<string, string> = {
   "library.upload": "Ajout de visuels",
+  "library.download": "Téléchargement d'un visuel",
   "library.update": "Modification d'un visuel",
   "library.delete": "Suppression de visuels",
   "library.expiry": "Changement d'échéance",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import mimetypes
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +19,7 @@ from nyra import report as report_module
 from nyra.refs import RefValidationError, change_tags, normalize_tags, parse_rights
 
 from .. import db as cloud_db
+from .. import downloads
 from .. import jobs as cloud_jobs
 from .. import storage as cloud_storage
 from ..csvcell import csv_cell, csv_text
@@ -159,6 +161,61 @@ def library_original_url(filename: str, scope: BrandScope = Depends(brand_member
     if not url:
         raise HTTPException(status_code=502, detail="L'image n'est pas disponible pour le moment.")
     return {"url": url}
+
+
+DOWNLOAD_WAIT_SECONDS = 5  # a place for one conversion not free by then: 503 (see `heavy_image`)
+
+
+def _own_reference(ctx: Ctx, scope: BrandScope, filename: str):
+    """The row of one of this brand's references, or a 404."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        row = cloud_db.get_reference_by_filename(conn, scope.brand_id, safe_filename(filename))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Référence introuvable.")
+    return row
+
+
+@router.get(f"{BRAND}/library/{{filename}}/downloads")
+def library_downloads(filename: str, scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """The sizes this image can be downloaded in, from the row alone: nothing is read from the storage."""
+    row = _own_reference(ctx, scope, filename)
+    return {"choices": downloads.choices(row["width"], row["height"], row["byte_size"])}
+
+
+def _original_bytes(ctx: Ctx, row) -> bytes:
+    """The stored original, or a 404 (purged or never stored) / 502 (the storage does not answer)."""
+    if not row["storage_path"]:
+        raise HTTPException(status_code=404, detail="L'original de ce visuel n'est plus disponible.")
+    try:
+        return cloud_storage.download(ctx.settings.storage_client(), cloud_storage.BUCKET_REFS, row["storage_path"])
+    except Exception as exc:  # noqa: BLE001 - told apart below: a storage that is down is a 502, a missing object a 404
+        log.warning("reading the original for a download failed", exc_info=True)
+        if cloud_storage.is_transient(exc):
+            raise HTTPException(status_code=502, detail="L'image n'est pas disponible pour le moment.") from exc
+        raise HTTPException(status_code=404, detail="L'original de ce visuel n'est plus disponible.") from exc
+
+
+@router.get(f"{BRAND}/library/{{filename}}/download")
+def library_download(filename: str, size: str = Query(downloads.ORIGINAL, max_length=20),
+                     scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> Response:
+    """One image as an attachment, at a size of `downloads.choices`. The original goes out byte for byte; a smaller size
+    is made now (one conversion at a time, capped in pixels) and kept nowhere."""
+    row = _own_reference(ctx, scope, filename)
+    if size not in {offer["key"] for offer in downloads.choices(row["width"], row["height"], row["byte_size"])}:
+        raise HTTPException(status_code=400, detail="Cette taille n'est pas proposée pour cette image.")
+    data = _original_bytes(ctx, row)
+    if size == downloads.ORIGINAL:
+        body, name, media = data, downloads.download_name(row["filename"], size, 0, Path(row["filename"]).suffix.lower()), mimetypes.guess_type(row["filename"])[0]
+    else:
+        with heavy_image(wait=DOWNLOAD_WAIT_SECONDS):
+            img, why = fetch.decode_reference(data, upload_pixel_limit(ctx.settings.base_config()))
+            if img is None:
+                raise HTTPException(status_code=422, detail=why)
+            body, width, extension, media = downloads.resized(img, downloads.known_size(size))
+        name = downloads.download_name(row["filename"], size, width, extension)
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        scope.audit(conn, "library.download", "reference", row["id"], count=1, size=size)  # the choice, never the name or the content
+    return Response(body, media_type=media or "application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
 def _read_upload(upload_file: UploadFile) -> tuple[Optional[dict], str, fetch.Source]:

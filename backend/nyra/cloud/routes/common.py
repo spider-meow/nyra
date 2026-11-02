@@ -266,10 +266,17 @@ _HEAVY_IMAGE = threading.Semaphore(1)
 
 
 @contextmanager
-def heavy_image():
-    """Held from the moment an image is decoded until its copies are stored (the decoded image is alive all along)."""
-    with _HEAVY_IMAGE:
+def heavy_image(wait: Optional[float] = None):
+    """Held from the moment an image is decoded until its copies are stored (the decoded image is alive all along).
+
+    With `wait` (seconds), a place not free by then is a 503 instead of a queue: a download asks, an upload waits its turn.
+    """
+    if not _HEAVY_IMAGE.acquire(timeout=wait):  # timeout=None blocks until a place is free
+        raise HTTPException(status_code=503, detail="Le serveur traite déjà une image. Réessayez dans quelques secondes.")
+    try:
         yield
+    finally:
+        _HEAVY_IMAGE.release()
 
 
 def put_reference_files(client, org_id: uuid.UUID, brand_id: uuid.UUID, filename: str, data: fetch.Source, img,

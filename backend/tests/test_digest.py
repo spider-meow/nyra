@@ -462,7 +462,7 @@ def test_the_mail_ends_with_the_way_to_stop_it_and_a_link_to_the_settings_when_t
     assert sentence in bare.text and "http" not in bare.text and "href" not in bare.html
 
 
-def test_columns_missing_stops_the_pass_before_anything_is_claimed_and_the_worker_names_the_migration_once_an_hour(url, monkeypatch, caplog):
+def test_columns_missing_stops_the_pass_before_anything_is_claimed_and_the_worker_names_the_migration_once_an_hour(url, monkeypatch, caplog, worker_clock):
     org, *_ = org_with_something_to_say(url)
     with cloud_db.connect(url) as conn:
         conn.execute("ALTER TABLE memberships RENAME COLUMN monthly_email_wanted TO monthly_email_wanted_off")
@@ -866,6 +866,18 @@ def test_nothing_is_logged_about_the_people_or_the_files(url, caplog):
 
 # --- the worker -----------------------------------------------------------------------------------------------------------
 
+@pytest.fixture()
+def worker_clock(monkeypatch):
+    """The worker asks the real clock which month it is; these tests are written for `NOW`, and before that day of the month the brands
+    (whose day is drawn from 1 to 7 by their identifier) are not yet due, so they passed or failed with the date the suite ran on."""
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW
+
+    monkeypatch.setattr(worker_module, "datetime", Frozen)
+
+
 def a_worker(url, **kw):
     return worker_module.Worker(database_url=url, storage_client_factory=lambda: None, **kw)
 
@@ -889,7 +901,7 @@ def test_a_wrong_sender_stops_the_web_but_not_the_worker_which_goes_on_without_e
     assert worker_module.mail_settings_or_none(None).mail_from == SENDER
 
 
-def test_without_settings_the_digest_is_unconfigured_and_does_not_crash(url, caplog):
+def test_without_settings_the_digest_is_unconfigured_and_does_not_crash(url, caplog, worker_clock):
     org, *_ = org_with_something_to_say(url)
     worker = a_worker(url)                                    # mail_settings=None
     with caplog.at_level(logging.WARNING):

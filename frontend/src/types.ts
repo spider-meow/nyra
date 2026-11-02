@@ -117,6 +117,9 @@ export type LibraryItem = {
   created_at: string;
 };
 
+/** One size an image can be downloaded in (`GET .../library/{filename}/downloads`); `bytes` is known for the original only. */
+export type DownloadChoice = { key: string; label: string; width: number | null; height: number | null; bytes: number | null };
+
 export type Removal = "pending" | "online" | "unread" | "suspect" | "gone";
 
 export type Hit = {
