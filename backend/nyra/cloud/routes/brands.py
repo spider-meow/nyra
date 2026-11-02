@@ -21,6 +21,7 @@ from .. import db as cloud_db
 from .. import insights as cloud_insights
 from .. import jobs as cloud_jobs
 from .. import presence as cloud_presence
+from .. import schedule as cloud_schedule
 from .. import storage as cloud_storage
 from .common import (
     BRAND,
@@ -95,6 +96,7 @@ def create_brand(org_id: uuid.UUID, body: BrandBody, claims=Depends(staff_dep), 
         with cloud_db.connect(ctx.settings.database_url) as conn:
             brand_id = cloud_db.create_brand(conn, org_id=org_id, name=name, slug=slug, created_by=claims.user_id)
             cloud_audit.record(conn, org_id, claims.user_id, "brand.create", "brand", brand_id, brand_id=brand_id)
+            cloud_schedule.enable_new_brand(conn, org_id, brand_id, claims.user_id)  # read by itself from the start (AXE-684)
             brand = cloud_db.get_brand(conn, org_id, brand_id)
     except psycopg.errors.UniqueViolation as exc:
         raise HTTPException(status_code=409, detail=f"Une marque utilise déjà l'identifiant {slug}.") from exc

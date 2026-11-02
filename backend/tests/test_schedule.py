@@ -511,3 +511,63 @@ def test_next_run_is_next_months_date_once_the_month_is_read_and_crosses_the_yea
     assert schedule.next_run(BRAND, 10, december, december + timedelta(days=2)) == due(2027, 1)
     assert schedule.next_run(BRAND, 28, None, at(2026, 12, 29)) == due(2026, 12, 28)  # never read, passed: the (past) date
     assert schedule.next_run(BRAND, 10, None, at(2026, 12, 1)).tzinfo is not None
+
+
+# --- a brand is always read by itself, or the team is told (AXE-684) ------------------------------------------------------
+
+def test_coverage_counts_the_brands_with_a_site_that_nothing_reads_and_the_ones_late(quiet):
+    with cloud_db.connect(quiet) as conn:
+        before = schedule.coverage(conn, 30)
+        _, on = make_brand(conn)
+        _, off = make_brand(conn)
+        make_brand(conn)  # a brand with a site and no schedule row
+        make_brand(conn, site=False)  # no site: nothing to read, never counted
+        _, late = make_brand(conn)
+        _, fresh = make_brand(conn)
+        for brand in (on, off, late, fresh):
+            schedule.enable(conn, brand, conn.execute("SELECT org_id FROM brands WHERE id = %s", (brand,)).fetchone()["org_id"])
+        schedule.disable(conn, off)
+        for brand in (on, late, fresh):  # old brands: the 30 days are counted from the brand's age too
+            conn.execute("UPDATE brands SET created_at = now() - interval '90 days' WHERE id = %s", (brand,))
+        for brand, age in ((late, "40 days"), (fresh, "3 days")):
+            site = conn.execute("SELECT id FROM sites WHERE brand_id = %s", (brand,)).fetchone()["id"]
+            conn.execute(f"INSERT INTO crawl_runs (org_id, site_id, status, started_at, finished_at) "
+                         f"SELECT org_id, id, 'done', now() - interval '{age}', now() - interval '{age}' FROM sites WHERE id = %s", (site,))
+        after = schedule.coverage(conn, 30)
+        assert after["unscheduled"] - before["unscheduled"] == 2  # the one switched off and the one with no schedule
+        assert after["late"] - before["late"] == 2  # `late` (read 40 days ago) and `on` (an active schedule, never read, 90 days old)
+        assert schedule.coverage(conn, 0)["late"] == 0  # no threshold, no late count
+
+
+def test_enable_unscheduled_gives_a_row_to_the_brands_that_have_none_and_leaves_the_ones_switched_off(quiet):
+    with cloud_db.connect(quiet) as conn:
+        _, none = make_brand(conn)
+        org, off = make_brand(conn)
+        _, no_site = make_brand(conn, site=False)
+        schedule.enable(conn, off, org)
+        schedule.disable(conn, off)
+        done = schedule.enable_unscheduled(conn, now=at(2026, 11, 20))
+        assert done >= 1 and schedule_row(conn, none)["enabled"] and schedule_row(conn, none)["day_of_month"] == schedule.default_day(none)
+        assert not schedule_row(conn, off)["enabled"] and schedule_row(conn, no_site) is None  # a choice is not undone, nothing to read is not scheduled
+        assert schedule.enable_unscheduled(conn, now=at(2026, 11, 20)) == 0  # twice changes nothing
+        events = conn.execute("SELECT user_id, detail FROM audit_log WHERE action = 'schedule.enable' AND brand_id = %s", (none,)).fetchall()
+        assert len(events) == 1 and events[0]["user_id"] is None and events[0]["detail"]["default"] is True
+
+
+def test_the_command_counts_without_names_and_switches_on_only_when_asked(quiet, monkeypatch):
+    from typer.testing import CliRunner
+
+    from nyra import cli
+
+    monkeypatch.setenv("DATABASE_URL", quiet)
+    with cloud_db.connect(quiet) as conn:
+        _, none = make_brand(conn)
+    run = lambda *args: CliRunner().invoke(cli.app, ["cloud-schedules", *args])  # noqa: E731
+    counted = run()
+    assert counted.exit_code == 0 and "with no schedule" in counted.output and "Nothing changed" in counted.output and "s-" not in counted.output  # no slug, no name
+    with cloud_db.connect(quiet) as conn:
+        assert schedule_row(conn, none) is None
+    applied = run("--apply")
+    assert applied.exit_code == 0 and "schedule(s) switched on" in applied.output
+    with cloud_db.connect(quiet) as conn:
+        assert schedule_row(conn, none)["enabled"]

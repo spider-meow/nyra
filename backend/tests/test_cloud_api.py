@@ -2470,3 +2470,21 @@ def test_only_the_nyra_team_launches_estimates_and_stops_a_read(client, org_with
         assert conn.execute("SELECT count(*) AS n FROM audit_log WHERE org_id = %s AND action LIKE 'job.%%'", (org_id,)).fetchone()["n"] == 1
     for path in ("/jobs/current", "/jobs", "/scans"):  # following a read stays open to every member
         assert client.get(f"{base}{path}", headers=_headers(client_id)).status_code == 200, path
+
+
+# --- a new brand is read by itself from the start (AXE-684) ---------------------------------------------------------------
+
+def test_a_brand_and_an_organization_made_by_the_team_start_with_their_schedule_on(client, org_with_users, cloud_database_url, monkeypatch):
+    from nyra.cloud import schedule
+
+    org_id, _, admin_id, _, _ = org_with_users
+    monkeypatch.setattr("nyra.cloud.routes.staff.find_or_invite_user", lambda *args: (str(admin_id), False))
+    brand = client.post(f"/api/orgs/{org_id}/brands", headers=_headers(admin_id), json={"name": "Nouvelle marque"}).json()["brand"]
+    made = client.post("/api/staff/organizations", headers=_headers(admin_id), json={"name": "Maison Neuve", "admin_email": "boss@neuve.test"}).json()
+    with cloud_db.connect(cloud_database_url) as conn:
+        first = conn.execute("SELECT id FROM brands WHERE org_id = %s", (made["id"],)).fetchone()["id"]
+        for brand_id in (uuid.UUID(brand["id"]), first):
+            row = conn.execute("SELECT enabled, day_of_month, last_run_at FROM brand_schedules WHERE brand_id = %s", (brand_id,)).fetchone()
+            assert row["enabled"] and row["day_of_month"] == schedule.default_day(brand_id)
+        traces = conn.execute("SELECT detail FROM audit_log WHERE action = 'schedule.enable' AND brand_id = ANY(%s)", ([uuid.UUID(brand["id"]), first],)).fetchall()
+    assert [t["detail"]["default"] for t in traces] == [True, True]  # said to be the default, not a choice

@@ -300,6 +300,7 @@ def cloud_provision_org(
     import uuid
 
     from nyra.cloud import db as cloud_db
+    from nyra.cloud import schedule as cloud_schedule
 
     env = _cloud_env()
     try:
@@ -312,6 +313,8 @@ def cloud_provision_org(
             _fail(f"An organization with slug {slug!r} already exists.")
         org_id = cloud_db.create_organization(conn, name=name, slug=slug)
         cloud_db.add_membership(conn, user_id=uuid.UUID(user_id), org_id=org_id, role="admin")
+        for brand in cloud_db.list_brands(conn, [org_id]):  # its first brand is read by itself from the start (AXE-684)
+            cloud_schedule.enable_new_brand(conn, org_id, brand["id"], None)
     note = " (invitation e-mail sent)" if invited else ""
     typer.secho(f"Organization {name!r} ({slug}) created, {admin_email} is admin{note}.", fg=typer.colors.GREEN)
 
@@ -392,6 +395,31 @@ def cloud_staff_memberships(
             return
         removed, kept = insights.drop_staff_memberships(conn, tuple(keep))
     typer.secho(f"{len(removed)} membership(s) removed, {len(kept)} kept.", fg=typer.colors.GREEN)
+
+
+@app.command("cloud-schedules")
+def cloud_schedules(
+    apply: bool = typer.Option(False, "--apply", help="Switch the schedule on for the brands that have none (without it, only count)."),
+    late_days: int = typer.Option(0, "--late-days", help="Also count the active schedules with no finished read for this many days."),
+) -> None:
+    """How many brands are read by themselves (AXE-684): numbers only, no name.
+
+    With --apply, every brand with a site and no schedule row gets one, on its own default day. A schedule switched off on purpose is left as it is."""
+    from nyra.cloud import db as cloud_db
+    from nyra.cloud import schedule as cloud_schedule
+
+    with cloud_db.connect(_cloud_env(need_storage=False)["DATABASE_URL"]) as conn:
+        total = conn.execute("SELECT count(*) AS n FROM brands b WHERE EXISTS (SELECT 1 FROM sites s WHERE s.brand_id = b.id)").fetchone()["n"]
+        none = conn.execute("""SELECT count(*) AS n FROM brands b WHERE EXISTS (SELECT 1 FROM sites s WHERE s.brand_id = b.id)
+                               AND NOT EXISTS (SELECT 1 FROM brand_schedules s WHERE s.brand_id = b.id)""").fetchone()["n"]
+        found = cloud_schedule.coverage(conn, late_days)
+        typer.echo(f"{total} brand(s) with a site: {total - found['unscheduled']} read by themselves, {none} with no schedule, "
+                   f"{found['unscheduled'] - none} switched off" + (f", {found['late']} late (no finished read for {late_days} days)." if late_days else "."))
+        if not apply:
+            typer.echo("Nothing changed. Run again with --apply to switch on the brands that have no schedule.")
+            return
+        switched = cloud_schedule.enable_unscheduled(conn)
+    typer.secho(f"{switched} schedule(s) switched on.", fg=typer.colors.GREEN)
 
 
 @app.command("cloud-delete-org")

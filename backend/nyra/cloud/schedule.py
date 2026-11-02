@@ -120,6 +120,13 @@ def enable(conn, brand_id: uuid.UUID, org_id: uuid.UUID, day_of_month: Optional[
     )
 
 
+def enable_new_brand(conn, org_id: uuid.UUID, brand_id: uuid.UUID, user_id: Optional[uuid.UUID], now: Optional[datetime] = None) -> None:
+    """The schedule every brand starts with (AXE-684): on, on its own default day, traced like a switch on made by hand (`default` says it was not chosen).
+    Called where a brand is created, in the transaction of its creation: without it nobody would read the brand, a client being unable to launch a read."""
+    enable(conn, brand_id, org_id, now=now)
+    audit.record(conn, org_id, user_id, "schedule.enable", "brand_schedule", brand_id, brand_id=brand_id, day_of_month=default_day(brand_id), default=True)
+
+
 def disable(conn, brand_id: uuid.UUID) -> None:
     conn.execute("UPDATE brand_schedules SET enabled = false, updated_at = now() WHERE brand_id = %s", (brand_id,))
 
@@ -188,6 +195,35 @@ def enqueue_due(conn, now: datetime, limit: int = MAX_PER_TICK) -> list[dict]:
         if job is not None:
             queued.append(job)
     return queued
+
+
+def coverage(conn, late_days: int = 0) -> dict:
+    """How many brands with a site are not read by themselves (AXE-684): `unscheduled` have no active schedule (none, or switched off), `late` have
+    an active one but no finished read for `late_days` days (0: not counted). Only numbers: no brand, no organization. A brand with no site has
+    nothing to read and a brand younger than `late_days` has had no time to be read yet."""
+    row = conn.execute(
+        """SELECT count(*) FILTER (WHERE s.brand_id IS NULL OR NOT s.enabled) AS unscheduled,
+                  count(*) FILTER (WHERE %(days)s > 0 AND s.enabled AND b.created_at < now() - make_interval(days => %(days)s)
+                                   AND COALESCE((SELECT max(r.finished_at) FROM crawl_runs r JOIN sites si ON si.id = r.site_id
+                                                 WHERE si.brand_id = b.id AND r.status = 'done'), '-infinity') < now() - make_interval(days => %(days)s)) AS late
+           FROM brands b LEFT JOIN brand_schedules s ON s.brand_id = b.id
+           WHERE EXISTS (SELECT 1 FROM sites si WHERE si.brand_id = b.id)""",
+        {"days": late_days},
+    ).fetchone()
+    return {"unscheduled": row["unscheduled"], "late": row["late"]}
+
+
+def enable_unscheduled(conn, now: Optional[datetime] = None) -> int:
+    """Switch the schedule on for every brand with a site that has no `brand_schedules` row at all, each on its own default day, traced in the
+    audit log as made by the system: the brands that have a row, switched off on purpose, are left as they are. Returns how many."""
+    brands = conn.execute(
+        """SELECT b.id, b.org_id FROM brands b
+           WHERE NOT EXISTS (SELECT 1 FROM brand_schedules s WHERE s.brand_id = b.id)
+             AND EXISTS (SELECT 1 FROM sites si WHERE si.brand_id = b.id) ORDER BY b.created_at, b.id"""
+    ).fetchall()
+    for brand in brands:
+        enable_new_brand(conn, brand["org_id"], brand["id"], None, now)
+    return len(brands)
 
 
 @lru_cache(maxsize=8)

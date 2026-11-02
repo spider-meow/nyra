@@ -117,3 +117,27 @@ def test_thresholds_can_be_set_and_an_invalid_value_warns_and_keeps_the_default(
 def test_out_of_range_durations_keep_the_default(monkeypatch, name):
     monkeypatch.setenv(name, "99999999")
     assert alerts.thresholds() == LIMITS
+
+
+# --- brands that nothing reads (AXE-684) ---------------------------------------------------------------------------------
+
+def test_brands_with_no_active_schedule_and_late_ones_are_warnings_with_numbers_and_no_name():
+    found = alerts.evaluate([worker()], 0.0, 0.1, LIMITS, reads={"unscheduled": 3, "late": 0})
+    assert [(a["code"], a["severity"]) for a in found] == [("reads_unscheduled", "warning")]
+    assert "3 marques" in found[0]["message"] and "n'ont aucune lecture automatique" in found[0]["message"]
+    one = alerts.evaluate([worker()], 0.0, 0.1, LIMITS, reads={"unscheduled": 1, "late": 0})
+    assert "1 marque avec un site n'a aucune" in one[0]["message"]
+    limits = alerts.Thresholds(disk=0.8, worker_memory=0.85, queue_seconds=300, silent_seconds=300, read_late_days=20)
+    late = alerts.evaluate([worker()], 0.0, 0.1, limits, reads={"unscheduled": 0, "late": 2})
+    assert [a["code"] for a in late] == ["reads_late"] and "2 marques programmées" in late[0]["message"] and "20 jours" in late[0]["message"]
+    assert codes() == [] and alerts.evaluate([worker()], 0.0, 0.1, LIMITS, reads={"unscheduled": 0, "late": 0}) == []
+    assert alerts.evaluate([worker()], 0.0, 0.1, LIMITS, reads=None) == []  # unknown (the table is missing): no alert rather than a wrong one
+
+
+def test_the_late_read_alert_is_off_until_a_number_of_days_is_set(monkeypatch):
+    monkeypatch.delenv("NYRA_ALERT_READ_LATE_DAYS", raising=False)
+    assert alerts.thresholds().read_late_days == 0
+    monkeypatch.setenv("NYRA_ALERT_READ_LATE_DAYS", "20")
+    assert alerts.thresholds().read_late_days == 20
+    monkeypatch.setenv("NYRA_ALERT_READ_LATE_DAYS", "many")
+    assert alerts.thresholds().read_late_days == 0  # ignored with a warning, like the others
