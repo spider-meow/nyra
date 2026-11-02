@@ -51,3 +51,25 @@ def test_the_command_prints_numbers_only(cloud_database_url, monkeypatch):
     out = CliRunner().invoke(cli.app, ["cloud-pages-quota"])
     assert out.exit_code == 0 and "would pass their limit at 2 read(s) a month" in out.output and "q-" not in out.output
     assert CliRunner().invoke(cli.app, ["cloud-pages-quota", "--reads", "0"]).exit_code != 0  # 1 at least
+
+
+def test_the_alert_counts_the_organizations_at_the_share_and_only_when_it_is_set(cloud_database_url, monkeypatch):
+    from nyra.cloud import alerts
+
+    def codes():
+        with cloud_db.connect(cloud_database_url) as conn:
+            state = alerts.current(conn, services=[], quota=BASE)
+        return {a["code"]: a for a in state["alerts"]}
+
+    monkeypatch.delenv("NYRA_ALERT_PAGES_PERCENT", raising=False)
+    with cloud_db.connect(cloud_database_url) as conn:
+        organization(conn, this=4600)                       # 92 % of 5000
+        organization(conn, this=500, limit=520)             # 96 % of its own limit
+        organization(conn, this=4000)                       # 80 %: under 90
+        organization(conn, this=10, limit=0)                # a limit of 0 is left out, not counted as full
+        near = usage.pages_near_limit(conn, BASE, 90)
+    assert "pages_quota" not in codes()                      # off by default
+    monkeypatch.setenv("NYRA_ALERT_PAGES_PERCENT", "90")
+    found = codes()["pages_quota"]
+    assert found["severity"] == "warning" and f"{near} organisation" in found["message"] and near >= 2
+    assert all(a["code"] != "pages_quota" for a in alerts.public(list(codes().values())))

@@ -162,7 +162,7 @@ def server_usage(claims=Depends(staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict
     and the `alerts` on right now (`cloud/alerts.py`)."""
     with cloud_db.connect(ctx.settings.database_url) as conn:
         workers = hostmetrics.published(conn)
-        state = cloud_alerts.current(conn, workers)
+        state = cloud_alerts.current(conn, workers, ctx.settings.base_config().quota)
     web = {"instance": socket.gethostname(), "role": "web", "reading": _WEB.read(), "age_seconds": 0.0}
     return {"services": [web, *workers], "alerts": state["alerts"]}
 
