@@ -12,7 +12,7 @@ import { useToast, type ToastInput, type Toaster } from "../feedback";
  * the outcome (done, stopped, failed) when the task ends.
  */
 export function JobToasts() {
-  const { admin } = useOrg();
+  const { admin, platformAdmin } = useOrg();
   const jobs = useJobs();
   const toast = useToast();
   const invalidate = useInvalidate();
@@ -45,14 +45,14 @@ export function JobToasts() {
       }
     }
     for (const row of rows) {
-      const input = describe(row, data, admin, stopping, () => void stop(row));
+      const input = describe(row, data, { admin, canStop: platformAdmin }, stopping, () => void stop(row));
       const existing = toastFor.current.get(row[0].id);
       if (existing !== undefined) toast.update(existing, input);
       else toastFor.current.set(row[0].id, toast.show(input));
     }
-    // invalidate/toast are stable; describe reads admin and stopping.
+    // invalidate/toast are stable; describe reads the rights and stopping.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs.data, stopping, admin]);
+  }, [jobs.data, stopping, admin, platformAdmin]);
 
   // Leaving the brand: its tasks' toasts go with it.
   useEffect(() => {
@@ -125,10 +125,11 @@ function toastRows(active: Job[]): Job[][] {
   return rows;
 }
 
-function describe(row: Job[], data: CurrentJobs, admin: boolean, stopping: Set<string>, onStop: () => void): ToastInput {
+/** `canStop`: stopping a read is the Nyra team's (AXE-682); `admin` only says how much of who started a waiting job is told. */
+function describe(row: Job[], data: CurrentJobs, rights: { admin: boolean; canStop: boolean }, stopping: Set<string>, onStop: () => void): ToastInput {
   const { active } = data;
   const job = row[0];
-  const queued = job.status === "queued" ? queuedText(job, data, admin) : null;
+  const queued = job.status === "queued" ? queuedText(job, data, rights.admin) : null;
   const total = Number(job.progress.total || 0);
   const done = Number(job.progress.done || 0);
   return {
@@ -138,7 +139,7 @@ function describe(row: Job[], data: CurrentJobs, admin: boolean, stopping: Set<s
       ? [row.length > 1 ? groupLine(row.length, active) : capitalize(queued.line), queued.hint].filter(Boolean).join(". ")
       : [job.message, eta(job)].filter(Boolean).join(" · "),
     progress: queued ? undefined : total > 0 ? Math.min(1, done / total) : null,
-    action: admin
+    action: rights.canStop
       ? {
           label: job.cancel_requested ? "Arrêt demandé…" : queued ? (row.length > 1 ? "Tout annuler" : "Annuler") : "Arrêter",
           disabled: job.cancel_requested || stopping.has(job.id),
