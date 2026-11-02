@@ -194,6 +194,7 @@ def _fresh(url, store, job="check") -> dict:
         brand = conn.execute("SELECT id FROM brands WHERE org_id = %s", (org,)).fetchone()["id"]
         tenant = _tenant(conn, org, brand, f"own{uuid.uuid4().hex[:6]}", job)  # never a prefix of B's tag
     store[("site-images", f"{org}/{tenant['tag']}.jpg")] = _upload_bytes().getvalue()  # what adopting a site image downloads
+    store[("refs", f"{org}/{brand}/{tenant['filename']}")] = _upload_bytes().getvalue()  # what downloading the visual reads
     return tenant
 
 
@@ -216,6 +217,7 @@ def world(cloud_database_url, cloud_org, cloud_brand, fake_storage_client):
         a, b = _tenant(conn, cloud_org, cloud_brand, "a"), _tenant(conn, org_b, brand_b, "b")
     for t in (a, b):
         fake_storage_client.store[("site-images", f"{t['org']}/{t['tag']}.jpg")] = _upload_bytes().getvalue()
+        fake_storage_client.store[("refs", f"{t['org']}/{t['brand']}/{t['filename']}")] = _upload_bytes().getvalue()
     return a, b
 
 
@@ -682,7 +684,7 @@ def test_stored_paths_stay_under_the_organization(client, world, cloud_database_
     with cloud_db.connect(cloud_database_url) as conn:
         row = cloud_db.get_reference_by_filename(conn, a["brand"], "up.jpg")
     assert all(row[key].startswith(f"{a['org']}/{a['brand']}/") for key in ("storage_path", "thumb_path", "work_path"))
-    refs = {path for bucket, path in fake_storage_client.store if bucket == cloud_storage.BUCKET_REFS}
+    refs = {path for bucket, path in fake_storage_client.store if bucket == cloud_storage.BUCKET_REFS and "up.jpg" in path}  # the visuals of `world` hold their own files
     assert refs == {row["storage_path"], row["thumb_path"], row["work_path"]}
     for name in ("../x.jpg", f"../../{b['org']}/a.jpg", "a/b.jpg", "..\\..\\x.jpg", f"/{b['org']}/x.jpg", "..", ""):
         for build in (cloud_storage.ref_path, cloud_storage.ref_thumb_path, cloud_storage.ref_work_path):
