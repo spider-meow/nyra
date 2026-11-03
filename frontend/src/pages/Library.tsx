@@ -73,7 +73,7 @@ function useOpenVisual(items: LibraryItem[], ready: boolean, view: { missingScop
 }
 
 export function Library() {
-  const { admin } = useOrg();
+  const { admin, platformAdmin } = useOrg();
   const library = useLibrary();
   const items = library.data?.items ?? [];
   const assignments = useAssignments("reference").data?.assignments;
@@ -106,7 +106,7 @@ export function Library() {
       ) : (
         <PageHeader title="Bibliothèque" actions={<LibraryActions up={up} onImport={() => setImportOpen(true)} />} />
       )}
-      <UploadNotices up={up} indexing={Boolean(library.data?.indexing)} folders={view.folders} current={openFolder} />
+      <UploadNotices up={up} indexing={platformAdmin && Boolean(library.data?.indexing)} folders={view.folders} current={openFolder} />
 
       {library.isLoading || library.error || !items.length ? (
         <DropZone up={up} folders={view.folders} current={openFolder}>
