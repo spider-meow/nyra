@@ -60,7 +60,7 @@ export function EditReference(props: { item: LibraryItem | null; thumbUrl: strin
           <>
             <Button onClick={() => void copyLink(visualLink(window.location.origin, link("library"), item.id))}>Copier le lien</Button>
             <DownloadMenu item={item} />
-            <button type="button" onClick={() => props.onDelete(item)} className="mr-auto inline-flex h-8 items-center rounded-lg px-2.5 text-[13px] font-medium text-expired transition-colors hover:bg-expired-soft">
+            <button type="button" onClick={() => props.onDelete(item)} className="mr-auto inline-flex h-8 items-center rounded-lg px-2.5 text-[13px] font-medium text-expired hover:bg-expired-soft">
               Supprimer
             </button>
             {dirty ? (

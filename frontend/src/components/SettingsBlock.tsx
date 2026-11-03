@@ -31,7 +31,7 @@ export function InfoTip(props: { children: ReactNode; label?: string }) {
         onFocus={() => setOpen(true)}
         onBlur={() => setOpen(false)}
         onClick={() => setOpen(true)}
-        className="grid size-[18px] place-items-center rounded-full border border-line-strong text-[11px] leading-none font-semibold text-muted transition-colors hover:border-ink hover:text-ink focus-visible:border-ink focus-visible:text-ink focus-visible:outline-none"
+        className="grid size-[18px] place-items-center rounded-full border border-line-strong text-[11px] leading-none font-semibold text-muted hover:border-ink hover:text-ink focus-visible:border-ink focus-visible:text-ink focus-visible:outline-none"
       >
         i
       </button>

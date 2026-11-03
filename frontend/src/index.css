@@ -164,6 +164,18 @@ a {
   animation: rise-in var(--motion-base) var(--ease-enter);
 }
 
+/* Les contrôles passent d'un état à l'autre en douceur (survol, appui, désactivé, état actif) : la règle est ici, une seule
+   fois, pour tous les liens, boutons et résumés. Pas de transition sur les champs ni sur l'anneau de focus (retour clavier
+   immédiat), ni sur les lignes de menu (la surbrillance suit les flèches). Une classe `transition-*` sur un contrôle
+   remplacerait cette liste de propriétés : ne pas en ajouter, sauf sur un élément qui n'est ni lien ni bouton. */
+@layer base {
+  :where(a, button, summary):not([role="menuitem"]) {
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, translate;
+    transition-duration: var(--motion-fast);
+    transition-timing-function: var(--ease-enter);
+  }
+}
+
 /* « Réduire les animations » : plus rien ne bouge, d'un seul endroit. Les boucles s'arrêtent à leur première image
    (la barre indéterminée reste visible, immobile) et les transitions deviennent instantanées. */
 @media (prefers-reduced-motion: reduce) {

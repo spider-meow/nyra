@@ -41,7 +41,7 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
 
 const navItemClass = (isActive: boolean) =>
   cx(
-    "group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm transition-colors",
+    "group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm",
     isActive ? "bg-yellow font-medium text-ink" : "text-ink-soft hover:bg-sunk hover:text-ink",
   );
 
@@ -52,16 +52,16 @@ export function NavItems(props: { list: NavItem[]; onNavigate: () => void; end?:
     item.newTab ? (
       // Another page of the product, opened beside this one: never "active", and the arrow says so.
       <a key={item.to} href={item.to} target="_blank" rel="noopener noreferrer" className={navItemClass(false)}>
-        <Icon name={item.icon} className="text-muted group-hover:text-ink-soft" />
+        <Icon name={item.icon} className="text-muted transition-colors group-hover:text-ink-soft" />
         <span className="flex-1">{item.label}</span>
-        <Icon name="external" size={15} className="text-muted group-hover:text-ink-soft" />
+        <Icon name="external" size={15} className="text-muted transition-colors group-hover:text-ink-soft" />
         <span className="sr-only">(s'ouvre dans un nouvel onglet)</span>
       </a>
     ) : (
       <NavLink key={item.to} to={item.to} end={props.end} onClick={props.onNavigate} className={({ isActive, isPending }) => navItemClass(isPending || (isActive && !loading))}>
         {({ isActive, isPending }) => (
           <>
-            <Icon name={item.icon} className={isPending || (isActive && !loading) ? "text-ink" : "text-muted group-hover:text-ink-soft"} />
+            <Icon name={item.icon} className={cx("transition-colors", isPending || (isActive && !loading) ? "text-ink" : "text-muted group-hover:text-ink-soft")} />
             <span className="flex-1">{item.label}</span>
             {item.count ? (
               <span
@@ -100,7 +100,7 @@ function BrandSwitcher() {
   return (
     <Dropdown
       aria-label="Changer de marque"
-      className="h-12 rounded-md px-2.5 transition-colors hover:bg-sunk"
+      className="h-12 rounded-md px-2.5 hover:bg-sunk"
       trigger={identity}
       value={brand.slug}
       options={org.brands.map((item) => ({ value: item.slug, label: item.name }))}

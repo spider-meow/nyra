@@ -42,7 +42,7 @@ export function OccurrencesSection({ item }: { item: LibraryItem }) {
 
   return (
     <div ref={section} className="mt-5 overflow-hidden rounded-xl border border-ink bg-paper">
-      <button type="button" aria-expanded={open} aria-controls="occurrences-panel" onClick={() => setOpen(!open)} className="group flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-paper">
+      <button type="button" aria-expanded={open} aria-controls="occurrences-panel" onClick={() => setOpen(!open)} className="group flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-paper">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-peach-soft text-bark"><Icon name="scan" size={18} strokeWidth={1.8} /></span>
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium">Où est-elle utilisée ?</span>

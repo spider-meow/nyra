@@ -13,7 +13,7 @@ type Size = "sm" | "md" | "lg";
 
 export function buttonClass(variant: Variant = "secondary", size: Size = "md", className?: string): string {
   return cx(
-    "inline-flex shrink-0 items-center justify-center gap-2 font-medium whitespace-nowrap transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+    "inline-flex shrink-0 items-center justify-center gap-2 font-medium whitespace-nowrap enabled:active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40",
     size === "sm" && "h-9 rounded-md px-3 text-[13.5px]",
     size === "md" && "h-10 rounded-md px-4 text-sm",
     size === "lg" && "h-11 rounded-md px-5 text-[14.5px]",
@@ -102,7 +102,7 @@ export const statusText: Record<Status, string> = {
 /** Expiry: round and coloured. The only badge that uses the urgency ladder. */
 export function StatusBadge(props: { status: Status; label?: string }) {
   return (
-    <span className={cx("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap", statusTone[props.status])}>
+    <span className={cx("inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap transition-colors", statusTone[props.status])}>
       <span className="h-1.5 w-1.5 rounded-full bg-current" aria-hidden />
       {props.label ?? statusLabel[props.status]}
     </span>
@@ -140,7 +140,7 @@ const decisionTone: Record<Decision, string> = {
 /** Decision: a square-cornered block. */
 export function DecisionBadge(props: { decision: Decision | null }) {
   if (!props.decision) return <span className="inline-flex rounded-md border border-dashed border-line-strong px-2 py-px text-xs whitespace-nowrap text-muted">À confirmer</span>;
-  return <span className={cx("inline-flex rounded-md px-2 py-px text-xs font-medium whitespace-nowrap", decisionTone[props.decision])}>{decisionLabel[props.decision]}</span>;
+  return <span className={cx("inline-flex rounded-md px-2 py-px text-xs font-medium whitespace-nowrap transition-colors", decisionTone[props.decision])}>{decisionLabel[props.decision]}</span>;
 }
 
 /** `quiet` is the soft border of the settings; `danger` frames what cannot be undone. */
@@ -175,7 +175,7 @@ export function FieldLabel(props: { children: ReactNode; htmlFor?: string; hint?
 }
 
 export const fieldClass =
-  "h-10 w-full rounded-md border border-line-strong bg-paper px-3.5 text-sm text-ink placeholder:text-faint outline-none transition-shadow focus:border-focus focus:ring-4 focus:ring-focus-soft disabled:bg-canvas disabled:text-muted";
+  "h-10 w-full rounded-md border border-line-strong bg-paper px-3.5 text-sm text-ink placeholder:text-faint outline-none transition-[background-color,color] focus:border-focus focus:ring-4 focus:ring-focus-soft disabled:bg-canvas disabled:text-muted";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input(
   { className, ...rest },
@@ -290,8 +290,8 @@ export function Chip(props: { active: boolean; onClick: () => void; children: Re
       aria-pressed={props.active}
       onClick={props.onClick}
       className={cx(
-        "inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full px-3.5 text-[13px] whitespace-nowrap transition-colors",
-        props.active ? "bg-ink font-medium text-paper" : "border border-ink bg-paper text-ink hover:bg-yellow",
+        "inline-flex h-[34px] shrink-0 items-center gap-2 rounded-full border border-ink px-3.5 text-[13px] whitespace-nowrap",
+        props.active ? "bg-ink font-medium text-paper" : "bg-paper text-ink hover:bg-yellow",
       )}
     >
       {props.dot ? <span className={cx("h-1.5 w-1.5 rounded-full", statusDot[props.dot])} aria-hidden /> : null}
@@ -326,7 +326,7 @@ export function Segmented<T extends string>(props: { value: T; options: { value:
 /** A rounded search field with a leading magnifier. */
 export function SearchField(props: { id: string; value: string; onChange: (value: string) => void; placeholder: string; className?: string }) {
   return (
-    <label htmlFor={props.id} className={cx("flex h-10 items-center gap-2.5 rounded-full border border-line-strong bg-paper px-4 transition-shadow focus-within:border-focus focus-within:ring-4 focus-within:ring-focus-soft", props.className)}>
+    <label htmlFor={props.id} className={cx("flex h-10 items-center gap-2.5 rounded-full border border-line-strong bg-paper px-4 focus-within:border-focus focus-within:ring-4 focus-within:ring-focus-soft", props.className)}>
       <Icon name="search" size={16} className="shrink-0 text-muted" />
       <span className="sr-only">{props.placeholder}</span>
       <input

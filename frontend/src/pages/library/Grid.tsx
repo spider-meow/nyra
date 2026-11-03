@@ -195,7 +195,7 @@ function ReferenceCard({ item, where, labels, thumbUrl, checked = false, anySele
         aria-label={`Copier le lien de ${item.filename}`}
         title="Copier le lien"
         onClick={() => void copyLink(visualLink(window.location.origin, link("library"), item.id))}
-        className="absolute top-2.5 right-2.5 flex h-7 w-7 items-center justify-center rounded-md bg-paper/90 text-ink-soft opacity-0 transition-opacity hover:text-ink group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+        className="absolute top-2.5 right-2.5 flex h-7 w-7 items-center justify-center rounded-md bg-paper/90 text-ink-soft opacity-0 hover:text-ink group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
       >
         <Icon name="link" size={15} />
       </button>

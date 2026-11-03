@@ -19,7 +19,7 @@ function Centered(props: { title: string; body?: ReactNode; children?: ReactNode
       <div className="w-full max-w-[400px]">
         <div className="mb-8 flex flex-col items-center gap-1.5">
           <p className="font-display text-[40px] leading-none">Nyra</p>
-          <a href="https://axelproject.fr" target="_blank" rel="noopener noreferrer" className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase underline-offset-4 transition-colors hover:text-ink hover:underline">
+          <a href="https://axelproject.fr" target="_blank" rel="noopener noreferrer" className="text-[11px] font-medium tracking-[0.18em] text-muted uppercase underline-offset-4 hover:text-ink hover:underline">
             by Axel Project
           </a>
         </div>
