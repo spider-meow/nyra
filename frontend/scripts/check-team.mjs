@@ -7,9 +7,9 @@ import { transformWithOxc } from "vite";
 
 const source = readFileSync(new URL("../src/pages/settings/team.ts", import.meta.url), "utf8");
 const { code } = await transformWithOxc(source, "team.ts", { target: "es2022" });
-const { displayName, orderMembers, matches, isLastAdmin, SEARCH_ABOVE } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+const { displayName, orderMembers, matches, isLastAdmin, splitPending, SEARCH_ABOVE } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
 
-const who = (email, role = "client") => ({ user_id: email, email, role, you: false });
+const who = (email, role = "client", pending = false) => ({ user_id: email, email, role, you: false, pending, invited_at: pending ? "2026-10-29T09:00:00Z" : null });
 
 // Names come from the address.
 assert.equal(displayName("adrien.duchemin@maison.fr"), "Adrien Duchemin");
@@ -38,4 +38,11 @@ assert.ok(isLastAdmin([lonely, who("b@x.fr")], lonely));
 assert.ok(!isLastAdmin([lonely, who("c@x.fr", "admin")], lonely));
 assert.ok(!isLastAdmin([lonely, who("b@x.fr")], who("b@x.fr")), "a client is never the last administrator");
 
-console.log("team: names, order, search and the last administrator are right");
+// Invitations nobody opened yet are apart from the members, each group in the same order.
+const mixed = [who("zoe@x.fr", "client", true), who("bob@x.fr"), who("amy@x.fr", "client", true), who("cat@x.fr", "admin")];
+const split = splitPending(mixed);
+assert.deepEqual(split.active.map((member) => member.email), ["cat@x.fr", "bob@x.fr"]);
+assert.deepEqual(split.waiting.map((member) => member.email), ["amy@x.fr", "zoe@x.fr"]);
+assert.deepEqual(splitPending([]), { active: [], waiting: [] });
+
+console.log("team: names, order, search, pending invitations and the last administrator are right");

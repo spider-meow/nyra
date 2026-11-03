@@ -212,7 +212,8 @@ export type Settings = {
   effective: { crawl: SettingsSection; match: SettingsSection; report: SettingsSection };
 };
 
-export type Member = { user_id: string; email: string; role: "admin" | "client"; you: boolean };
+/** `pending`: the invitation was sent and never opened; `invited_at` (ISO date and time) is when, null once accepted. */
+export type Member = { user_id: string; email: string; role: "admin" | "client"; you: boolean; pending: boolean; invited_at: string | null };
 
 /** `GET /orgs/{id}/me/notifications`: `wanted` is the person's choice, `allowed` the Nyra team's, `eligible` whether the role receives it. */
 export type Notifications = { monthly_email: { wanted: boolean; allowed: boolean; eligible: boolean } };
