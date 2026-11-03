@@ -8,6 +8,7 @@
     "preview": "vite preview",
     "size": "node scripts/check-bundle-size.mjs",
     "check:team": "node scripts/check-team.mjs",
+    "check:folders": "node scripts/check-folders.mjs",
     "check:avatar": "node scripts/check-avatar.mjs",
     "check:scrub": "node scripts/check-scrub.mjs",
     "check:rows": "node scripts/check-rows.mjs",

@@ -48,6 +48,7 @@ type HeaderProps = {
   /** How many visuals the filters leave: what "Tout sélectionner" takes. */
   visibleCount: number;
   folders: CollectionIndex;
+  folderCounts: Record<string, number>;
   labels: LabelInfo[];
   onSelectAll: () => void;
   onClear: () => void;
@@ -59,7 +60,7 @@ type HeaderProps = {
  * The selection is a mode: this header takes the place of the page title (same height, so nothing moves and nothing floats over the
  * cards), says how many visuals are ticked, and has one button, Actions, for everything that can be done to them.
  */
-export function SelectionHeader({ items, visibleCount, folders, labels, onSelectAll, onClear, removing, onRemove }: HeaderProps) {
+export function SelectionHeader({ items, visibleCount, folders, folderCounts, labels, onSelectAll, onClear, removing, onRemove }: HeaderProps) {
   const [menu, setMenu] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
@@ -94,7 +95,7 @@ export function SelectionHeader({ items, visibleCount, folders, labels, onSelect
         </button>
         {loaded ? (
           <Suspense fallback={null}>
-            <SelectionActions open={menu} onClose={closeMenu} items={items} folders={folders} labels={labels} onDone={onClear} removing={removing} onRemove={onRemove} />
+            <SelectionActions open={menu} onClose={closeMenu} items={items} folders={folders} folderCounts={folderCounts} labels={labels} onDone={onClear} removing={removing} onRemove={onRemove} />
           </Suspense>
         ) : null}
       </div>

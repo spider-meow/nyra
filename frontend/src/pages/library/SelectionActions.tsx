@@ -10,6 +10,7 @@ import { useLibraryMutations } from "../../lib/queries";
 import type { LabelInfo, LibraryItem } from "../../types";
 import type { CollectionIndex } from "./collections";
 import { creditHint, dateHint, summarize, whereHint } from "./selectionSummary";
+import { FolderDialog } from "./FolderDialog";
 import { ZipDialog } from "./ZipDialog";
 
 type Dialog = "date" | "unlimited" | "tags" | "folder" | "credit" | "labels" | "zip";
@@ -199,51 +200,14 @@ function CreditDialog(props: { items: LibraryItem[]; bulk: ReturnType<typeof use
   );
 }
 
-function FolderDialog(props: { items: LibraryItem[]; folders: CollectionIndex; bulk: ReturnType<typeof useBulkEdit>; onClose: () => void }) {
-  const [choice, setChoice] = useState<string | null | undefined>(undefined); // undefined: nothing chosen yet; null: out of any collection
-  const sum = summarize(props.items);
-  const paths = [...props.folders.byId.keys()].map((id) => ({ id, path: props.folders.path(id) })).sort((a, b) => a.path.localeCompare(b.path, "fr", { numeric: true }));
-  const options: { id: string | null; label: string }[] = [{ id: null, label: "Aucune (non classé)" }, ...paths.map((folder) => ({ id: folder.id, label: folder.path }))];
-  return (
-    <Modal
-      open
-      onClose={props.onClose}
-      title={`Classer ${plural(sum.count, "visuel", "visuels")}`}
-      footer={
-        <>
-          <Button onClick={props.onClose}>Annuler</Button>
-          <Button variant="primary" disabled={choice === undefined} loading={props.bulk.busy} onClick={() => choice !== undefined && props.bulk.file(choice)}>Classer ici</Button>
-        </>
-      }
-    >
-      <ul className="grid gap-1" role="radiogroup" aria-label="Collection">
-        {options.map((option) => (
-          <li key={option.id ?? "none"}>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={choice === option.id}
-              onClick={() => setChoice(option.id)}
-              className={cx("flex w-full items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-sm", choice === option.id ? "border-ink bg-yellow/40 font-medium" : "border-line hover:bg-sunk")}
-            >
-              <span className={cx("grid h-4 w-4 shrink-0 place-items-center rounded-full border", choice === option.id ? "border-ink bg-ink text-white" : "border-line-strong")}>
-                {choice === option.id ? <Icon name="check" size={10} strokeWidth={3} /> : null}
-              </span>
-              <span className="min-w-0 break-words">{option.label}</span>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </Modal>
-  );
-}
-
 type Props = {
   open: boolean;
   /** The menu is closed (a dialog may stay open): the header gives the focus back to its button. */
   onClose: () => void;
   items: LibraryItem[];
   folders: CollectionIndex;
+  /** Visuals per collection (a collection counts what is in the collections below it). */
+  folderCounts: Record<string, number>;
   labels: LabelInfo[];
   /** The selection is over: after an edit succeeded, or a delete. */
   onDone: () => void;
@@ -252,7 +216,7 @@ type Props = {
 };
 
 /** The Actions menu of the selection header and the dialogs it opens. Loaded when the menu is first opened. */
-export function SelectionActions({ open, onClose, items, folders, labels, onDone, removing, onRemove }: Props) {
+export function SelectionActions({ open, onClose, items, folders, folderCounts, labels, onDone, removing, onRemove }: Props) {
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const names = items.map((item) => item.filename);
   const bulk = useBulkEdit(names, () => {
@@ -274,7 +238,7 @@ export function SelectionActions({ open, onClose, items, folders, labels, onDone
       {dialog === "unlimited" ? <UnlimitedDialog items={items} bulk={bulk} onClose={close} /> : null}
       {dialog === "tags" ? <TagsDialog items={items} bulk={bulk} onClose={close} /> : null}
       {dialog === "credit" ? <CreditDialog items={items} bulk={bulk} onClose={close} /> : null}
-      {dialog === "folder" ? <FolderDialog items={items} folders={folders} bulk={bulk} onClose={close} /> : null}
+      {dialog === "folder" ? <FolderDialog items={items} folders={folders} counts={folderCounts} busy={bulk.busy} onFile={bulk.file} onClose={close} /> : null}
       {dialog === "zip" ? <ZipDialog items={items} onClose={close} /> : null}
       {dialog === "labels" ? (
         <Modal open onClose={close} title="Étiquettes de contenu" footer={<Button onClick={close}>Fermer</Button>}>

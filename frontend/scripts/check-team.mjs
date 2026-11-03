@@ -2,12 +2,9 @@
 // names are read from the address, the search ignores case and accents, and the only administrator is recognised (the server refuses to
 // demote or remove them, the page says so before the click). No test framework: the file is compiled in memory. Run: `npm run check:team`.
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { transformWithOxc } from "vite";
+import { loadTs } from "./load-ts.mjs";
 
-const source = readFileSync(new URL("../src/pages/settings/team.ts", import.meta.url), "utf8");
-const { code } = await transformWithOxc(source, "team.ts", { target: "es2022" });
-const { displayName, orderMembers, matches, isLastAdmin, splitPending, SEARCH_ABOVE } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+const { displayName, orderMembers, matches, isLastAdmin, splitPending, SEARCH_ABOVE } = await loadTs("/src/pages/settings/team.ts");
 
 const who = (email, role = "client", pending = false) => ({ user_id: email, email, role, you: false, pending, invited_at: pending ? "2026-10-29T09:00:00Z" : null });
 

@@ -1,3 +1,4 @@
+import { plain } from "../../lib/text";
 import type { Member } from "../../types";
 
 export const ROLE_LABEL: Record<Member["role"], string> = { admin: "Administrateur", client: "Lecture et validation" };
@@ -19,8 +20,6 @@ export function orderMembers(members: Member[]): Member[] {
   const byName = (a: Member, b: Member) => displayName(a.email).localeCompare(displayName(b.email), "fr") || a.email.localeCompare(b.email, "fr");
   return [...members].sort((a, b) => Number(b.role === "admin") - Number(a.role === "admin") || byName(a, b));
 }
-
-const plain = (text: string) => text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
 
 /** Every word typed is found in the name or the address, without caring for case or accents. */
 export function matches(member: Member, query: string): boolean {
