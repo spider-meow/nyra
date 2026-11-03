@@ -108,6 +108,7 @@ cd frontend && npm run check:emails # l'aperçu des e-mails : iframe sandbox="" 
 cd frontend && npm run check:viewas # « Voir en tant que » : les en-têtes envoyés (seulement pour l'organisation vue) et les droits affichés sous chaque rôle
 cd frontend && npm run check:navprogress # la barre de chargement d'une page : rien sous 150 ms, 300 ms au moins une fois montrée
 cd frontend && npm run check:avatar # l'avatar d'une personne : même identifiant, même dessin ; les 15 familles ; les dessins validés ne bougent pas
+cd frontend && npm run check:team # la page Équipe : noms lus de l'adresse, ordre fixe (administrateurs d'abord), recherche sans accents, dernier administrateur
 pytest -q                          # sans warning non justifié
 ```
 
