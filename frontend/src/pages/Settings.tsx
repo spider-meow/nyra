@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { Icon, type IconName } from "../components/icons";
 import { cx, EmptyState, PageHeader, Skeleton } from "../components/ui";
@@ -19,8 +19,10 @@ import { Notifications } from "./settings/Notifications";
 import { Profile } from "./settings/Profile";
 import { Reading } from "./settings/Reading";
 import { Schedule } from "./settings/Schedule";
-import { Team } from "./settings/Team";
 import { Usage } from "./settings/Usage";
+
+/** Its own chunk: the team page carries the avatars, and the page of settings is close to its size budget. */
+const Team = lazy(() => import("./settings/Team").then((module) => ({ default: module.Team })));
 
 /** What a section is about: the brand on screen, the whole organization, or the signed-in person. */
 type Group = "marque" | "organisation" | "moi";
@@ -49,7 +51,7 @@ const SECTIONS: Section[] = [
   { id: "notifications", label: "Notifications", icon: "bell", group: "moi", render: () => <Notifications /> },
   { id: "general", label: "Général", icon: "idBadge", group: "marque", render: () => <General /> },
   { id: "collections", label: "Collections", icon: "folders", group: "marque", adminOnly: true, render: () => <Collections /> },
-  { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Team /> },
+  { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Suspense fallback={<Skeleton className="h-40" />}><Team /></Suspense> },
   { id: "audit", label: "Journal d'activité", icon: "eye", group: "organisation", adminOnly: true, render: () => <Audit /> },
   { id: "detection", label: "Détection", icon: "radar", group: "organisation", platformOnly: true, render: (data) => <Detection data={data} /> },
   { id: "usage", label: "Usage", icon: "stats", group: "organisation", platformOnly: true, render: () => <Usage /> },

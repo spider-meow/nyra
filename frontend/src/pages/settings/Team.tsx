@@ -2,20 +2,22 @@ import { useState, type FormEvent } from "react";
 import { Avatar } from "../../components/Avatar";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Select } from "../../components/Dropdown";
+import { Icon } from "../../components/icons";
 import { Button, Card, cx, FieldLabel, Input, Skeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useOrg } from "../../lib/org";
 import { useMemberMutations, useMembers } from "../../lib/queries";
 import type { Member } from "../../types";
+import { displayName, isLastAdmin, matches, orderMembers, ROLE_HELP, ROLE_LABEL, SEARCH_ABOVE } from "./team";
 
-const ROLE_LABEL: Record<Member["role"], string> = { admin: "Administrateur", client: "Lecture et validation" };
+const ROLES: Member["role"][] = ["client", "admin"];
 
-function MemberRow(props: { member: Member }) {
+function MemberCard(props: { member: Member; last: boolean }) {
   const { admin, org } = useOrg();
   const { setRole, remove } = useMemberMutations();
   const confirm = useConfirm();
   const toast = useToast();
-  const { member } = props;
+  const { member, last } = props;
   const fail = (message: string) => (error: Error) => toast.show({ tone: "error", message, description: errorMessage(error) });
 
   async function leave() {
@@ -28,31 +30,62 @@ function MemberRow(props: { member: Member }) {
     if (ok) remove.mutate(member.user_id, { onError: fail("La personne n'a pas été retirée") });
   }
 
+  const editable = admin && !member.you;
+  const help = !admin || !last ? ROLE_HELP[member.role] : member.you ? "Vous êtes le seul administrateur : invitez-en un autre." : "Dernier administrateur : nommez-en un autre avant de le retirer ou de changer son rôle.";
   return (
-    <li className="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
-      <Avatar seed={member.user_id} />
-      <span className="min-w-0 flex-1 truncate">
-        {member.email}
-        {member.you ? <span className="text-muted"> · vous</span> : null}
-      </span>
-      {admin && !member.you ? (
-        <>
+    <li className={cx("grid content-start gap-3 rounded-xl border bg-paper p-4", member.you ? "border-ink" : "border-line")}>
+      <div className="flex items-center gap-3">
+        <Avatar seed={member.user_id} size={48} />
+        <div className="min-w-0 leading-tight">
+          <p className="truncate text-[15px] font-semibold">
+            {displayName(member.email)}
+            {member.you ? <span className="ml-2 rounded-full bg-ink px-2 py-0.5 align-[2px] text-[11.5px] font-medium text-white">vous</span> : null}
+          </p>
+          <p className="truncate text-[13px] text-muted">{member.email}</p>
+        </div>
+      </div>
+      {editable ? (
+        <div className="flex items-center gap-2 border-t border-line pt-3">
           <Select
-            className="w-52"
+            className="min-w-0 flex-1"
             aria-label={`Rôle de ${member.email}`}
             value={member.role}
-            disabled={setRole.isPending}
-            onChange={(event) => setRole.mutate({ userId: member.user_id, role: event.target.value as Member["role"] }, { onError: fail("Le rôle n'a pas été modifié") })}
+            disabled={setRole.isPending || last}
+            onChange={(event) => {
+              const role = ROLES.find((known) => known === event.target.value);
+              if (role) setRole.mutate({ userId: member.user_id, role }, { onError: fail("Le rôle n'a pas été modifié") });
+            }}
           >
-            <option value="client">{ROLE_LABEL.client}</option>
-            <option value="admin">{ROLE_LABEL.admin}</option>
+            {ROLES.map((role) => <option key={role} value={role}>{ROLE_LABEL[role]}</option>)}
           </Select>
-          <Button size="sm" variant="ghost" className="w-20" loading={remove.isPending && remove.variables === member.user_id} onClick={() => void leave()}>Retirer</Button>
-        </>
+          <Button size="sm" variant="ghost" disabled={last} loading={remove.isPending && remove.variables === member.user_id} onClick={() => void leave()}>Retirer</Button>
+        </div>
       ) : (
-        <span className={cx("rounded-md bg-sunk px-2.5 py-1 text-[13px] text-muted", admin && "sm:mr-[5.75rem]")}>{ROLE_LABEL[member.role]}</span>
+        <p className="border-t border-line pt-3"><span className={cx("rounded-full px-2.5 py-0.5 text-[12.5px] font-medium", member.role === "admin" ? "bg-yellow" : "bg-sunk text-ink-soft")}>{ROLE_LABEL[member.role]}</span></p>
       )}
+      <p className="text-[12.5px] text-muted">{help}{member.you && admin && !last ? " Vous ne pouvez pas changer votre propre rôle." : ""}</p>
     </li>
+  );
+}
+
+/** The two roles as two cards that say what each allows. */
+function RoleChoice(props: { value: Member["role"]; onChange: (role: Member["role"]) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Rôle" className="grid max-w-3xl gap-3 sm:grid-cols-2">
+      {ROLES.map((role) => (
+        <button
+          key={role}
+          type="button"
+          role="radio"
+          aria-checked={props.value === role}
+          onClick={() => props.onChange(role)}
+          className={cx("grid gap-0.5 rounded-xl border px-4 py-3 text-left", props.value === role ? "border-2 border-ink bg-yellow/30" : "border-line-strong bg-paper hover:bg-sunk")}
+        >
+          <span className="flex items-center gap-1.5 text-sm font-medium">{ROLE_LABEL[role]}{props.value === role ? <Icon name="check" size={14} strokeWidth={3} /> : null}</span>
+          <span className="text-[13px] text-muted">{ROLE_HELP[role]}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -82,20 +115,19 @@ function Invite(props: { onDone: () => void }) {
   }
 
   return (
-    <form className="flex flex-wrap items-end gap-3 border-t border-line bg-sunk px-5 py-4" onSubmit={submit}>
-      <div className="min-w-56 flex-1">
+    <form className="grid gap-4 border-t border-line bg-sunk px-5 py-5" onSubmit={submit}>
+      <div className="max-w-md">
         <FieldLabel htmlFor="invite-email">Inviter par e-mail</FieldLabel>
         <Input id="invite-email" autoFocus type="email" required maxLength={254} placeholder="prenom.nom@entreprise.com" value={email} onChange={(event) => setEmail(event.target.value)} />
       </div>
       <div>
-        <FieldLabel htmlFor="invite-role">Rôle</FieldLabel>
-        <Select id="invite-role" value={role} onChange={(event) => setRole(event.target.value as Member["role"])}>
-          <option value="client">{ROLE_LABEL.client}</option>
-          <option value="admin">{ROLE_LABEL.admin}</option>
-        </Select>
+        <FieldLabel>Rôle</FieldLabel>
+        <RoleChoice value={role} onChange={setRole} />
       </div>
-      <Button type="submit" variant="primary" loading={invite.isPending} disabled={!email.trim()}>Envoyer l'invitation</Button>
-      <Button variant="ghost" onClick={props.onDone}>Annuler</Button>
+      <div className="flex gap-3">
+        <Button type="submit" variant="primary" loading={invite.isPending} disabled={!email.trim()}>Envoyer l'invitation</Button>
+        <Button variant="ghost" onClick={props.onDone}>Annuler</Button>
+      </div>
     </form>
   );
 }
@@ -105,19 +137,31 @@ export function Team() {
   const { admin } = useOrg();
   const members = useMembers();
   const [inviting, setInviting] = useState(false);
-  const list = members.data?.members ?? [];
+  const [query, setQuery] = useState("");
+  const all = orderMembers(members.data?.members ?? []);
+  const shown = all.filter((member) => matches(member, query));
+  const alone = all.length === 1 && all[0].you;
   return (
     <Card padded={false} tone="quiet">
-      <div className="flex items-center justify-between gap-3 px-5 py-3">
-        <p className="text-sm text-muted">{members.data ? `${list.length} ${list.length > 1 ? "membres" : "membre"}` : "Membres"}</p>
+      <div className="flex flex-wrap items-center gap-3 px-5 py-3">
+        <p className="flex-1 text-sm font-medium text-muted">{members.data ? `${all.length} ${all.length > 1 ? "membres" : "membre"}` : "Membres"}</p>
+        {all.length > SEARCH_ABOVE ? <Input type="search" className="w-full sm:w-64" aria-label="Rechercher une personne" placeholder="Rechercher une personne…" value={query} onChange={(event) => setQuery(event.target.value)} /> : null}
         {admin && !inviting ? <Button size="sm" variant="primary" onClick={() => setInviting(true)}>Inviter un membre</Button> : null}
       </div>
       {inviting ? <Invite onDone={() => setInviting(false)} /> : null}
       {members.isLoading ? <Skeleton className="m-5 h-24" /> : null}
       {members.error ? <p className="px-5 py-4 text-sm text-expired">{errorMessage(members.error)}</p> : null}
-      <ul className="divide-y divide-line border-t border-line">
-        {list.map((member) => <MemberRow key={member.user_id} member={member} />)}
+      <ul className="grid gap-3 border-t border-line p-5 sm:grid-cols-2 2xl:grid-cols-3">
+        {shown.map((member) => <MemberCard key={member.user_id} member={member} last={isLastAdmin(all, member)} />)}
       </ul>
+      {query && !shown.length ? <p className="px-5 pb-5 text-sm text-muted">Aucun membre ne correspond à « {query} ».</p> : null}
+      {alone ? (
+        <div className="grid justify-items-center gap-2 px-5 pb-8 pt-2 text-center">
+          <p className="text-lg font-semibold">Personne d'autre pour l'instant</p>
+          <p className="max-w-sm text-sm text-muted">Invitez votre première personne : elle recevra un e-mail pour choisir son mot de passe.</p>
+          {admin && !inviting ? <Button variant="primary" onClick={() => setInviting(true)}>Inviter un membre</Button> : null}
+        </div>
+      ) : null}
     </Card>
   );
 }
