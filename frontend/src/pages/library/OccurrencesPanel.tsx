@@ -85,7 +85,7 @@ function SearchBar({ item, data, onStarted }: { item: LibraryItem; data: Occurre
     return (
       <div className="px-4 py-3" role="status">
         <div className="h-1.5 overflow-hidden rounded-full bg-line">
-          <div className={cx("h-full rounded-full bg-bark transition-[width] duration-500", !total && "progress-indeterminate w-1/4")} style={total ? { width: `${Math.min(100, Math.round((done / total) * 100))}%` } : undefined} />
+          <div className={cx("h-full rounded-full bg-bark transition-[width] duration-(--motion-soft)", !total && "progress-indeterminate w-1/4")} style={total ? { width: `${Math.min(100, Math.round((done / total) * 100))}%` } : undefined} />
         </div>
         <p className="mt-1.5 text-[13px] text-muted">{running?.message}</p>
       </div>

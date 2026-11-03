@@ -124,6 +124,18 @@ Toute requête dont le résultat s'affiche a ses trois états : premier chargeme
 (le contenu reste, atténué, `aria-busy`, après 200 ms) et erreur (avec « Réessayer »). Ils sont écrits une fois (`components/busy.tsx`) et la page par
 page est dans [`ETATS_DE_CHARGEMENT.md`](ETATS_DE_CHARGEMENT.md). Une ancienne donnée ne se fait jamais passer pour la réponse à la nouvelle demande.
 
+## Mouvement (interface)
+
+Une plateforme où l'on reste des heures ne se remarque pas par son mouvement : il adoucit, il ne se voit pas. Les durées
+et les courbes sont **les jetons de `frontend/src/index.css`** (`--motion-fast` 120 ms pour les couleurs, les survols et
+les sorties, `--motion-base` 160 ms pour les apparitions, `--motion-soft` 200 ms pour les fenêtres et les menus,
+`--ease-enter`, `--ease-exit`) ; aucune durée en dur dans un composant, jamais plus de 250 ms, une sortie toujours plus
+courte que l'entrée. On n'anime que l'opacité, la couleur, l'ombre et un léger `transform` : jamais la hauteur, la
+largeur ou la position dans la mise en page (un fondu ne corrige pas un contenu qui pousse ses voisins : on réserve la
+place). Ne jamais adoucir ce qui doit répondre sans délai : saisie, focus clavier, cases à cocher, triage au clavier,
+tout ce qui suit le pointeur. « Réduire les animations » est géré une seule fois, dans `index.css` : rien à ajouter par
+composant. L'inventaire écran par écran est dans [`AUDIT_TRANSITIONS.md`](AUDIT_TRANSITIONS.md).
+
 ## Tests
 
 Conformément à `ponytail` : la logique non triviale laisse **un** test

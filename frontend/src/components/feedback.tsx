@@ -177,7 +177,7 @@ function ToastProgress(props: { progress: ToastInput["progress"] }) {
   if (progress === undefined) return null;
   return (
     <div className="h-1 bg-paper/10" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress * 100)}>
-      <div className="h-full bg-peach transition-[width] duration-300" style={{ width: `${Math.max(3, Math.min(100, progress * 100))}%` }} />
+      <div className="h-full bg-peach transition-[width] duration-(--motion-soft)" style={{ width: `${Math.max(3, Math.min(100, progress * 100))}%` }} />
     </div>
   );
 }

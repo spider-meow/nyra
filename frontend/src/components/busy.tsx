@@ -18,7 +18,7 @@ export function Refreshing(props: { active: boolean; children: ReactNode; label?
     <div aria-busy={props.active} className={cx("relative", props.className)}>
       {show ? <span aria-hidden className="absolute inset-x-0 -top-1.5 h-0.5 animate-pulse rounded-full bg-bark" /> : null}
       <span role="status" className="sr-only">{show ? props.label ?? "Mise à jour des résultats…" : ""}</span>
-      <div className={cx("transition-opacity duration-150", show && "opacity-60")}>{props.children}</div>
+      <div className={cx("transition-opacity", show && "opacity-60")}>{props.children}</div>
     </div>
   );
 }

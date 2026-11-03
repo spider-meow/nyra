@@ -48,7 +48,7 @@ export function OccurrencesSection({ item }: { item: LibraryItem }) {
           <span className="block text-sm font-medium">Où est-elle utilisée ?</span>
           <span className="block truncate text-[13px] text-muted">{hint || "Les pages des sites qui montrent ce visuel, recadrages compris"}</span>
         </span>
-        <Icon name="chevrons" size={16} className={cx("shrink-0 text-faint transition-transform duration-200 group-hover:text-ink", open && "rotate-180")} />
+        <Icon name="chevrons" size={16} className={cx("shrink-0 text-faint transition-transform duration-(--motion-soft) group-hover:text-ink", open && "rotate-180")} />
       </button>
       {open ? (
         <div id="occurrences-panel" className="pop-in border-t border-line bg-paper">
