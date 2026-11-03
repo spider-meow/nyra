@@ -614,6 +614,10 @@ export function useMemberMutations() {
       onSuccess: done,
     }),
     remove: useMutation({ mutationFn: (userId: string) => api.del(orgApiPath(`/members/${userId}`)), onSuccess: done }),
+    resend: useMutation({
+      mutationFn: (userId: string) => api.post<{ invited: boolean }>(orgApiPath(`/members/${userId}/resend`), {}, false),  // a 429 here is the day's mails used up: final
+      onSuccess: done,
+    }),
   };
 }
 

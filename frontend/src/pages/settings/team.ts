@@ -28,6 +28,12 @@ export function matches(member: Member, query: string): boolean {
   return plain(query).split(/\s+/).filter(Boolean).every((word) => haystack.includes(word));
 }
 
+/** The people in use, and the invitations nobody opened yet, each in the order of `orderMembers`. */
+export function splitPending(members: Member[]): { active: Member[]; waiting: Member[] } {
+  const ordered = orderMembers(members);
+  return { active: ordered.filter((member) => !member.pending), waiting: ordered.filter((member) => member.pending) };
+}
+
 /** The only administrator: the server refuses to demote or remove them, so the page says so before the click. */
 export function isLastAdmin(members: Member[], member: Member): boolean {
   return member.role === "admin" && members.filter((other) => other.role === "admin").length <= 1;
