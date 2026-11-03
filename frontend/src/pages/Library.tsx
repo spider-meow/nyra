@@ -102,7 +102,7 @@ export function Library() {
   return (
     <div className="relative">
       {admin && selected.size > 0 ? (
-        <SelectionHeader items={pickedItems} visibleCount={view.visible.length} folders={view.folders} labels={labels} onSelectAll={() => setPicked(new Set(view.visible.map((item) => item.filename)))} onClear={clear} removing={removing} onRemove={removeNames} />
+        <SelectionHeader items={pickedItems} visibleCount={view.visible.length} folders={view.folders} folderCounts={view.folderCounts} labels={labels} onSelectAll={() => setPicked(new Set(view.visible.map((item) => item.filename)))} onClear={clear} removing={removing} onRemove={removeNames} />
       ) : (
         <PageHeader title="Bibliothèque" actions={<LibraryActions up={up} onImport={() => setImportOpen(true)} />} />
       )}

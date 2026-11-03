@@ -83,6 +83,7 @@ jobs:
       - run: npm run check:navprogress
       - run: npm run check:avatar
       - run: npm run check:team
+      - run: npm run check:folders
       - run: npx playwright install --with-deps chromium
       - run: npm run check:remember
 
