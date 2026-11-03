@@ -217,15 +217,37 @@ def get_membership(conn: psycopg.Connection, *, user_id: uuid.UUID, org_id: uuid
     ).fetchone()
 
 
+# An invited person is « pending » until the invitation was opened: Supabase Auth sets `invited_at` when it sends it and `email_confirmed_at` when
+# the link is used. Read through `to_jsonb`, like `users_overview`, so a schema without the columns reads as « nobody is pending ».
+PENDING_SQL = "((to_jsonb(u) ->> 'invited_at') IS NOT NULL AND (to_jsonb(u) ->> 'email_confirmed_at') IS NULL)"
+_MEMBER_COLUMNS = f"m.user_id, m.role, u.email, {PENDING_SQL} AS pending, (to_jsonb(u) ->> 'invited_at')::timestamptz AS invited_at"
+
+
 def list_members(conn: psycopg.Connection, org_id: uuid.UUID) -> list[Row]:
     return conn.execute(
-        """
-        SELECT m.user_id, m.role, u.email
+        f"""
+        SELECT {_MEMBER_COLUMNS}
         FROM memberships m JOIN auth.users u ON u.id = m.user_id
         WHERE m.org_id = %s ORDER BY m.role, lower(u.email)
         """,
         (org_id,),
     ).fetchall()
+
+
+def get_member(conn: psycopg.Connection, org_id: uuid.UUID, user_id: uuid.UUID) -> Optional[Row]:
+    """One member of the organization, with the same columns as `list_members`; None when that person is not in it."""
+    return conn.execute(
+        f"SELECT {_MEMBER_COLUMNS} FROM memberships m JOIN auth.users u ON u.id = m.user_id WHERE m.org_id = %s AND m.user_id = %s",
+        (org_id, user_id),
+    ).fetchone()
+
+
+def member_by_email(conn: psycopg.Connection, org_id: uuid.UUID, email: str) -> Optional[Row]:
+    """The member of the organization with this address (any case), or None."""
+    return conn.execute(
+        "SELECT m.user_id FROM memberships m JOIN auth.users u ON u.id = m.user_id WHERE m.org_id = %s AND lower(u.email) = lower(%s)",
+        (org_id, email),
+    ).fetchone()
 
 
 def count_admins(conn: psycopg.Connection, org_id: uuid.UUID) -> int:

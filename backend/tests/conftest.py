@@ -33,6 +33,8 @@ create table if not exists auth.users (
     id uuid primary key default gen_random_uuid(),
     email text
 );
+alter table auth.users add column if not exists invited_at timestamptz;
+alter table auth.users add column if not exists email_confirmed_at timestamptz;
 do $$
 begin
     if not exists (
