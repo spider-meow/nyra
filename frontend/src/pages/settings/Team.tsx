@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { Avatar } from "../../components/Avatar";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Select } from "../../components/Dropdown";
 import { Button, Card, cx, FieldLabel, Input, Skeleton } from "../../components/ui";
@@ -8,9 +9,6 @@ import { useMemberMutations, useMembers } from "../../lib/queries";
 import type { Member } from "../../types";
 
 const ROLE_LABEL: Record<Member["role"], string> = { admin: "Administrateur", client: "Lecture et validation" };
-
-/** Two letters from the e-mail: "adrien.duchemin@…" gives AD. */
-const initials = (email: string) => email.split("@")[0].split(/[._-]/).slice(0, 2).map((part) => part[0]).join("");
 
 function MemberRow(props: { member: Member }) {
   const { admin, org } = useOrg();
@@ -32,7 +30,7 @@ function MemberRow(props: { member: Member }) {
 
   return (
     <li className="flex flex-wrap items-center gap-3 px-5 py-3 text-sm">
-      <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-full bg-mint text-xs font-medium uppercase">{initials(member.email)}</span>
+      <Avatar seed={member.user_id} />
       <span className="min-w-0 flex-1 truncate">
         {member.email}
         {member.you ? <span className="text-muted"> · vous</span> : null}
