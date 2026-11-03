@@ -62,7 +62,7 @@ export function ZipDialog({ items, onClose }: { items: LibraryItem[]; onClose: (
       }
     >
       <div className="grid gap-3">
-        <ul className="grid gap-1" role="radiogroup" aria-label="Taille du téléchargement">
+        <ul className="grid gap-1 pt-1" role="radiogroup" aria-label="Taille du téléchargement">
           {SIZES.map((option) => (
             <li key={option.key}>
               <button
