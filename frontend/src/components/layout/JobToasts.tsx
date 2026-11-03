@@ -6,16 +6,17 @@ import { refreshAfter, useCancelJob, useInvalidate, useJobs } from "../../lib/qu
 import type { CurrentJobs, Job } from "../../types";
 import { useToast, type ToastInput, type Toaster } from "../feedback";
 
+/** The tasks a client still sees as toasts: the ones it asks for itself. The machinery (index, read, comparison, page check) is the Nyra team's to watch (AXE-712). */
+const CLIENT_SEES: ReadonlySet<Job["kind"]> = new Set(["report", "locate"]);
+
 /**
  * Tasks of the brand as toasts: one per running task, one per group of
  * waiting tasks of the same kind, updated at every poll, then turned into
  * the outcome (done, stopped, failed) when the task ends.
- *
- * Only the Nyra team sees them (AXE-712): a client is told nothing about the machinery (an indexation, a read), and
- * what a task changes still reaches the page, since the refresh below runs for everyone.
+ * A client only gets `CLIENT_SEES`; what any task changes still reaches the page, since the refresh below runs for everyone.
  */
 export function JobToasts() {
-  const { platformAdmin } = useOrg();
+  const { admin, platformAdmin } = useOrg();
   const jobs = useJobs();
   const toast = useToast();
   const invalidate = useInvalidate();
@@ -33,18 +34,13 @@ export function JobToasts() {
     for (const [id, kind] of seen.current) {
       if (activeIds.has(id)) continue;
       invalidate(...refreshAfter[kind]);
-      if (platformAdmin) showOutcome(toast, toastFor.current, id, data.last);
+      if (platformAdmin || CLIENT_SEES.has(kind)) showOutcome(toast, toastFor.current, id, data.last);
     }
     seen.current = activeIds;
-    if (!platformAdmin) {
-      for (const toastId of toastFor.current.values()) toast.dismiss(toastId); // the view changed to a client's (AXE-634): the bubbles go
-      toastFor.current.clear();
-      return;
-    }
 
     // A queued job is no news when it only waits its turn (an index, or no place free on the server): it starts by
     // itself, and its progress toast appears then. No toast, no worker warning.
-    const rows = toastRows(data.active.filter((job) => !quietlyQueued(job)));
+    const rows = toastRows(data.active.filter((job) => !quietlyQueued(job) && (platformAdmin || CLIENT_SEES.has(job.kind))));
     const leads = new Set(rows.map((row) => row[0].id));
     for (const [id, toastId] of toastFor.current) {
       if (!leads.has(id)) {
@@ -53,14 +49,14 @@ export function JobToasts() {
       }
     }
     for (const row of rows) {
-      const input = describe(row, data, stopping, () => void stop(row));
+      const input = describe(row, data, { admin, canStop: platformAdmin }, stopping, () => void stop(row));
       const existing = toastFor.current.get(row[0].id);
       if (existing !== undefined) toast.update(existing, input);
       else toastFor.current.set(row[0].id, toast.show(input));
     }
-    // invalidate/toast are stable; describe reads stopping.
+    // invalidate/toast are stable; describe reads the rights and stopping.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs.data, stopping, platformAdmin]);
+  }, [jobs.data, stopping, admin, platformAdmin]);
 
   // Leaving the brand: its tasks' toasts go with it.
   useEffect(() => {
@@ -133,11 +129,11 @@ function toastRows(active: Job[]): Job[][] {
   return rows;
 }
 
-/** A task in the Nyra team's words; stopping it is theirs too (AXE-682). */
-function describe(row: Job[], data: CurrentJobs, stopping: Set<string>, onStop: () => void): ToastInput {
+/** `canStop`: stopping a read is the Nyra team's (AXE-682); `admin` only says how much of who started a waiting job is told. */
+function describe(row: Job[], data: CurrentJobs, rights: { admin: boolean; canStop: boolean }, stopping: Set<string>, onStop: () => void): ToastInput {
   const { active } = data;
   const job = row[0];
-  const queued = job.status === "queued" ? queuedText(job, data) : null;
+  const queued = job.status === "queued" ? queuedText(job, data, rights.admin) : null;
   const total = Number(job.progress.total || 0);
   const done = Number(job.progress.done || 0);
   return {
@@ -147,12 +143,14 @@ function describe(row: Job[], data: CurrentJobs, stopping: Set<string>, onStop: 
       ? [row.length > 1 ? groupLine(row.length, active) : capitalize(queued.line), queued.hint].filter(Boolean).join(". ")
       : [job.message, eta(job)].filter(Boolean).join(" · "),
     progress: queued ? undefined : total > 0 ? Math.min(1, done / total) : null,
-    action: {
-      label: job.cancel_requested ? "Arrêt demandé…" : queued ? (row.length > 1 ? "Tout annuler" : "Annuler") : "Arrêter",
-      disabled: job.cancel_requested || stopping.has(job.id),
-      keep: true,
-      onClick: onStop,
-    },
+    action: rights.canStop
+      ? {
+          label: job.cancel_requested ? "Arrêt demandé…" : queued ? (row.length > 1 ? "Tout annuler" : "Annuler") : "Arrêter",
+          disabled: job.cancel_requested || stopping.has(job.id),
+          keep: true,
+          onClick: onStop,
+        }
+      : undefined,
   };
 }
 
@@ -173,12 +171,17 @@ function groupLine(count: number, active: Job[]): string {
 }
 
 /** A queued job in plain words: behind another task, about to start, or waiting for a worker nobody started. */
-function queuedText(job: Job, data: CurrentJobs): { line: string; hint?: string } {
+function queuedText(job: Job, data: CurrentJobs, admin: boolean): { line: string; hint?: string } {
   const running = data.active.find((other) => other.status === "running");
   if (running) return { line: `en file d'attente, démarre après « ${jobLabel[running.kind]} »` };
   // Another brand's task holds the queue: a worker is there, nothing to warn about.
   if (data.organization?.some((other) => other.status === "running")) return { line: "en file d'attente" };
   const waitedSeconds = (Date.now() - new Date(job.created_at).getTime()) / 1000;
   if (waitedSeconds < 60) return { line: "démarre dans un instant" };
-  return { line: "en attente", hint: "Aucun worker ne traite les tâches pour l'instant : lancez « nyra worker » (ou vérifiez qu'il tourne). La tâche démarrera alors toute seule." };
+  return {
+    line: "en attente",
+    hint: admin
+      ? "Aucun worker ne traite les tâches pour l'instant : lancez « nyra worker » (ou vérifiez qu'il tourne). La tâche démarrera alors toute seule."
+      : "Elle démarrera automatiquement dès que le serveur d'analyse sera disponible.",
+  };
 }
