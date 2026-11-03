@@ -34,11 +34,11 @@ class EmailLimit(Exception):
 
 def find_or_invite_user(database_url: str, supabase_url: str, service_key: str, public_url: str, email: str,
                         claim: Optional[Callable[[], bool]] = None) -> tuple[str, bool]:
-    """Supabase Auth user id for this e-mail, inviting them if they have no account. Returns (id, invited).
-    `claim` is asked before an e-mail is sent (never for an existing account); False raises EmailLimit."""
+    """Supabase Auth user id for this e-mail, inviting them if they have no account or never opened their invitation (it is sent again).
+    Returns (id, invited). `claim` is asked before an e-mail is sent (never for an account that is in use); False raises EmailLimit."""
     with cloud_db.connect(database_url) as conn:
-        row = conn.execute("SELECT id FROM auth.users WHERE lower(email) = lower(%s)", (email,)).fetchone()
-    if row is not None:
+        row = conn.execute(f"SELECT id, {cloud_db.PENDING_SQL} AS pending FROM auth.users u WHERE lower(email) = lower(%s)", (email,)).fetchone()
+    if row is not None and not row["pending"]:
         return str(row["id"]), False
     if claim is not None and not claim():
         raise EmailLimit()
@@ -48,7 +48,9 @@ def find_or_invite_user(database_url: str, supabase_url: str, service_key: str, 
 
 
 def _member_json(row: dict, caller: uuid.UUID) -> dict:
-    return {"user_id": str(row["user_id"]), "email": row["email"], "role": row["role"], "you": row["user_id"] == caller}
+    pending = bool(row["pending"])
+    return {"user_id": str(row["user_id"]), "email": row["email"], "role": row["role"], "you": row["user_id"] == caller,
+            "pending": pending, "invited_at": row["invited_at"].isoformat() if pending and row["invited_at"] else None}
 
 
 @router.get(MEMBER)
@@ -58,14 +60,10 @@ def list_members(org_id: uuid.UUID, member=Depends(member_dep), ctx: Ctx = Depen
     return {"members": [_member_json(row, member.user_id) for row in rows]}
 
 
-@router.post(MEMBER)
-def invite_member(org_id: uuid.UUID, body: InviteBody, member=Depends(admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    email = body.email.strip().lower()
-    if "@" not in email or " " in email:
-        raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
+def _send_invitation(ctx: Ctx, org_id: uuid.UUID, email: str) -> tuple[str, bool]:
+    """`find_or_invite_user` for this organization: one of its day's e-mails is used when a mail leaves (429 when none is left, and
+    given back when the provider refuses: 502). Returns (user id, whether a mail was sent)."""
     s = ctx.settings
-    enforce(ctx, org_id, "members")
-
     claimed = False
 
     def claim() -> bool:
@@ -75,7 +73,7 @@ def invite_member(org_id: uuid.UUID, body: InviteBody, member=Depends(admin_dep)
         return claimed
 
     try:
-        user_id, invited = find_or_invite_user(s.database_url, s.supabase_url, s.service_role_key, s.public_url, email, claim)
+        return find_or_invite_user(s.database_url, s.supabase_url, s.service_role_key, s.public_url, email, claim)
     except EmailLimit as exc:
         raise HTTPException(status_code=429, detail="Limite d'invitations atteinte pour aujourd'hui. Réessayez demain.") from exc
     except Exception as exc:  # noqa: BLE001 - the provider's refusal (bad address, rate limit) is shown to the admin
@@ -83,13 +81,43 @@ def invite_member(org_id: uuid.UUID, body: InviteBody, member=Depends(admin_dep)
             with cloud_db.connect(s.database_url) as conn:
                 cloud_usage.release_email(conn, org_id)
         raise HTTPException(status_code=502, detail=f"L'invitation n'a pas pu être envoyée : {str(exc)[:200]}") from exc
+
+
+@router.post(MEMBER)
+def invite_member(org_id: uuid.UUID, body: InviteBody, member=Depends(admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    email = body.email.strip().lower()
+    if "@" not in email or " " in email:
+        raise HTTPException(status_code=400, detail="Adresse e-mail invalide.")
+    s = ctx.settings
+    enforce(ctx, org_id, "members")
+    with cloud_db.connect(s.database_url) as conn:
+        if cloud_db.member_by_email(conn, org_id, email) is not None:  # before any mail: an invitation still pending is sent again with « Renvoyer »
+            raise HTTPException(status_code=409, detail="Cette personne fait déjà partie de l'équipe.")
+    user_id, invited = _send_invitation(ctx, org_id, email)
     with cloud_db.connect(s.database_url) as conn:
         existing = cloud_db.get_membership(conn, user_id=uuid.UUID(user_id), org_id=org_id)
         if existing is not None:
             raise HTTPException(status_code=409, detail="Cette personne fait déjà partie de l'équipe.")
         cloud_db.add_membership(conn, user_id=uuid.UUID(user_id), org_id=org_id, role=body.role)
         cloud_audit.record(conn, org_id, member.user_id, "member.invite", "user", user_id, **seen_as(member), role=body.role, invited=invited)
-    return {"invited": invited, "member": {"user_id": user_id, "email": email, "role": body.role, "you": False}}
+    return {"invited": invited, "member": {"user_id": user_id, "email": email, "role": body.role, "you": False, "pending": invited,
+                                           "invited_at": None}}
+
+
+@router.post(MEMBER + "/{user_id}/resend")
+def resend_invitation(org_id: uuid.UUID, user_id: uuid.UUID, member=Depends(admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """The invitation mail again, for a member who never opened it. Counts against the organization's mails of the day like the first one."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        row = cloud_db.get_member(conn, org_id, user_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Cette personne ne fait pas partie de l'équipe.")
+    if not row["pending"]:
+        raise HTTPException(status_code=409, detail="Cette personne a déjà accepté l'invitation.")
+    _, invited = _send_invitation(ctx, org_id, row["email"])
+    if invited:  # false only when the invitation was opened in the meantime: no mail left, nothing to trace
+        with cloud_db.connect(ctx.settings.database_url) as conn:
+            cloud_audit.record(conn, org_id, member.user_id, "member.reinvite", "user", user_id, **seen_as(member))
+    return {"invited": invited}
 
 
 def _keep_one_admin(conn, org_id: uuid.UUID, user_id: uuid.UUID) -> None:

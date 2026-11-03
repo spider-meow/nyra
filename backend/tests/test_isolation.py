@@ -146,8 +146,8 @@ def _tenant(conn, org, brand, tag, job="check") -> dict:
     people = {}
     for role in ("admin", "client"):
         people[role] = uuid.uuid4()
-        conn.execute("INSERT INTO auth.users (id, email) VALUES (%s, %s)", (people[role], f"{role}@canary-{tag}.test"))
-        cloud_db.add_membership(conn, user_id=people[role], org_id=org, role=role)
+        conn.execute("INSERT INTO auth.users (id, email, invited_at) VALUES (%s, %s, %s)", (people[role], f"{role}@canary-{tag}.test", "2026-01-01" if role == "client" else None))
+        cloud_db.add_membership(conn, user_id=people[role], org_id=org, role=role)  # the client never opened its invitation: « Renvoyer » has someone to work on
     filename = f"canary-{tag}.jpg"
     ref = cloud_db.upsert_reference_image(
         conn, org_id=org, brand_id=brand, filename=filename, storage_path=f"{org}/{brand}/{filename}", expiry_date="2030-01-01",

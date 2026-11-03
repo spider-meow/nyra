@@ -2325,6 +2325,103 @@ def test_invitations_stop_at_the_days_limit_but_an_existing_account_sends_no_mai
         assert conn.execute("SELECT 1 FROM auth.users WHERE email = %s", (second,)).fetchone() is None  # nothing was sent
 
 
+# --- invitations still waiting (AXE-676) ------------------------------------------------------
+
+def _inviter(cloud_database_url, monkeypatch):
+    """A fake Supabase Auth: an invitation creates the account as Supabase does (invited, not confirmed) and counts the mails sent."""
+    from types import SimpleNamespace
+
+    sent: list[str] = []
+
+    def invite(email, options):
+        sent.append(email)
+        with cloud_db.connect(cloud_database_url) as conn:
+            user = conn.execute("INSERT INTO auth.users (email, invited_at) VALUES (%s, now()) RETURNING id", (email,)).fetchone()["id"]
+        return SimpleNamespace(user=SimpleNamespace(id=user))
+
+    def invite_again(email, options):
+        with cloud_db.connect(cloud_database_url) as conn:
+            known = conn.execute("SELECT id FROM auth.users WHERE lower(email) = lower(%s)", (email,)).fetchone()
+            if known is None:
+                return invite(email, options)
+            sent.append(email)
+            conn.execute("UPDATE auth.users SET invited_at = now() WHERE id = %s", (known["id"],))
+        return SimpleNamespace(user=SimpleNamespace(id=known["id"]))
+
+    fake = SimpleNamespace(auth=SimpleNamespace(admin=SimpleNamespace(invite_user_by_email=invite_again)))
+    monkeypatch.setattr("nyra.cloud.storage.get_client", lambda *args: fake)
+    return sent
+
+
+def test_a_person_who_never_opened_the_invitation_is_listed_as_pending_until_they_do(client, org_with_users, cloud_database_url, monkeypatch):
+    org_id, _, admin_id, client_id, _ = org_with_users
+    sent = _inviter(cloud_database_url, monkeypatch)
+    base = f"/api/orgs/{org_id}/members"
+    invited = client.post(base, headers=_headers(admin_id), json={"email": "Julie.Garnier@Agence.test", "role": "admin"})
+    assert invited.status_code == 200 and invited.json()["invited"] is True and sent == ["julie.garnier@agence.test"]
+    listed = {m["email"]: m for m in client.get(base, headers=_headers(client_id)).json()["members"]}  # a client reads it too
+    julie = listed["julie.garnier@agence.test"]
+    assert julie["pending"] is True and julie["invited_at"].startswith(__import__("datetime").date.today().isoformat())
+    assert listed[f"{admin_id}@x.com"]["pending"] is False and listed[f"{admin_id}@x.com"]["invited_at"] is None  # an account in use: not pending
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("UPDATE auth.users SET email_confirmed_at = now() WHERE id = %s", (julie["user_id"],))  # the link was opened
+    after = {m["email"]: m for m in client.get(base, headers=_headers(client_id)).json()["members"]}
+    assert after["julie.garnier@agence.test"]["pending"] is False and after["julie.garnier@agence.test"]["invited_at"] is None
+
+
+def test_an_invitation_is_sent_again_on_request_within_the_days_mails_and_only_to_a_pending_member(
+        client, org_with_users, cloud_database_url, monkeypatch):
+    org_id, _, admin_id, client_id, _ = org_with_users
+    sent = _inviter(cloud_database_url, monkeypatch)
+    base = f"/api/orgs/{org_id}/members"
+    _limits(client, admin_id, org_id, emails_per_day=2)
+    julie = client.post(base, headers=_headers(admin_id), json={"email": "julie@agence.test"}).json()["member"]["user_id"]  # mail 1 of 2
+    assert client.post(f"{base}/{julie}/resend", headers=_headers(client_id)).status_code == 403  # a client cannot
+    again = client.post(f"{base}/{julie}/resend", headers=_headers(admin_id))  # mail 2 of 2
+    assert again.status_code == 200 and again.json() == {"invited": True} and sent == ["julie@agence.test"] * 2
+    late = client.post(f"{base}/{julie}/resend", headers=_headers(admin_id))
+    assert late.status_code == 429 and "Réessayez demain" in late.json()["detail"] and len(sent) == 2  # the day's mails are used up: nothing leaves
+    assert client.post(f"{base}/{admin_id}/resend", headers=_headers(admin_id)).status_code == 409  # an account in use
+    assert client.post(f"{base}/{uuid.uuid4()}/resend", headers=_headers(admin_id)).status_code == 404  # not in the team
+    with cloud_db.connect(cloud_database_url) as conn:
+        rows = conn.execute("SELECT detail FROM audit_log WHERE org_id = %s AND action = 'member.reinvite'", (org_id,)).fetchall()
+    assert len(rows) == 1  # traced once, with no address
+
+
+def test_a_provider_that_refuses_the_new_mail_gives_the_place_back_and_a_pending_member_cannot_be_invited_twice(
+        client, org_with_users, cloud_database_url, monkeypatch):
+    from types import SimpleNamespace
+
+    org_id, _, admin_id, _, _ = org_with_users
+    sent = _inviter(cloud_database_url, monkeypatch)
+    base = f"/api/orgs/{org_id}/members"
+    _limits(client, admin_id, org_id, emails_per_day=1)
+    julie = client.post(base, headers=_headers(admin_id), json={"email": "julie@agence.test"}).json()["member"]["user_id"]
+    duplicate = client.post(base, headers=_headers(admin_id), json={"email": "JULIE@agence.test"})
+    assert duplicate.status_code == 409 and len(sent) == 1  # refused before any mail: « Renvoyer » is for that
+
+    def refuse(email, options):
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr("nyra.cloud.storage.get_client", lambda *args: SimpleNamespace(auth=SimpleNamespace(admin=SimpleNamespace(invite_user_by_email=refuse))))
+    for _ in range(2):  # the one mail of the day was used by the first invitation: the 429 comes first, never a 502 that would eat a place
+        assert client.post(f"{base}/{julie}/resend", headers=_headers(admin_id)).status_code == 429
+    _limits(client, admin_id, org_id, emails_per_day=5)
+    for _ in range(3):  # a refusal each time, and the place is given back each time
+        assert client.post(f"{base}/{julie}/resend", headers=_headers(admin_id)).status_code == 502
+
+
+def test_cancelling_an_invitation_removes_the_member_and_the_address_can_be_invited_again(client, org_with_users, cloud_database_url, monkeypatch):
+    org_id, _, admin_id, _, _ = org_with_users
+    sent = _inviter(cloud_database_url, monkeypatch)
+    base = f"/api/orgs/{org_id}/members"
+    julie = client.post(base, headers=_headers(admin_id), json={"email": "julie@agence.test"}).json()["member"]["user_id"]
+    assert client.delete(f"{base}/{julie}", headers=_headers(admin_id)).json() == {"removed": True}
+    assert "julie@agence.test" not in [m["email"] for m in client.get(base, headers=_headers(admin_id)).json()["members"]]
+    again = client.post(base, headers=_headers(admin_id), json={"email": "julie@agence.test"})  # the account was never used: it gets a mail again
+    assert again.status_code == 200 and again.json()["invited"] is True and sent == ["julie@agence.test"] * 2
+
+
 def test_adopting_site_images_is_refused_at_the_library_or_storage_limit(client, org_with_users, cloud_brand, cloud_database_url):
     org_id, base, admin_id, _, _ = org_with_users
     with cloud_db.connect(cloud_database_url) as conn:

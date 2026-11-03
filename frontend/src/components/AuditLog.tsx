@@ -48,6 +48,7 @@ const ACTION_LABEL: Record<string, string> = {
   "label.delete": "Étiquette supprimée",
   "label.decide": "Décision sur une étiquette",
   "member.invite": "Personne invitée",
+  "member.reinvite": "Invitation renvoyée",
   "member.role": "Rôle modifié",
   "member.remove": "Personne retirée",
   "job.cancel": "Tâche annulée",
