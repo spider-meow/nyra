@@ -1173,6 +1173,67 @@ def test_the_nyra_team_judges_the_detector_image_by_image_and_nobody_else_can(
     assert cards(staff)["scene"]["packshot_feedback"] is None
 
 
+def test_the_answer_of_the_nyra_team_wins_over_the_packshot_detector_and_follows_the_file(
+    client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client
+):
+    """AXE-680: "pas un packshot" takes an image out of the tab, "c'est un packshot" brings it in, both survive a new read of the site, and taking the answer back
+    gives the image to the detector again. The counters follow, and another brand with the same file does not share the answer."""
+    from nyra import packshots as detector
+    from nyra.cloud import packshots as cloud_packshots
+
+    org_id, base, staff_id, client_id, _ = org_with_users
+    text = detector._text()
+    product_look, scene_look = text[0], text[len(detector.PRODUCT_PROMPTS)]
+    ids = {}
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = _site(conn, org_id, cloud_brand, "https://t.test/fr/")
+        for name, look, uniform in (("bottle", product_look, 0.99), ("styled", product_look, 0.2), ("scene", scene_look, 0.99)):
+            ids[name] = conn.execute(
+                """INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash, embedding, bg_uniform)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+                (org_id, site, f"https://t.test/{name}.jpg", f"{org_id}/{name}.jpg", f"{org_id}/thumbs/{name}.jpg", name,
+                 f"{len(ids):016x}", f"{len(ids):016x}", look, uniform),
+            ).fetchone()["id"]
+        other_brand = cloud_db.create_brand(conn, org_id=org_id, name="Autre", slug="autre")
+        other_site = _site(conn, org_id, other_brand, "https://o.test/")
+        conn.execute(
+            "INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash, embedding, bg_uniform)"
+            " VALUES (%s, %s, 'https://o.test/bottle.jpg', 'x', 'y', 'bottle', %s, %s, %s, 0.99)", (org_id, other_site, "e" * 16, "e" * 16, product_look))
+        conn.execute("UPDATE brands SET detect_packshots = true WHERE id = %s", (other_brand,))
+    staff = _headers(staff_id)
+    judge = lambda name, yes: client.put(f"{base}/packshots/feedback", headers=staff, json={"site_image_id": str(ids[name]), "is_packshot": yes})  # noqa: E731
+    tab = lambda view: client.get(f"{base}/site-images", headers=staff, params={"view": view}).json()  # noqa: E731
+    urls = lambda view: {item["url"].rsplit("/", 1)[1][:-4] for item in tab(view)["items"]}  # noqa: E731
+    unreferenced = lambda: client.get(f"{base}/overview", headers=_headers(staff_id)).json()["dashboard"]["unreferenced_online"]  # noqa: E731
+
+    client.put(f"{base}/packshots/setting", headers=staff, json={"enabled": True})
+    assert urls("packshots") == {"bottle"} and urls("qualify") == {"styled", "scene"} and unreferenced() == 2  # the detector alone
+
+    # The answers win: the intruder leaves the tab and goes back to qualify, the missed one enters, counters included.
+    assert judge("bottle", False).status_code == 200 and judge("styled", True).status_code == 200
+    assert urls("packshots") == {"styled"} and urls("qualify") == {"bottle", "scene"}
+    assert tab("qualify")["counts"]["packshots"] == 1 and unreferenced() == 2
+    assert judge("scene", True).status_code == 200
+    assert tab("qualify")["counts"]["packshots"] == 2 and unreferenced() == 1
+
+    # The site is read again: the row is replaced, the answer stays with the file (same hash).
+    with cloud_db.connect(cloud_database_url) as conn:
+        conn.execute("DELETE FROM site_images WHERE id = %s", (ids["styled"],))
+        conn.execute(
+            "INSERT INTO site_images (org_id, site_id, url, storage_path, thumb_path, content_hash, phash, dhash, embedding, bg_uniform)"
+            " VALUES (%s, %s, 'https://t.test/styled.jpg', 'a', 'b', 'styled', %s, %s, %s, 0.2)", (org_id, site, "f" * 16, "f" * 16, product_look))
+        cloud_packshots.score_pending(conn, other_brand)
+        assert len(cloud_packshots.ids(conn, other_brand)) == 1  # the other brand keeps its bottle: the answer "pas un packshot" of this brand is not shared
+    assert urls("packshots") == {"styled", "scene"} and "bottle" not in urls("packshots")
+
+    # Taking an answer back gives the image to the detector; the report of measures does not move with the decisions.
+    assert client.delete(f"{base}/packshots/feedback/{ids['bottle']}", headers=staff).status_code == 200
+    assert client.delete(f"{base}/packshots/feedback/{ids['scene']}", headers=staff).status_code == 200
+    assert urls("packshots") == {"bottle", "styled"} and urls("qualify") == {"scene"}
+    report = client.get(f"{base}/packshots/feedback", headers=staff).json()
+    assert report["feedbacks"] == 1 and report["false_negatives"] == 1 and report["false_positives"] == 0
+
+
 def test_an_administrator_splits_a_group_of_crops_by_hand(client, org_with_users, cloud_brand, cloud_database_url, monkeypatch):
     """AXE-521: a version taken out of its group gets its own card; a group left with one file is no group; nothing is hidden."""
     from nyra.cloud import splits as cloud_splits

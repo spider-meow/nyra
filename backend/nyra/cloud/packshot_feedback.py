@@ -2,7 +2,9 @@
 
 A feedback is kept with the two measures and the two thresholds of the moment, and whether the image was detected, so the case can be replayed later
 (`report` reads them back: the false positives and false negatives with their measures, and the precision and recall of the thresholds in force, with
-the number of images behind each). A feedback never changes the detection: it measures, and moving a threshold is a decision taken with these figures.
+the number of images behind each). A feedback measures (the report) AND decides what is shown (AXE-680): the answer of the team wins over the detector for that image, which stays in or leaves the
+Packshots tab even when the site is read again (the answer follows the file's `content_hash`). Taking the feedback back gives the image back to the detector. Moving a
+threshold is still a decision taken with the figures; the report never reads the decision, only the measures kept with each feedback.
 
 Migration 20261030000045 adds the table. Until it is applied nothing is written or listed (one cached look at the catalogue).
 """
@@ -78,6 +80,24 @@ def of_images(conn: psycopg.Connection, brand_id: uuid.UUID, user_id: uuid.UUID,
         if mine is not None:
             found[str(image["id"])] = {"is_packshot": mine["is_packshot"], "note": mine["note"] or ""}
     return found
+
+
+def decided(conn: psycopg.Connection, brand_id: uuid.UUID) -> dict[uuid.UUID, bool]:
+    """{site image id: the team's answer} for the brand's images that have one: the latest feedback on the file (its hash, else its row) wins over the detector.
+    Empty before the migration. Only this brand's feedbacks are read: the same file in another brand or organization does not share the answer."""
+    if not has_table(conn):
+        return {}
+    rows = conn.execute(
+        """WITH latest AS (
+               SELECT DISTINCT ON (COALESCE(content_hash, site_image_id::text, id::text)) site_image_id, content_hash, is_packshot
+               FROM packshot_feedback WHERE brand_id = %s
+               ORDER BY COALESCE(content_hash, site_image_id::text, id::text), updated_at DESC)
+           SELECT si.id, l.is_packshot FROM site_images si JOIN sites s ON s.id = si.site_id
+           JOIN latest l ON l.site_image_id = si.id OR (l.content_hash IS NOT NULL AND l.content_hash = si.content_hash)
+           WHERE s.brand_id = %s""",
+        (brand_id, brand_id),
+    ).fetchall()
+    return {row["id"]: row["is_packshot"] for row in rows}
 
 
 def measures_of(conn: psycopg.Connection, ids: list[uuid.UUID]) -> dict[str, Row]:

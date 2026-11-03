@@ -77,7 +77,7 @@ export function useSplitVariant() {
   });
 }
 
-/** "C'est / ce n'est pas un packshot", for the Nyra team (AXE-668): kept with the detector's measures, never changes the detection. */
+/** "C'est / ce n'est pas un packshot", for the Nyra team (AXE-668): kept with the detector's measures; the answer wins over the detection for that image (AXE-680). */
 export function usePackshotFeedback() {
   const { apiPath } = useOrg();
   const invalidate = useInvalidate();

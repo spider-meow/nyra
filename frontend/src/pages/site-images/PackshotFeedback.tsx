@@ -7,7 +7,7 @@ import type { SiteImage } from "../../types";
 
 const measure = (value: number | null) => (value === null ? "—" : value.toLocaleString("fr-FR", { maximumFractionDigits: 2 }));
 
-/** For the Nyra team only (AXE-668): the detector's two measures on the card, and "c'est / ce n'est pas un packshot", kept with them to calibrate the detection. Nothing here changes it. */
+/** For the Nyra team only (AXE-668): the detector's two measures on the card, and "c'est / ce n'est pas un packshot", kept with them to calibrate the detection. The answer also decides: the image leaves or joins the Packshots tab (AXE-680). */
 export function PackshotFeedback({ item }: { item: SiteImage }) {
   const { give, takeBack } = usePackshotFeedback();
   const toast = useToast();
