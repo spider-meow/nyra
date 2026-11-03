@@ -6,10 +6,14 @@ import { refreshAfter, useCancelJob, useInvalidate, useJobs } from "../../lib/qu
 import type { CurrentJobs, Job } from "../../types";
 import { useToast, type ToastInput, type Toaster } from "../feedback";
 
+/** The tasks a client still sees as toasts: the ones it asks for itself. The machinery (index, read, comparison, page check) is the Nyra team's to watch (AXE-712). */
+const CLIENT_SEES: ReadonlySet<Job["kind"]> = new Set(["report", "locate"]);
+
 /**
  * Tasks of the brand as toasts: one per running task, one per group of
  * waiting tasks of the same kind, updated at every poll, then turned into
  * the outcome (done, stopped, failed) when the task ends.
+ * A client only gets `CLIENT_SEES`; what any task changes still reaches the page, since the refresh below runs for everyone.
  */
 export function JobToasts() {
   const { admin, platformAdmin } = useOrg();
@@ -30,13 +34,13 @@ export function JobToasts() {
     for (const [id, kind] of seen.current) {
       if (activeIds.has(id)) continue;
       invalidate(...refreshAfter[kind]);
-      showOutcome(toast, toastFor.current, id, data.last);
+      if (platformAdmin || CLIENT_SEES.has(kind)) showOutcome(toast, toastFor.current, id, data.last);
     }
     seen.current = activeIds;
 
     // A queued job is no news when it only waits its turn (an index, or no place free on the server): it starts by
     // itself, and its progress toast appears then. No toast, no worker warning.
-    const rows = toastRows(data.active.filter((job) => !quietlyQueued(job)));
+    const rows = toastRows(data.active.filter((job) => !quietlyQueued(job) && (platformAdmin || CLIENT_SEES.has(job.kind))));
     const leads = new Set(rows.map((row) => row[0].id));
     for (const [id, toastId] of toastFor.current) {
       if (!leads.has(id)) {

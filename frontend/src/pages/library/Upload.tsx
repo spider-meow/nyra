@@ -169,7 +169,7 @@ export function LibraryActions({ up, onImport }: { up: Upload; onImport: () => v
   );
 }
 
-/** Banners above the library: drop hint, indexing in progress, replaced visuels, refused files. */
+/** Banners above the library: drop hint, indexing in progress (`indexing` is true for the Nyra team only, AXE-712), replaced visuels, refused files. */
 export function UploadNotices(props: { up: Upload; indexing: boolean; folders: CollectionIndex; current?: string }) {
   const { up } = props;
   return (
