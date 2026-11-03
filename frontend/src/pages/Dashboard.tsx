@@ -17,11 +17,9 @@ export function Dashboard() {
     return (
       <div className="grid gap-4">
         <Skeleton className="h-9 w-64" />
-        <Skeleton className="h-36" />
-        <div className="grid gap-4 md:grid-cols-3">
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
+        <Skeleton className="h-64" />
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {[0, 1, 2, 3].map((key) => <Skeleton key={key} className="h-36" />)}
         </div>
       </div>
     );

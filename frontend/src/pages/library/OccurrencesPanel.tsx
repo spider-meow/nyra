@@ -25,7 +25,7 @@ export default function OccurrencesPanel({ item }: { item: LibraryItem }) {
     <>
       <Summary data={data} filter={filter} onFilter={(next) => { setFilter(next); setOffset(0); }} />
       <div className="max-h-72 overflow-x-hidden overflow-y-auto px-4 pb-3">
-        {found.isLoading ? <div className="grid gap-2" aria-busy="true">{[0, 1, 2].map((key) => <Skeleton key={key} className="h-12" />)}</div> : null}
+        {found.isLoading ? <div className="grid gap-2" aria-busy="true">{[0, 1, 2].map((key) => <Skeleton key={key} className="h-[70px]" />)}</div> : null}
         {found.isError ? <RefreshFailed error={found.error} onRetry={() => void found.refetch()} retrying={found.isFetching} /> : null}
         {data ? <PageRows data={data} filter={filter} /> : null}
       </div>

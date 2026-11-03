@@ -58,7 +58,7 @@ export function SiteImages() {
       <ViewTabs view={view} counts={counts} packshots={packshotsOn || view === "packshots"} onChange={changeView} />
       <ViewNote view={view} logosSetAside={page?.logos_set_aside} />
       {images.isLoading ? (
-        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" cell="aspect-[4/5]" />
+        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" cell="aspect-[1/2]" />
       ) : !page ? (
         <LoadError title="Impossible de charger les images" error={images.error} onRetry={() => void images.refetch()} retrying={images.isFetching} />
       ) : (

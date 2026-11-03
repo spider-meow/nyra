@@ -10,8 +10,8 @@ export function StatisticsSkeleton() {
   return (
     <div className="grid gap-4">
       <Skeleton className="h-9 w-64" />
-      <div className="grid gap-4 md:grid-cols-4">
-        {[0, 1, 2, 3].map((key) => <Skeleton key={key} className="h-24" />)}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {[0, 1, 2, 3, 4, 5, 6, 7].map((key) => <Skeleton key={key} className="h-28" />)}
       </div>
       <Skeleton className="h-64" />
     </div>

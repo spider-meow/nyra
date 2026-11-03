@@ -101,7 +101,7 @@ export function Settings() {
   const settings = useSettings();
   const [params, setParams] = useSearchParams();
 
-  if (settings.isLoading) return <Skeleton className="h-96" />;
+  if (settings.isLoading) return <><PageHeader title="Réglages" /><Skeleton className="h-96" /></>;
   if (settings.error || !settings.data) return <EmptyState title="Réglages indisponibles" body={errorMessage(settings.error)} />;
 
   // A platform admin has no membership, so no e-mail of Nyra to switch on or off.
