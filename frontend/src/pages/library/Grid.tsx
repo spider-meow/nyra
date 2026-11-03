@@ -46,7 +46,7 @@ export function LibraryGrid({ view, thumbs, labelsOf, selected, setSelected, onE
           Tout sélectionner
         </label>
       ) : null}
-      <ul key={`${tab}|${view.scope}`} className="fade-in grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
+      <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
         {visible.slice(0, shown).map((item) => (
           <ReferenceCard key={item.id} item={item} where={showWhere && item.collection_id ? view.folders.path(item.collection_id) : ""} labels={labelsOf(item.id)} thumbUrl={thumbs[item.filename]} checked={selected.has(item.filename)} anySelected={selected.size > 0} onEdit={onEdit} onToggle={toggle} />
         ))}

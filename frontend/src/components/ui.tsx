@@ -249,16 +249,17 @@ export function Skeleton(props: { className?: string }) {
 
 /** An image that fades in once it has loaded instead of popping in. The box is the caller's, so nothing moves when it arrives. */
 export function FadeImage(props: ImgHTMLAttributes<HTMLImageElement> & { src: string }) {
-  const [loaded, setLoaded] = useState<string>();
+  // Once loaded it stays visible: a new `src` (a renewed signed URL) keeps the old picture until the new one arrives, never a blank.
+  const [loaded, setLoaded] = useState(false);
   const { className, onLoad, ...rest } = props;
   return (
     <img
       {...rest}
       onLoad={(event) => {
-        setLoaded(props.src);
+        setLoaded(true);
         onLoad?.(event);
       }}
-      className={cx(className, "transition-opacity", loaded === props.src ? "opacity-100" : "opacity-0")}
+      className={cx(className, "transition-opacity", loaded ? "opacity-100" : "opacity-0")}
     />
   );
 }
