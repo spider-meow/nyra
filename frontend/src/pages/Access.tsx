@@ -141,7 +141,7 @@ function LoginForm(props: LoginFormProps) {
         </div>
       ) : null}
       {mode === "password" ? <Checkbox checked={props.remember} onChange={props.onRemember} label="Rester connecté" /> : null}
-      {props.error ? <p className="text-sm text-expired" role="alert">{props.error}</p> : null}
+      {props.error ? <p className="fade-in text-sm text-expired" role="alert">{props.error}</p> : null}
       <Button type="submit" variant="primary" size="lg" disabled={props.disabled}>
         {props.pending ? "Un instant…" : mode === "password" ? "Se connecter" : "Envoyer le lien"}
       </Button>
@@ -198,7 +198,7 @@ export function SetPassword() {
           <FieldLabel htmlFor="confirm-password" hint={confirm && password !== confirm ? "ne correspond pas" : undefined}>Confirmation</FieldLabel>
           <PasswordInput id="confirm-password" autoComplete="new-password" required value={confirm} onChange={(event) => setConfirm(event.target.value)} />
         </div>
-        {error ? <p className="text-sm text-expired" role="alert">{error}</p> : null}
+        {error ? <p className="fade-in text-sm text-expired" role="alert">{error}</p> : null}
         <Button type="submit" variant="primary" size="lg" disabled={pending}>{pending ? "Enregistrement…" : "Enregistrer et continuer"}</Button>
       </form>
     </Centered>
@@ -342,7 +342,7 @@ function NoBrand(props: { org: Organization }) {
           <FieldLabel htmlFor="brand-name">Nom de la marque</FieldLabel>
           <Input id="brand-name" required maxLength={120} placeholder="Louis XIII" value={name} onChange={(event) => setName(event.target.value)} />
         </div>
-        {error ? <p className="text-sm text-expired" role="alert">{error}</p> : null}
+        {error ? <p className="fade-in text-sm text-expired" role="alert">{error}</p> : null}
         <Button type="submit" variant="primary" loading={pending} disabled={!name.trim()}>{pending ? "Création…" : "Créer la marque"}</Button>
       </form>
     </Centered>

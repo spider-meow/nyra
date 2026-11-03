@@ -136,6 +136,15 @@ place). Ne jamais adoucir ce qui doit répondre sans délai : saisie, focus clav
 tout ce qui suit le pointeur. « Réduire les animations » est géré une seule fois, dans `index.css` : rien à ajouter par
 composant. L'inventaire écran par écran est dans [`AUDIT_TRANSITIONS.md`](AUDIT_TRANSITIONS.md).
 
+**Ajouter une apparition ou une sortie.** (1) Un élément qui arrive : la classe `fade-in` (ou `rise-in` pour un panneau ou une
+barre, `tip-in` pour une bulle), sur un élément qui n'est pas un conteneur de page (pas de `transform` ni de `filter` sur un parent
+d'un `position: fixed`). (2) Un élément qui part : `usePresence(open)` (`components/feedback.tsx`) le garde monté le temps de sa
+sortie, `fade-out` + `inert` pendant ce temps, `onAnimationEnd` sur l'élément animé ; `Present` fait de même pour un composant
+qu'un parent monte et démonte (fenêtre, menu). (3) Un contrôle (lien, bouton, résumé) n'a rien à ajouter : la règle de base de
+`index.css` le couvre ; ne pas y mettre de `transition-*` (il remplacerait sa liste de propriétés). (4) Une image qui charge :
+`FadeImage`. (5) Une zone de chargement a la forme de ce qu'elle remplace. Toute durée vient des jetons ; rien n'est animé en
+boucle, sauf un indicateur d'attente.
+
 ## Tests
 
 Conformément à `ponytail` : la logique non triviale laisse **un** test

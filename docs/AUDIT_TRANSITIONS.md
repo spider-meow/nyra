@@ -227,3 +227,26 @@ Scroll : aucun `ScrollRestoration` ; ne pas l'ajouter ici.
 - Décision à prendre : mouvement réduit = fondus gardés et déplacements retirés (lecture MDN / WCAG) ou tout retiré.
 - Décision à prendre : le back-office est un outil interne ; on ne lui applique que les composants partagés et les 3 sauts
   les plus visibles (période des courbes, dépliage du journal, aperçu d'e-mail), le reste est écarté.
+
+## 10. Suivi : ce qui a été fait (AXE-714 à 720)
+
+| Groupe de l'inventaire | Sort | Où |
+|---|---|---|
+| Jetons, courbes, mouvement réduit global, classes `fade-in` / `rise-in` / `fade-out`, durées isolées (§3, 2/7) | traité | AXE-715 |
+| Liens, boutons, résumés : règle de base ; badges, jauge de mot de passe, icônes de barre latérale ; largeur des pastilles de À traiter ; enfoncement à l'appui (3/7) | traité | AXE-716 |
+| Champs, anneau de focus, lignes de menu, cases, saisie (§4) | écarté, restent immédiats | AXE-716, décision §4 |
+| `font-medium` à l'état actif (onglets, `Segmented`, arbre) ; soulignement au survol | reste (largeur de quelques pixels ; propriété non animable) | — |
+| `Modal` (19 usages), `ConfirmProvider`, zoom, `DangerZone`, Échap / focus / défilement, `Present` pour les 10 fenêtres montées par un parent (4/7) | traité | AXE-717 (1/2) |
+| Listes déroulantes, menu d'actions, popover de téléchargement, infobulles, barre de sélection des images, bandeaux (entrée) (4/7) | traité | AXE-717 (2/2) |
+| `<details>` natifs, `RowMenu`, enveloppe de `CursorTip`, bulles des graphiques (position), `DropBox` | écarté (pas de sortie possible, ou suit le pointeur) | §4 |
+| Bandeaux qui poussent le contenu, fenêtres centrées dont la hauteur change, bandeau d'indexation, `ViewNote` (§5) | **reste** : place à réserver, hors périmètre « transitions » ; l'en-tête de sélection de la bibliothèque (22 px) aussi | à ouvrir en issue séparée |
+| Contenu de page, section de réglages, changement de marque sans remonter la colonne latérale, menu mobile en surcouche, barre `NavProgress`, chevron et sous-niveaux de l'arbre (5/7) | traité | AXE-718 |
+| Écran vide entre deux organisations (`FirstBrand`) ; « Cette marque n'existe pas » après un renommage | **reste** (spinner retardé de 150 ms seulement) ; à reproduire sur un environnement jetable | à ouvrir en issue séparée |
+| Squelettes de la forme du contenu (bibliothèque, À traiter, tableau de bord, statistiques, images en ligne, occurrences, titres des visuels et des réglages) (6/7) | traité | AXE-719 (1/2) |
+| Squelettes de `AuditLog`, page Serveur, courbes du back-office, `Visual` | **reste** | idem |
+| Contenu qui arrive (`Refreshing`), images qui chargent (`FadeImage`), grille de la bibliothèque, barres d'usage et de part, image de la fiche (6/7) | traité | AXE-719 (2/2) |
+| Graphiques (tracé, axes), `SplitBar`, lignes ajoutées ou retirées d'une liste, `PhotoRow` | écarté (§4) | — |
+| Sortie des toasts, `update()` qui ne ressuscite plus un toast parti, confirmations et messages d'erreur en fondu (7/7) | traité | AXE-720 |
+| Pile de toasts : les voisins sautent quand un toast part | **reste** (la hauteur ne s'anime pas) | — |
+| Tactile : survol collé | déjà évité (Tailwind 4 enveloppe `hover:` dans `@media (hover: hover)`) ; appui : AXE-716 | — |
+| Durées : tout ≤ 200 ms ; ce qui dépasse 250 ms est une boucle d'attente (spinner 1 s, pulsation 2 s, barre 1,4 s) ou un retard d'apparition (`fade-in-late`, 150 ms) | vérifié par `grep` | AXE-720 |

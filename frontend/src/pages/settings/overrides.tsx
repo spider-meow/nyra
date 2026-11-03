@@ -109,9 +109,11 @@ export function SaveIndicator(props: { form: OverridesForm }) {
   const { form } = props;
   return (
     <span role="status" className={cx("flex items-center gap-1.5 text-xs", form.state === "error" ? "text-expired" : "text-muted")}>
-      {form.state === "saved" ? <Icon name="check" size={13} strokeWidth={2} /> : null}
-      {STATE_LABEL[form.state]}
-      {form.state === "error" ? <button type="button" className="underline" onClick={form.retry}>Réessayer</button> : null}
+      <span key={form.state} className="fade-in flex items-center gap-1.5">
+        {form.state === "saved" ? <Icon name="check" size={13} strokeWidth={2} /> : null}
+        {STATE_LABEL[form.state]}
+        {form.state === "error" ? <button type="button" className="underline" onClick={form.retry}>Réessayer</button> : null}
+      </span>
     </span>
   );
 }

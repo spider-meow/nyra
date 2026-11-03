@@ -45,8 +45,8 @@ function TestButton(props: { entry: MailEntry; configured: boolean }) {
       <span title={reason || undefined}>
         <Button size="sm" disabled={reason !== ""} loading={test.isPending} onClick={() => test.mutate(props.entry.key)}>M'envoyer un test</Button>
       </span>
-      {test.data ? <p role="status" className="max-w-72 text-right text-[13px] text-muted">Test envoyé à votre adresse ({test.data.to}).</p> : null}
-      {test.error ? <p role="alert" className="max-w-72 text-right text-[13px] text-expired">{errorMessage(test.error)}</p> : null}
+      {test.data ? <p role="status" className="fade-in max-w-72 text-right text-[13px] text-muted">Test envoyé à votre adresse ({test.data.to}).</p> : null}
+      {test.error ? <p role="alert" className="fade-in max-w-72 text-right text-[13px] text-expired">{errorMessage(test.error)}</p> : null}
     </div>
   );
 }
