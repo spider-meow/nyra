@@ -2447,6 +2447,98 @@ def test_a_download_waits_for_no_one_and_decodes_no_more_than_the_cap(client, or
     assert client.get(f"{base}/library/big.png/download?size=web", headers=_headers(admin_id)).status_code == 422  # and the place was released
 
 
+# --- several images in one ZIP (AXE-678) -----------------------------------------------------------
+
+def _zip_of(response):
+    import zipfile
+
+    assert response.status_code == 200, response.text
+    return zipfile.ZipFile(io.BytesIO(response.content))
+
+
+def test_a_member_downloads_a_selection_as_one_zip_at_one_size_and_nothing_is_kept(client, org_with_users, fake_storage_client, cloud_database_url):
+    org_id, base, admin_id, client_id, outsider_id = org_with_users
+    _upload_sized(client, base, admin_id, "big.jpg", 3000, 2000)
+    _upload_sized(client, base, admin_id, "small.jpg", 600, 400)
+    before = dict(fake_storage_client.store)
+
+    sent = client.post(f"{base}/library/zip", headers=_headers(client_id), json={"filenames": ["big.jpg", "small.jpg", "big.jpg"], "size": "web"})  # a client too; a name twice is one image
+    archive = _zip_of(sent)
+    assert sent.headers["content-type"] == "application/zip" and sent.headers["content-disposition"] == 'attachment; filename="visuels.zip"'
+    assert archive.namelist() == ["big_800w.jpg", "small.jpg"]  # the small one is not enlarged: it goes out as it is
+    assert Image.open(io.BytesIO(archive.read("big_800w.jpg"))).size == (800, 533)
+    assert archive.read("small.jpg") == next(data for (_, path), data in fake_storage_client.store.items() if path.endswith("/small.jpg"))
+    assert archive.testzip() is None
+
+    assert fake_storage_client.store == before  # no copy kept
+    with cloud_db.connect(cloud_database_url) as conn:
+        rows = conn.execute("SELECT detail FROM audit_log WHERE org_id = %s AND action = 'library.download'", (org_id,)).fetchall()
+    assert [row["detail"] for row in rows] == [{"count": 2, "size": "web"}]  # how many and the choice, never the names
+    assert client.post(f"{base}/library/zip", headers=_headers(outsider_id), json={"filenames": ["big.jpg"]}).status_code == 403
+
+
+def test_a_selection_over_the_limits_or_naming_a_visual_that_is_not_the_brands_is_refused_whole(client, org_with_users, fake_storage_client, monkeypatch):
+    from nyra.cloud import downloads
+
+    _, base, admin_id, _, _ = org_with_users
+    _upload_sized(client, base, admin_id, "a.jpg", 900, 600)
+    post = lambda body: client.post(f"{base}/library/zip", headers=_headers(admin_id), json=body)  # noqa: E731
+    assert post({"filenames": []}).status_code == 400
+    many = post({"filenames": [f"n{number}.jpg" for number in range(downloads.MAX_ZIP_FILES + 1)]})
+    assert (many.status_code, many.json()["detail"]) == (413, "Au plus 50 visuels par fichier : téléchargez en deux fois.")
+    monkeypatch.setattr(downloads, "MAX_ZIP_BYTES", 1)
+    heavy = post({"filenames": ["a.jpg"]})
+    assert heavy.status_code == 413 and "téléchargez en deux fois" in heavy.json()["detail"]
+    monkeypatch.undo()
+    assert post({"filenames": ["a.jpg", "other-brand.jpg"]}).status_code == 404  # one unknown name: nothing is made for the others
+    assert post({"filenames": ["a.jpg"], "size": "../x"}).status_code == 400
+    assert post({"filenames": ["notes.txt"]}).status_code == 400
+    assert len(_zip_of(post({"filenames": ["a.jpg"]})).namelist()) == 1  # the refusals left the place free
+
+
+def test_two_images_that_would_share_a_name_in_the_archive_both_stay(client, org_with_users, fake_storage_client):
+    _, base, admin_id, _, _ = org_with_users
+    _upload_sized(client, base, admin_id, "a.jpg", 3000, 2000)
+    _upload_sized(client, base, admin_id, "a.jpeg", 3001, 2000)  # not the same bytes: an identical file is refused on import
+    archive = _zip_of(client.post(f"{base}/library/zip", headers=_headers(admin_id), json={"filenames": ["a.jpg", "a.jpeg"], "size": "web"}))
+    assert archive.namelist() == ["a_800w.jpg", "a_800w (1).jpg"]
+
+
+def test_a_purged_original_is_left_out_and_told_in_the_readme_while_the_others_are_sent(client, org_with_users, fake_storage_client):
+    _, base, admin_id, _, _ = org_with_users
+    _upload_sized(client, base, admin_id, "kept.jpg", 600, 400)
+    _upload_sized(client, base, admin_id, "gone.jpg", 601, 400)
+    for key in [key for key in fake_storage_client.store if key[1].endswith("/gone.jpg")]:
+        del fake_storage_client.store[key]  # purged: the row stays, the file is gone
+    archive = _zip_of(client.post(f"{base}/library/zip", headers=_headers(admin_id), json={"filenames": ["gone.jpg", "kept.jpg"]}))
+    assert archive.namelist() == ["kept.jpg", "LISEZ-MOI.txt"]
+    text = archive.read("LISEZ-MOI.txt").decode("utf-8")
+    assert "gone.jpg : L'original de ce visuel n'est plus disponible." in text and "kept.jpg" not in text
+
+
+def test_a_person_runs_one_archive_at_a_time_and_the_place_is_given_back(client, org_with_users, fake_storage_client, monkeypatch):
+    from nyra.cloud.routes import library
+
+    _, base, admin_id, client_id, _ = org_with_users
+    _upload_sized(client, base, admin_id, "a.jpg", 600, 400)
+    post = lambda who: client.post(f"{base}/library/zip", headers=_headers(who), json={"filenames": ["a.jpg"]})  # noqa: E731
+    monkeypatch.setitem(library._ZIPS, admin_id, time.monotonic())  # a batch of this person is being prepared
+    busy = post(admin_id)
+    assert busy.status_code == 409 and "déjà en préparation" in busy.json()["detail"]
+    assert post(client_id).status_code == 200  # someone else is not held
+    monkeypatch.setitem(library._ZIPS, admin_id, time.monotonic() - library.ZIP_LOCK_SECONDS - 1)  # one that never ended stops counting
+    assert post(admin_id).status_code == 200 and admin_id not in library._ZIPS
+    assert post(admin_id).status_code == 200  # and a finished one frees the place
+
+
+def test_the_archive_is_made_piece_by_piece_and_the_names_are_made_unique():
+    from nyra.cloud import downloads
+
+    taken: set[str] = set()
+    assert [downloads.unique_name(name, taken) for name in ("a.jpg", "a.jpg", "A.JPG", "b.png")] == ["a.jpg", "a (1).jpg", "A (2).JPG", "b.png"]
+    assert "LISEZ-MOI.txt" not in {name.lower() for name in taken}  # an image never takes the readme's name: its extension is one of an image
+
+
 # --- launching a read by hand is the Nyra team's (AXE-682) ------------------------------------------
 
 def test_only_the_nyra_team_launches_estimates_and_stops_a_read(client, org_with_users, cloud_database_url):

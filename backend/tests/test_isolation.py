@@ -101,6 +101,7 @@ BODIES = {
     ("POST", BR + "/library/upload"): lambda t: {"files": [("files", _bytes("up.jpg"))], "data": {"collection_id": str(t["col"])}},
     ("PUT", BR + "/library/{filename}"): lambda t: {"json": {"credit": "x"}},
     ("POST", BR + "/library/delete"): lambda t: {"json": {"filenames": [t["filename"]]}},
+    ("POST", BR + "/library/zip"): lambda t: {"json": {"filenames": [t["filename"]]}},
     ("POST", BR + "/library/expiry"): lambda t: {"json": {"filenames": [t["filename"]], "expiry_date": "2031-01-01"}},
     ("POST", BR + "/library/tags"): lambda t: {"json": {"filenames": [t["filename"]], "add": ["x"]}},
     ("POST", BR + "/library/credit"): lambda t: {"json": {"filenames": [t["filename"]], "credit": "Studio"}},
