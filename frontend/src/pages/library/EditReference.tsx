@@ -198,11 +198,8 @@ function OriginalImage({ item, thumbUrl }: { item: LibraryItem; thumbUrl: string
   const image = shown ? <img src={shown} alt="" className="aspect-square w-full object-contain" /> : <span className="flex aspect-square w-full items-center justify-center text-faint"><Icon name="library" size={48} strokeWidth={1.4} /></span>;
   return (
     <div>
-      {url ? (
-        <a href={url} target="_blank" rel="noreferrer noopener" aria-label="Ouvrir l'image en taille réelle" className="block overflow-hidden rounded-xl bg-side">{image}</a>
-      ) : (
-        <div className="overflow-hidden rounded-xl bg-side">{image}</div>
-      )}
+      {/* The same element with or without a link: the image is not mounted again when the original arrives. */}
+      <a href={url} target="_blank" rel="noreferrer noopener" aria-label={url ? "Ouvrir l'image en taille réelle" : undefined} className="block overflow-hidden rounded-xl bg-side">{image}</a>
       {original.isError ? <p className="mt-2 text-xs text-muted">L'image en pleine taille n'a pas pu être chargée.</p> : null}
     </div>
   );

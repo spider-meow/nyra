@@ -120,7 +120,7 @@ export function Library() {
           <LibraryNotice loading={library.isLoading} error={library.error} admin={admin} uploading={up.uploader.uploading} onPick={up.pick} onRetry={() => void library.refetch()} retrying={library.isFetching} />
         </DropZone>
       ) : (
-        <div className="lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+        <div className="fade-in lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8">
           <CollectionTree view={view} />
           <div className="min-w-0">
           <FolderBar view={view} />

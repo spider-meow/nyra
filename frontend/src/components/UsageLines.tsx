@@ -14,7 +14,7 @@ export function UsageBar(props: { item: UsageItem; className?: string }) {
   const ratio = item.limit ? Math.min(1, item.used / item.limit) : 1;
   return (
     <div aria-hidden className={cx("h-1.5 w-32 overflow-hidden rounded-full bg-canvas", props.className)}>
-      <div className={cx("h-full rounded-full", BAR[item.level])} style={{ width: `${ratio * 100}%` }} />
+      <div className={cx("h-full rounded-full transition-[width]", BAR[item.level])} style={{ width: `${ratio * 100}%` }} />
     </div>
   );
 }

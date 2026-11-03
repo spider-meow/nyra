@@ -1,4 +1,4 @@
-import { forwardRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
+import { forwardRef, useState, type ButtonHTMLAttributes, type ImgHTMLAttributes, type InputHTMLAttributes, type ReactNode } from "react";
 import { Link } from "react-router";
 import { confidenceHelp, confidenceLabel, decisionLabel, statusLabel } from "../lib/format";
 import type { Confidence, Decision, Status } from "../types";
@@ -247,10 +247,26 @@ export function Skeleton(props: { className?: string }) {
   return <div className={cx("animate-pulse rounded-xl bg-line/70", props.className)} aria-hidden />;
 }
 
+/** An image that fades in once it has loaded instead of popping in. The box is the caller's, so nothing moves when it arrives. */
+export function FadeImage(props: ImgHTMLAttributes<HTMLImageElement> & { src: string }) {
+  const [loaded, setLoaded] = useState<string>();
+  const { className, onLoad, ...rest } = props;
+  return (
+    <img
+      {...rest}
+      onLoad={(event) => {
+        setLoaded(props.src);
+        onLoad?.(event);
+      }}
+      className={cx(className, "transition-opacity", loaded === props.src ? "opacity-100" : "opacity-0")}
+    />
+  );
+}
+
 export function Thumb(props: { src: string; size?: number; className?: string; alt?: string }) {
   const size = props.size ?? 44;
   return props.src ? (
-    <img
+    <FadeImage
       src={props.src}
       alt={props.alt ?? ""}
       loading="lazy"

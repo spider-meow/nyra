@@ -1,7 +1,7 @@
 import { useEffect, useRef, type PointerEvent } from "react";
 import { Icon } from "../../components/icons";
 import { LabelChips } from "../../components/Labels";
-import { Button, StatusBadge, cx } from "../../components/ui";
+import { Button, FadeImage, StatusBadge, cx } from "../../components/ui";
 import { formatDate, rightsText } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import type { ImageLabel, LibraryItem } from "../../types";
@@ -46,7 +46,7 @@ export function LibraryGrid({ view, thumbs, labelsOf, selected, setSelected, onE
           Tout sélectionner
         </label>
       ) : null}
-      <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
+      <ul key={`${tab}|${view.scope}`} className="fade-in grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4">
         {visible.slice(0, shown).map((item) => (
           <ReferenceCard key={item.id} item={item} where={showWhere && item.collection_id ? view.folders.path(item.collection_id) : ""} labels={labelsOf(item.id)} thumbUrl={thumbs[item.filename]} checked={selected.has(item.filename)} anySelected={selected.size > 0} onEdit={onEdit} onToggle={toggle} />
         ))}
@@ -166,7 +166,7 @@ function ReferenceCard({ item, where, labels, thumbUrl, checked = false, anySele
       >
         <span className="block aspect-[4/3] overflow-hidden bg-side">
           {thumbUrl ? (
-            <img src={thumbUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
+            <FadeImage src={thumbUrl} alt="" loading="lazy" className="h-full w-full object-cover" />
           ) : (
             <span className="flex h-full w-full items-center justify-center text-faint"><Icon name="library" size={32} strokeWidth={1.4} /></span>
           )}
