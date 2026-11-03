@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Modal, useToast } from "../../components/feedback";
+import { Modal, Present, useToast } from "../../components/feedback";
 import { Icon, type IconName } from "../../components/icons";
 import { ContentTagger } from "../../components/Labels";
 import { Button, Input, cx } from "../../components/ui";
@@ -234,17 +234,17 @@ export function SelectionActions({ open, onClose, items, folders, folderCounts, 
   return (
     <>
       {open ? <Menu items={items} labelsOn={LABELS_ENABLED} removing={removing} onPick={pick} onClose={onClose} /> : null}
-      {dialog === "date" ? <DateDialog items={items} bulk={bulk} onClose={close} /> : null}
-      {dialog === "unlimited" ? <UnlimitedDialog items={items} bulk={bulk} onClose={close} /> : null}
-      {dialog === "tags" ? <TagsDialog items={items} bulk={bulk} onClose={close} /> : null}
-      {dialog === "credit" ? <CreditDialog items={items} bulk={bulk} onClose={close} /> : null}
-      {dialog === "folder" ? <FolderDialog items={items} folders={folders} counts={folderCounts} busy={bulk.busy} onFile={bulk.file} onClose={close} /> : null}
-      {dialog === "zip" ? <ZipDialog items={items} onClose={close} /> : null}
-      {dialog === "labels" ? (
+      <Present show={dialog === "date"}><DateDialog items={items} bulk={bulk} onClose={close} /></Present>
+      <Present show={dialog === "unlimited"}><UnlimitedDialog items={items} bulk={bulk} onClose={close} /></Present>
+      <Present show={dialog === "tags"}><TagsDialog items={items} bulk={bulk} onClose={close} /></Present>
+      <Present show={dialog === "credit"}><CreditDialog items={items} bulk={bulk} onClose={close} /></Present>
+      <Present show={dialog === "folder"}><FolderDialog items={items} folders={folders} counts={folderCounts} busy={bulk.busy} onFile={bulk.file} onClose={close} /></Present>
+      <Present show={dialog === "zip"}><ZipDialog items={items} onClose={close} /></Present>
+      <Present show={dialog === "labels"}>
         <Modal open onClose={close} title="Étiquettes de contenu" footer={<Button onClick={close}>Fermer</Button>}>
           <ContentTagger labels={labels} images={{ referenceIds: items.map((item) => item.id) }} />
         </Modal>
-      ) : null}
+      </Present>
     </>
   );
 }

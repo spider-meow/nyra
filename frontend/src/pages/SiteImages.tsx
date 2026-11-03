@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
-import { useToast } from "../components/feedback";
+import { Present, useToast } from "../components/feedback";
 import { ContentFilter, ContentTagger } from "../components/Labels";
 import { LoadError, RefreshFailed, Refreshing, SkeletonGrid } from "../components/busy";
 import { Button, EmptyState, FieldLabel, Input, PageHeader, cx } from "../components/ui";
@@ -86,7 +86,9 @@ export function SiteImages() {
       {qualifying && chosen.length ? (
         <BulkBar chosen={chosen} labels={labels} ignoring={ignoring} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => pick.setSelected(new Set(failedIds)))} onClear={pick.clear} />
       ) : null}
-      <AddToLibrary items={adding} onClose={() => setAdding(null)} onDone={(ids) => pick.setSelected(new Set([...pick.selected].filter((id) => !ids.includes(id))))} />
+      <Present show={adding !== null}>
+        <AddToLibrary items={adding} onClose={() => setAdding(null)} onDone={(ids) => pick.setSelected(new Set([...pick.selected].filter((id) => !ids.includes(id))))} />
+      </Present>
       <Zoom item={zoom} onClose={() => setZoom(null)} />
       {LABELS_ENABLED ? <LabelingMode open={typing} onClose={() => setTyping(false)} /> : null}
     </div>

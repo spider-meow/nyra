@@ -1,7 +1,7 @@
 import { LoadError } from "../components/busy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
-import { useToast } from "../components/feedback";
+import { Present, useToast } from "../components/feedback";
 import { Button, EmptyState, PageHeader, Skeleton } from "../components/ui";
 import { useOrg } from "../lib/org";
 import { useAssignments, useLabels } from "../lib/labels";
@@ -130,7 +130,9 @@ export function Library() {
         </div>
       )}
 
-      <EditReference item={editing} thumbUrl={editing ? thumbs.urls[editing.filename] : undefined} onClose={closeVisual} onDelete={(item) => void removeNames([item.filename])} />
+      <Present show={editing !== null}>
+        <EditReference item={editing} thumbUrl={editing ? thumbs.urls[editing.filename] : undefined} onClose={closeVisual} onDelete={(item) => void removeNames([item.filename])} />
+      </Present>
       <ImportCsv open={importOpen} onClose={() => setImportOpen(false)} />
     </div>
   );
