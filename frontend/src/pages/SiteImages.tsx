@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
-import { Present, useToast } from "../components/feedback";
+import { Present, usePresence, useToast } from "../components/feedback";
 import { ContentFilter, ContentTagger } from "../components/Labels";
 import { LoadError, RefreshFailed, Refreshing, SkeletonGrid } from "../components/busy";
 import { Button, EmptyState, FieldLabel, Input, PageHeader, cx } from "../components/ui";
@@ -83,9 +83,9 @@ export function SiteImages() {
           </Refreshing>
         </>
       )}
-      {qualifying && chosen.length ? (
+      <Present show={Boolean(qualifying && chosen.length)}>
         <BulkBar chosen={chosen} labels={labels} ignoring={ignoring} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => pick.setSelected(new Set(failedIds)))} onClear={pick.clear} />
-      ) : null}
+      </Present>
       <Present show={adding !== null}>
         <AddToLibrary items={adding} onClose={() => setAdding(null)} onDone={(ids) => pick.setSelected(new Set([...pick.selected].filter((id) => !ids.includes(id))))} />
       </Present>
@@ -206,7 +206,7 @@ function ViewNote({ view, logosSetAside }: { view: SiteImageView; logosSetAside:
     packshots: <>Photos de produit seul sur un fond uni, repérées par Nyra. Elles ne sont plus dans « À qualifier » mais restent comparées à la bibliothèque : rien n'est masqué. Une erreur de détection se corrige en désactivant le réglage dans les {settings}.</>,
     ignored: <>Images mises de côté à la main : elles ne sont plus proposées. On les réintègre depuis les <Link className={linkClass} to={`${link("settings")}?section=general`}>Réglages</Link>.</>,
   };
-  return notes[view] ? <p className="mb-4 rounded-xl bg-side px-4 py-3 text-sm text-ink-soft">{notes[view]}</p> : null;
+  return notes[view] ? <p key={view} className="fade-in mb-4 rounded-xl bg-side px-4 py-3 text-sm text-ink-soft">{notes[view]}</p> : null;
 }
 
 /** One tab per site version (US, FR, INT...), when there are several. */
@@ -350,8 +350,9 @@ function EmptyTab({ view, filtered }: { view: SiteImageView; filtered: boolean }
 }
 
 function SelectionBar(props: { count: number; ignoring: boolean; onAdd: () => void; onIgnore: () => void; onClear: () => void; children: ReactNode }) {
+  const { leaving, onAnimationEnd } = usePresence(true);
   return (
-    <div className="fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-4xl flex-wrap items-center gap-3 rounded-3xl border border-line-strong bg-bar px-5 py-2.5 text-sm text-white shadow-float md:left-[calc(248px+2.5rem)]" role="region" aria-label="Actions sur la sélection">
+    <div inert={leaving} onAnimationEnd={onAnimationEnd} className={cx(leaving ? "fade-out" : "rise-in", "fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-4xl flex-wrap items-center gap-3 rounded-3xl border border-line-strong bg-bar px-5 py-2.5 text-sm text-white shadow-float md:left-[calc(248px+2.5rem)]")} role="region" aria-label="Actions sur la sélection">
       <span className="font-medium">{plural(props.count, "sélectionnée", "sélectionnées")}</span>
       <Button size="sm" onClick={props.onAdd}>Ajouter à la bibliothèque</Button>
       {/* Immediate feedback on the bar itself, not only the toast: the images are set aside one request later. */}

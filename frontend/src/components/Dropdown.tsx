@@ -1,4 +1,5 @@
 import { Children, isValidElement, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { usePresence } from "./feedback";
 import { Icon } from "./icons";
 import { cx, fieldClass } from "./ui";
 
@@ -65,6 +66,7 @@ function useListbox(props: Pick<DropdownProps, "options" | "value" | "onChange">
 /** A list that opens under its button, in the colours of the app (the browser's own list cannot be styled). */
 export function Dropdown(props: DropdownProps) {
   const list = useListbox(props);
+  const menu = usePresence(list.open);
   const listId = useId();
   const selected = props.options.find((option) => option.value === props.value);
   return (
@@ -83,8 +85,14 @@ export function Dropdown(props: DropdownProps) {
         <span className="min-w-0 flex-1 truncate">{props.trigger ?? selected?.label}</span>
         <Icon name="chevrons" size={14} className="shrink-0 text-muted" />
       </button>
-      {list.open ? (
-        <ul id={listId} role="listbox" className={cx("absolute right-0 left-0 z-50 max-h-64 min-w-max overflow-auto rounded-md border border-ink bg-paper p-1 shadow-float", props.up ? "bottom-full mb-1" : "top-full mt-1")}>
+      {menu.mounted ? (
+        <ul
+          id={listId}
+          role="listbox"
+          inert={menu.leaving}
+          onAnimationEnd={menu.onAnimationEnd}
+          className={cx("absolute right-0 left-0 z-50 max-h-64 min-w-max overflow-auto rounded-md border border-ink bg-paper p-1 shadow-float", props.up ? "bottom-full mb-1" : "top-full mt-1", menu.leaving ? "fade-out" : "fade-in")}
+        >
           {props.options.map((option, index) => (
             <li
               key={option.value}
@@ -153,6 +161,7 @@ export function MultiDropdown(props: {
   id?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const menu = usePresence(open);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -176,8 +185,14 @@ export function MultiDropdown(props: {
         <span className="min-w-0 flex-1 truncate">{props.selected.length ? props.selected.join(", ") : props.allLabel}</span>
         <Icon name="chevrons" size={14} className="shrink-0 text-muted" />
       </button>
-      {open ? (
-        <div role="listbox" aria-multiselectable className="absolute top-full right-0 left-0 z-50 mt-1 max-h-64 min-w-max overflow-auto rounded-md border border-ink bg-paper p-1 shadow-float">
+      {menu.mounted ? (
+        <div
+          role="listbox"
+          aria-multiselectable
+          inert={menu.leaving}
+          onAnimationEnd={menu.onAnimationEnd}
+          className={cx("absolute top-full right-0 left-0 z-50 mt-1 max-h-64 min-w-max overflow-auto rounded-md border border-ink bg-paper p-1 shadow-float", menu.leaving ? "fade-out" : "fade-in")}
+        >
           <button type="button" role="option" aria-selected={!props.selected.length} onClick={() => { props.onAll(); setOpen(false); }} className={cx(row, !props.selected.length && "bg-yellow font-medium")}>
             <span className="min-w-0 flex-1">{props.allLabel}</span>
             {!props.selected.length ? <Icon name="check" size={14} strokeWidth={2} /> : null}

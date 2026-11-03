@@ -1,8 +1,8 @@
 import { useQuery, type UseQueryResult } from "@tanstack/react-query";
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from "react";
-import { useToast } from "../../components/feedback";
+import { Present, usePresence, useToast } from "../../components/feedback";
 import { Icon } from "../../components/icons";
-import { Button, Spinner } from "../../components/ui";
+import { Button, Spinner, cx } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { bytes, num } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -40,10 +40,11 @@ function Row(props: { choice: DownloadChoice; busy: boolean; disabled: boolean; 
 /** The popover above the button: the sizes, or the wait, or the error with « Réessayer ». */
 function Sizes(props: { query: UseQueryResult<{ choices: DownloadChoice[] }>; list: RefObject<HTMLUListElement | null>; busy: string | null; onPick: (choice: DownloadChoice) => void; onClose: () => void }) {
   const { query } = props;
+  const { leaving, onAnimationEnd } = usePresence(true);
   return (
     <>
-      <div className="fixed inset-0 z-30" onMouseDown={props.onClose} />
-      <div className="absolute bottom-full left-0 z-40 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-line-strong bg-paper p-1.5 shadow-float">
+      <div className="fixed inset-0 z-30" inert={leaving} onMouseDown={props.onClose} />
+      <div inert={leaving} onAnimationEnd={onAnimationEnd} className={cx(leaving ? "fade-out" : "fade-in", "absolute bottom-full left-0 z-40 mb-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-line-strong bg-paper p-1.5 shadow-float")}>
         {query.data ? (
           <ul ref={props.list} role="menu" aria-label="Taille du téléchargement" className="grid gap-0.5">
             {query.data.choices.map((choice) => (
@@ -110,7 +111,7 @@ export function DownloadMenu({ item }: { item: LibraryItem }) {
       <Button aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
         <Icon name="download" size={16} /> Télécharger <Icon name="down" size={14} />
       </Button>
-      {open ? <Sizes query={sizes} list={list} busy={busy} onPick={(choice) => void pick(choice)} onClose={() => setOpen(false)} /> : null}
+      <Present show={open}><Sizes query={sizes} list={list} busy={busy} onPick={(choice) => void pick(choice)} onClose={() => setOpen(false)} /></Present>
     </div>
   );
 }

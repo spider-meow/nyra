@@ -45,7 +45,7 @@ function StaffBanner() {
   }
   const seen: Seen = viewAs?.role ?? "staff";
   return (
-    <div role="status" className="-mx-4 -mt-6 mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-ink bg-yellow px-4 py-2.5 text-sm md:-mx-14 md:-mt-10 md:px-14">
+    <div role="status" className="fade-in -mx-4 -mt-6 mb-6 flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-ink bg-yellow px-4 py-2.5 text-sm md:-mx-14 md:-mt-10 md:px-14">
       <Icon name="eye" size={16} />
       <p className="min-w-0 flex-1 basis-56">Vous consultez l'espace de <strong>{org.name}</strong> {seen === "staff" ? "en tant qu'équipe Nyra" : seen === "admin" ? "en tant qu'administrateur" : "en tant que client"}.</p>
       <Segmented
