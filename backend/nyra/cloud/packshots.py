@@ -17,6 +17,7 @@ import numpy as np
 import psycopg
 
 from .. import packshots as detector
+from . import packshot_feedback
 
 log = logging.getLogger("nyra.packshots")
 Row = dict
@@ -98,7 +99,7 @@ def pending_background(conn: psycopg.Connection, brand_id: uuid.UUID, after: uui
 
 
 def ids(conn: psycopg.Connection, brand_id: uuid.UUID) -> set[uuid.UUID]:
-    """The brand's site images that are packshots: none unless the setting is on."""
+    """The brand's site images that are packshots: none unless the setting is on. What the detector says, except where the Nyra team answered (AXE-680): its answer wins."""
     if not is_enabled(conn, brand_id):
         return set()
     rows = conn.execute(
@@ -106,7 +107,13 @@ def ids(conn: psycopg.Connection, brand_id: uuid.UUID) -> set[uuid.UUID]:
            WHERE s.brand_id = %s AND si.packshot_score >= %s::real AND si.bg_uniform >= %s::real""",
         (brand_id, detector.PRODUCT_THRESHOLD, detector.UNIFORM_THRESHOLD),
     ).fetchall()
-    return {row["id"] for row in rows}
+    found = {row["id"] for row in rows}
+    for image_id, answer in packshot_feedback.decided(conn, brand_id).items():
+        if answer:
+            found.add(image_id)
+        else:
+            found.discard(image_id)
+    return found
 
 
 def fingerprint(conn: psycopg.Connection, brand_id: uuid.UUID) -> str:

@@ -389,7 +389,12 @@ back, and a short note (200 characters) can be added. One feedback per person an
 A feedback is stored (`packshot_feedback`, migration `20261030000045`) **with what lets the case be replayed**: the image and its `content_hash` (the feedback follows the
 file when the site is read again), the verdict, the product probability and the border measure of that moment, the two thresholds in force, and whether the image was
 detected. It is traced in the audit log as `packshots.feedback` (identifiers and flags, never the note), invisible to the client when the author is not a member.
-**A feedback never changes the detection**: it measures. Moving a threshold stays a decision, taken with these figures.
+**A feedback measures, and since AXE-680 it also decides what is shown**: the answer of the team wins over the detector for that image. "Pas un packshot" takes it out of the
+Packshots tab (back to "À qualifier"), "C'est un packshot" brings it in, and both stay when the site is read again (the answer follows the `content_hash`, within the brand only).
+Pressing the same button again takes the answer back and gives the image to the detector. No new table: `cloud.packshots.ids` applies the latest answer per file
+(`packshot_feedback.decided`), so the tab, its counters and the "À qualifier" counter all follow. The report above reads the measures kept with each feedback, never the
+decision, so its figures do not move. Answers are written by the Nyra team only, and shown to the client only through what the tabs list. Moving a threshold stays a decision, taken with the figures.
+Any team member's latest answer counts (taking back one's own answer leaves another person's in force).
 
 *At the start of a session* read what the feedbacks say, per brand:
 
