@@ -259,6 +259,7 @@ export function FadeImage(props: ImgHTMLAttributes<HTMLImageElement> & { src: st
         setLoaded(true);
         onLoad?.(event);
       }}
+      onError={() => setLoaded(true)} // a picture that cannot load shows what the browser shows, not a hidden image
       className={cx(className, "transition-opacity", loaded ? "opacity-100" : "opacity-0")}
     />
   );
