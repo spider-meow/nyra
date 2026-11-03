@@ -9,7 +9,7 @@ import { useOrg } from "../../lib/org";
 import type { DownloadChoice, LibraryItem } from "../../types";
 
 /** Hands a file to the browser's download, without leaving the page. */
-function saveBlob(blob: Blob, name: string) {
+export function saveBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;

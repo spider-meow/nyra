@@ -10,8 +10,9 @@ import { useLibraryMutations } from "../../lib/queries";
 import type { LabelInfo, LibraryItem } from "../../types";
 import type { CollectionIndex } from "./collections";
 import { creditHint, dateHint, summarize, whereHint } from "./selectionSummary";
+import { ZipDialog } from "./ZipDialog";
 
-type Dialog = "date" | "unlimited" | "tags" | "folder" | "credit" | "labels";
+type Dialog = "date" | "unlimited" | "tags" | "folder" | "credit" | "labels" | "zip";
 
 /** The edits applied to the selected visuals. Each one says how many visuals changed, then ends the selection. */
 function useBulkEdit(names: string[], done: () => void) {
@@ -85,6 +86,8 @@ function Menu(props: { items: LibraryItem[]; labelsOn: boolean; removing: boolea
         <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-line-strong sm:hidden" aria-hidden />
         <p className="px-4 pb-1 text-[13px] text-muted sm:hidden">{plural(sum.count, "visuel sélectionné", "visuels sélectionnés")}</p>
         <ul ref={list} className="grid gap-0.5 p-1.5" role="menu" aria-label="Actions sur la sélection" onKeyDown={onKeyDown}>
+          <Row icon="download" label="Télécharger…" hint="Un fichier ZIP, à la taille choisie" onClick={() => props.onPick("zip")} />
+          <li role="separator" className="my-1 border-t border-line" />
           <Row icon="calendar" label="Fixer l'échéance…" hint={dateHint(sum.count, sum.withDate)} onClick={() => props.onPick("date")} />
           <Row icon="infinity" label="Droits illimités…" hint="Jamais expirés, sans alerte" onClick={() => props.onPick("unlimited")} />
           <Row icon="tag" label="Ajouter ou retirer des tags…" hint={sum.tags ? plural(sum.tags, "tag déjà utilisé", "tags déjà utilisés") : "Aucun tag pour l'instant"} onClick={() => props.onPick("tags")} />
@@ -272,6 +275,7 @@ export function SelectionActions({ open, onClose, items, folders, labels, onDone
       {dialog === "tags" ? <TagsDialog items={items} bulk={bulk} onClose={close} /> : null}
       {dialog === "credit" ? <CreditDialog items={items} bulk={bulk} onClose={close} /> : null}
       {dialog === "folder" ? <FolderDialog items={items} folders={folders} bulk={bulk} onClose={close} /> : null}
+      {dialog === "zip" ? <ZipDialog items={items} onClose={close} /> : null}
       {dialog === "labels" ? (
         <Modal open onClose={close} title="Étiquettes de contenu" footer={<Button onClick={close}>Fermer</Button>}>
           <ContentTagger labels={labels} images={{ referenceIds: items.map((item) => item.id) }} />

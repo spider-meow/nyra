@@ -50,6 +50,7 @@ async function request<T>(path: string, init: RequestInit = {}, replay = true, r
     try {
       response = await fetch(`/api${path}`, { ...init, headers });
     } catch {
+      if (init.signal?.aborted) throw new DOMException("Annulé", "AbortError"); // the person cancelled: not a network failure, `isCancelled` tells it apart
       throw new ApiError(UNREACHABLE, 0); // no connection, or the connection was cut: the browser's own message ("Failed to fetch") says nothing
     }
     // Only the rate limiter (cloud/ratelimit.py) is replayed: it refuses with 429 and always sets Retry-After, before the
@@ -86,11 +87,16 @@ export const api = {
     request<T>(path, { method: "PUT", body: body instanceof FormData ? body : JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
   /** A file the server sends as an attachment (with the session's token, which a plain link cannot carry) and the name it gives it. */
-  file: async (path: string): Promise<{ blob: Blob; name: string }> => {
-    const response = await request<Response>(path, {}, true, true);
+  file: async (path: string, init: RequestInit = {}): Promise<{ blob: Blob; name: string }> => {
+    const response = await request<Response>(path, init, true, true);
     return { blob: await response.blob(), name: /filename="([^"]+)"/.exec(response.headers.get("Content-Disposition") ?? "")?.[1] ?? "image" };
   },
 };
+
+/** The person cancelled a request they had given an `AbortSignal`. */
+export function isCancelled(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "La requête a échoué.";
