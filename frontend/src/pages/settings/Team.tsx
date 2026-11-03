@@ -34,7 +34,7 @@ function MemberCard(props: { member: Member; last: boolean }) {
   const editable = admin && !member.you;
   const help = !admin || !last ? ROLE_HELP[member.role] : member.you ? "Vous êtes le seul administrateur : invitez-en un autre." : "Dernier administrateur : nommez-en un autre avant de le retirer ou de changer son rôle.";
   return (
-    <li className={cx("grid content-start gap-3 rounded-xl border bg-paper p-4", member.you ? "border-ink" : "border-line")}>
+    <li className={cx("grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-3 rounded-xl border bg-paper p-4", member.you ? "border-ink" : "border-line")}>
       <div className="flex items-center gap-3">
         <Avatar seed={member.user_id} size={48} />
         <div className="min-w-0 leading-tight">
@@ -42,7 +42,7 @@ function MemberCard(props: { member: Member; last: boolean }) {
             {displayName(member.email)}
             {member.you ? <span className="ml-2 rounded-full bg-ink px-2 py-0.5 align-[2px] text-[11.5px] font-medium text-white">vous</span> : null}
           </p>
-          <p className="truncate text-[13px] text-muted">{member.email}</p>
+          <p className="truncate text-[13px] text-muted" title={member.email}>{member.email}</p>
         </div>
       </div>
       {editable ? (
@@ -87,11 +87,11 @@ function PendingCard({ member }: { member: Member }) {
   }
 
   return (
-    <li className="grid content-start gap-3 rounded-xl border-[1.5px] border-dashed border-line-strong bg-canvas p-4">
+    <li className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-3 rounded-xl border-[1.5px] border-dashed border-line-strong bg-canvas p-4">
       <div className="flex items-center gap-3">
         <span aria-hidden className="grid size-12 shrink-0 place-items-center rounded-full border-[1.5px] border-dashed border-line-strong bg-sunk text-faint"><Icon name="mail" size={20} /></span>
         <div className="min-w-0 leading-tight">
-          <p className="truncate text-[15px] font-semibold">{member.email}</p>
+          <p className="truncate text-[15px] font-semibold" title={member.email}>{member.email}</p>
           <p className="text-[13px] text-muted">Invitation envoyée le {formatDate(member.invited_at)} · {ROLE_LABEL[member.role]}</p>
         </div>
       </div>
@@ -198,13 +198,13 @@ export function Team() {
       {inviting ? <Invite onDone={() => setInviting(false)} /> : null}
       {members.isLoading ? <Skeleton className="m-5 h-24" /> : null}
       {members.error ? <p className="px-5 py-4 text-sm text-expired">{errorMessage(members.error)}</p> : null}
-      <ul className="grid gap-3 border-t border-line p-5 sm:grid-cols-2 2xl:grid-cols-3">
+      <ul className="grid grid-cols-1 gap-3 border-t border-line p-5 sm:grid-cols-2">
         {active.map((member) => <MemberCard key={member.user_id} member={member} last={isLastAdmin(all, member)} />)}
       </ul>
       {waiting.length ? (
         <>
           <h3 className="border-t border-line px-5 pb-1 pt-4 text-[13px] font-medium uppercase tracking-wide text-muted">Invitations en attente</h3>
-          <ul className="grid gap-3 px-5 pb-5 pt-2 sm:grid-cols-2 2xl:grid-cols-3">
+          <ul className="grid grid-cols-1 gap-3 px-5 pb-5 pt-2 sm:grid-cols-2">
             {waiting.map((member) => <PendingCard key={member.user_id} member={member} />)}
           </ul>
         </>
