@@ -17,6 +17,9 @@ from .. import fetch
 ORIGINAL = "original"
 # (key, label, long side in px), largest first. An image is never enlarged: a size not under the original's long side is not offered.
 STEPS = (("large", "Grand", 2000), ("medium", "Moyen", 1200), ("web", "Web", 800))
+MAX_ZIP_FILES = 50  # one archive (AXE-678): beyond either limit, « téléchargez en deux fois »
+MAX_ZIP_BYTES = 200_000_000  # the originals' announced sizes added up (`byte_size`); a smaller size weighs less, so this is the ceiling
+README_NAME = "LISEZ-MOI.txt"
 JPEG_QUALITY = 90
 WEBP_QUALITY = 90
 # Pillow saves these as they are; any other format (a GIF, a TIFF kept as sent...) is saved as PNG.
@@ -58,6 +61,24 @@ def download_name(filename: str, key: str, width: int, extension: str) -> str:
     """`photo_1200w.jpg`: the stored name without its extension, the width made, the format's extension. Only letters, digits, `.`, `_`, `-` and `()`; the rest becomes `_`."""
     stem = re.sub(r"[^\w.()\-]+", "_", Path(filename).stem, flags=re.ASCII).strip("._") or "image"
     return f"{stem}{'' if key == ORIGINAL else f'_{width}w'}{extension}"
+
+
+def unique_name(name: str, taken: set[str]) -> str:
+    """`name`, or `stem (1).ext`, `stem (2).ext`... the first one not in `taken` (compared without case: Windows and macOS
+    would merge `A.jpg` and `a.jpg` on extraction). The name chosen is added to `taken`, which is as small as the batch."""
+    path, number, candidate = Path(name), 0, name
+    while candidate.lower() in taken:  # ends: `taken` is finite
+        number += 1
+        candidate = f"{path.stem} ({number}){path.suffix}"
+    taken.add(candidate.lower())
+    return candidate
+
+
+def readme(skipped: list[tuple[str, str]]) -> str:
+    """The text of `LISEZ-MOI.txt`: the visuals left out of an archive and why (the archive is still made, whole as far as it can be)."""
+    lines = [f"{len(skipped)} visuel(s) n'ont pas pu être ajoutés à cette archive :", ""]
+    lines += [f"- {name} : {why}" for name, why in skipped]
+    return "\n".join(lines) + "\n"
 
 
 def resized(img: Image.Image, side: int) -> tuple[bytes, int, str, str]:

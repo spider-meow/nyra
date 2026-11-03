@@ -639,6 +639,11 @@ def reference_with_hash(conn: psycopg.Connection, brand_id: uuid.UUID, content_h
     return row["filename"] if row else None
 
 
+def get_references_by_filenames(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str]) -> list[Row]:
+    """The rows of this brand's references with these names (an unknown name, or another brand's, has none)."""
+    return conn.execute("SELECT * FROM reference_images WHERE brand_id = %s AND filename = ANY(%s)", (brand_id, filenames)).fetchall()
+
+
 def existing_filenames(conn: psycopg.Connection, brand_id: uuid.UUID, filenames: list[str]) -> set[str]:
     rows = conn.execute(
         "SELECT filename FROM reference_images WHERE brand_id = %s AND filename = ANY(%s)", (brand_id, filenames)

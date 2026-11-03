@@ -5,13 +5,16 @@ from __future__ import annotations
 import csv
 import io
 import mimetypes
+import threading
+import time
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Iterator, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
 from nyra import fetch
@@ -195,6 +198,20 @@ def _original_bytes(ctx: Ctx, row) -> bytes:
         raise HTTPException(status_code=404, detail="L'original de ce visuel n'est plus disponible.") from exc
 
 
+def _rendered(ctx: Ctx, row, size: str, wait: float) -> tuple[bytes, str, Optional[str]]:
+    """(content, download name, media type) of one image at `size`, a key of `downloads.choices` for it. The original goes out byte for byte;
+    a smaller size is made now, in the one place of `heavy_image` (waited for `wait` seconds at most) and capped in pixels."""
+    data = _original_bytes(ctx, row)
+    if size == downloads.ORIGINAL:
+        return data, downloads.download_name(row["filename"], size, 0, Path(row["filename"]).suffix.lower()), mimetypes.guess_type(row["filename"])[0]
+    with heavy_image(wait=wait):
+        img, why = fetch.decode_reference(data, upload_pixel_limit(ctx.settings.base_config()))
+        if img is None:
+            raise HTTPException(status_code=422, detail=why)
+        body, width, extension, media = downloads.resized(img, downloads.known_size(size))
+    return body, downloads.download_name(row["filename"], size, width, extension), media
+
+
 @router.get(f"{BRAND}/library/{{filename}}/download")
 def library_download(filename: str, size: str = Query(downloads.ORIGINAL, max_length=20),
                      scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> Response:
@@ -203,19 +220,108 @@ def library_download(filename: str, size: str = Query(downloads.ORIGINAL, max_le
     row = _own_reference(ctx, scope, filename)
     if size not in {offer["key"] for offer in downloads.choices(row["width"], row["height"], row["byte_size"])}:
         raise HTTPException(status_code=400, detail="Cette taille n'est pas proposée pour cette image.")
-    data = _original_bytes(ctx, row)
-    if size == downloads.ORIGINAL:
-        body, name, media = data, downloads.download_name(row["filename"], size, 0, Path(row["filename"]).suffix.lower()), mimetypes.guess_type(row["filename"])[0]
-    else:
-        with heavy_image(wait=DOWNLOAD_WAIT_SECONDS):
-            img, why = fetch.decode_reference(data, upload_pixel_limit(ctx.settings.base_config()))
-            if img is None:
-                raise HTTPException(status_code=422, detail=why)
-            body, width, extension, media = downloads.resized(img, downloads.known_size(size))
-        name = downloads.download_name(row["filename"], size, width, extension)
+    body, name, media = _rendered(ctx, row, size, DOWNLOAD_WAIT_SECONDS)
     with cloud_db.connect(ctx.settings.database_url) as conn:
         scope.audit(conn, "library.download", "reference", row["id"], count=1, size=size)  # the choice, never the name or the content
     return Response(body, media_type=media or "application/octet-stream", headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+
+# --- several images in one ZIP (AXE-678) ----------------------------------------------------------
+
+ZIP_WAIT_SECONDS = 30  # a conversion waits this long for the place of `heavy_image`; after it the image is left out of the archive
+ZIP_LOCK_SECONDS = 600  # a batch of one person that never ended (a stream dropped without closing) stops counting after this
+# One archive at a time per person. Process memory, like the rate limit (`ratelimit.py`): with several web processes a person could run
+# one per process. At most one entry per person ever seen; a finished or dropped batch frees its entry.
+_ZIPS: dict[uuid.UUID, float] = {}
+_ZIPS_LOCK = threading.Lock()
+
+
+class ZipBody(BaseModel):
+    filenames: list[Annotated[str, Field(max_length=200)]] = Field(default_factory=list, max_length=1000)  # the real limit is `MAX_ZIP_FILES`, said in words
+    size: str = Field(default=downloads.ORIGINAL, max_length=20)
+
+
+class _Sink:
+    """What `zipfile` writes to: it keeps the bytes until the stream takes them, so the archive is never whole in memory."""
+
+    def __init__(self) -> None:
+        self.parts: list[bytes] = []
+
+    def write(self, data: bytes) -> int:
+        self.parts.append(bytes(data))
+        return len(data)
+
+    def flush(self) -> None:
+        pass  # nothing is buffered below
+
+    def take(self) -> bytes:
+        data, self.parts = b"".join(self.parts), []
+        return data
+
+
+def _zip_rows(ctx: Ctx, scope: BrandScope, body: ZipBody) -> list:
+    """The rows of the visuals asked for (in the order asked, once each), or the refusal of the whole batch: nothing named that is not this brand's."""
+    names = list(dict.fromkeys(safe_filename(name) for name in body.filenames))
+    if not names:
+        raise HTTPException(status_code=400, detail="Aucun visuel sélectionné.")
+    if len(names) > downloads.MAX_ZIP_FILES:
+        raise HTTPException(status_code=413, detail=f"Au plus {downloads.MAX_ZIP_FILES} visuels par fichier : téléchargez en deux fois.")
+    if body.size not in (downloads.ORIGINAL, *(step[0] for step in downloads.STEPS)):
+        raise HTTPException(status_code=400, detail="Cette taille n'est pas proposée.")
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        found = {row["filename"]: row for row in cloud_db.get_references_by_filenames(conn, scope.brand_id, names)}
+    if len(found) != len(names):  # an unknown name, or one of another brand: the same answer, and nothing is made
+        raise HTTPException(status_code=404, detail="Un des visuels n'existe plus dans cette bibliothèque.")
+    if sum(row["byte_size"] or 0 for row in found.values()) > downloads.MAX_ZIP_BYTES:
+        raise HTTPException(status_code=413, detail=f"Plus de {megabytes(downloads.MAX_ZIP_BYTES)} dans ce lot : téléchargez en deux fois.")
+    return [found[name] for name in names]
+
+
+def _zip_chunks(ctx: Ctx, rows: list, size: str, user_id: uuid.UUID) -> Iterator[bytes]:
+    """The archive, piece by piece: each image is read, converted and written before the next is touched (so one image in memory).
+    An image that cannot be made is left out and told in `LISEZ-MOI.txt`; the person's place is given back whatever happens."""
+    sink, taken, skipped = _Sink(), set(), []
+    now = datetime.now(timezone.utc).timetuple()[:6]
+    try:
+        with zipfile.ZipFile(sink, "w", zipfile.ZIP_STORED) as archive:  # stored: the images are compressed already
+            for row in rows:
+                offered = {offer["key"] for offer in downloads.choices(row["width"], row["height"], row["byte_size"])}
+                try:
+                    body, name, _ = _rendered(ctx, row, size if size in offered else downloads.ORIGINAL, ZIP_WAIT_SECONDS)  # never enlarged
+                except HTTPException as exc:
+                    skipped.append((row["filename"], str(exc.detail)))
+                    continue
+                entry = zipfile.ZipInfo(downloads.unique_name(name, taken), now)
+                entry.external_attr = 0o644 << 16
+                archive.writestr(entry, body)
+                yield sink.take()
+            if skipped:
+                archive.writestr(zipfile.ZipInfo(downloads.README_NAME, now), downloads.readme(skipped).encode("utf-8"))
+        yield sink.take()  # the table of contents, written when the archive is closed
+    finally:
+        with _ZIPS_LOCK:
+            _ZIPS.pop(user_id, None)
+
+
+@router.post(f"{BRAND}/library/zip")
+def library_zip(body: ZipBody, scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> StreamingResponse:
+    """Several images in one ZIP, all at the same size, sent as it is made and kept nowhere. Up to `MAX_ZIP_FILES` images and
+    `MAX_ZIP_BYTES` announced, one archive at a time per person; a name that is not this brand's refuses the whole batch."""
+    rows = _zip_rows(ctx, scope, body)
+    user_id = scope.member.user_id
+    with _ZIPS_LOCK:
+        if time.monotonic() - _ZIPS.get(user_id, -ZIP_LOCK_SECONDS) < ZIP_LOCK_SECONDS:
+            raise HTTPException(status_code=409, detail="Un autre téléchargement est déjà en préparation. Attendez qu'il se termine ou annulez-le.")
+        _ZIPS[user_id] = time.monotonic()
+    try:
+        with cloud_db.connect(ctx.settings.database_url) as conn:
+            scope.audit(conn, "library.download", "reference", None, count=len(rows), size=body.size)  # how many and the choice, never the names
+    except BaseException:  # the stream that would give the place back is never started
+        with _ZIPS_LOCK:
+            _ZIPS.pop(user_id, None)
+        raise
+    return StreamingResponse(_zip_chunks(ctx, rows, body.size, user_id), media_type="application/zip",
+                             headers={"Content-Disposition": 'attachment; filename="visuels.zip"'})
 
 
 def _read_upload(upload_file: UploadFile) -> tuple[Optional[dict], str, fetch.Source]:
