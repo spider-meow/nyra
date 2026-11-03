@@ -155,6 +155,11 @@ a {
   animation: fade-in var(--motion-base) var(--ease-enter);
 }
 
+/* Un indicateur d'attente n'apparaît qu'au bout de 150 ms : un chargement rapide n'affiche rien (comme NavProgress et busy). */
+.fade-in-late {
+  animation: fade-in var(--motion-base) var(--ease-enter) 150ms backwards;
+}
+
 /* Sorties : plus courtes que les entrées, courbe qui accélère ; l'élément reste monté jusqu'à la fin (usePresence). */
 @keyframes fade-out {
   from { opacity: 1; }

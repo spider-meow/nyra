@@ -1,16 +1,19 @@
 import { useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, Outlet } from "react-router";
+import { Link } from "react-router";
 import { useOrg, useOrganizations } from "../lib/org";
+import { usePresence } from "./feedback";
 import { Icon } from "./icons";
 import { JobToasts } from "./layout/JobToasts";
+import { RouteFade } from "./layout/RouteFade";
 import { Sidebar, useNavItems } from "./layout/Sidebar";
 import { setViewAs, type ViewAs } from "../lib/viewAs";
-import { Button, Checkbox, Segmented } from "./ui";
+import { Button, Checkbox, Segmented, cx } from "./ui";
 
 /** The side column (a menu on a phone) and the page beside it. `sidebar` gets the function that closes the phone menu. */
 export function Frame(props: { sidebar: (close: () => void) => ReactNode; title: string; children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const menu = usePresence(menuOpen);
   const sidebar = props.sidebar(() => setMenuOpen(false));
 
   return (
@@ -24,8 +27,17 @@ export function Frame(props: { sidebar: (close: () => void) => ReactNode; title:
         <Button variant="ghost" aria-expanded={menuOpen} aria-label={menuOpen ? "Fermer le menu" : "Ouvrir le menu"} className="w-11 px-0" onClick={() => setMenuOpen((open) => !open)}>
           <Icon name={menuOpen ? "close" : "menu"} size={20} />
         </Button>
+        {/* Over the page, not in the flow: opening it does not push the page down. */}
+        {menu.mounted ? (
+          <div
+            inert={menu.leaving}
+            onAnimationEnd={menu.onAnimationEnd}
+            className={cx("absolute inset-x-0 top-full max-h-[calc(100dvh-3.5rem)] overflow-y-auto border-b border-line bg-side shadow-float md:hidden", menu.leaving ? "fade-out" : "fade-in")}
+          >
+            {sidebar}
+          </div>
+        ) : null}
       </div>
-      {menuOpen ? <div className="border-b border-line bg-side md:hidden">{sidebar}</div> : null}
       <main className="min-w-0 px-4 py-6 md:px-14 md:py-10">{props.children}</main>
     </div>
   );
@@ -70,8 +82,8 @@ export function Layout() {
   return (
     <Frame title={org.brands.length > 1 ? brand.name : org.name} sidebar={(close) => <Sidebar nav={nav} orgs={orgs.data} onNavigate={close} />}>
       <StaffBanner />
-      <JobToasts />
-      <Outlet />
+      <JobToasts key={brand.id} />
+      <RouteFade />
     </Frame>
   );
 }

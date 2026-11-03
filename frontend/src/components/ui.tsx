@@ -236,7 +236,7 @@ export function EmptyState(props: { title: string; body?: ReactNode; action?: Re
 
 export function Spinner(props: { label?: string }) {
   return (
-    <span className="inline-flex items-center gap-2 text-sm text-muted" role="status">
+    <span className="fade-in-late inline-flex items-center gap-2 text-sm text-muted" role="status">
       <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-line-strong border-t-bark" aria-hidden />
       {props.label ?? "Chargement…"}
     </span>

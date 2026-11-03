@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link, Outlet } from "react-router";
+import { Link } from "react-router";
 import {
   CompareFacts,
   CountList,
@@ -14,6 +14,7 @@ import {
   type HistoryMetric,
 } from "../components/insights";
 import { Frame } from "../components/Layout";
+import { RouteFade } from "../components/layout/RouteFade";
 import { StaffSidebar } from "../components/layout/StaffSidebar";
 import { EmptyState, PageHeader, Spinner } from "../components/ui";
 import { api, errorMessage } from "../lib/api";
@@ -36,7 +37,7 @@ export function BackOffice() {
   }
   return (
     <Frame title="Back office" sidebar={(close) => <StaffSidebar onNavigate={close} />}>
-      <Outlet />
+      <RouteFade />
     </Frame>
   );
 }
