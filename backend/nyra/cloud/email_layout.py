@@ -92,6 +92,17 @@ class Section:
 
 
 @dataclass(frozen=True)
+class Brand:
+    """A card for one brand: its figures (`(value, label, tone)`, each on a line), its notes (yellow warnings), its button.
+    With no figure, only `quiet` is said (« rien à traiter »): one short line."""
+    title: str
+    figures: Sequence[tuple] = ()
+    notes: Sequence[str] = ()
+    button: Optional[Button] = None
+    quiet: str = ""
+
+
+@dataclass(frozen=True)
 class Footer:
     text: str
     link_label: Optional[str] = None
@@ -216,7 +227,22 @@ def _section(b: Section) -> tuple[str, str]:
     return html, text
 
 
-_RENDER = {Paragraph: _paragraph, Notice: _notice, Stats: _stats, Section: _section}
+def _brand(b: Brand) -> tuple[str, str]:
+    name = f'<p class="ink" style="margin:0;font-family:{SERIF};font-size:18px;line-height:1.3;font-weight:800">{_e(b.title)}</p>'
+    box = (f'<table {_TABLE} class="sect" style="margin:0 0 12px;background:{LIGHT["sect"]};border:1px solid {LIGHT["line"]};border-radius:12px"><tr>'
+           f'<td class="sect-pad" style="padding:14px 18px 16px">')
+    chips = "".join(f'<tr><td style="padding:6px 0 0"><span class="t-{tone}" style="display:inline-block;min-width:26px;padding:2px 9px;border-radius:999px;'
+                    f'background:{TONES[tone][1]};color:{TONES[tone][0]};font-weight:700;text-align:center">{_e(value)}</span>'
+                    f'<span style="padding-left:10px;font-size:15px">{_e(label)}</span></td></tr>' for value, label, tone in b.figures)
+    quiet = f'<p class="muted" style="margin:2px 0 0;font-size:14px;color:{LIGHT["muted"]}">{_e(b.quiet)}</p>' if not b.figures else ""
+    notes = "".join(_notice_html(n, "yellow").replace("margin:0 0 16px", "margin:12px 0 0") for n in b.notes)
+    button, button_text = _button(b.button)
+    lines = [f"- {_line(value)} {_line(label)}" for value, label, _ in b.figures] or [_line(b.quiet)]
+    text = [_line(b.title)] + lines + [_line(n) for n in b.notes] + ([button_text] if button_text else [])
+    return f'{box}{name}{quiet}<table {_TABLE}>{chips}</table>{notes}{button}</td></tr></table>', "\n".join(text)
+
+
+_RENDER = {Brand: _brand, Paragraph: _paragraph, Notice: _notice, Stats: _stats, Section: _section}
 
 
 # --- the page -----------------------------------------------------------------------------------------------------------------

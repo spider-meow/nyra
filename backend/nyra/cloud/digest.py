@@ -62,9 +62,9 @@ ORG_LIMIT = 200                 # organizations looked at per page of `due_orgs`
 MAX_PAGES = 5                   # pages per pass: at most 1,000 organizations
 ALREADY_SENT = "invalid_idempotent_request"  # Resend: this key was used with another body, so the first mail left
 _SENTENCES = {
-    "unfinished": "La lecture de ce mois n'est pas terminée pour la marque « {} ». Les informations ci-dessous peuvent donc être partielles.",
-    "suspect": "La dernière lecture de la marque « {} » semble incomplète : rien n'est marqué retiré pour cette marque.",
-    "capped": "La lecture de la marque « {} » s'est arrêtée avant la fin : la limite de pages lues ce mois-ci est atteinte.",
+    "unfinished": "La lecture de ce mois n'est pas terminée : ces chiffres peuvent être partiels.",
+    "suspect": "La dernière lecture du site semble incomplète : aucun visuel n'est marqué retiré.",
+    "capped": "La lecture s'est arrêtée avant la fin : la limite de pages lues ce mois-ci est atteinte.",
 }
 
 
@@ -100,43 +100,36 @@ def _facts(counts: dict) -> list[str]:
 
 
 def _subject(org_name: str, counts: dict) -> str:
-    subject = f"Nyra · {' '.join(org_name.split())[:30]} : {', '.join(_facts(counts)) or 'lecture à vérifier'}"
+    facts = _facts(counts)  # the first two say what is urgent; the 31-to-90-day figure is in the mail
+    subject = f"{' '.join(org_name.split())[:30]} : {' · '.join(facts[:2]) or 'lecture à vérifier'}"
     return subject if len(subject) <= 100 else subject[:99] + "…"
 
 
-def _section(title: str, intro: str, tone: str, brands: list, key: str, button: str, page_url: Callable[[dict], Optional[str]],
-             line: Callable[[dict], layout.Item]) -> list:
-    """The section of one kind of list (none when no brand has any), one group per brand."""
-    groups = []
-    for b in (b for b in brands if b[key + "_total"]):
-        items = [line(item) for item in b[key][:LIST_MAX]]
-        groups.append(layout.Group(b["name"], items, layout.Button(button, page_url(b)), more=b[key + "_total"] - len(items)))
-    return [layout.Section(title, intro, groups, tone)] if groups else []
-
-
 def _stats(counts: dict) -> list:
-    """The row of figures (none when every figure is 0); a 0 is shown calm, not in alarm colors."""
-    figures = [(counts["new"], "À traiter", "red"), (counts["soon"], f"Expirent sous {SOON_DAYS} jours", "orange"),
-               (counts["later"], f"Sous {SOON_DAYS + 1} à {LATER_DAYS} jours", "yellow")]
+    """The row of figures of the whole organization (none when every figure is 0); a 0 is shown calm, not in alarm colors."""
+    figures = [(counts["new"], "À traiter", "red"), (counts["soon"], f"Sous {SOON_DAYS} jours", "orange"),
+               (counts["later"], f"{SOON_DAYS + 1} à {LATER_DAYS} jours", "yellow")]
     return [layout.Stats([(n, label, tone if n else "neutral") for n, label, tone in figures])] if counts["new"] + counts["soon"] + counts["later"] else []
+
+
+def _card(b: dict, base: str, org_slug: str) -> layout.Brand:
+    """One brand: its figures, the warnings about its last read, one button (the review page when something is to treat, else the library)."""
+    figures = [(b["new_total"], _plural(b["new_total"], "visuel à traiter", "visuels à traiter"), "red"),
+               (b["soon_total"], f"{_plural(b['soon_total'], 'expire', 'expirent')} sous {SOON_DAYS} jours", "orange"),
+               (b["later_total"], f"{_plural(b['later_total'], 'expire', 'expirent')} dans {SOON_DAYS + 1} à {LATER_DAYS} jours", "yellow")]
+    page = "review" if b["new_total"] else "library"
+    url = f"{base}/o/{quote(org_slug, safe='')}/b/{quote(b['slug'], safe='')}/{page}" if base else None
+    button = layout.Button("Traiter ces visuels" if b["new_total"] else "Voir la bibliothèque", url) if b["new_total"] or b["soon_total"] or b["later_total"] else None
+    return layout.Brand(b["name"], [f for f in figures if f[0]], [text for key, text in _SENTENCES.items() if b[key]], button, "Rien à traiter ce mois-ci.")
 
 
 def _blocks(data: dict, public_url: str, counts: dict) -> tuple[list, layout.Footer]:
     brands, base = data["brands"], public_url.rstrip("/")
-
-    def page_url(page: str) -> Callable[[dict], Optional[str]]:
-        return lambda b: f"{base}/o/{quote(data['org_slug'], safe='')}/b/{quote(b['slug'], safe='')}/{page}" if base else None
-
-    blocks: list = [layout.Paragraph("Bonjour, voici ce qu'il faut savoir ce mois-ci sur les visuels de votre bibliothèque.")] + _stats(counts)
-    blocks += [layout.Notice(sentence.format(b["name"])) for key, sentence in _SENTENCES.items() for b in brands if b[key]]
-    blocks += _section("Nouveaux visuels à traiter", "Ces visuels ont des droits expirés et ont été retrouvés en ligne depuis le dernier e-mail. "
-                       "Aucune décision n'a encore été prise.", "red", brands, "new", "Ouvrir À traiter", page_url("review"),
-                       lambda i: layout.Item(i["filename"], f"{i['images']} {_plural(i['images'], 'image', 'images')} en ligne", f"expiré le {_fr(i['expiry_date'])}"))
-    expiring = lambda i: layout.Item(i["filename"], None, f"expire le {_fr(i['expiry_date'])}\n{_when(i['days'])}")  # noqa: E731
-    blocks += _section(f"Visuels qui expirent dans {SOON_DAYS} jours", "Pensez à les renouveler ou à les remplacer.", "orange", brands, "soon",
-                       "Voir la bibliothèque", page_url("library"), expiring)
-    blocks += _section(f"Visuels qui expirent dans {SOON_DAYS + 1} à {LATER_DAYS} jours", "À prévoir.", "yellow", brands, "later",
-                       "Voir la bibliothèque", page_url("library"), expiring)
+    cards = [_card(b, base, data["org_slug"]) for b in brands]
+    cards.sort(key=lambda c: not (c.figures or c.notes))  # stable: the brands with something first, the quiet ones last
+    blocks: list = [layout.Paragraph("Bonjour, voici l'état des visuels de votre bibliothèque ce mois-ci.")]
+    blocks += _stats(counts) if counts["brands"] > 1 else []
+    blocks += cards
     # The settings are a page of a brand (`/o/<org>/b/<brand>/settings`): the first brand's, no link when the address is unknown.
     settings_link = f"{base}/o/{quote(data['org_slug'], safe='')}/b/{quote(brands[0]['slug'], safe='')}/settings?section=notifications" if base and brands else None
     return blocks, layout.Footer("Ce message est envoyé une fois par mois aux administrateurs de l'organisation. "
@@ -153,7 +146,7 @@ def build(data: dict, public_url: str, banner: Optional[str] = None) -> Optional
     if not (counts["new"] or counts["soon"] or counts["later"] or any(b[key] for b in brands for key in _SENTENCES)):
         return None
     blocks, footer = _blocks(data, public_url, counts)
-    html, text = layout.compose(f"Nyra : le point du mois pour {data['org_name']}", ", ".join(_facts(counts)) or "Lecture à vérifier", blocks,
+    html, text = layout.compose("Votre point du mois", ", ".join(_facts(counts)) or "Lecture à vérifier", blocks,
                                 banner=banner, footer=footer)
     return Mail(_subject(data["org_name"], counts), html, text, counts)
 
