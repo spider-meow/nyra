@@ -96,16 +96,17 @@ one at a time), so a read can start a few hours late; it could not have started 
 **A brand is read by itself, or the team is told (AXE-684).** Since a client cannot launch a read (AXE-682), a brand with no active schedule would never be read. `schedule.enable_new_brand` (called where a brand is created: `POST .../brands`, `POST /api/staff/organizations`, `nyra cloud-create-org`) switches the schedule on, on the brand's default day, in the same transaction, traced `schedule.enable` with `default: true`. For the brands that already exist, `schedule.coverage` counts, for the back office and `/api/workerz`, the brands with a site and **no active schedule** (alert `reads_unscheduled`, always on) and the active ones with **no finished read for D days** (`reads_late`, `NYRA_ALERT_READ_LATE_DAYS`, off at 0): numbers only. Nothing is read or switched on in silence: `nyra cloud-schedules` counts and, with `--apply`, gives a schedule to the brands that have none (never to one switched off on purpose), "the algorithm proposes, a person decides". A brand with no site is not counted (nothing to read).
 
 **Monthly e-mail (AXE-523, `cloud/digest.py`).** ONE e-mail per organization and per month, to its administrators who are allowed and want it (see « Who receives
-it » below; at most 10), sent by the worker through `mailer.send` (Resend). *It says:*
-(1) « Nouveaux visuels à traiter »: matches found since the last e-mail sent to the organization (35 days if none) on a visual
-whose rights have expired (unlimited rights excluded) and with no decision yet. A match is dated by the later of the site
+it » below; at most 10), sent by the worker through `mailer.send` (Resend; Supabase is not involved). *It says,* per brand and as figures only (no file name: the lists are in the application, AXE-706/707):
+(1) the visuals **to treat**: matches found since the last e-mail sent to the organization (35 days if none) on a visual
+whose rights have expired (unlimited rights excluded) and with no decision yet, counted per visual. A match is dated by the later of the site
 image's `first_seen` and the reference's `created_at`, not by `matches.created_at`, which every pass that rewrites a match sets
 again (a re-indexed reference, a new threshold); (2) the visuals of the library expiring within 30 days, and (3) in 31 to 90
-days (`SOON_DAYS`, `LATER_DAYS`: the only place of the two thresholds; a visual is in one list at most; expired ones are in
-neither); (4) one sentence per brand whose last read looks incomplete (`crawl_runs.suspect`: nothing is marked removed), was
+days (`SOON_DAYS`, `LATER_DAYS`: the only place of the two thresholds; a visual is in one figure at most; expired ones are in
+neither); (4) a warning when the brand's last read looks incomplete (`crawl_runs.suspect`: nothing is marked removed), was
 stopped by the month's page limit (`result.quota_reached` of the scheduled `crawl`) or is not finished (its scheduled read
-is not `done`, or still due). Each list shows 20 lines per brand at most (10, 5, 3, 1 or 0 when the mail grows past the layout's 90 KB), then « et N autres », and a link to the page
-(`NYRA_PUBLIC_URL` + `/o/<org>/b/<brand>/review` or `/library`). Every name is escaped in the HTML; no word on billing.
+is not `done`, or still due). The mail is **one**, divided into one block per brand (`email_layout.Brand`): the brands with something first, a brand with nothing in one short line
+(« Rien à traiter ce mois-ci »), one button per brand (`NYRA_PUBLIC_URL` + `/o/<org>/b/<brand>/review` when something is to treat, else `/library`); the totals of the organization on top only when several brands have something. At most `MAX_CARDS` (20) blocks, the quiet brands go first, the rest in one line
+(about 3 KB a block at most: under the layout's 90 KB). The subject names the organization and the two urgent figures. No migration: the one-per-month key `monthly:<org_id>:<YYYY-MM>` is unchanged. Every name is escaped in the HTML; no word on billing.
 *When:* at least one brand has the scheduled reads on, the date of the **second** read of the latest brand (13th to 16th) has passed, so the mail follows both reads of the month (a brand counts only if its
 `brand_schedules` row existed before that date: `created_at`, which a switch off and on does not change; one switched
 on after the date is read at the next date and mails next month), and no scheduled read of the
@@ -177,13 +178,11 @@ traced in a second row, `email.test` with `result` = `sent` or `failed` (no orga
 with « Aperçu » (the HTML in an `<iframe sandbox="">`: no script, no active link, plus the text version) and « M'envoyer un test » (not replayed on a 429).
 
 **The layout of every e-mail (`cloud/email_layout.py`).** Never write an e-mail's HTML by hand: `compose(title, preheader, blocks, *, banner=None, footer=None)` gives `(html, text)` from
-blocks that are plain dataclasses: `Paragraph(text)`, `Stats([(value, label, tone)])` (2 to 4 figures in one row), `Notice(text)` (a yellow warning band), `Section(title, intro,
-groups, tone, more=0)` (a card with a tone dot) holding `Group(title, [Item(primary, secondary, right)], Button(label, url), more=N)` (a brand and its lines; `right` puts its second line after a
-newline; `more` says « et N autres »; a `Section`'s `more` says « et N autres marques »; the `Button` lives in a `Group`). Tones: `red` (to treat / expired), `orange` (urgent), `yellow` (soon), `neutral` (add `green` the day an e-mail needs it). Everything from outside is escaped; a
+blocks that are plain dataclasses: `Paragraph(text)`, `Stats([(value, label, tone)])` (2 to 4 figures in one row), `Brand(title, [(value, label, tone)], notes=[...], button=Button(label, url), quiet="...")`
+(a card: a brand, its figures as coloured pills, its yellow warnings, its button; with no figure only `quiet` is said). Tones: `red` (to treat / expired), `orange` (urgent), `yellow` (soon), `neutral` (add `green` the day an e-mail needs it). Everything from outside is escaped; a
 button or footer link whose address is not `http(s)://host` is left out. *Constraints of mail clients, all held by the layout and tested in `test_email_layout.py`:* tables with `role="presentation"`
 and styles written in the tags (the `<style>` block only holds dark mode and small screens); no image, font or sheet from outside; 600 px wide, one column on a phone; every text/background pair of the palette
-(the application's: text `#1a3300`, fond `#fdfcf8`, carte `#fff`, jaune `#f6e27f`; dark `#12170d` / `#1c2415`) at 4.5:1 or more; HTML under 90 KB (Gmail clips near 102 KB: past the limit the lists go from 20 lines per brand to 10, 5, 3, 1, 0, then fewer brands, with « et N autres » / « et N autres marques »; the
-sections stay; if what cannot be cut, such as the notices, still passes the limit, a warning is logged); the text version comes from the same blocks. The test mails of the back office pass `banner=` (a line above the title). The Supabase templates are the only HTML written by hand.
+(the application's: text `#1a3300`, fond `#fdfcf8`, carte `#fff`, jaune `#f6e27f`; dark `#12170d` / `#1c2415`) at 4.5:1 or more; HTML under 90 KB (Gmail clips near 102 KB: the layout cuts nothing, the caller bounds the blocks it sends, and a warning is logged past the limit); the text version comes from the same blocks. The test mails of the back office pass `banner=` (a line above the title). The Supabase templates are the only HTML written by hand.
 
 **Ajouter un e-mail.** (1) Write the render function (pure, tested on invented data): it builds blocks and calls `email_layout.compose`; give it an optional `banner` it passes on. (2) Add an `Entry` to `ENTRIES` in `cloud/email_registry.py`:
 a short unique `key` (`[a-z_]+`), `label`, `description`, `sender` and a `sample()` that calls the render function on invented data (never a client's).
@@ -279,7 +278,7 @@ numbers and the report itself are pure functions over plain dicts in
 | `cloud/jobs.py` | The queue (enqueue, claim, heartbeat, cancel, reap). |
 | `cloud/schedule.py` | The monthly read (`brand_schedules`): `is_due` (pure), `enable` / `disable`, `enqueue_due` (called by the worker every 5 minutes), the `NYRA_SCHEDULER` switch. |
 | `cloud/email_registry.py` | Every e-mail of the product with a sample of invented data (preview and test mail of the back office), and the `kind` every `mailer` call must name. |
-| `cloud/email_layout.py` | The one layout of Nyra's e-mails: blocks (`Stats`, `Section`, `Item`, `Notice`, `Button`...) to `(html, text)`, escaped, dark mode, under 90 KB. |
+| `cloud/email_layout.py` | The one layout of Nyra's e-mails: blocks (`Paragraph`, `Stats`, `Brand`...) to `(html, text)`, escaped, dark mode, under 90 KB. |
 | `cloud/digest.py` | The monthly e-mail (`monthly_digests`): `gather` (reads), `build` (pure: subject, HTML, text), `due_orgs` / `is_ready` (when), `claim` (atomic), `run` (called by the worker right after `enqueue_due`). |
 | `cloud/store.py` | Postgres + Storage behind the store interfaces. |
 | `cloud/db.py` | Pooled Postgres access, one query per screen (no N+1). |

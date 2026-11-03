@@ -4,13 +4,13 @@
 (`memberships.monthly_email_allowed`), AND who wants it (`monthly_email_wanted`). Both switches are on by default. When nobody
 receives it the month is marked `skipped` with the reason `no_recipient` (`no_admin`: the organization has no administrator).
 
-*What it says.* `gather` reads, per brand: the **new visuals to treat** (a match found since the last e-mail on a visual whose
+*What it says.* `gather` counts, per brand: the **new visuals to treat** (a match found since the last e-mail on a visual whose
 rights have expired, with no decision yet), the visuals that **expire within 30 days** and those that expire in **31 to 90
 days**, and whether the brand's last read looks incomplete (`crawl_runs.suspect`), was stopped by the month's page limit, or
-is not finished. `build` turns that into the subject, the HTML and the text (blocks composed by `email_layout`); it reads nothing and is tested on made-up data.
-Unlimited rights are left out everywhere. Each list shows 20 lines at most and says how many more there are.
-When the HTML would pass `email_layout.MAX_HTML_BYTES` (Gmail clips long mails), the layout shortens the lists to 10, 5, 3, 1 or 0 lines
-per brand, then keeps fewer brands (« et N autres marques »): the text of such a mail is shortened the same way.
+is not finished. No file name: the lists are in the application. `build` turns that into the subject, the HTML and the text: ONE mail,
+one block (`email_layout.Brand`) per brand, the brands with something first, those with nothing in one short line (« Rien à traiter »),
+one button per brand (« À traiter » when something is to treat, else the library); it reads nothing and is tested on made-up data.
+Unlimited rights are left out everywhere. At most `MAX_CARDS` brand blocks (the quiet ones go first), the rest in one line (Gmail clips long mails).
 
 *When a match is "new".* `matches.created_at` cannot tell: a pass that rewrites a match (a re-indexed reference, a new
 threshold) sets it again. A match cannot exist before both of its images do, so it is dated by the later of the site
@@ -48,7 +48,7 @@ from .routes.members import EmailLimit
 log = logging.getLogger("nyra.cloud.digest")
 
 SOON_DAYS, LATER_DAYS = 30, 90  # the two lists: expires within SOON_DAYS days, then within SOON_DAYS + 1 to LATER_DAYS days
-LIST_MAX = 20                   # lines per list and per brand; the rest is "et N autres"
+MAX_CARDS = 20                  # brand blocks in one mail (about 3 KB each at most, Gmail clips near 100 KB); the rest is told in one line
 PERIOD_DAYS = 35                # how far back the first e-mail of an organization looks
 MAX_ADMINS = mailer.MAX_RECIPIENTS
 LATE_AFTER = timedelta(hours=48)  # after the date of the latest brand, the mail leaves even if a read is not over
@@ -62,9 +62,9 @@ ORG_LIMIT = 200                 # organizations looked at per page of `due_orgs`
 MAX_PAGES = 5                   # pages per pass: at most 1,000 organizations
 ALREADY_SENT = "invalid_idempotent_request"  # Resend: this key was used with another body, so the first mail left
 _SENTENCES = {
-    "unfinished": "La lecture de ce mois n'est pas terminée pour la marque « {} ». Les informations ci-dessous peuvent donc être partielles.",
-    "suspect": "La dernière lecture de la marque « {} » semble incomplète : rien n'est marqué retiré pour cette marque.",
-    "capped": "La lecture de la marque « {} » s'est arrêtée avant la fin : la limite de pages lues ce mois-ci est atteinte.",
+    "unfinished": "La lecture de ce mois n'est pas terminée : ces chiffres peuvent être partiels.",
+    "suspect": "La dernière lecture du site semble incomplète : aucun visuel n'est marqué retiré.",
+    "capped": "La lecture s'est arrêtée avant la fin : la limite de pages lues ce mois-ci est atteinte.",
 }
 
 
@@ -100,43 +100,38 @@ def _facts(counts: dict) -> list[str]:
 
 
 def _subject(org_name: str, counts: dict) -> str:
-    subject = f"Nyra · {' '.join(org_name.split())[:30]} : {', '.join(_facts(counts)) or 'lecture à vérifier'}"
+    facts = _facts(counts)  # the first two say what is urgent; the 31-to-90-day figure is in the mail
+    subject = f"{' '.join(org_name.split())[:30]} : {' · '.join(facts[:2]) or 'lecture à vérifier'}"
     return subject if len(subject) <= 100 else subject[:99] + "…"
 
 
-def _section(title: str, intro: str, tone: str, brands: list, key: str, button: str, page_url: Callable[[dict], Optional[str]],
-             line: Callable[[dict], layout.Item]) -> list:
-    """The section of one kind of list (none when no brand has any), one group per brand."""
-    groups = []
-    for b in (b for b in brands if b[key + "_total"]):
-        items = [line(item) for item in b[key][:LIST_MAX]]
-        groups.append(layout.Group(b["name"], items, layout.Button(button, page_url(b)), more=b[key + "_total"] - len(items)))
-    return [layout.Section(title, intro, groups, tone)] if groups else []
-
-
 def _stats(counts: dict) -> list:
-    """The row of figures (none when every figure is 0); a 0 is shown calm, not in alarm colors."""
-    figures = [(counts["new"], "À traiter", "red"), (counts["soon"], f"Expirent sous {SOON_DAYS} jours", "orange"),
-               (counts["later"], f"Sous {SOON_DAYS + 1} à {LATER_DAYS} jours", "yellow")]
+    """The row of figures of the whole organization (none when every figure is 0); a 0 is shown calm, not in alarm colors."""
+    figures = [(counts["new"], "À traiter", "red"), (counts["soon"], f"Sous {SOON_DAYS} jours", "orange"),
+               (counts["later"], f"{SOON_DAYS + 1} à {LATER_DAYS} jours", "yellow")]
     return [layout.Stats([(n, label, tone if n else "neutral") for n, label, tone in figures])] if counts["new"] + counts["soon"] + counts["later"] else []
+
+
+def _card(b: dict, base: str, org_slug: str) -> layout.Brand:
+    """One brand: its figures, the warnings about its last read, one button (the review page when something is to treat, else the library)."""
+    figures = [(b["new_total"], _plural(b["new_total"], "visuel à traiter", "visuels à traiter"), "red"),
+               (b["soon_total"], f"{_plural(b['soon_total'], 'expire', 'expirent')} sous {SOON_DAYS} jours", "orange"),
+               (b["later_total"], f"{_plural(b['later_total'], 'expire', 'expirent')} dans {SOON_DAYS + 1} à {LATER_DAYS} jours", "yellow")]
+    page = "review" if b["new_total"] else "library"
+    url = f"{base}/o/{quote(org_slug, safe='')}/b/{quote(b['slug'], safe='')}/{page}" if base else None
+    button = layout.Button("Traiter ces visuels" if b["new_total"] else "Voir la bibliothèque", url) if b["new_total"] or b["soon_total"] or b["later_total"] else None
+    return layout.Brand(b["name"], [f for f in figures if f[0]], [text for key, text in _SENTENCES.items() if b[key]], button, "Rien à traiter ce mois-ci.")
 
 
 def _blocks(data: dict, public_url: str, counts: dict) -> tuple[list, layout.Footer]:
     brands, base = data["brands"], public_url.rstrip("/")
-
-    def page_url(page: str) -> Callable[[dict], Optional[str]]:
-        return lambda b: f"{base}/o/{quote(data['org_slug'], safe='')}/b/{quote(b['slug'], safe='')}/{page}" if base else None
-
-    blocks: list = [layout.Paragraph("Bonjour, voici ce qu'il faut savoir ce mois-ci sur les visuels de votre bibliothèque.")] + _stats(counts)
-    blocks += [layout.Notice(sentence.format(b["name"])) for key, sentence in _SENTENCES.items() for b in brands if b[key]]
-    blocks += _section("Nouveaux visuels à traiter", "Ces visuels ont des droits expirés et ont été retrouvés en ligne depuis le dernier e-mail. "
-                       "Aucune décision n'a encore été prise.", "red", brands, "new", "Ouvrir À traiter", page_url("review"),
-                       lambda i: layout.Item(i["filename"], f"{i['images']} {_plural(i['images'], 'image', 'images')} en ligne", f"expiré le {_fr(i['expiry_date'])}"))
-    expiring = lambda i: layout.Item(i["filename"], None, f"expire le {_fr(i['expiry_date'])}\n{_when(i['days'])}")  # noqa: E731
-    blocks += _section(f"Visuels qui expirent dans {SOON_DAYS} jours", "Pensez à les renouveler ou à les remplacer.", "orange", brands, "soon",
-                       "Voir la bibliothèque", page_url("library"), expiring)
-    blocks += _section(f"Visuels qui expirent dans {SOON_DAYS + 1} à {LATER_DAYS} jours", "À prévoir.", "yellow", brands, "later",
-                       "Voir la bibliothèque", page_url("library"), expiring)
+    cards = [_card(b, base, data["org_slug"]) for b in brands]
+    cards.sort(key=lambda c: not (c.figures or c.notes))  # stable: the brands with something first, the quiet ones last
+    blocks: list = [layout.Paragraph("Bonjour, voici l'état des visuels de votre bibliothèque ce mois-ci.")]
+    blocks += _stats(counts) if counts["brands"] > 1 else []
+    blocks += cards[:MAX_CARDS]
+    if len(cards) > MAX_CARDS:  # the quiet ones go first: only brands with nothing to say, or a very large organization
+        blocks.append(layout.Paragraph(f"Et {len(cards) - MAX_CARDS} autres marques, à retrouver dans Nyra."))
     # The settings are a page of a brand (`/o/<org>/b/<brand>/settings`): the first brand's, no link when the address is unknown.
     settings_link = f"{base}/o/{quote(data['org_slug'], safe='')}/b/{quote(brands[0]['slug'], safe='')}/settings?section=notifications" if base and brands else None
     return blocks, layout.Footer("Ce message est envoyé une fois par mois aux administrateurs de l'organisation. "
@@ -153,7 +148,7 @@ def build(data: dict, public_url: str, banner: Optional[str] = None) -> Optional
     if not (counts["new"] or counts["soon"] or counts["later"] or any(b[key] for b in brands for key in _SENTENCES)):
         return None
     blocks, footer = _blocks(data, public_url, counts)
-    html, text = layout.compose(f"Nyra : le point du mois pour {data['org_name']}", ", ".join(_facts(counts)) or "Lecture à vérifier", blocks,
+    html, text = layout.compose("Votre point du mois", ", ".join(_facts(counts)) or "Lecture à vérifier", blocks,
                                 banner=banner, footer=footer)
     return Mail(_subject(data["org_name"], counts), html, text, counts)
 
@@ -161,27 +156,19 @@ def build(data: dict, public_url: str, banner: Optional[str] = None) -> Optional
 # --- what it reads ------------------------------------------------------------------------------------------------------------
 
 _NEW = """
-    SELECT brand_id, filename, expiry_date, images, total FROM (
-        SELECT g.*, row_number() OVER (PARTITION BY g.brand_id ORDER BY g.expiry_date, lower(g.filename), g.id) AS rn,
-               count(*) OVER (PARTITION BY g.brand_id) AS total
-        FROM (SELECT r.id, r.brand_id, r.filename, r.expiry_date, count(*) AS images
-              FROM matches m JOIN reference_images r ON r.id = m.reference_id JOIN site_images s ON s.id = m.site_image_id
-              WHERE r.org_id = %(org)s AND NOT r.unlimited_rights AND r.expiry_date < %(today)s
-                AND GREATEST(s.first_seen, r.created_at) > %(since)s
-                AND NOT EXISTS (SELECT 1 FROM reviews v WHERE v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id)
-              GROUP BY r.id) g
-    ) t WHERE rn <= %(cap)s"""
+    SELECT r.brand_id, count(DISTINCT r.id) AS total
+    FROM matches m JOIN reference_images r ON r.id = m.reference_id JOIN site_images s ON s.id = m.site_image_id
+    WHERE r.org_id = %(org)s AND NOT r.unlimited_rights AND r.expiry_date < %(today)s
+      AND GREATEST(s.first_seen, r.created_at) > %(since)s
+      AND NOT EXISTS (SELECT 1 FROM reviews v WHERE v.reference_id = m.reference_id AND v.site_image_id = m.site_image_id)
+    GROUP BY r.brand_id"""
 
 _EXPIRING = """
-    SELECT brand_id, filename, expiry_date, days, bucket, total FROM (
-        SELECT t.*, row_number() OVER (PARTITION BY brand_id, bucket ORDER BY expiry_date, lower(filename), id) AS rn,
-               count(*) OVER (PARTITION BY brand_id, bucket) AS total
-        FROM (SELECT r.id, r.brand_id, r.filename, r.expiry_date, (r.expiry_date - %(today)s::date) AS days,
-                     CASE WHEN r.expiry_date - %(today)s::date <= %(soon)s THEN 'soon' ELSE 'later' END AS bucket
-              FROM reference_images r
-              WHERE r.org_id = %(org)s AND NOT r.unlimited_rights
-                AND r.expiry_date BETWEEN %(today)s::date AND %(today)s::date + %(later)s) t
-    ) u WHERE rn <= %(cap)s"""
+    SELECT r.brand_id, count(*) FILTER (WHERE r.expiry_date - %(today)s::date <= %(soon)s) AS soon,
+           count(*) FILTER (WHERE r.expiry_date - %(today)s::date > %(soon)s) AS later
+    FROM reference_images r
+    WHERE r.org_id = %(org)s AND NOT r.unlimited_rights AND r.expiry_date BETWEEN %(today)s::date AND %(today)s::date + %(later)s
+    GROUP BY r.brand_id"""
 
 _SUSPECT = """
     SELECT DISTINCT s.brand_id FROM sites s
@@ -218,22 +205,18 @@ def recipients(conn, org_id: uuid.UUID) -> tuple[int, list[str]]:
 
 
 def gather(conn, org_id: uuid.UUID, since: datetime, now: datetime, schedules: Sequence[dict]) -> dict:
-    """Everything the mail is made of, per brand, lists cut at `LIST_MAX` rows with their real totals."""
+    """Everything the mail is made of, per brand: how many visuals to treat, expire within 30 days and within 31 to 90 days, and the state of its last read."""
     org = conn.execute("SELECT name, slug FROM organizations WHERE id = %s", (org_id,)).fetchone()
     rows = conn.execute("SELECT id, name, slug FROM brands WHERE org_id = %s ORDER BY lower(name), id LIMIT %s", (org_id, MAX_BRANDS)).fetchall()
-    brands = {r["id"]: {"name": r["name"], "slug": r["slug"], "new": [], "new_total": 0, "soon": [], "soon_total": 0, "later": [],
-                        "later_total": 0, "suspect": False, "capped": False, "unfinished": False} for r in rows}
-    args = {"org": org_id, "today": now.date(), "since": since, "cap": LIST_MAX, "soon": SOON_DAYS, "later": LATER_DAYS}
+    brands = {r["id"]: {"name": r["name"], "slug": r["slug"], "new_total": 0, "soon_total": 0, "later_total": 0,
+                        "suspect": False, "capped": False, "unfinished": False} for r in rows}
+    args = {"org": org_id, "today": now.date(), "since": since, "soon": SOON_DAYS, "later": LATER_DAYS}
     for r in conn.execute(_NEW, args).fetchall():
         if r["brand_id"] in brands:
-            b = brands[r["brand_id"]]
-            b["new"].append({"filename": r["filename"], "expiry_date": r["expiry_date"], "images": r["images"]})
-            b["new_total"] = r["total"]
+            brands[r["brand_id"]]["new_total"] = r["total"]
     for r in conn.execute(_EXPIRING, args).fetchall():
         if r["brand_id"] in brands:
-            b = brands[r["brand_id"]]
-            b[r["bucket"]].append({"filename": r["filename"], "expiry_date": r["expiry_date"], "days": r["days"]})
-            b[r["bucket"] + "_total"] = r["total"]
+            brands[r["brand_id"]].update(soon_total=r["soon"], later_total=r["later"])
     for r in conn.execute(_SUSPECT, (org_id, since)).fetchall():
         if r["brand_id"] in brands:
             brands[r["brand_id"]]["suspect"] = True

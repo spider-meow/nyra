@@ -43,17 +43,12 @@ def days(n: int) -> date:
 # --- what the e-mail says: pure -----------------------------------------------------------------------------------------
 
 def brand(name="Marque A", slug="marque-a", **kw):
-    base = {"name": name, "slug": slug, "new": [], "new_total": 0, "soon": [], "soon_total": 0, "later": [], "later_total": 0,
-            "suspect": False, "capped": False, "unfinished": False}
+    base = {"name": name, "slug": slug, "new_total": 0, "soon_total": 0, "later_total": 0, "suspect": False, "capped": False, "unfinished": False}
     return {**base, **kw}
 
 
 def data(*brands, org="Maison Test"):
     return {"org_name": org, "org_slug": "maison-test", "brands": list(brands)}
-
-
-def soon_item(name, left=10):
-    return {"filename": name, "expiry_date": days(left), "days": left}
 
 
 def build(*brands, url="https://nyra.test", org="Maison Test"):
@@ -64,87 +59,95 @@ def test_there_is_no_mail_when_there_is_nothing_to_say():
     assert build(brand(), brand("B", "b")) is None
 
 
-def test_a_mail_holds_the_three_lists_per_brand_and_counts_them():
-    mail = build(brand(new=[{"filename": "vieux.jpg", "expiry_date": days(-3), "images": 2}], new_total=1,
-                       soon=[soon_item("bientot.jpg", 12)], soon_total=1,
-                       later=[soon_item("plus-tard.jpg", 60)], later_total=1))
+def test_a_brand_block_holds_its_three_figures_and_counts_them():
+    mail = build(brand(new_total=2, soon_total=1, later_total=4))
     for text in (mail.text, mail.html):
-        assert all(word in text for word in ("Nouveaux visuels à traiter", "Visuels qui expirent dans 30 jours",
-                                             "Visuels qui expirent dans 31 à 90 jours", "vieux.jpg", "bientot.jpg", "plus-tard.jpg", "Marque A"))
-    assert mail.counts == {"new": 1, "soon": 1, "later": 1, "brands": 1}
+        assert all(word in text for word in ("Marque A", "visuels à traiter", "expire sous 30 jours", "expirent dans 31 à 90 jours"))
+    assert "2 visuels à traiter" in mail.text and "1 expire sous 30 jours" in mail.text and "4 expirent dans 31 à 90 jours" in mail.text
+    assert mail.counts == {"new": 2, "soon": 1, "later": 4, "brands": 1}
 
 
-def test_an_empty_section_is_left_out():
-    mail = build(brand(soon=[soon_item("a.jpg")], soon_total=1))
-    # (the row of figures keeps its three labels, even at 0: only the sections are left out)
-    assert "Nouveaux visuels" not in mail.text and "expirent dans 31 à 90" not in mail.text and "dans 30 jours" in mail.text
+def test_no_file_name_is_in_the_mail_only_figures():
+    assert "jpg" not in build(brand(new_total=3, soon_total=2)).text
+
+
+def test_a_figure_at_zero_is_left_out_of_the_block():
+    mail = build(brand(soon_total=1))
+    assert "à traiter" not in mail.text.split("Marque A", 1)[1] and "31 à 90" not in mail.text.split("Marque A", 1)[1] and "sous 30 jours" in mail.text
 
 
 def test_the_two_thresholds_are_named_constants_in_one_place():
     assert (digest.SOON_DAYS, digest.LATER_DAYS) == (30, 90)
-    mail = build(brand(soon=[soon_item("a.jpg")], soon_total=1, later=[soon_item("b.jpg", 40)], later_total=1))
-    assert f"dans {digest.SOON_DAYS} jours" in mail.text and f"{digest.SOON_DAYS + 1} à {digest.LATER_DAYS} jours" in mail.text
+    mail = build(brand(soon_total=2, later_total=1))
+    assert f"sous {digest.SOON_DAYS} jours" in mail.text and f"{digest.SOON_DAYS + 1} à {digest.LATER_DAYS} jours" in mail.text
 
 
-def test_a_list_is_capped_at_20_lines_with_and_n_others():
-    items = [soon_item(f"v{i:02}.jpg", 5) for i in range(25)]
-    mail = build(brand(soon=items, soon_total=25))
-    assert digest.LIST_MAX == 20
-    assert "v19.jpg" in mail.text and "v20.jpg" not in mail.text and "et 5 autres" in mail.text and "et 5 autres" in mail.html
-    # the query hands over 20 rows and the real total: the line says how many are left
-    assert "et 15 autres" in build(brand(soon=items[:20], soon_total=35)).text
-    assert "autre" not in build(brand(soon=items[:20], soon_total=20)).text
+def test_the_totals_of_the_organization_are_shown_only_with_several_brands_to_tell_apart():
+    one = build(brand(new_total=2, soon_total=1))
+    two = build(brand(new_total=2), brand("B", "b", soon_total=1))
+    assert "À traiter : 2" not in one.text and "À traiter : 2" in two.text and "Sous 30 jours : 1" in two.text
+
+
+def test_a_brand_with_nothing_is_one_short_line_after_the_brands_with_something():
+    mail = build(brand("Alpha", "alpha"), brand("Beta", "beta", new_total=1), brand("Gamma", "gamma"))
+    assert mail.text.index("Beta") < mail.text.index("Alpha") < mail.text.index("Gamma")
+    assert "Alpha\nRien à traiter ce mois-ci." in mail.text and mail.text.count("Rien à traiter") == 2
+    assert "alpha/library" not in mail.text and "gamma/review" not in mail.text  # no button for a quiet brand
 
 
 def test_a_name_is_escaped_in_the_html_and_cannot_inject_anything():
-    trap = '<script>alert(1)</script>.jpg'
-    mail = build(brand(name='M"><img src=x onerror=alert(2)>', soon=[soon_item(trap)], soon_total=1), org="<b>Maison</b>")
-    assert "<script>" not in mail.html and "&lt;script&gt;alert(1)&lt;/script&gt;.jpg" in mail.html
-    assert "<img" not in mail.html and "<b>Maison" not in mail.html and "&lt;b&gt;Maison" in mail.html
-    assert trap in mail.text  # the text version is plain
+    mail = build(brand(name='M"><img src=x onerror=alert(2)>', soon_total=1), org="<b>Maison</b>")
+    assert "<img" not in mail.html and "<b>Maison" not in mail.html  # (the organization's name is in the subject only)
+    assert "&lt;img" in mail.html and 'M"><img src=x onerror=alert(2)>' in mail.text  # the text version is plain
 
 
-def test_one_sentence_per_suspect_capped_or_unfinished_brand():
+def test_a_warning_is_told_with_the_brand_it_is_about():
     mail = build(brand("Alpha", "alpha", suspect=True), brand("Beta", "beta", capped=True), brand("Gamma", "gamma", unfinished=True),
                  brand("Delta", "delta"))
     lines = [line for line in mail.text.splitlines() if line.strip()]
-    suspect = [line for line in lines if "incomplète" in line]
-    capped = [line for line in lines if "limite de pages" in line]
-    unfinished = [line for line in lines if "n'est pas terminée" in line]
-    assert len(suspect) == len(capped) == len(unfinished) == 1
-    assert "Alpha" in suspect[0] and "rien n'est marqué retiré" in suspect[0]
-    assert "Beta" in capped[0] and "Gamma" in unfinished[0] and "Delta" not in mail.text
+    for name, word in (("Alpha", "incomplète"), ("Beta", "limite de pages"), ("Gamma", "n'est pas terminée")):
+        (index,) = [i for i, line in enumerate(lines) if word in line]
+        assert lines[index - 1] == name or lines[index - 2] == name, name  # the line right under the brand's name (the quiet line may sit between)
+    assert "Delta\nRien à traiter ce mois-ci." in mail.text
     assert mail.counts["new"] == mail.counts["soon"] == 0
 
 
-def test_the_subject_is_short_one_line_and_does_not_carry_a_long_client_name():
-    mail = build(brand(soon=[soon_item("a.jpg")], soon_total=1), org="Grande Maison " * 30)
-    assert len(mail.subject) <= 100 and "\n" not in mail.subject and mail.subject.startswith("Nyra")
-    assert "Grande Maison" in mail.subject  # a short one stays whole
-    assert "Grande Maison " * 5 not in mail.subject
+def test_the_subject_says_the_two_urgent_figures_is_short_and_does_not_carry_a_long_client_name():
+    mail = build(brand(new_total=3, soon_total=2, later_total=9), org="Grande Maison " * 30)
+    assert len(mail.subject) <= 100 and "\n" not in mail.subject and "Grande Maison" in mail.subject and "Grande Maison " * 5 not in mail.subject
+    assert build(brand(new_total=3, soon_total=2, later_total=9)).subject == "Maison Test : 3 visuels à traiter · 2 expirent sous 30 jours"
+    assert build(brand(later_total=1)).subject == "Maison Test : 1 expire d'ici 90 jours"
+    assert build(brand(suspect=True)).subject == "Maison Test : lecture à vérifier"
 
 
 def test_no_word_about_billing_prices_or_subscription():
-    mail = build(brand(new=[{"filename": "x.jpg", "expiry_date": days(-1), "images": 1}], new_total=1, soon=[soon_item("a.jpg")],
-                       soon_total=1, suspect=True, capped=True, unfinished=True))
+    mail = build(brand(new_total=1, soon_total=1, suspect=True, capped=True, unfinished=True))
     low = (mail.text + mail.html + mail.subject).lower()
     for word in ("factur", "prix", "tarif", "abonnement", "paiement", "€", "euro", "forfait", "quota", "plan "):
         assert word not in low, word
 
 
-def test_links_point_to_the_application_pages_and_are_left_out_without_a_public_address():
-    mail = build(brand(new=[{"filename": "x.jpg", "expiry_date": days(-1), "images": 1}], new_total=1, soon=[soon_item("a.jpg")], soon_total=1))
-    assert "https://nyra.test/o/maison-test/b/marque-a/review" in mail.text
-    assert "https://nyra.test/o/maison-test/b/marque-a/library" in mail.text
+def test_one_button_per_brand_to_its_review_page_or_its_library_and_none_without_a_public_address():
+    mail = build(brand(new_total=1, soon_total=1), brand("B", "b", soon_total=1))
+    assert "https://nyra.test/o/maison-test/b/marque-a/review" in mail.text and "https://nyra.test/o/maison-test/b/b/library" in mail.text
+    assert mail.text.count("/review") == 1 and mail.text.count("/library") == 1
     assert 'href="https://nyra.test/o/maison-test/b/marque-a/review"' in mail.html
-    assert "http" not in build(brand(soon=[soon_item("a.jpg")], soon_total=1), url="").text
-    assert "https://nyra.test/o" in build(brand(soon=[soon_item("a.jpg")], soon_total=1), url="https://nyra.test/").text
+    assert "http" not in build(brand(soon_total=1), url="").text
+    assert "https://nyra.test/o" in build(brand(soon_total=1), url="https://nyra.test/").text
 
 
-def test_the_html_and_text_fit_the_mailer_limits_with_many_brands():
-    brands = [brand(f"Marque {i}", f"m{i}", soon=[soon_item(f"{'long' * 20}{j}.jpg") for j in range(20)], soon_total=40) for i in range(30)]
+def test_the_mail_shows_at_most_max_cards_brands_with_the_busiest_first_and_says_how_many_are_left():
+    brands = [brand(f"Calme {i:02}", f"c{i}") for i in range(40)] + [brand("Occupée", "occupee", new_total=1, suspect=True, capped=True, unfinished=True)]
     mail = build(*brands)
-    assert len(mail.html.encode()) < mailer.MAX_BODY_BYTES and len(mail.text.encode()) < mailer.MAX_BODY_BYTES
+    assert "Occupée" in mail.text and mail.text.count("Rien à traiter") == digest.MAX_CARDS - 1
+    assert f"Et {41 - digest.MAX_CARDS} autres marques" in mail.text and "Calme 39" not in mail.text
+
+
+def test_the_worst_case_fits_the_limits_of_the_mailer_and_of_gmail():
+    full = [brand(f"Marque numéro {i} " + "x" * 30, f"m{i}", new_total=999, soon_total=999, later_total=999, suspect=True, capped=True, unfinished=True)
+            for i in range(digest.MAX_BRANDS)]
+    mail = build(*full)
+    assert len(mail.html.encode()) < digest.layout.MAX_HTML_BYTES < mailer.MAX_BODY_BYTES and len(mail.text.encode()) < mailer.MAX_BODY_BYTES
 
 
 # --- when: pure -----------------------------------------------------------------------------------------------------------
@@ -239,10 +242,6 @@ def gather(url, org, since=None, schedules=None):
         return digest.gather(conn, org, since or NOW - timedelta(days=digest.PERIOD_DAYS), NOW, rows)
 
 
-def names(items):
-    return [item["filename"] for item in items]
-
-
 def the_brand(result, index=0):
     return result["brands"][index]
 
@@ -265,9 +264,8 @@ def test_new_visuals_are_the_matches_found_in_the_period_on_an_expired_visual_no
         add_hit(conn, org, b1, add_ref(conn, org, b1, "ref-recente.jpg", days(-2), created=IN_PERIOD), first_seen=OLD)
     result = gather(url, org)
     first = the_brand(result)
-    assert sorted(names(first["new"])) == ["deux-images.jpg", "nouveau.jpg", "ref-recente.jpg"] and first["new_total"] == 3
-    assert {item["filename"]: item["images"] for item in first["new"]}["deux-images.jpg"] == 2
-    assert the_brand(result, 1)["new"] == []
+    assert first["new_total"] == 3  # nouveau, deux-images (two matches, ONE visual), ref-recente
+    assert the_brand(result, 1)["new_total"] == 0
 
 
 def test_a_match_written_again_today_for_an_old_image_is_not_new(url):
@@ -279,7 +277,7 @@ def test_a_match_written_again_today_for_an_old_image_is_not_new(url):
         image = add_hit(conn, org, b1, ref, first_seen=OLD)
         cloud_db.write_matches(conn, org, [(ref, image, "phash", 1.0, "haut")])
         assert conn.execute("SELECT created_at > %s AS recent FROM matches WHERE site_image_id = %s", (OLD, image)).fetchone()["recent"]
-    assert the_brand(gather(url, org))["new"] == []
+    assert the_brand(gather(url, org))["new_total"] == 0
 
 
 def test_the_period_starts_at_the_last_mail_sent_to_the_organization(url):
@@ -293,11 +291,11 @@ def test_the_period_starts_at_the_last_mail_sent_to_the_organization(url):
         conn.execute("INSERT INTO monthly_digests (org_id, month, status, attempts) VALUES (%s, '2026-09-01', 'skipped', 1)", (org,))
         since = digest.period_start(conn, org, NOW)
     assert since == datetime(2026, 11, 8, tzinfo=UTC)
-    assert names(the_brand(gather(url, org, since=since))["new"]) == ["apres.jpg"]
-    assert sorted(names(the_brand(gather(url, org))["new"])) == ["apres.jpg", "avant.jpg"]
+    assert the_brand(gather(url, org, since=since))["new_total"] == 1
+    assert the_brand(gather(url, org))["new_total"] == 2
 
 
-def test_the_30_and_90_day_lists_have_exact_limits(url):
+def test_the_30_and_90_day_figures_have_exact_limits(url):
     with cloud_db.connect(url) as conn:
         org, (b1,), *_ = make_org(conn)
         for left in (-1, 0, 29, 30, 31, 90, 91, 400):
@@ -305,34 +303,21 @@ def test_the_30_and_90_day_lists_have_exact_limits(url):
         add_ref(conn, org, b1, "illimite.jpg", None, unlimited=True)
         add_ref(conn, org, b1, "sans-date.jpg", None)
     first = the_brand(gather(url, org))
-    assert names(first["soon"]) == ["in-0.jpg", "in-29.jpg", "in-30.jpg"]       # expires in 30 days: the 30-day list
-    assert names(first["later"]) == ["in-31.jpg", "in-90.jpg"]                  # in 31 days: the 90-day list; in 91: neither
-    assert [item["days"] for item in first["soon"]] == [0, 29, 30] and (first["soon_total"], first["later_total"]) == (3, 2)
-    assert "in--1.jpg" not in names(first["soon"] + first["later"] + first["new"])
+    assert (first["soon_total"], first["later_total"]) == (3, 2)  # 0, 29, 30 days: within 30; 31 and 90: the second figure; 91 and more, expired, unlimited, no date: neither
+    assert first["new_total"] == 0
 
 
-def test_each_list_is_capped_at_20_per_brand_with_the_real_total(url):
+def test_each_brand_has_its_own_figures_and_the_counts_are_not_capped(url):
     with cloud_db.connect(url) as conn:
         org, (b1, b2), *_ = make_org(conn, brands=2)
         for i in range(30):
             add_ref(conn, org, b1, f"s{i:02}.jpg", days(5 + i % 20))
         for i in range(3):
             add_ref(conn, org, b2, f"t{i}.jpg", days(60))
-    result = gather(url, org)
-    assert len(the_brand(result)["soon"]) == digest.LIST_MAX == 20 and the_brand(result)["soon_total"] == 30
-    assert (len(the_brand(result, 1)["later"]), the_brand(result, 1)["later_total"]) == (3, 3)
-    first = names(the_brand(result)["soon"])
-    assert first == sorted(first, key=lambda n: (days(5 + int(n[1:3]) % 20), n))    # the soonest first
-
-
-def test_the_new_visuals_are_capped_at_20_too_with_the_real_total(url):
-    with cloud_db.connect(url) as conn:
-        org, (b1,), *_ = make_org(conn)
         for i in range(25):
             add_hit(conn, org, b1, add_ref(conn, org, b1, f"n{i:02}.jpg", days(-1 - i)))
-    first = the_brand(gather(url, org))
-    assert len(first["new"]) == digest.LIST_MAX and first["new_total"] == 25
-    assert names(first["new"])[0] == "n24.jpg"                               # the oldest expiry first
+    result = gather(url, org)
+    assert [(b["new_total"], b["soon_total"], b["later_total"]) for b in result["brands"]] == [(25, 30, 0), (0, 0, 3)]
 
 
 def test_a_suspect_last_read_a_read_stopped_by_the_page_limit_and_a_read_not_finished_are_told_per_brand(url):
@@ -453,12 +438,12 @@ def digest_addresses(url, org):
 
 
 def test_the_mail_ends_with_the_way_to_stop_it_and_a_link_to_the_settings_when_the_address_is_known():
-    mail = build(brand(soon=[soon_item("a.jpg")], soon_total=1))
+    mail = build(brand(soon_total=1))
     sentence = "Vous pouvez choisir de ne plus recevoir ce message dans Réglages > Notifications."
     assert sentence in mail.text and "Réglages &gt; Notifications" in mail.html
     assert "https://nyra.test/o/maison-test/b/marque-a/settings?section=notifications" in mail.text
     assert 'href="https://nyra.test/o/maison-test/b/marque-a/settings?section=notifications"' in mail.html
-    bare = build(brand(soon=[soon_item("a.jpg")], soon_total=1), url="")
+    bare = build(brand(soon_total=1), url="")
     assert sentence in bare.text and "http" not in bare.text and "href" not in bare.html
 
 
@@ -653,7 +638,7 @@ def test_the_mail_leaves_once_to_the_administrators_with_the_monthly_key_and_is_
     body = json.loads(request.content)
     assert sorted(body["to"]) == sorted(admins) and not set(body["to"]) & set(clients)
     assert request.headers["idempotency-key"] == f"monthly:{org}:2026-11"
-    assert "expire.jpg" in body["text"] and "bientot.jpg" in body["html"] and body["from"] == SENDER
+    assert "1 visuel à traiter" in body["text"] and "1 expire sous 30 jours" in body["html"] and body["from"] == SENDER
     (row,) = digests(url, org)
     assert (row["month"], row["status"], row["attempts"]) == (MONTH, "sent", 1) and row["sent_at"] is not None
     (event,) = audit_rows(url, org, "digest.sent")
@@ -661,6 +646,22 @@ def test_the_mail_leaves_once_to_the_administrators_with_the_monthly_key_and_is_
     assert "@" not in json.dumps(event["detail"]) and "expire.jpg" not in json.dumps(event["detail"])
     # again, and again later in the month: nothing more leaves
     assert run(url, t) == 0 and run(url, t) == 0 and len(t.seen) == 1
+
+
+def test_an_organization_with_two_brands_gets_one_mail_for_the_period_with_a_block_per_brand_and_no_double_after_a_restart(url):
+    with cloud_db.connect(url) as conn:
+        org, (b1, b2), *_ = make_org(conn, brands=2)
+        add_ref(conn, org, b1, "bientot.jpg", days(20))
+        add_ref(conn, org, b2, "plus-tard.jpg", days(60))
+    t = transport()
+    assert run(url, t) == 1
+    (request,) = t.seen
+    text = json.loads(request.content)["text"]
+    assert text.count("/library") == 2 and "/b/marque-2/library" in text  # one block and one button per brand
+    assert request.headers["idempotency-key"] == f"monthly:{org}:2026-11"
+    # the worker restarts and looks again, again later in the month, and once the claim is taken again: still one mail
+    assert run(url, t) == 0 and run(url, t) == 0 and len(t.seen) == 1
+    assert len(digests(url, org)) == 1 and len(audit_rows(url, org, "digest.sent")) == 1
 
 
 def test_nothing_to_say_marks_the_month_without_sending(url):

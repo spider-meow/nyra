@@ -1,28 +1,26 @@
 """The one layout of every e-mail Nyra sends: `compose` turns a list of blocks into `(html, text)`. See « Ajouter un e-mail ».
 
-    html, text = compose(title, preheader, [Paragraph(...), Stats([(value, label, tone)]), Notice(text),
-                         Section(title, intro, [Group(brand, [Item(name, detail, right)], Button(label, url), more=3)], tone)],
+    html, text = compose(title, preheader, [Paragraph(...), Stats([(value, label, tone)]),
+                         Brand(name, [(value, label, tone)], notes=[...], button=Button(label, url), quiet="Rien à traiter")],
                          banner=None, footer=Footer(text, link_label, link_url))
 
 Blocks are plain dataclasses; tones are `red`, `orange`, `yellow`, `neutral`. Every text from outside is escaped; a
 `Button` or footer link whose address is not `http(s)://host...` is left out. The HTML is made for mail clients: tables with
 `role="presentation"`, styles written in the tags (the `<style>` block only holds dark mode and small screens), no image, no
-font, no sheet from outside. One mail stays under `MAX_HTML_BYTES` (Gmail clips near 102 000): when it would not, the lists are
-cut (20 lines per brand, then 10, 5, 3, 1, 0, then fewer brands) and say « et N autres » or « et N autres marques ». The palette below is the application's (`frontend/src/index.css`) and Supabase's templates'.
+font, no sheet from outside. One mail should stay under `MAX_HTML_BYTES` (Gmail clips near 102 000): the layout cannot cut, so
+the caller bounds what it sends and a warning is logged when it is not enough. The palette below is the application's (`frontend/src/index.css`) and Supabase's templates'.
 """
 
 from __future__ import annotations
 
 import html as html_lib
 import logging
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Optional, Sequence
 from urllib.parse import urlsplit
 
 log = logging.getLogger("nyra.cloud.email_layout")
 MAX_HTML_BYTES = 90_000
-# (items kept per list, groups kept per section): tried in turn until the HTML fits. ponytail: cut the lists, never the sections.
-_LADDER = ((20, 50), (10, 50), (5, 50), (3, 20), (1, 10), (0, 5), (0, 2))
 
 LIGHT = {"page": "#fdfcf8", "card": "#ffffff", "sect": "#fdfcf8", "line": "#ebe7db", "ink": "#1a3300",
          "muted": "#5f6e50", "faint": "#667556", "btn": "#1a3300", "btn_ink": "#ffffff"}  # faint: #8a9680 reads at 3.1:1, under 4.5
@@ -53,42 +51,20 @@ class Stats:
 
 
 @dataclass(frozen=True)
-class Notice:
-    """A warning band (yellow)."""
-    text: str
-
-
-@dataclass(frozen=True)
 class Button:
     label: str
     url: Optional[str]
 
 
 @dataclass(frozen=True)
-class Item:
-    """A line: `primary` in bold, `secondary` under it, `right` at the end (a second line after a newline)."""
-    primary: str
-    secondary: Optional[str] = None
-    right: str = ""
-
-
-@dataclass(frozen=True)
-class Group:
-    """A subtitle (a brand), its lines (`more` = how many others there are), and its button."""
+class Brand:
+    """A card for one brand: its figures (`(value, label, tone)`, each on a line), its notes (yellow warnings), its button.
+    With no figure, only `quiet` is said (« rien à traiter »): one short line."""
     title: str
-    items: Sequence[Item]
+    figures: Sequence[tuple] = ()
+    notes: Sequence[str] = ()
     button: Optional[Button] = None
-    more: int = 0
-
-
-@dataclass(frozen=True)
-class Section:
-    """A card with a tone dot: its groups (`more` = how many other groups were cut)."""
-    title: str
-    intro: str
-    items: Sequence[Group]
-    tone: str
-    more: int = 0
+    quiet: str = ""
 
 
 @dataclass(frozen=True)
@@ -140,14 +116,10 @@ def _paragraph(b: Paragraph) -> tuple[str, str]:
     return f'<p style="margin:0 0 16px">{_e(b.text)}</p>', _line(b.text)
 
 
-def _notice_html(text: str, tone: str) -> str:
+def _notice_html(text: str, tone: str, margin: str = "0 0 16px") -> str:
     fg, bg = TONES[tone][:2]
-    return (f'<table {_TABLE} style="margin:0 0 16px"><tr><td class="t-{tone}" style="background:{bg};color:{fg};border-left:4px solid {fg};'
+    return (f'<table {_TABLE} style="margin:{margin}"><tr><td class="t-{tone}" style="background:{bg};color:{fg};border-left:4px solid {fg};'
             f'border-radius:6px;padding:12px 14px;font-size:14px;line-height:1.5">{_e(text)}</td></tr></table>')
-
-
-def _notice(b: Notice) -> tuple[str, str]:
-    return _notice_html(b.text, "yellow"), _line(b.text)
 
 
 def _stats(b: Stats) -> tuple[str, str]:
@@ -173,50 +145,22 @@ def _button(b: Optional[Button]) -> tuple[str, str]:
     return html, f"{_line(b.label)} : {url}"
 
 
-def _row(item: Item) -> tuple[str, str]:
-    first, _, second = item.right.partition("\n")
-    cell = f'class="rule" valign="top" style="padding:10px 0;border-top:1px solid {LIGHT["line"]}'
-    sec = f'<br><span class="muted" style="font-size:13px;color:{LIGHT["muted"]}">{_e(item.secondary)}</span>' if item.secondary else ""
-    left = f'<td {cell};word-break:break-word"><b>{_e(item.primary)}</b>{sec}</td>'
-    sub = f'<br><span class="muted" style="color:{LIGHT["muted"]}">{_e(second)}</span>' if second else ""
-    right = f'<td {cell};padding:12px 0 10px 12px;font-size:13px;white-space:nowrap" align="right"><b>{_e(first)}</b>{sub}</td>'
-    text = _line(item.primary) + (f" : {_line(first)}" + (f" ({_line(second)})" if second else "") if item.right else "")
-    return f"<tr>{left}{right}</tr>", f"- {text}" + (f", {_line(item.secondary)}" if item.secondary else "")
+def _brand(b: Brand) -> tuple[str, str]:
+    name = f'<p class="ink" style="margin:0;font-family:{SERIF};font-size:18px;line-height:1.3;font-weight:800">{_e(b.title)}</p>'
+    box = (f'<table {_TABLE} class="sect" style="margin:0 0 12px;background:{LIGHT["sect"]};border:1px solid {LIGHT["line"]};border-radius:12px"><tr>'
+           f'<td class="sect-pad" style="padding:14px 18px 16px">')
+    chips = "".join(f'<tr><td style="padding:6px 0 0"><span class="t-{tone}" style="display:inline-block;min-width:26px;padding:2px 9px;border-radius:999px;'
+                    f'background:{TONES[tone][1]};color:{TONES[tone][0]};font-weight:700;text-align:center">{_e(value)}</span>'
+                    f'<span style="padding-left:10px;font-size:15px">{_e(label)}</span></td></tr>' for value, label, tone in b.figures)
+    quiet = f'<p class="muted" style="margin:2px 0 0;font-size:14px;color:{LIGHT["muted"]}">{_e(b.quiet)}</p>' if not b.figures else ""
+    notes = "".join(_notice_html(n, "yellow", "12px 0 0") for n in b.notes)
+    button, button_text = _button(b.button)
+    lines = [f"- {_line(value)} {_line(label)}" for value, label, _ in b.figures] or [_line(b.quiet)]
+    text = [_line(b.title)] + lines + [_line(n) for n in b.notes] + ([button_text] if button_text else [])
+    return f'{box}{name}{quiet}<table {_TABLE}>{chips}</table>{notes}{button}</td></tr></table>', "\n".join(text)
 
 
-def _more_row(count: int, noun: str = "") -> tuple[str, str]:
-    """« et 3 autres » (lines) or, with `noun`, « et 3 autres marques » (groups)."""
-    text = f"et {count} {'autre' if count == 1 else 'autres'}" + (f" {noun}{'' if count == 1 else 's'}" if noun else "")
-    return (f'<tr><td colspan="2" class="rule muted" style="padding:10px 0;border-top:1px solid {LIGHT["line"]};font-size:13px;color:{LIGHT["muted"]}">{text}</td></tr>',
-            f"- {text}")
-
-
-def _rows(items: Sequence[Item], more: int, noun: str = "") -> tuple[str, str]:
-    pairs = [_row(i) for i in items] + ([_more_row(more, noun)] if more else [])
-    if not pairs:
-        return "", ""
-    return f'<table {_TABLE}>{"".join(h for h, _ in pairs)}</table>', "\n".join(t for _, t in pairs)
-
-
-def _group(g: Group) -> tuple[str, str]:
-    rows, rows_text = _rows(g.items, g.more)
-    button, button_text = _button(g.button)
-    head = (f'<p class="ink" style="margin:18px 0 2px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase">{_e(g.title)}</p>')
-    return head + rows + button, "\n".join(part for part in (_line(g.title), rows_text, button_text) if part)
-
-
-def _section(b: Section) -> tuple[str, str]:
-    fg = TONES[b.tone][0]
-    parts = [_group(g) for g in b.items] + [_rows([], b.more, "marque")]
-    head = (f'<h2 class="ink" style="margin:0 0 4px;font-family:{SERIF};font-size:19px;line-height:1.25;font-weight:800"><span class="f-{b.tone}" '
-            f'style="color:{fg}">&#9679;</span> {_e(b.title)}</h2><p class="muted" style="margin:0;font-size:14px;color:{LIGHT["muted"]}">{_e(b.intro)}</p>')
-    html = (f'<table {_TABLE} class="sect" style="margin:0 0 20px;background:{LIGHT["sect"]};border:1px solid {LIGHT["line"]};border-radius:12px"><tr>'
-            f'<td class="sect-pad" style="padding:18px 20px 20px">{head}{"".join(h for h, _ in parts)}</td></tr></table>')
-    text = "\n".join([_line(b.title), "-" * min(len(_line(b.title)), 40), _line(b.intro)] + [t for _, t in parts if t])
-    return html, text
-
-
-_RENDER = {Paragraph: _paragraph, Notice: _notice, Stats: _stats, Section: _section}
+_RENDER = {Paragraph: _paragraph, Stats: _stats, Brand: _brand}
 
 
 # --- the page -----------------------------------------------------------------------------------------------------------------
@@ -248,27 +192,10 @@ def _page(title: str, preheader: str, blocks: Sequence, banner: Optional[str], f
     return html, "\n\n".join(t for t in [t for _, t in pairs] + [foot_text] if t)
 
 
-def _shrink(blocks: Sequence, cap: int, groups: int) -> list:
-    """The same blocks with at most `cap` lines per group and `groups` groups per section; what is cut becomes `more`."""
-    out = []
-    for b in blocks:
-        if isinstance(b, Section):
-            kept = [replace(g, items=g.items[:cap], more=g.more + max(0, len(g.items) - cap)) for g in b.items[:groups]]
-            b = replace(b, items=kept, more=b.more + max(0, len(b.items) - groups))
-        out.append(b)
-    return out
-
-
 def compose(title: str, preheader: str, blocks: Sequence, *, banner: Optional[str] = None, footer: Optional[Footer] = None) -> tuple[str, str]:
-    """`(html, text)` for these blocks. `banner` is a line above the title (the « e-mail de test » one). While the HTML is not under
-    `MAX_HTML_BYTES`, the lists are cut by `_LADDER` (20 lines per group, then 10, 5, 3, 1, 0; fewer groups per section). Only lists
-    are cut: if the title, the notices or the sections themselves are too many, the last step is kept and a warning is logged."""
-    footer = footer or _FOOTER
-    html, text = _page(title, preheader, blocks, banner, footer)
-    for cap, groups in _LADDER:
-        if len(html.encode("utf-8")) < MAX_HTML_BYTES:
-            return html, text
-        html, text = _page(title, preheader, _shrink(blocks, cap, groups), banner, footer)
+    """`(html, text)` for these blocks. `banner` is a line above the title (the « e-mail de test » one). The layout cuts nothing: past
+    `MAX_HTML_BYTES` a warning is logged (the caller bounds the number of blocks)."""
+    html, text = _page(title, preheader, blocks, banner, footer or _FOOTER)
     if len(html.encode("utf-8")) >= MAX_HTML_BYTES:
-        log.warning("an e-mail is %d bytes after every list was cut: Gmail may clip it", len(html.encode("utf-8")))
+        log.warning("an e-mail is %d bytes: Gmail may clip it", len(html.encode("utf-8")))
     return html, text

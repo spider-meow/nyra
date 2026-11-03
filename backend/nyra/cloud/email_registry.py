@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, timedelta
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -30,21 +29,20 @@ class Entry:
     sample: Callable[..., tuple[str, str, str]]  # sample(banner=None) -> (subject, html, text), invented data only; the banner goes above the title
 
 
-def digest_data(today: date) -> dict:
+def digest_data() -> dict:
     """What `digest.gather` would read for an invented organization: the input of the real `digest.build`."""
-    def soon(name: str, days: int) -> dict:
-        return {"filename": name, "expiry_date": today + timedelta(days=days), "days": days}
+    def brand(name: str, slug: str, new: int, soon: int, later: int, **state: bool) -> dict:
+        return {"name": name, "slug": slug, "new_total": new, "soon_total": soon, "later_total": later,
+                **{"suspect": False, "capped": False, "unfinished": False, **state}}
 
-    # Every block of the layout shows: figures, two warnings, the three sections with their lines and buttons.
-    brand = {"name": "Maison Exemple", "slug": "maison-exemple", "suspect": True, "capped": True, "unfinished": False,
-             "new": [{"filename": "affiche-printemps.jpg", "expiry_date": today - timedelta(days=12), "images": 3}], "new_total": 1,
-             "soon": [soon("banniere-ete.jpg", 20), soon("vitrine-juin.jpg", 1)], "soon_total": 2,
-             "later": [soon("photo-equipe.jpg", 60), soon("catalogue-automne.jpg", 85)], "later_total": 2}
-    return {"org_name": "Maison Exemple", "org_slug": "maison-exemple", "brands": [brand]}
+    # Every block of the layout shows: the figures, a brand with warnings, one with a single figure, one with nothing to say.
+    brands = [brand("Maison Exemple", "maison-exemple", 1, 2, 2, suspect=True, capped=True), brand("Atelier Lumière", "atelier-lumiere", 2, 7, 0),
+              brand("Studio Nord", "studio-nord", 0, 0, 1), brand("Boutique Sud", "boutique-sud", 0, 0, 0)]
+    return {"org_name": "Maison Exemple", "org_slug": "maison-exemple", "brands": brands}
 
 
 def _digest_sample(banner: Optional[str] = None) -> tuple[str, str, str]:
-    mail = digest.build(digest_data(date.today()), EXAMPLE_URL, banner)
+    mail = digest.build(digest_data(), EXAMPLE_URL, banner)
     if mail is None:  # the invented data always has something to say
         raise RuntimeError("the sample of the monthly e-mail has nothing to say")
     return mail.subject, mail.html, mail.text

@@ -15,7 +15,6 @@ import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
 from pathlib import Path
 
 import httpx
@@ -59,10 +58,10 @@ def test_every_sample_is_a_complete_mail_the_mailer_accepts():
 
 def test_the_monthly_sample_is_what_the_digest_code_renders_on_made_up_data():
     subject, html, text = email_registry.get("monthly_digest").sample()
-    mail = digest.build(email_registry.digest_data(date.today()), email_registry.EXAMPLE_URL)
+    mail = digest.build(email_registry.digest_data(), email_registry.EXAMPLE_URL)
     assert (subject, html, text) == (mail.subject, mail.html, mail.text)
-    assert "Maison Exemple" in html and "Nouveaux visuels à traiter" in html and "semble incomplète" in html
-    assert mail.counts["new"] == 1 and mail.counts["soon"] >= 1 and mail.counts["later"] >= 1
+    assert "Maison Exemple" in html and "visuels à traiter" in html and "semble incomplète" in html and "Rien à traiter" in html
+    assert mail.counts == {"new": 3, "soon": 9, "later": 3, "brands": 3}
 
 
 def test_the_supabase_samples_are_the_template_files_with_example_values():
@@ -239,7 +238,7 @@ def test_the_list_says_what_can_be_sent_and_never_shows_the_key(make_client, org
 def test_the_preview_is_what_the_render_functions_produce_even_when_sending_is_off(make_client, org_with_users):
     staff = org_with_users[2]
     got = make_client(key="", sender="").get("/api/staff/emails/monthly_digest/preview", headers=_headers(staff))
-    mail = digest.build(email_registry.digest_data(date.today()), email_registry.EXAMPLE_URL)
+    mail = digest.build(email_registry.digest_data(), email_registry.EXAMPLE_URL)
     assert got.status_code == 200 and got.json() == {"subject": mail.subject, "html": mail.html, "text": mail.text}
     invite = make_client().get("/api/staff/emails/invite/preview", headers=_headers(staff)).json()
     assert invite["subject"] == "Votre accès à Nyra" and "{{" not in invite["html"] and invite["text"]
@@ -252,7 +251,7 @@ def test_a_test_goes_to_the_signed_in_account_only_with_the_test_marks(make_clie
     (request,) = resend.state["transport"].seen
     sent = json.loads(request.content)
     assert sent["to"] == ["alice@client.fr"] and sent["from"] == SENDER
-    assert sent["subject"].startswith("[TEST] Nyra · Maison Exemple")
+    assert sent["subject"].startswith("[TEST] Maison Exemple")
     body = sent["html"][sent["html"].index("<body"):]  # (the <title> already names the organization)
     assert BANNER in body and body.index(BANNER) < body.index("Maison Exemple")
     assert sent["text"].startswith(BANNER) and "Maison Exemple" in sent["text"]

@@ -16,11 +16,11 @@ VOID = {"meta", "br", "hr", "img", "link", "input"}
 
 
 def sample(url="https://nyra.test/o/x/b/y/review"):
-    items = [L.Item("affiche.jpg", "3 images en ligne", "expiré le 13/10/2026"), L.Item("banniere.jpg", None, "expire le 14/11/2026\ndans 20 jours")]
+    figures = [("2", "visuels à traiter", "red"), ("5", "expirent sous 30 jours", "orange")]
     return [L.Paragraph("Bonjour, voici le point."),
             L.Stats([("2", "À traiter", "red"), ("5", "Expirent sous 30 jours", "orange"), ("7", "Sous 31 à 90 jours", "yellow")]),
-            L.Notice("La lecture de la marque « Alpha » semble incomplète."),
-            L.Section("Nouveaux visuels", "Ils sont en ligne.", [L.Group("Alpha", items, L.Button("Ouvrir À traiter", url), more=4)], "red")]
+            L.Brand("Alpha", figures, ["La lecture semble incomplète."], L.Button("Ouvrir À traiter", url)),
+            L.Brand("Beta", quiet="Rien à traiter ce mois-ci.")]
 
 
 def mail(blocks=None, **kw):
@@ -31,8 +31,8 @@ def mail(blocks=None, **kw):
 
 @pytest.mark.parametrize("trap", TRAPS)
 def test_every_outside_field_is_escaped_in_the_html_and_plain_in_the_text(trap):
-    blocks = [L.Paragraph(trap), L.Stats([(trap, trap, "red"), ("1", "x", "neutral")]), L.Notice(trap),
-              L.Section(trap, trap, [L.Group(trap, [L.Item(trap, trap, trap)], L.Button(trap, "https://a.test/"))], "orange")]
+    blocks = [L.Paragraph(trap), L.Stats([(trap, trap, "red"), ("1", "x", "neutral")]),
+              L.Brand(trap, [(trap, trap, "orange")], [trap], L.Button(trap, "https://a.test/")), L.Brand(trap, quiet=trap)]
     html, text = L.compose(trap, trap, blocks, banner=trap, footer=L.Footer(trap, trap, "https://a.test/s"))
     low = html.lower()
     assert "<img" not in low and "<script" not in low and "<b>gras" not in low and "onerror=alert(1)>" not in low
@@ -40,7 +40,7 @@ def test_every_outside_field_is_escaped_in_the_html_and_plain_in_the_text(trap):
 
 
 def button_blocks(url):
-    return [L.Paragraph("p"), L.Section("Titre", "intro", [L.Group("Marque", [L.Item("a.jpg", None, "expire")], L.Button("Cliquez", url))], "red")]
+    return [L.Paragraph("p"), L.Brand("Marque", [("1", "expire", "red")], button=L.Button("Cliquez", url))]
 
 
 def test_only_http_and_https_addresses_make_a_button():
@@ -132,9 +132,8 @@ def test_the_text_says_what_the_html_says_without_any_tag():
     html, text = mail(banner="Bandeau test", footer=L.Footer("Pied de page", "Réglages", "https://a.test/s"))
     assert "<" not in text and ">" not in text.replace("> ", "")  # no markup
     labels = ["Nyra : le point du mois", "Bonjour, voici le point.", "À traiter", "Expirent sous 30 jours", "Sous 31 à 90 jours", "semble incomplète",
-              "Nouveaux visuels", "Ils sont en ligne.", "Alpha", "affiche.jpg", "3 images en ligne", "expiré le 13/10/2026", "banniere.jpg",
-              "expire le 14/11/2026", "dans 20 jours", "et 4 autres", "Ouvrir À traiter", "https://nyra.test/o/x/b/y/review", "Bandeau test",
-              "Pied de page", "Réglages", "https://a.test/s", "Nyra by Axel Project"]
+              "Alpha", "visuels à traiter", "expirent sous 30 jours", "Beta", "Rien à traiter ce mois-ci.", "Ouvrir À traiter",
+              "https://nyra.test/o/x/b/y/review", "Bandeau test", "Pied de page", "Réglages", "https://a.test/s", "Nyra by Axel Project"]
     for label in labels:
         assert label in text, label
         assert label.replace("&", "&amp;") in html or label in html, label
@@ -186,36 +185,21 @@ def test_every_tone_is_readable_in_light_and_dark():
 
 # --- size --------------------------------------------------------------------------------------------------------------------
 
-def heavy(brands, sections=1, lines=20):
-    name = "visuel-campagne-ete-tres-long-nom-de-fichier-"
-    def group(b):
-        items = [L.Item(f"{name}{i}.jpg", "3 images en ligne", "expiré le 13/10/2026\ndans 20 jours") for i in range(lines)]
-        return L.Group(f"Marque {b}", items, L.Button("Voir la bibliothèque", f"https://nyra.test/o/org/b/marque-{b}/library"), more=5)
-
-    return [L.Section(f"Section {s}", "intro", [group(b) for b in range(brands)], "red") for s in range(sections)]
-
-
-def test_a_full_summary_stays_under_gmails_clipping_limit():
-    html, text = mail(heavy(10))
-    assert len(html.encode()) < L.MAX_HTML_BYTES < 95_000 and re.search(r"et \d+ autres", html) and "marque-9/library" in html
+def test_a_brand_block_stays_small_even_at_its_fullest():
+    """The caller bounds the number of blocks (`digest.MAX_CARDS`); this is how much one weighs at most."""
+    full = L.Brand("Marque numéro 1 " + "x" * 30, [("999", "visuels à traiter", "red"), ("999", "expirent sous 30 jours", "orange"), ("999", "expirent dans 31 à 90 jours", "yellow")],
+                   ["Une phrase de lecture assez longue pour peser dans le courrier. " * 2] * 3, L.Button("Traiter ces visuels", "https://nyra.test/o/org/b/marque/review"))
+    html, _ = mail([full])
+    assert 1_000 < len(html.encode()) - len(mail([])[0].encode()) < 4_000
 
 
-def test_an_oversized_mail_cuts_its_lists_with_and_n_others_instead_of_growing():
-    html, text = mail(heavy(50, sections=3))
-    assert len(html.encode()) < L.MAX_HTML_BYTES and len(text.encode()) < L.MAX_HTML_BYTES
-    assert re.search(r"et \d+ autres", html) and re.search(r"et \d+ autres", text)
-    assert "Section 2" in html  # every section survives, the lists are what shrinks
-    assert re.search(r"et \d+ autres marques", html) and re.search(r"et \d+ autres marques", text)  # brands left out are not « visuels »
-    assert "et 1 autre marque" not in html
-
-
-def test_one_cut_brand_is_told_in_the_singular():
-    html, _ = mail([L.Section("S", "i", [L.Group("A", [], more=0)], "red", more=1)])
-    assert "et 1 autre marque<" in html
-
-
-def test_what_the_layout_cannot_cut_is_logged_not_hidden(caplog):
-    notices = [L.Notice("Une phrase de lecture assez longue pour peser dans le courrier. " * 3)] * 600
+def test_what_the_layout_does_not_cut_is_logged_not_hidden(caplog):
+    blocks = [L.Brand(f"Marque {i}", [("1", "visuel à traiter", "red")], ["Une phrase de lecture assez longue pour peser dans le courrier. " * 3] * 3) for i in range(60)]
     with caplog.at_level("WARNING", logger="nyra.cloud.email_layout"):
-        html, _ = mail(notices)
+        html, _ = mail(blocks)
     assert len(html.encode()) >= L.MAX_HTML_BYTES and "Gmail may clip it" in caplog.text
+
+
+def test_a_quiet_brand_has_no_figure_and_no_button_and_says_what_it_is_given():
+    html, text = mail([L.Brand("Calme", quiet="Rien à traiter."), L.Brand("Occupée", [("1", "visuel", "red")], button=L.Button("Ouvrir", "https://a.test/p"))])
+    assert "Rien à traiter." in html and text.count("https://a.test/p") == 1 and "Calme\nRien à traiter." in text
