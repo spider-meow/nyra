@@ -21,7 +21,7 @@ export function Visuals() {
   const read = useFullRead();
   const [tab, setTab] = useState<Tab>("todo");
 
-  if (visuals.isLoading) return <Skeleton className="h-96" />;
+  if (visuals.isLoading) return <><PageHeader title="Visuels à remplacer" /><Skeleton className="h-96" /></>;
   if (!visuals.data) return <LoadError title="Visuels indisponibles" error={visuals.error} onRetry={() => void visuals.refetch()} retrying={visuals.isFetching} />;
   const all = [...visuals.data.visuals].sort(byUrgency);
   const todo = all.filter((item) => !item.replaced);

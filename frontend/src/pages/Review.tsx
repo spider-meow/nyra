@@ -45,7 +45,14 @@ export function Review() {
 /** The three states of the list (first load, refresh with the rows on screen, failure), then what it shows. */
 function Results(props: { view: ReviewView; compare: ReactNode }) {
   const { matches } = props.view;
-  if (matches.isLoading) return <div className="grid gap-2">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-16" />)}</div>;
+  if (matches.isLoading) {
+    return (
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,480px)]">
+        <div className="grid gap-2">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-16" />)}</div>
+        <Skeleton className="hidden h-96 lg:block" />
+      </div>
+    );
+  }
   if (matches.error && !matches.data) return <LoadError title="Impossible de charger les correspondances" error={matches.error} onRetry={() => void matches.refetch()} retrying={matches.isFetching} />;
   return (
     <Refreshing active={matches.isFetching}>

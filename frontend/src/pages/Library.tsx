@@ -1,4 +1,4 @@
-import { LoadError } from "../components/busy";
+import { LoadError, SkeletonGrid } from "../components/busy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Present, useToast } from "../components/feedback";
@@ -21,7 +21,14 @@ const RECENT_CARDS = 4; // one row at the widest layout
 
 /** What stands in for the library while it loads, fails to load, or is empty. */
 function LibraryNotice(props: { loading: boolean; error: unknown; admin: boolean; uploading: boolean; onPick: () => void; onRetry: () => void; retrying: boolean }) {
-  if (props.loading) return <div className="grid gap-2">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-14" />)}</div>;
+  if (props.loading) {
+    return (
+      <div className="lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+        <Skeleton className="mb-5 h-72 lg:mb-0" />
+        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4" cell="aspect-[4/3]" />
+      </div>
+    );
+  }
   if (props.error) return <LoadError title="Impossible de charger la bibliothèque" error={props.error} onRetry={props.onRetry} retrying={props.retrying} />;
   return (
     <EmptyState
