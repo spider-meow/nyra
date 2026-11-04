@@ -88,7 +88,7 @@ export function SiteImages() {
       <TypePills type={type} counts={typeCounts} total={counts?.[view]} packshots={packshotsOn || type === "packshots"} onChange={(next) => go(view, next)} />
       <ViewNote view={view} logosSetAside={page?.logos_set_aside} />
       {images.isLoading ? (
-        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" cell="aspect-[1/2]" />
+        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" cell="aspect-[5/7]" />
       ) : !page ? (
         <LoadError title="Impossible de charger les images" error={images.error} onRetry={() => void images.refetch()} retrying={images.isFetching} />
       ) : (
@@ -319,6 +319,9 @@ function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelI
         </div>
         {/* While the answer to a search or a site comes, the count is the previous one: it says so instead of passing for the new one. */}
         <p className="pb-2 text-sm text-muted">{props.stale ? "Mise à jour…" : plural(page.total, page.view === "qualify" ? "image à vérifier" : "image", page.view === "qualify" ? "images à vérifier" : "images")}</p>
+        {search.applied !== "" || search.site !== "all" || search.min > 0 ? (
+          <button type="button" className="pb-2 text-sm text-muted underline underline-offset-2 hover:text-ink" onClick={search.reset}>Effacer la recherche et les filtres</button>
+        ) : null}
         {selecting && page.items.length ? (
           <button
             type="button"
