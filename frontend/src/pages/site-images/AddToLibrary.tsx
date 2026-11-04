@@ -1,9 +1,11 @@
 import { useState, type FormEvent } from "react";
+import { useNavigate } from "react-router";
 import { Modal, useToast, type ToastInput } from "../../components/feedback";
 import { Button, Checkbox, FieldLabel, Input } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDate, plural } from "../../lib/format";
 import { useAssignments } from "../../lib/labels";
+import { useOrg } from "../../lib/org";
 import { useSiteImageMutations } from "../../lib/queries";
 import type { SiteImage } from "../../types";
 import { typeOf } from "./Typing";
@@ -12,10 +14,11 @@ type Fields = { expiry: string; unlimited: boolean; credit: string; name: string
 
 type Adopted = { added: { site_image_id: string; filename: string }[]; failed: { reason: string }[] };
 
-function adoptedToast(result: Adopted, hasRights: boolean): ToastInput {
+function adoptedToast(result: Adopted, hasRights: boolean, open: () => void): ToastInput {
   if (result.added.length && !result.failed.length) {
     return {
       tone: "success",
+      action: { label: "Ouvrir la bibliothèque", onClick: open },
       message: result.added.length > 1 ? `${result.added.length} visuels ajoutés à la bibliothèque` : `${result.added[0].filename} ajouté à la bibliothèque`,
       description: hasRights
         ? "Ils sont déjà reliés à leurs pages : retrouvez-les dans « À traiter »."
@@ -32,6 +35,8 @@ function adoptedToast(result: Adopted, hasRights: boolean): ToastInput {
 export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => void; onDone: (ids: string[]) => void }) {
   const { adopt } = useSiteImageMutations();
   const toast = useToast();
+  const navigate = useNavigate();
+  const { link } = useOrg();
   const [fields, setFields] = useState<Fields>({ expiry: "", unlimited: false, credit: "", name: "" });
   const [openedFor, setOpenedFor] = useState<string | null>(null);
   const items = props.items;
@@ -61,7 +66,7 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
         onSuccess: (result) => {
           props.onDone(result.added.map((item) => item.site_image_id));
           props.onClose();
-          toast.show(adoptedToast(result, Boolean(fields.expiry) || fields.unlimited));
+          toast.show(adoptedToast(result, Boolean(fields.expiry) || fields.unlimited, () => navigate(link("library"))));
         },
         onError: (error) => toast.show({ tone: "error", message: "L'ajout n'a pas abouti", description: errorMessage(error) }),
       },
@@ -105,7 +110,7 @@ function AdoptFields(props: { items: SiteImage[]; fields: Fields; packshots: boo
           <Input id="adopt-name" maxLength={200} value={fields.name} onChange={(event) => props.onChange({ ...fields, name: event.target.value })} />
         </div>
       ) : (
-        <p className="text-sm text-muted">Chaque image garde le nom de son fichier sur le site.</p>
+        <p className="text-sm text-muted">Chaque image garde le nom de son fichier sur le site. L'échéance ci-dessous vaut pour les {items.length}.</p>
       )}
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
