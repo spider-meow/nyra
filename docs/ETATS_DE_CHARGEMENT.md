@@ -43,6 +43,40 @@ Deux règles qui vont avec :
 Plusieurs requêtes gardaient déjà les anciennes données le temps d'une nouvelle réponse (`keepPreviousData` dans `lib/queries.ts`), sans rien le
 montrer : c'est ce que `Refreshing` rend visible.
 
+## Inventaire des squelettes (AXE-747, 4 novembre 2026)
+
+Relevé de chaque `Skeleton` / `SkeletonGrid` du code (46 sites d'appel dans 33 fichiers ; `Skeleton` est le seul à porter `animate-pulse`, avec la ligne
+de `Refreshing`). « Fidèle » : même structure et mêmes dimensions que ce qui arrive ; « devinée » : un bloc de hauteur arbitraire.
+
+| Écran | Fichier | Squelette actuel | Forme réelle | Verdict | Traité par |
+|---|---|---|---|---|---|
+| Tableau de bord | `Dashboard.tsx` | barre `h-9`, bloc `h-64`, 4 blocs `h-36` | date + titre + 2 boutons ; hero d'environ 530 px (pastille, titre sur 3 lignes, texte, bouton, note, cadre « Dernière lecture ») ; 4 cartes teintées ; liste des échéances | devinée, titre et boutons absents | AXE-749 |
+| Barre latérale | `layout/` | compteurs absents | pastilles (7, 31, 312, 124) | apparaissent à l'arrivée | AXE-749 |
+| Bibliothèque | `Library.tsx` | bloc `h-72` + grille 2×4 `aspect-[4/3]` | arborescence, Actifs/Expirés, recherche, « Derniers ajouts » (4 cartes avec nom, pastille, date), bouton | devinée, mauvaise structure | AXE-750 |
+| Fenêtre d'édition d'un visuel | `library/OccurrencesPanel.tsx` | 3 lignes `h-[…]` | lignes d'occurrences | à mesurer | AXE-750 |
+| Fiche d'un visuel | `visual/Visual.tsx` | bloc `h-96` | en-tête, onglets, liste des pages | devinée | AXE-750 |
+| À traiter | `Review.tsx` | 6 lignes `h-16` + bloc `h-96` (grand écran) | lignes (vignette, nom, statut), comparaison côte à côte | à mesurer | AXE-751 |
+| Visuels à remplacer | `Visuals.tsx` | bloc `h-96` | liste de visuels | devinée | AXE-751 |
+| Images en ligne | `SiteImages.tsx` | grille `aspect-[5/7]` | cartes d'environ 219×357 px (image carrée, nom, pages, bouton, lien), rangée de champs affichée seulement après le chargement | devinée, la rangée de champs saute | AXE-752 |
+| Rapports | `Reports.tsx` | bloc `h-40` | liste de rapports | devinée | AXE-753 |
+| Statistiques | `StatisticsSections.tsx` | barre, 8 blocs `h-28`, bloc `h-64` | cartes de chiffres, graphiques, tableaux | devinée | AXE-753 |
+| Lectures | `Scans.tsx`, `scans/SitesCard.tsx`, `scans/History.tsx` | blocs `h-40` / `h-16` | carte des sites, lancement, historique | devinée | AXE-754 |
+| Réglages | `Settings.tsx` (+ 7 sections : Team, Collections, Schedule, Notifications, Packshots, Logos, Exclusions, Usage) | blocs `h-40` / `h-24` / `h-72` / `h-96` | formulaires, tableaux, listes selon la section | devinée | AXE-755 |
+| Back-office | `BackOffice.tsx`, `BackOfficeSections.tsx`, `backoffice/*` (8 fichiers) | blocs `h-20` à `h-96` | tableaux, cartes de chiffres, aperçus | devinée | AXE-756 |
+| Journal d'audit | `components/AuditLog.tsx` | bloc `h-24` | liste d'événements | devinée | AXE-756 |
+
+**Mesure du saut** (Chromium, bureau 1280×800, API simulée qui répond 1,5 s plus tard ; indicateur : bas du contenu avant et après l'arrivée, car
+le *Cumulative Layout Shift* du navigateur ne compte que les éléments qui bougent et reste à 0,000 quand un squelette est remplacé par un autre élément) :
+
+| Écran | Bas du contenu : squelette | chargé | saut |
+|---|---|---|---|
+| Tableau de bord | 508 px | 1334 px | **+826 px** |
+| Bibliothèque | 552 px | 688 px | **+136 px** |
+| Images en ligne | 837 px | 1018 px | **+181 px** |
+
+Les autres écrans ne sont pas mesurés ici : leur mesure se fait au début de leur issue, avec la paire « squelette / écran chargé » qui sert de maquette.
+Même méthode à la fin (AXE-757) pour comparer.
+
 ## Le contrôle automatique : évalué, pas écrit
 
 Un script qui échoue quand une page lit le résultat d'un `useQuery` sans lire son état de chargement a été essayé (parcours de `pages/` et
