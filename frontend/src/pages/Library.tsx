@@ -25,7 +25,7 @@ function LibraryNotice(props: { loading: boolean; error: unknown; admin: boolean
     return (
       <div className="lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8">
         <Skeleton className="mb-5 h-72 lg:mb-0" />
-        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4" cell="aspect-[4/3]" />
+        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4"><Skeleton className="aspect-[4/3]" /></SkeletonGrid>
       </div>
     );
   }

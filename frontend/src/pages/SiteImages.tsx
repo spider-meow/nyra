@@ -4,7 +4,7 @@ import { Present, useToast } from "../components/feedback";
 import { SelectionFrame } from "../components/SelectionFrame";
 import { ContentFilter, ContentTagger } from "../components/Labels";
 import { LoadError, RefreshFailed, Refreshing, SkeletonGrid } from "../components/busy";
-import { Button, EmptyState, FieldLabel, Input, PageHeader, cx } from "../components/ui";
+import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useLastKnown } from "../lib/busy";
 import { plural } from "../lib/format";
@@ -95,7 +95,7 @@ export function SiteImages() {
       <ViewTabs view={view} counts={counts} onChange={changeView} />
       <TypePills type={type} counts={typeCounts} total={counts?.[view]} packshots={packshotsOn || type === "packshots"} onChange={(next) => go(view, next)} />
       {images.isLoading ? (
-        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" cell="aspect-[5/7]" />
+        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"><Skeleton className="aspect-[5/7]" /></SkeletonGrid>
       ) : !page ? (
         <LoadError title="Impossible de charger les images" error={images.error} onRetry={() => void images.refetch()} retrying={images.isFetching} />
       ) : (

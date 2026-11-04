@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 import { errorMessage } from "../lib/api";
 import { useRefreshing } from "../lib/busy";
-import { Button, EmptyState, Skeleton, cx } from "./ui";
+import { Button, EmptyState, cx } from "./ui";
 
 /**
  * The three states of a request that is shown (AXE-632), written once; `docs/ETATS_DE_CHARGEMENT.md` says what each page does:
- * - first load, nothing to show yet: `SkeletonGrid` (or a `Skeleton` of the page's own shape, the same size as what replaces it);
+ * - first load, nothing to show yet: a skeleton built from the markup of what arrives, with `Bar` for text and `Skeleton` for images and blocks (`SkeletonGrid` for a grid of cards);
  * - refresh with the content already there: `Refreshing` (the content stays, a little paler, with a thin line of progress after 200 ms, `aria-busy`
  *   and a polite announcement);
  * - failure: `LoadError` when there is nothing to show, `RefreshFailed` above the content that is.
@@ -16,18 +16,18 @@ export function Refreshing(props: { active: boolean; children: ReactNode; label?
   const show = useRefreshing(props.active);
   return (
     <div aria-busy={props.active} className={cx("relative", props.className)}>
-      {show ? <span aria-hidden className="fade-in absolute inset-x-0 -top-1.5 h-0.5 animate-pulse rounded-full bg-bark" /> : null}
+      {show ? <span aria-hidden className="fade-in absolute inset-x-0 -top-1.5 h-0.5 skeleton rounded-full bg-bark" /> : null}
       <span role="status" className="sr-only">{show ? props.label ?? "Mise à jour des résultats…" : ""}</span>
       <div className={cx("fade-in transition-opacity", show && "opacity-60")}>{props.children}</div>
     </div>
   );
 }
 
-/** The first load of a grid of cards: the same columns as the grid it stands for, so nothing jumps when the cards arrive. */
-export function SkeletonGrid(props: { count?: number; className: string; cell: string }) {
+/** The first load of a grid of cards: the same columns as the grid it stands for, each cell the skeleton of one real card (`children`), so nothing jumps when they arrive. */
+export function SkeletonGrid(props: { count?: number; className: string; children: ReactNode }) {
   return (
     <div className={props.className} aria-busy="true">
-      {Array.from({ length: props.count ?? 8 }, (_, index) => <Skeleton key={index} className={props.cell} />)}
+      {Array.from({ length: props.count ?? 8 }, (_, index) => <div key={index}>{props.children}</div>)}
     </div>
   );
 }

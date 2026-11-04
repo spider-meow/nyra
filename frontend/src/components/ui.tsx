@@ -243,8 +243,17 @@ export function Spinner(props: { label?: string }) {
   );
 }
 
+/** A block that stands for something that is coming. Size it like what replaces it; for text use `Bar`. */
 export function Skeleton(props: { className?: string }) {
-  return <div className={cx("animate-pulse rounded-xl bg-line/70", props.className)} aria-hidden />;
+  return <div className={cx("skeleton rounded-xl bg-line/70", props.className)} aria-hidden />;
+}
+
+/**
+ * A line of text that is coming: as high as the text it replaces (`1lh`, the line height of the parent), so a skeleton built from the same markup as the
+ * real thing, with `Bar` in place of the words, takes the same room. `width` is a CSS width (`"60%"`, `"6rem"`; the whole line by default).
+ */
+export function Bar(props: { width?: string; className?: string }) {
+  return <span className={cx("skeleton inline-block h-[0.7lh] max-w-full rounded-md bg-line/70 align-middle", props.className)} style={{ width: props.width ?? "100%" }} aria-hidden />;
 }
 
 /** An image that fades in once it has loaded instead of popping in. The box is the caller's, so nothing moves when it arrives. */
