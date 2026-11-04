@@ -4,7 +4,7 @@ import { Present, useToast } from "../components/feedback";
 import { SelectionFrame } from "../components/SelectionFrame";
 import { ContentFilter, ContentTagger } from "../components/Labels";
 import { LoadError, RefreshFailed, Refreshing, SkeletonGrid } from "../components/busy";
-import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton, cx } from "../components/ui";
+import { Bar, Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton, cx } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useLastKnown } from "../lib/busy";
 import { plural } from "../lib/format";
@@ -95,7 +95,7 @@ export function SiteImages() {
       <ViewTabs view={view} counts={counts} onChange={changeView} />
       <TypePills type={type} counts={typeCounts} total={counts?.[view]} packshots={packshotsOn || type === "packshots"} onChange={(next) => go(view, next)} />
       {images.isLoading ? (
-        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"><Skeleton className="aspect-[5/7]" /></SkeletonGrid>
+        <ImagesSkeleton />
       ) : !page ? (
         <LoadError title="Impossible de charger les images" error={images.error} onRetry={() => void images.refetch()} retrying={images.isFetching} />
       ) : (
@@ -295,6 +295,31 @@ function SiteTabs(props: { page: SiteImagesPage; search: Search }) {
 }
 
 type Selecting = { selected: Set<string>; onSelect: (ids: Set<string>) => void; items: SiteImage[] };
+
+/** The first load: the row of fields (their labels are there, only the fields wait) and a grid of cards, each as `ImageCard` (square image, name, pages, button, link). */
+function ImagesSkeleton() {
+  return (
+    <div aria-busy="true" aria-hidden>
+      <div className="mb-4 flex flex-wrap items-end gap-3">
+        <div className="w-full sm:w-72"><FieldLabel>Rechercher</FieldLabel><Skeleton className="h-10 rounded-md" /></div>
+        <div className="w-full sm:w-52"><FieldLabel>Section du site</FieldLabel><Skeleton className="h-10 rounded-md" /></div>
+        <div><FieldLabel>Taille minimale</FieldLabel><Skeleton className="h-10 w-28 rounded-md" /></div>
+        <p className="w-28 pb-2 text-sm"><Bar /></p>
+        <p className="ml-auto flex w-24 justify-end pb-2 text-sm max-sm:w-full"><span className="w-24"><Bar /></span></p>
+      </div>
+      <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="flex flex-col overflow-hidden rounded-xl border border-ink/20 bg-paper">
+          <Skeleton className="aspect-square rounded-none" />
+          <div className="flex flex-col gap-1 p-3">
+            <p className="text-sm"><Bar width="70%" /></p>
+            <p className="text-xs"><Bar width="85%" /></p>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5"><Skeleton className="h-11 w-full rounded-lg sm:h-9 sm:w-[180px]" /><span className="w-14 px-1 text-[13px]"><Bar /></span></div>
+          </div>
+        </div>
+      </SkeletonGrid>
+    </div>
+  );
+}
 
 function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelInfo[]; filter: LabelFilter; selecting: Selecting | undefined; stale: boolean }) {
   const { page, search, filter, selecting } = props;
