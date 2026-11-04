@@ -49,7 +49,7 @@ function LogoRow() {
             onDragOver={(event) => (event.preventDefault(), setOver(true))}
             onDragLeave={() => setOver(false)}
             onDrop={drop}
-            className={cx("rounded-xl border border-dashed p-1 transition-colors", over ? "border-ink bg-sunk" : "border-line-strong hover:border-ink hover:bg-sunk")}
+            className={cx("rounded-xl border border-dashed p-1", over ? "border-ink bg-sunk" : "border-line-strong hover:border-ink hover:bg-sunk")}
           >
             <BrandMark brand={brand} size={48} />
           </button>

@@ -297,6 +297,8 @@ type ModalProps = { open: boolean; onClose: () => void; title: string; children:
 const topDialog = (panel: HTMLElement | null) =>
   [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((dialog) => !dialog.closest("[inert]")).at(-1) === panel;
 
+let scrollLocks = 0; // ponytail: one count for the page's scroll, shared by every open dialog; the last one to close frees it
+
 /** While `on`: the focus goes into the dialog and comes back to where it was, Tab goes round, Escape closes, the page does not scroll. */
 function useDialogKeys(on: boolean, panel: RefObject<HTMLDivElement | null>, onClose: () => void) {
   useEffect(() => {
@@ -313,11 +315,12 @@ function useDialogKeys(on: boolean, panel: RefObject<HTMLDivElement | null>, onC
       if (event.key === "Tab") keepFocusInside(event, panel.current);
     };
     document.addEventListener("keydown", onKey);
-    const overflow = document.body.style.overflow;
+    scrollLocks += 1;
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = overflow;
+      scrollLocks -= 1;
+      if (scrollLocks === 0) document.body.style.overflow = "";
       if (previous?.isConnected) previous.focus(); // the menu that opened the dialog may be gone
     };
     // Only re-run on open/close.
@@ -359,8 +362,11 @@ export function Modal(props: ModalProps) {
             <Icon name="close" size={16} strokeWidth={2} />
           </button>
         </div>
-        <div className="overflow-y-auto px-6 pb-5">{shown.children}</div>
-        {shown.footer ? <div className="flex flex-wrap justify-end gap-2 border-t border-line bg-sunk px-6 py-3.5 rounded-b-[20px]">{shown.footer}</div> : null}
+        {/* What is inside has its own presence (a list, a tip): it must not end the dialog's. */}
+        <PresenceContext.Provider value={null}>
+          <div className="overflow-y-auto px-6 pb-5">{shown.children}</div>
+          {shown.footer ? <div className="flex flex-wrap justify-end gap-2 border-t border-line bg-sunk px-6 py-3.5 rounded-b-[20px]">{shown.footer}</div> : null}
+        </PresenceContext.Provider>
       </div>
     </div>
   );

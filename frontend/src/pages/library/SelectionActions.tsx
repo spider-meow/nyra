@@ -63,15 +63,16 @@ function Menu(props: { items: LibraryItem[]; labelsOn: boolean; removing: boolea
   const { leaving, onAnimationEnd } = usePresence(true);
   const sum = summarize(props.items);
   useEffect(() => {
+    if (leaving) return;
     list.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
     const onKey = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") props.onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-    // Only on open: `onClose` is the page's own.
+    // On open, and again if it is opened again while it leaves: `onClose` is the page's own.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [leaving]);
 
   function onKeyDown(event: KeyboardEvent) {
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;

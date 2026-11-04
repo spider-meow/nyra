@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router";
+import { Link, useLocation } from "react-router";
 import { useOrg, useOrganizations } from "../lib/org";
 import { usePresence } from "./feedback";
 import { Icon } from "./icons";
@@ -14,6 +14,8 @@ import { Button, Checkbox, Segmented, cx } from "./ui";
 export function Frame(props: { sidebar: (close: () => void) => ReactNode; title: string; children: ReactNode }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menu = usePresence(menuOpen);
+  const { pathname } = useLocation();
+  useEffect(() => setMenuOpen(false), [pathname]);
   const sidebar = props.sidebar(() => setMenuOpen(false));
 
   return (

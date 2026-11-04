@@ -1,4 +1,4 @@
-import { Children, isValidElement, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Children, isValidElement, useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { usePresence } from "./feedback";
 import { Icon } from "./icons";
 import { cx, fieldClass } from "./ui";
@@ -20,21 +20,25 @@ type DropdownProps = {
   up?: boolean;
 };
 
+/** While `open`, a press outside `root` closes it. */
+function useOutsideClose(open: boolean, root: RefObject<HTMLElement | null>, close: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (event: MouseEvent) => {
+      if (!root.current?.contains(event.target as Node)) close();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open, root, close]);
+}
+
 /** Open state, the highlighted option and the keyboard, so the component below only draws. */
 function useListbox(props: Pick<DropdownProps, "options" | "value" | "onChange">) {
   const { options, value, onChange } = props;
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const root = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [open]);
+  useOutsideClose(open, root, useCallback(() => setOpen(false), []));
 
   const show = () => {
     setActive(Math.max(0, options.findIndex((option) => option.value === value)));
@@ -163,14 +167,7 @@ export function MultiDropdown(props: {
   const [open, setOpen] = useState(false);
   const menu = usePresence(open);
   const root = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: MouseEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [open]);
+  useOutsideClose(open, root, useCallback(() => setOpen(false), []));
   const row = "flex w-full items-center gap-2 rounded px-2.5 py-1.5 text-left text-sm hover:bg-sunk";
   return (
     <div ref={root} className="relative" onKeyDown={(event) => event.key === "Escape" && setOpen(false)}>
