@@ -1092,6 +1092,23 @@ def site_images_by_id(conn: psycopg.Connection, brand_id: uuid.UUID, ids: list[u
     ).fetchall()
 
 
+def site_image_pages(conn: psycopg.Connection, image_ids: list[uuid.UUID], offset: int, limit: int) -> tuple[list[Row], int]:
+    """The pages of the given site images (with the site version of each), `limit` from `offset`, and how many there are in all."""
+    rows = conn.execute(
+        """SELECT DISTINCT p.url AS page, COALESCE(s.label, s.url) AS site
+           FROM image_pages ip JOIN pages p ON p.id = ip.page_id JOIN sites s ON s.id = p.site_id
+           WHERE ip.image_id = ANY(%s) ORDER BY p.url LIMIT %s OFFSET %s""", (image_ids, limit, offset)).fetchall()
+    total = conn.execute("SELECT count(DISTINCT ip.page_id) AS n FROM image_pages ip WHERE ip.image_id = ANY(%s)", (image_ids,)).fetchone()["n"]
+    return rows, total
+
+
+def site_image_visual(conn: psycopg.Connection, image_ids: list[uuid.UUID]) -> Optional[Row]:
+    """The visual of the library best matching one of the given site images: its id, name and the score of the match."""
+    return conn.execute(
+        """SELECT r.id, r.filename, m.score FROM matches m JOIN reference_images r ON r.id = m.reference_id
+           WHERE m.site_image_id = ANY(%s) ORDER BY m.score DESC LIMIT 1""", (image_ids,)).fetchone()
+
+
 def same_image_ids(conn: psycopg.Connection, brand_id: uuid.UUID, content_hash: Optional[str], image_id: uuid.UUID) -> list[uuid.UUID]:
     """This image and every other URL of the brand's sites serving the same bytes."""
     rows = conn.execute(
