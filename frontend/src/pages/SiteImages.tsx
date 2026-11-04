@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
-import { Present, usePresence, useToast } from "../components/feedback";
+import { Present, useToast } from "../components/feedback";
+import { SelectionFrame } from "../components/SelectionFrame";
 import { ContentFilter, ContentTagger } from "../components/Labels";
 import { LoadError, RefreshFailed, Refreshing, SkeletonGrid } from "../components/busy";
 import { Button, EmptyState, FieldLabel, Input, PageHeader, cx } from "../components/ui";
@@ -37,7 +38,7 @@ export function SiteImages() {
   const askedType = params.get("type");
   const type: SiteImageType | null = legacy ? legacy.type : isType(askedType) ? askedType : null;
   const search = useSearch();
-  const images = useSiteImages({ view, type, site: search.site, text: search.applied, min: search.min });
+  const images = useSiteImages({ view, type, site: search.site, text: search.applied, min: search.min, section: search.section });
   const items = useMemo(() => images.data?.pages.flatMap((page) => page.items) ?? [], [images.data]);
   const last = images.data?.pages.at(-1);
   const page: SiteImagesPage | undefined = last && { ...last, items };
@@ -82,8 +83,12 @@ export function SiteImages() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [legacy]);
   return (
-    <div className={cx(qualifying && chosen.length > 0 && "pb-20")}>
-      <PageHeader title="Images en ligne" actions={admin && LABELS_ENABLED ? <Button onClick={() => setTyping(true)}>Étiqueter à la main</Button> : undefined} />
+    <div>
+      {qualifying && chosen.length > 0 ? (
+        <BulkBar chosen={chosen} total={items.length} labels={labels} ignoring={ignoring} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => pick.setSelected(new Set(failedIds)))} onSelectAll={() => pick.setSelected(new Set(items.map((item) => item.id)))} onClear={pick.clear} />
+      ) : (
+        <PageHeader title="Images en ligne" actions={admin && LABELS_ENABLED ? <Button onClick={() => setTyping(true)}>Étiqueter à la main</Button> : undefined} />
+      )}
       <ViewTabs view={view} counts={counts} onChange={changeView} />
       <TypePills type={type} counts={typeCounts} total={counts?.[view]} packshots={packshotsOn || type === "packshots"} onChange={(next) => go(view, next)} />
       <ViewNote view={view} logosSetAside={page?.logos_set_aside} />
@@ -108,15 +113,12 @@ export function SiteImages() {
             onAdd={qualifying ? (item) => setAdding([item]) : undefined}
             onIgnore={qualifying ? (item) => ignore([item], () => pick.toggle(item.id, false)) : undefined}
             footerFor={footerFor}
-            filtered={search.applied !== "" || search.site !== "all" || search.min > 0 || type !== null}
+            filtered={search.applied !== "" || search.site !== "all" || search.min > 0 || search.section !== "" || type !== null}
             onClear={() => { search.reset(); go(view, null); }}
           />
           </Refreshing>
         </>
       )}
-      <Present show={Boolean(qualifying && chosen.length)}>
-        <BulkBar chosen={chosen} labels={labels} ignoring={ignoring} onAdd={() => setAdding(chosen)} onIgnore={() => ignore(chosen, (failedIds) => pick.setSelected(new Set(failedIds)))} onClear={pick.clear} />
-      </Present>
       <Present show={adding !== null}>
         <AddToLibrary items={adding} onClose={() => setAdding(null)} onDone={(ids) => pick.setSelected(new Set([...pick.selected].filter((id) => !ids.includes(id))))} />
       </Present>
@@ -134,13 +136,16 @@ function useSiteLabels() {
 }
 
 /** What can be done to the cards ticked: add them to the library, ignore them, or (labels on) type them. */
-function BulkBar(props: { chosen: SiteImage[]; labels: LabelInfo[]; ignoring: boolean; onAdd: () => void; onIgnore: () => void; onClear: () => void }) {
+function BulkBar(props: { chosen: SiteImage[]; total: number; labels: LabelInfo[]; ignoring: boolean; onAdd: () => void; onIgnore: () => void; onSelectAll: () => void; onClear: () => void }) {
   const { chosen, labels } = props;
   return (
-    <SelectionBar count={chosen.length} ignoring={props.ignoring} onAdd={props.onAdd} onIgnore={props.onIgnore} onClear={props.onClear}>
+    <SelectionFrame count={chosen.length} total={props.total} onSelectAll={props.onSelectAll} onClear={props.onClear}>
       {LABELS_ENABLED ? <TypeButtons types={labels.filter((label) => label.kind === "type")} items={chosen} onDone={props.onClear} /> : null}
-      {LABELS_ENABLED ? <ContentTagger labels={labels} images={{ siteImageIds: chosen.flatMap((item) => item.ids) }} dark /> : null}
-    </SelectionBar>
+      {LABELS_ENABLED ? <ContentTagger labels={labels} images={{ siteImageIds: chosen.flatMap((item) => item.ids) }} /> : null}
+      <Button variant="primary" onClick={props.onAdd}>Ajouter à la bibliothèque</Button>
+      {/* Immediate feedback on the bar itself, not only the toast: the images are set aside one request later. */}
+      <Button disabled={props.ignoring} aria-busy={props.ignoring} onClick={props.onIgnore}>{props.ignoring ? "Ignorer…" : "Ignorer"}</Button>
+    </SelectionFrame>
   );
 }
 
@@ -177,17 +182,18 @@ function useSearch() {
     setParams((previous) => { const next = new URLSearchParams(previous); if (value === empty) next.delete(key); else next.set(key, value); return next; }, { replace: true });
   const [text, setText] = useState(params.get("q") ?? "");
   const [applied, setApplied] = useState(text.trim());
+  const [section, setSection] = useState(params.get("section") ?? "");
   useEffect(() => {
-    const timer = setTimeout(() => { setApplied(text.trim()); put("q", text.trim(), ""); }, 300);
+    const timer = setTimeout(() => { setApplied(text.trim()); put("q", text.trim(), ""); put("section", section.trim(), ""); }, 300);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text]);
+  }, [text, section]);
   return {
-    site: params.get("site") ?? "all", text, applied, min: Number(params.get("min")) || 0,
+    site: params.get("site") ?? "all", text, applied, section: params.get("section") ?? "", sectionText: section, changeSection: setSection, min: Number(params.get("min")) || 0,
     changeSite: (id: string) => put("site", id, "all"),
     changeText: setText,
     changeMin: (px: number) => put("min", String(px), "0"),
-    reset: () => { setText(""); setApplied(""); setParams((previous) => { const next = new URLSearchParams(previous); ["q", "site", "min"].forEach((key) => next.delete(key)); return next; }, { replace: true }); },
+    reset: () => { setText(""); setApplied(""); setSection(""); setParams((previous) => { const next = new URLSearchParams(previous); ["q", "site", "min", "section"].forEach((key) => next.delete(key)); return next; }, { replace: true }); },
   };
 }
 type Search = ReturnType<typeof useSearch>;
@@ -309,6 +315,10 @@ function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelI
           <FieldLabel htmlFor="img-search">Rechercher</FieldLabel>
           <Input id="img-search" type="search" placeholder="Nom de fichier ou page" value={search.text} onChange={(event) => search.changeText(event.target.value)} />
         </div>
+        <div className="w-full sm:w-52">
+          <FieldLabel htmlFor="img-section">Section du site</FieldLabel>
+          <Input id="img-section" placeholder="/fr/soins" maxLength={200} value={search.sectionText} onChange={(event) => search.changeSection(event.target.value)} />
+        </div>
         <div>
           <FieldLabel htmlFor="img-min">Taille minimale</FieldLabel>
           <select id="img-min" value={search.min} onChange={(event) => search.changeMin(Number(event.target.value))} className="h-10 rounded-md border border-line-strong bg-paper px-3 text-sm">
@@ -319,7 +329,7 @@ function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelI
         </div>
         {/* While the answer to a search or a site comes, the count is the previous one: it says so instead of passing for the new one. */}
         <p className="pb-2 text-sm text-muted">{props.stale ? "Mise à jour…" : plural(page.total, page.view === "qualify" ? "image à vérifier" : "image", page.view === "qualify" ? "images à vérifier" : "images")}</p>
-        {search.applied !== "" || search.site !== "all" || search.min > 0 ? (
+        {search.applied !== "" || search.site !== "all" || search.min > 0 || search.section !== "" ? (
           <button type="button" className="pb-2 text-sm text-muted underline underline-offset-2 hover:text-ink" onClick={search.reset}>Effacer la recherche et les filtres</button>
         ) : null}
         {selecting && page.items.length ? (
@@ -449,20 +459,6 @@ function EmptyTab({ view, filtered, nothingRead, onClear }: { view: SiteImageVie
     );
   }
   return <p className="py-10 text-center text-sm text-muted">Aucune image dans cet onglet.</p>;
-}
-
-function SelectionBar(props: { count: number; ignoring: boolean; onAdd: () => void; onIgnore: () => void; onClear: () => void; children: ReactNode }) {
-  const { leaving, onAnimationEnd } = usePresence(true);
-  return (
-    <div inert={leaving} onAnimationEnd={onAnimationEnd} className={cx(leaving ? "fade-out" : "rise-in", "fixed inset-x-4 bottom-4 z-30 mx-auto flex max-w-4xl flex-wrap items-center gap-3 rounded-3xl border border-line-strong bg-bar px-5 py-2.5 text-sm text-white shadow-float md:left-[calc(248px+2.5rem)]")} role="region" aria-label="Actions sur la sélection">
-      <span className="font-medium">{plural(props.count, "sélectionnée", "sélectionnées")}</span>
-      <Button size="sm" onClick={props.onAdd}>Ajouter à la bibliothèque</Button>
-      {/* Immediate feedback on the bar itself, not only the toast: the images are set aside one request later. */}
-      <button type="button" className="text-white/80 hover:text-white disabled:opacity-60" disabled={props.ignoring} aria-busy={props.ignoring} onClick={props.onIgnore}>{props.ignoring ? "Ignorer…" : "Ignorer"}</button>
-      {props.children}
-      <button type="button" className="ml-auto text-white/70 hover:text-white" onClick={props.onClear}>Annuler</button>
-    </div>
-  );
 }
 
 /** Set aside as not rights-managed: never proposed again, near copies included. */

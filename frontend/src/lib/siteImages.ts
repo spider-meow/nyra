@@ -9,16 +9,17 @@ import { useInvalidate } from "./queries";
 export const SITE_IMAGES_PAGE = 60;
 
 /** One tab of "Images en ligne", narrowed to a site version and a text, a page of entries at a time (`fetchNextPage`). */
-export function useSiteImages(options: { view: SiteImageView; type: SiteImageType | null; site: string; text: string; min: number }) {
+export function useSiteImages(options: { view: SiteImageView; type: SiteImageType | null; site: string; text: string; min: number; section: string }) {
   const { apiPath, brand } = useOrg();
-  const { view, type, site, text, min } = options;
+  const { view, type, site, text, min, section } = options;
   return useInfiniteQuery({
-    queryKey: ["site-images", brand.id, view, type, site, text, min],
+    queryKey: ["site-images", brand.id, view, type, site, text, min, section],
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams({ view, offset: String(pageParam), limit: String(SITE_IMAGES_PAGE), q: text });
       if (type) params.set("type", type);
       if (site !== "all") params.set("site", site);
       if (min) params.set("min", String(min));
+      if (section) params.set("section", section);
       return api.get<SiteImagesPage>(`${apiPath("/site-images")}?${params}`);
     },
     initialPageParam: 0,
