@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Icon } from "../../components/icons";
-import { Button, Card, cx, FieldLabel, Input, Skeleton } from "../../components/ui";
+import { Bar, Button, Card, cx, FieldLabel, Input, Skeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDateTime, hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -41,7 +41,15 @@ export function SitesCard(props: {
         </div>
       </div>
       {sites.isLoading ? (
-        <div className="border-t border-line p-5"><Skeleton className="h-16" /></div>
+        <ul className="divide-y divide-line border-t border-line" aria-busy="true" aria-hidden>
+          {[0, 1].map((key) => (
+            <li key={key} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3 text-sm">
+              {selectable ? <Skeleton className="h-4 w-4 rounded-sm" /> : null}
+              <div className="min-w-0 flex-1"><p className="font-medium"><Bar width="40%" /></p><p className="text-[13px]"><Bar width="25%" /></p></div>
+              <Skeleton className="h-8 w-24 rounded-lg" />
+            </li>
+          ))}
+        </ul>
       ) : sites.error ? (
         <p className="border-t border-line px-5 py-4 text-sm text-expired">{errorMessage(sites.error)}</p>
       ) : list.length ? (
