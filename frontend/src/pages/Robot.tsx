@@ -29,7 +29,7 @@ function CopyButton(props: { text: string }) {
     }
     window.setTimeout(() => setState("idle"), 2000);
   }
-  return <Button size="sm" onClick={() => void copy()}>{state === "copied" ? "Copié" : state === "failed" ? "Copie impossible" : "Copier"}</Button>;
+  return <Button size="sm" onClick={() => void copy()}><span key={state} className="fade-in">{state === "copied" ? "Copié" : state === "failed" ? "Copie impossible" : "Copier"}</span></Button>;
 }
 
 const Section = (props: { title: string; children: ReactNode }) => (

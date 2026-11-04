@@ -19,7 +19,8 @@ export type ToastInput = {
   duration?: number;
 };
 
-type Toast = ToastInput & { id: number; tone: Tone };
+/** `leaving`: it stays in the list while its exit plays; the card asks for its removal when that is over. */
+type Toast = ToastInput & { id: number; tone: Tone; leaving?: boolean };
 
 export type Toaster = {
   /** toast("Adresse ajoutée.", "success") */
@@ -40,6 +41,19 @@ function defaultDuration(toast: Toast): number | null {
   return toast.action ? 7000 : 4500;
 }
 
+const MAX_TOASTS = 4;
+
+const leave = (list: Toast[], id: number) => list.map((toast) => (toast.id === id ? { ...toast, leaving: true } : toast));
+
+/** `input` applied to toast `id`: in place while it is on screen, from scratch when it is gone or leaving (an update brings it back). */
+function patched(list: Toast[], id: number, input: Partial<ToastInput>) {
+  const existing = list.find((toast) => toast.id === id);
+  const live = existing !== undefined && !existing.leaving;
+  const next: Toast = live ? { ...existing, ...input } : { message: "", ...input, id, tone: input.tone ?? "info" };
+  const items = existing ? list.map((toast) => (toast.id === id ? next : toast)) : [...list.slice(-(MAX_TOASTS - 1)), next];
+  return { items, next, fresh: !live };
+}
+
 /** The toasts on screen, their auto-dismiss timers and the `toast()` function handed to the app. */
 function useToastStore() {
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -51,6 +65,11 @@ function useToastStore() {
   const dismiss = useCallback((id: number) => {
     window.clearTimeout(timers.current.get(id));
     timers.current.delete(id);
+    current.current = leave(current.current, id);
+    setToasts(current.current);
+  }, []);
+
+  const remove = useCallback((id: number) => {
     current.current = current.current.filter((toast) => toast.id !== id);
     setToasts(current.current);
   }, []);
@@ -71,23 +90,19 @@ function useToastStore() {
       const toast: Toast = { ...input, id: nextId.current++, tone: input.tone ?? "info" };
       // At most four on screen: the oldest finished one makes room, never a task still in progress.
       let list = current.current;
-      if (list.length >= 4) {
-        const oldest = list.find((item) => item.tone !== "loading");
-        if (oldest) list = list.filter((item) => item !== oldest);
-      }
+      const oldest = list.filter((item) => !item.leaving).length >= MAX_TOASTS ? list.find((item) => !item.leaving && item.tone !== "loading") : undefined;
+      if (oldest) list = leave(list, oldest.id);
       current.current = [...list, toast];
       setToasts(current.current);
       schedule(toast);
       return toast.id;
     };
     const update = (id: number, input: Partial<ToastInput>) => {
-      const existing = current.current.find((toast) => toast.id === id);
-      const next: Toast = existing ? { ...existing, ...input } : { message: "", ...input, id, tone: input.tone ?? "info" };
-      const list = existing ? current.current.map((toast) => (toast.id === id ? next : toast)) : [...current.current.slice(-3), next];
+      const { items, next, fresh } = patched(current.current, id, input);
       // Two updates in the same tick must build on each other.
-      current.current = list;
-      setToasts(list);
-      if (!existing || input.tone) schedule(next);
+      current.current = items;
+      setToasts(items);
+      if (fresh || input.tone) schedule(next);
     };
     return Object.assign((message: string, tone: Exclude<Tone, "loading"> = "info") => show({ message, tone }), {
       show,
@@ -97,11 +112,11 @@ function useToastStore() {
     });
   }, [dismiss, schedule]);
 
-  return { toasts, toaster, dismiss, pause, schedule };
+  return { toasts, toaster, dismiss, remove, pause, schedule };
 }
 
 export function ToastProvider(props: { children: ReactNode }) {
-  const { toasts, toaster, dismiss, pause, schedule } = useToastStore();
+  const { toasts, toaster, dismiss, remove, pause, schedule } = useToastStore();
   return (
     <ToastContext.Provider value={toaster}>
       {props.children}
@@ -114,6 +129,7 @@ export function ToastProvider(props: { children: ReactNode }) {
             key={toast.id}
             toast={toast}
             onDismiss={() => dismiss(toast.id)}
+            onGone={() => remove(toast.id)}
             onPause={() => pause(toast.id)}
             onResume={() => schedule(toast)}
           />
@@ -123,15 +139,25 @@ export function ToastProvider(props: { children: ReactNode }) {
   );
 }
 
-function ToastCard(props: { toast: Toast; onDismiss: () => void; onPause: () => void; onResume: () => void }) {
-  const { toast, onDismiss } = props;
+function ToastCard(props: { toast: Toast; onDismiss: () => void; onGone: () => void; onPause: () => void; onResume: () => void }) {
+  const { toast, onDismiss, onGone } = props;
+  const { mounted, leaving, onAnimationEnd } = usePresence(!toast.leaving);
+  useEffect(() => {
+    if (!mounted) onGone();
+    // Once, when its exit is over.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mounted]);
+  if (!mounted) return null;
   return (
     <div
       role={toast.tone === "error" ? "alert" : "status"}
+      inert={leaving}
+      onAnimationEnd={onAnimationEnd}
       onMouseEnter={props.onPause}
       onMouseLeave={props.onResume}
       className={cx(
-        "toast-in pointer-events-auto w-full max-w-sm overflow-hidden rounded-xl text-sm shadow-float",
+        leaving ? "fade-out" : "toast-in",
+        "pointer-events-auto w-full max-w-sm overflow-hidden rounded-xl text-sm shadow-float",
         toast.tone === "error" ? "border border-expired/20 bg-expired-soft text-expired" : "border border-line-strong bg-bar text-white",
       )}
     >
