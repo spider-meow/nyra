@@ -1,26 +1,37 @@
 import { Link } from "react-router";
 import { LoadError, RefreshFailed, Refreshing } from "../components/busy";
-import { LinkButton, PageHeader, Skeleton, Stat } from "../components/ui";
+import { Bar, LinkButton, PageHeader, Stat } from "../components/ui";
 import { plural } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useOverview } from "../lib/queries";
 import type { Overview } from "../types";
-import { Hero } from "./dashboard/Hero";
+import { Hero, HeroSkeleton } from "./dashboard/Hero";
 import { Start } from "./dashboard/Start";
-import { Upcoming } from "./dashboard/Upcoming";
+import { Upcoming, UpcomingSkeleton } from "./dashboard/Upcoming";
 
 export function Dashboard() {
   const { link, platformAdmin } = useOrg();
   const overview = useOverview();
 
+  const header = (
+    <PageHeader
+      eyebrow={today()}
+      title="Tableau de bord"
+      actions={
+        <>
+          <LinkButton to={link("reports")}>Rapports</LinkButton>
+          {platformAdmin ? <LinkButton to={link("scans")} variant="primary">Relire les sites</LinkButton> : null}
+        </>
+      }
+    />
+  );
   if (overview.isLoading) {
     return (
-      <div className="grid gap-4">
-        <Skeleton className="h-9 w-64" />
-        <Skeleton className="h-64" />
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[0, 1, 2, 3].map((key) => <Skeleton key={key} className="h-36" />)}
-        </div>
+      <div aria-busy="true">
+        {header}
+        <HeroSkeleton />
+        <StatsSkeleton />
+        <UpcomingSkeleton />
       </div>
     );
   }
@@ -34,16 +45,7 @@ export function Dashboard() {
   return (
     <Refreshing active={overview.isFetching}>
       {overview.error ? <RefreshFailed error={overview.error} onRetry={() => void overview.refetch()} retrying={overview.isFetching} /> : null}
-      <PageHeader
-        eyebrow={today()}
-        title="Tableau de bord"
-        actions={
-          <>
-            <LinkButton to={link("reports")}>Rapports</LinkButton>
-            {platformAdmin ? <LinkButton to={link("scans")} variant="primary">Relire les sites</LinkButton> : null}
-          </>
-        }
-      />
+      {header}
       <Hero overview={overview.data} />
       <Stats dashboard={dashboard} stats={stats} />
       <Upcoming items={dashboard.upcoming} />
@@ -56,6 +58,16 @@ const todayFormat = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "nu
 function today(): string {
   const text = todayFormat.format(new Date());
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The first load of `Stats`: the same four cards, in their tints, with a bar in place of every word. */
+function StatsSkeleton() {
+  const label = <><Bar /><Bar width="60%" /></>;
+  return (
+    <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" aria-hidden>
+      {(["yellow", "teal", "blush", "mint"] as const).map((tint) => <Stat key={tint} tint={tint} value={<Bar width="4rem" />} label={label} hint={<Bar width="50%" />} />)}
+    </div>
+  );
 }
 
 /** The numbers count every deadline, not a window: the links to "À traiter" ask for all of them (window=3650), whatever window was remembered there. */
