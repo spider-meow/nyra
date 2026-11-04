@@ -2,7 +2,7 @@ import { LoadError, RefreshFailed, Refreshing } from "../components/busy";
 import { useState } from "react";
 import { Link } from "react-router";
 import { OrgHoldNotice, holdProps } from "../components/OrgHold";
-import { Button, EmptyState, PageHeader, Segmented, Skeleton, StatusBadge, Thumb } from "../components/ui";
+import { Bar, Button, EmptyState, PageHeader, Segmented, Skeleton, StatusBadge, Thumb } from "../components/ui";
 import { InfoTip } from "../components/SettingsBlock";
 import { daysText, hostOf, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
@@ -21,7 +21,13 @@ export function Visuals() {
   const read = useFullRead();
   const [tab, setTab] = useState<Tab>("todo");
 
-  if (visuals.isLoading) return <><PageHeader title="Visuels à remplacer" /><Skeleton className="h-96" /></>;
+  const header = (
+    <PageHeader
+      title="Visuels à remplacer"
+      actions={platformAdmin ? <Button variant="primary" loading={read.busy} disabled={Boolean(read.hold)} {...holdProps(read.hold)} onClick={read.read}>Relire les sites</Button> : undefined}
+    />
+  );
+  if (visuals.isLoading) return <div aria-busy="true">{header}<VisualsSkeleton /></div>;
   if (!visuals.data) return <LoadError title="Visuels indisponibles" error={visuals.error} onRetry={() => void visuals.refetch()} retrying={visuals.isFetching} />;
   const all = [...visuals.data.visuals].sort(byUrgency);
   const todo = all.filter((item) => !item.replaced);
@@ -29,10 +35,7 @@ export function Visuals() {
   return (
     <Refreshing active={visuals.isFetching}>
       {visuals.error ? <RefreshFailed error={visuals.error} onRetry={() => void visuals.refetch()} retrying={visuals.isFetching} /> : null}
-      <PageHeader
-        title="Visuels à remplacer"
-        actions={platformAdmin ? <Button variant="primary" loading={read.busy} disabled={Boolean(read.hold)} {...holdProps(read.hold)} onClick={read.read}>Relire les sites</Button> : undefined}
-      />
+      {header}
       {platformAdmin && read.hold ? <div className="mb-4"><OrgHoldNotice hold={read.hold} /></div> : null}
       {visuals.data.suspect_sites.map((site) => <SuspectReadNotice key={site.site_id} site={site.label || hostOf(site.site_url)} reason={site.reason} />)}
       <div className="mb-4 flex items-center gap-2">
@@ -81,6 +84,31 @@ function redirectNote(item: VisualItem, concluded: boolean): string {
     other ? `${plural(other, "page renvoyée ailleurs", "pages renvoyées ailleurs")} : rien n'est conclu` : "",
   ];
   return parts.filter(Boolean).join(" · ");
+}
+
+/** The first load: the tabs and five rows, each as the real row (thumbnail, name and badge, figures and gauge), a bar in place of every word. */
+function VisualsSkeleton() {
+  return (
+    <div aria-hidden>
+      <Skeleton className="mb-4 h-10 w-72 rounded-xl" />
+      <ul className="divide-y divide-line rounded-xl border border-ink/20 bg-paper">
+        {[0, 1, 2, 3, 4].map((key) => (
+          <li key={key} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3">
+            <Skeleton className="h-[46px] w-[46px] shrink-0 rounded-md" />
+            <span className="min-w-0 flex-1 basis-40">
+              <span className="block text-sm"><Bar width="50%" /></span>
+              <Skeleton className="mt-1 h-[22px] w-24 rounded-full" />
+            </span>
+            <span className="flex w-full shrink-0 flex-col items-start gap-1 sm:w-auto sm:items-end">
+              <span className="block w-24 text-sm"><Bar /></span>
+              <span className="block w-40 text-xs"><Bar /></span>
+              <Skeleton className="h-1.5 w-28 rounded-full" />
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function VisualRow(props: { item: VisualItem; to: string; concluded: boolean }) {

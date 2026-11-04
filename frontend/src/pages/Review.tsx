@@ -2,11 +2,11 @@ import { LoadError, RefreshFailed, Refreshing } from "../components/busy";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { CompareView } from "../components/CompareView";
 import { Modal } from "../components/feedback";
-import { Card, EmptyState, Kbd, LinkButton, PageHeader, Skeleton } from "../components/ui";
+import { Bar, Card, EmptyState, Kbd, LinkButton, PageHeader, Skeleton } from "../components/ui";
 import { useOrg } from "../lib/org";
 import { useDecide, useShortcuts } from "./review/decide";
 import { ReviewFilters, ReviewTabs } from "./review/Filters";
-import { MissingList, OccurrenceList } from "./review/List";
+import { MissingList, OccurrenceList, OccurrenceListSkeleton } from "./review/List";
 import { RelatedReferences } from "./review/Related";
 import { focusOn, useReviewView, type ReviewView } from "./review/view";
 
@@ -42,17 +42,26 @@ export function Review() {
   );
 }
 
+/** The first load: the list as it will be (`OccurrenceList`) and, on a large screen, the room of the comparison. */
+function ResultsSkeleton() {
+  return (
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,480px)]" aria-busy="true">
+      <OccurrenceListSkeleton />
+      <div className="hidden self-start rounded-xl border border-ink/20 bg-paper p-5 lg:block" aria-hidden>
+        <h2 className="text-lg"><Bar width="45%" /></h2>
+        <p className="mt-1 text-sm"><Bar width="70%" /></p>
+        <Skeleton className="mt-4 h-9 w-48 rounded-lg" />
+        <div className="mt-4 grid grid-cols-2 gap-3"><Skeleton className="aspect-square" /><Skeleton className="aspect-square" /></div>
+        <Skeleton className="mt-4 h-20" />
+      </div>
+    </div>
+  );
+}
+
 /** The three states of the list (first load, refresh with the rows on screen, failure), then what it shows. */
 function Results(props: { view: ReviewView; compare: ReactNode }) {
   const { matches } = props.view;
-  if (matches.isLoading) {
-    return (
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,480px)]">
-        <div className="grid gap-2">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} className="h-16" />)}</div>
-        <Skeleton className="hidden h-96 lg:block" />
-      </div>
-    );
-  }
+  if (matches.isLoading) return <ResultsSkeleton />;
   if (matches.error && !matches.data) return <LoadError title="Impossible de charger les correspondances" error={matches.error} onRetry={() => void matches.refetch()} retrying={matches.isFetching} />;
   return (
     <Refreshing active={matches.isFetching}>
