@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useToast, type Toaster } from "../../components/feedback";
 import { OrgHoldNotice, holdProps, useOrgHold } from "../../components/OrgHold";
-import { Button, Checkbox, FieldLabel, Input } from "../../components/ui";
+import { Bar, Button, Checkbox, FieldLabel, Input, Skeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { approxDuration, hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -29,6 +29,20 @@ function compareOutcome(toast: Toaster) {
 }
 
 /** The page's main action, on top: read the ticked addresses, or compare what was already read. Options stay folded. */
+/** The first load of `RunCard`: the same box, the two buttons, the estimate and the options line. */
+export function RunCardSkeleton() {
+  return (
+    <div className="mb-6 rounded-xl border border-line bg-paper px-5 py-4" aria-hidden>
+      <div className="flex flex-wrap items-center gap-3">
+        <Skeleton className="h-10 w-36 rounded-lg" />
+        <Skeleton className="h-10 w-44 rounded-lg" />
+        <span className="w-72 text-xs"><Bar /></span>
+      </div>
+      <p className="mt-3 w-40 text-sm"><Bar /></p>
+    </div>
+  );
+}
+
 export function RunCard(props: { list: Site[]; selected: Site[] }) {
   const { admin } = useOrg();
   const { list, selected } = props;

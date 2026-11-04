@@ -1,5 +1,5 @@
 import { LoadError, Refreshing } from "../../components/busy";
-import { Card, EmptyState, Skeleton, cx } from "../../components/ui";
+import { Bar, Card, EmptyState, cx } from "../../components/ui";
 import { formatDateTime, hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { useScans } from "../../lib/queries";
@@ -19,7 +19,31 @@ function siteName(site: { url: string; label: string }): string {
 export function ScanHistory() {
   const { admin } = useOrg();
   const scans = useScans();
-  if (scans.isLoading) return <Skeleton className="h-40" />;
+  if (scans.isLoading) {
+    return (
+      <Card padded={false} className="overflow-x-auto">
+        <table className="w-full min-w-[640px] text-sm" aria-busy="true" aria-hidden>
+          <thead>
+            <tr className="border-b border-line text-left text-xs text-muted">
+              {["Site", "Début", "État", "Pages", "Nouvelles images", "Incidents"].map((head, index) => <th key={head} className={cx("px-2 py-2.5 font-medium first:px-4 last:px-4", (index === 3 || index === 4) && "text-right")}>{head}</th>)}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-line">
+            {[0, 1, 2].map((key) => (
+              <tr key={key}>
+                <td className="px-4 py-2.5"><Bar width="8rem" /></td>
+                <td className="px-2 py-2.5"><Bar width="7rem" /></td>
+                <td className="px-2 py-2.5"><Bar width="3rem" /></td>
+                <td className="px-2 py-2.5"><Bar width="2rem" /></td>
+                <td className="px-2 py-2.5"><Bar width="2rem" /></td>
+                <td className="px-4 py-2.5"><Bar width="6rem" /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    );
+  }
   if (scans.error && !scans.data) return <LoadError title="Historique indisponible" error={scans.error} onRetry={() => void scans.refetch()} retrying={scans.isFetching} />;
   if (!scans.data?.scans.length) {
     return <EmptyState title="Aucune lecture pour l'instant" body={admin ? "Ajoutez une adresse puis lancez la lecture." : "Un administrateur doit lancer la première lecture."} />;
