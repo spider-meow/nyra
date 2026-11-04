@@ -22,7 +22,7 @@ export function CollectionTree({ view }: { view: LibraryView }) {
     return (
       <li key={collection.id} className={depth === 1 ? "rounded-xl border border-line bg-paper p-1" : undefined}>
         <Row depth={depth} active={scope === collection.id} label={collection.name} count={folderCounts[collection.id] ?? 0} onSelect={() => view.setScope(collection.id)} chevron={kids.length ? { expanded } : undefined} />
-        {expanded && kids.length ? <ul>{kids.map((child) => node(child, depth + 1))}</ul> : null}
+        {expanded && kids.length ? <ul className="fade-in">{kids.map((child) => node(child, depth + 1))}</ul> : null}
       </li>
     );
   }
@@ -124,7 +124,7 @@ function Row(props: { depth: number; active: boolean; label: string; count: numb
     <div className={cx("flex items-center rounded-lg text-[13.5px]", props.active ? "bg-side font-medium text-ink" : "text-ink-soft hover:bg-side/60")} style={{ paddingLeft: (props.depth - 1) * 14 }}>
       {props.chevron ? (
         <span aria-hidden className="grid h-7 w-6 shrink-0 place-items-center text-muted">
-          <Icon name="arrow" size={12} className={props.chevron.expanded ? "rotate-90" : ""} />
+          <Icon name="arrow" size={12} className={cx("transition-transform", props.chevron.expanded && "rotate-90")} />
         </span>
       ) : <span className="w-6 shrink-0" />}
       <button type="button" onClick={props.onSelect} aria-current={props.active ? "true" : undefined} aria-expanded={props.chevron?.expanded} className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pr-2 text-left">

@@ -297,8 +297,8 @@ export function BrandShell() {
   const brand = org.brands.find((item) => item.slug === slug);
   if (!brand) return <NotFound message="Cette marque n'existe pas dans cette organisation." />;
   return (
-    // Keyed by brand: switching brands starts every screen from a clean state.
-    <OrgProvider key={brand.id} org={org} brand={brand}>
+    // Switching brands keeps the side column and starts every screen from a clean state (RouteFade keys the page by its path, which names the brand).
+    <OrgProvider org={org} brand={brand}>
       <Layout />
     </OrgProvider>
   );

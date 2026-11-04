@@ -113,7 +113,7 @@ export function Settings() {
       <PageHeader title="Réglages" />
       <div className="flex flex-col gap-6 lg:flex-row lg:gap-10">
         <Nav sections={visible} activeId={active.id} onPick={(id) => setParams({ section: id }, { replace: true })} />
-        <div className="min-w-0 max-w-3xl flex-1">
+        <div key={active.id} className="fade-in min-w-0 max-w-3xl flex-1">
           <h2 className="mb-6 text-xl font-semibold tracking-tight">{active.label}</h2>
           {active.render(settings.data)}
         </div>
