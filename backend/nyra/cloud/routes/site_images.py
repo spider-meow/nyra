@@ -56,6 +56,8 @@ class AdoptBody(BaseModel):
     unlimited_rights: bool = False
     credit: str = Field(default="", max_length=500)
     notes: str = Field(default="", max_length=2000)
+    # Optional expiry date per image (site image id -> date) in place of `expiry_date`, for a batch whose images do not share it.
+    expiries: dict[str, str] = Field(default_factory=dict)
     collection_id: Optional[uuid.UUID] = None  # where the visuals are filed in the library (none: unfiled)
     # Optional name per image (site image id -> file name); otherwise taken from the image's address.
     filenames: dict[str, str] = Field(default_factory=dict)
@@ -320,6 +322,9 @@ def adopt_site_images(body: AdoptBody, scope: BrandScope = Depends(brand_admin_d
     """Add images read on the site to the library. Each one is linked to its occurrences at once
     (a sure match: same image), so it goes straight to "À traiter"."""
     expiry, _ = rights_from_body(body.expiry_date, body.unlimited_rights)
+    if body.expiries and body.unlimited_rights:
+        raise HTTPException(status_code=400, detail="Des droits illimités n'ont pas de date d'échéance.")
+    own = {key: rights_from_body(value, False)[0] for key, value in body.expiries.items() if value}  # validated before anything is added
     client = ctx.settings.storage_client()
     with cloud_db.connect(ctx.settings.database_url) as conn:
         if body.collection_id:
@@ -337,7 +342,7 @@ def adopt_site_images(body: AdoptBody, scope: BrandScope = Depends(brand_admin_d
     ]
     for row in rows:
         try:
-            item, refused = _adopt_one(ctx, scope, client, config, body, expiry, row, taken)
+            item, refused = _adopt_one(ctx, scope, client, config, body, own.get(str(row["id"]), expiry), row, taken)
         except HTTPException as exc:
             failed.append({"site_image_id": str(row["id"]), "url": row["url"], "reason": str(exc.detail)})
             continue

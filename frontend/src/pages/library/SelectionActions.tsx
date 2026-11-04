@@ -240,7 +240,7 @@ export function SelectionActions({ open, onClose, items, folders, folderCounts, 
       <Present show={dialog === "unlimited"}><UnlimitedDialog items={items} bulk={bulk} onClose={close} /></Present>
       <Present show={dialog === "tags"}><TagsDialog items={items} bulk={bulk} onClose={close} /></Present>
       <Present show={dialog === "credit"}><CreditDialog items={items} bulk={bulk} onClose={close} /></Present>
-      <Present show={dialog === "folder"}><FolderDialog items={items} folders={folders} counts={folderCounts} busy={bulk.busy} onFile={bulk.file} onClose={close} /></Present>
+      <Present show={dialog === "folder"}><FolderDialog count={items.length} folders={folders} counts={folderCounts} busy={bulk.busy} onFile={bulk.file} onClose={close} /></Present>
       <Present show={dialog === "zip"}><ZipDialog items={items} onClose={close} /></Present>
       <Present show={dialog === "labels"}>
         <Modal open onClose={close} title="Étiquettes de contenu" footer={<Button onClick={close}>Fermer</Button>}>

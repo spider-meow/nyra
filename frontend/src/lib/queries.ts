@@ -264,7 +264,7 @@ export function useSiteImageMutations() {
   const invalidate = useInvalidate();
   return {
     adopt: useMutation({
-      mutationFn: (input: { site_image_ids: string[]; expiry_date: string; unlimited_rights: boolean; credit: string; filenames: Record<string, string>; collection_id?: string }) =>
+      mutationFn: (input: { site_image_ids: string[]; expiry_date: string; unlimited_rights: boolean; credit: string; filenames: Record<string, string>; collection_id?: string; expiries?: Record<string, string> }) =>
         api.post<{
           added: { site_image_id: string; filename: string }[];
           failed: { site_image_id: string; url: string; reason: string }[];
