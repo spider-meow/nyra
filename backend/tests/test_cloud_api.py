@@ -1397,6 +1397,13 @@ def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
     assert listed("qualify", min=1) == set() and listed("qualify", section="/nowhere") == set()  # no size known, no page under that path
     assert [(entry["label"], entry["count"]) for entry in tab("qualify")["sites"]] == [("t.test", 2)]
 
+    # An image ignored by hand goes back to "À qualifier"; one that no exclusion keeps out says so.
+    back = client.post(f"{base}/site-images/requalify", headers=_headers(admin_id), json={"site_image_ids": [str(ids["ignored"])]}).json()
+    assert back["exclusions"] == 1 and listed("ignored") == set() and str(ids["ignored"]) in listed("qualify")
+    assert client.post(f"{base}/site-images/requalify", headers=_headers(admin_id), json={"site_image_ids": [str(ids["plain"])]}).json()["exclusions"] == 0
+    assert client.post(f"{base}/site-images/requalify", headers=_headers(client_id), json={"site_image_ids": [str(ids["ignored"])]}).status_code == 403
+    assert client.post(f"{base}/exclusions", headers=_headers(admin_id), json={"site_image_id": str(ids["ignored"])}).status_code == 200
+
     # Setting the logos aside moves them from "À qualifier" to "Ignorées", still under the type "Logos".
     assert client.put(f"{base}/logos/setting", headers=_headers(admin_id), json={"enabled": True}).status_code == 200
     assert tab("qualify")["counts"]["qualify"] == 1 and listed("qualify") == {str(ids["plain"])}

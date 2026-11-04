@@ -35,6 +35,16 @@ export function useSiteImages(options: { view: SiteImageView; type: SiteImageTyp
   });
 }
 
+/** Put images ignored by hand back to "À qualifier" (their exclusions are deleted, a comparison is queued). */
+export function useRequalify() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (ids: string[]) => api.post<{ exclusions: number }>(apiPath("/site-images/requalify"), { site_image_ids: ids }),
+    onSuccess: () => invalidate("site-images", "exclusions", "occurrences", "matches", "overview", "jobs"),
+  });
+}
+
 /** The sheet of an image (AXE-740): all its pages, fifty at a time, and the visual of the library it matches. Asked once opened, not per card. */
 export type SiteImageDetail = { pages: { site: string; page: string }[]; page_total: number; visual: { id: string; filename: string; score: number } | null };
 

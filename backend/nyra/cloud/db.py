@@ -1166,6 +1166,18 @@ def delete_exclusion(conn: psycopg.Connection, brand_id: uuid.UUID, exclusion_id
     return result.rowcount
 
 
+def exclusion_groups_covering(conn: psycopg.Connection, brand_id: uuid.UUID, image_ids: list[uuid.UUID], phash_threshold: int, dhash_threshold: int) -> set[uuid.UUID]:
+    """The exclusions (their group ids) that keep these site images out: one hash of an exclusion within the usual Hamming threshold
+    of the image's hash of the same kind (the rule of `match.excluded_site_ids`, read the other way round)."""
+    images = conn.execute(
+        """SELECT si.phash, si.dhash FROM site_images si JOIN sites s ON s.id = si.site_id WHERE s.brand_id = %s AND si.id = ANY(%s)""",
+        (brand_id, image_ids)).fetchall()
+    excluded = conn.execute("SELECT COALESCE(group_id, id) AS gid, hash, hash_type FROM excluded_hashes WHERE brand_id = %s", (brand_id,)).fetchall()
+    thresholds = {"phash": phash_threshold, "dhash": dhash_threshold}
+    return {row["gid"] for row in excluded for image in images
+            if image[row["hash_type"]] and bin(int(image[row["hash_type"]], 16) ^ int(row["hash"], 16)).count("1") <= thresholds[row["hash_type"]]}
+
+
 def site_hashes(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
     return conn.execute(
         """SELECT si.id, si.phash, si.dhash FROM site_images si JOIN sites s ON s.id = si.site_id

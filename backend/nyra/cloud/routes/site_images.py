@@ -403,6 +403,29 @@ def add_exclusion(body: ExclusionBody, scope: BrandScope = Depends(brand_admin_d
     return {"id": str(group_id), "matches_removed": removed}
 
 
+class RequalifyBody(BaseModel):
+    site_image_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
+@router.post(f"{BRAND}/site-images/requalify")
+def requalify_site_images(body: RequalifyBody, scope: BrandScope = Depends(brand_admin_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Put images ignored by hand back to "À qualifier": the exclusions that keep them out are deleted (a near copy comes back with
+    them, as it left with them) and a comparison is queued. `exclusions` says how many there were: none for an image set aside by a setting."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        config = ctx.org_config(conn, scope.org_id)
+        groups = cloud_db.exclusion_groups_covering(conn, scope.brand_id, body.site_image_ids, config.match.phash_threshold, config.match.dhash_threshold)
+        for group in groups:
+            cloud_db.delete_exclusion(conn, scope.brand_id, group)
+            scope.audit(conn, "exclusion.delete", "exclusion", group)
+        job = None
+        if groups:  # the match signature now differs: the next comparison brings the images back
+            try:
+                job = cloud_jobs.enqueue(conn, org_id=scope.org_id, brand_id=scope.brand_id, kind="match", created_by=scope.member.user_id)
+            except cloud_jobs.JobConflict:
+                job = None
+    return {"exclusions": len(groups), "job": job}
+
+
 @router.delete(f"{BRAND}/exclusions/{{exclusion_id}}")
 def delete_exclusion(exclusion_id: uuid.UUID, scope: BrandScope = Depends(brand_admin_dep),
                      ctx: Ctx = Depends(get_ctx)) -> dict:
