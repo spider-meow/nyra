@@ -1,5 +1,5 @@
 import { SettingsBlock } from "../../components/SettingsBlock";
-import { Button, Checkbox, EmptyState, Skeleton } from "../../components/ui";
+import { Button, Checkbox, EmptyState, SettingsSkeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useNotifications, useSetNotifications } from "../../lib/queries";
 import type { Notifications as NotificationsData } from "../../types";
@@ -24,7 +24,7 @@ export function Notifications() {
   const query = useNotifications();
   const save = useSetNotifications();
 
-  if (query.isLoading) return <Skeleton className="h-40" />;
+  if (query.isLoading) return <SettingsSkeleton groups={[3]} />;
   if (query.error || !query.data?.monthly_email) {  // an answer without the field is an error, not a crash
     return (
       <div role="alert">

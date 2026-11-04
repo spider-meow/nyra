@@ -2,7 +2,7 @@ import { Link } from "react-router";
 import { LoadError } from "../../components/busy";
 import { useToast } from "../../components/feedback";
 import { SettingsBlock } from "../../components/SettingsBlock";
-import { Checkbox, Skeleton } from "../../components/ui";
+import { Checkbox, SettingsSkeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useOrg } from "../../lib/org";
 import { usePackshotMutations, usePackshots } from "../../lib/siteImages";
@@ -13,7 +13,7 @@ export function Packshots() {
   const packshots = usePackshots();
   const { setEnabled } = usePackshotMutations();
   const toast = useToast();
-  if (packshots.isLoading) return <Skeleton className="h-40" />;
+  if (packshots.isLoading) return <SettingsSkeleton groups={[2]} />;
   if (!packshots.data) return <LoadError title="Impossible de charger le réglage" error={packshots.error} onRetry={() => void packshots.refetch()} retrying={packshots.isFetching} />;
   const { available, enabled, detected } = packshots.data;
   return (

@@ -1,7 +1,7 @@
 import { LoadError } from "../../components/busy";
 import { useMemo } from "react";
 import { SettingsBlock } from "../../components/SettingsBlock";
-import { Button, cx, Skeleton } from "../../components/ui";
+import { Button, cx, SettingsSkeleton } from "../../components/ui";
 import { useLibrary } from "../../lib/queries";
 import type { Collection } from "../../types";
 import { collectionIndex, MAX_DEPTH, moveTargets, type CollectionIndex } from "../library/collections";
@@ -71,7 +71,7 @@ export function Collections() {
     );
   }
 
-  if (library.isLoading) return <Skeleton className="h-40" />;
+  if (library.isLoading) return <SettingsSkeleton groups={[3]} />;
   if (library.error && !library.data) return <LoadError title="Impossible de charger les collections" error={library.error} onRetry={() => void library.refetch()} retrying={library.isFetching} />;
   const top = folders.children.get(null) ?? [];
   return (
