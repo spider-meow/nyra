@@ -22,6 +22,7 @@ from .. import packshot_feedback as cloud_feedback
 from .. import packshots as cloud_packshots
 from .. import splits as cloud_splits
 from .. import storage as cloud_storage
+from .collections import require_collection
 from .common import (
     BRAND,
     IMAGE_SUFFIXES,
@@ -55,6 +56,7 @@ class AdoptBody(BaseModel):
     unlimited_rights: bool = False
     credit: str = Field(default="", max_length=500)
     notes: str = Field(default="", max_length=2000)
+    collection_id: Optional[uuid.UUID] = None  # where the visuals are filed in the library (none: unfiled)
     # Optional name per image (site image id -> file name); otherwise taken from the image's address.
     filenames: dict[str, str] = Field(default_factory=dict)
 
@@ -306,6 +308,8 @@ def _adopt_one(ctx: Ctx, scope: BrandScope, client, config: Config, body: AdoptB
         )
         same = cloud_db.same_image_ids(conn, scope.brand_id, row["content_hash"], row["id"])
         cloud_db.write_matches(conn, scope.org_id, [(ref_id, image_id, "phash", 1.0, "haut") for image_id in same])
+        if body.collection_id:
+            cloud_db.set_reference_collection(conn, scope.brand_id, [filename], body.collection_id)
         scope.audit(conn, "library.adopt", "reference", ref_id)  # one row per image, with its write
     taken.add(filename)
     return {"site_image_id": str(row["id"]), "filename": filename}, ""
@@ -318,6 +322,8 @@ def adopt_site_images(body: AdoptBody, scope: BrandScope = Depends(brand_admin_d
     expiry, _ = rights_from_body(body.expiry_date, body.unlimited_rights)
     client = ctx.settings.storage_client()
     with cloud_db.connect(ctx.settings.database_url) as conn:
+        if body.collection_id:
+            require_collection(conn, scope.brand_id, body.collection_id)
         config = ctx.org_config(conn, scope.org_id)
         rows = cloud_db.site_images_by_id(conn, scope.brand_id, body.site_image_ids)
         taken = {row["filename"] for row in cloud_db.list_references(conn, scope.brand_id)}
