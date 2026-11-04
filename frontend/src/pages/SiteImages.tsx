@@ -63,10 +63,13 @@ export function SiteImages() {
     : admin && view === "ignored" ? (item: SiteImage) => (item.status === "ignored" ? <Requalify item={item} /> : null)
     : view === "found" ? () => <Link className="text-[13px] font-medium text-ink underline underline-offset-2" to={link("review")}>Voir dans À traiter</Link> : undefined;
   // The address holds the state and the type, by identifier only; the default ("À qualifier", every type) leaves it clean.
-  function go(next: SiteImageView, nextType: SiteImageType | null) {
+  // One single update of the address: react-router applies each call to the address of the last render, so two calls in a row (the second
+  // built on the old address) would undo the first. `clear`: the search, site, size and section go too.
+  function go(next: SiteImageView, nextType: SiteImageType | null, clear = false) {
     setParams((previous) => {
       const out = new URLSearchParams(previous);
       out.delete("view"); out.delete("type");
+      if (clear) ["q", "site", "min", "section"].forEach((key) => out.delete(key));
       if (next !== "qualify") out.set("view", next);
       if (nextType) out.set("type", nextType);
       return out;
@@ -74,8 +77,8 @@ export function SiteImages() {
     pick.clear();
   }
   function changeView(next: SiteImageView) {
-    go(next, type);
-    search.reset();
+    go(next, type, true);
+    search.clearLocal();
   }
   // Redirect an old link to its new address once.
   useEffect(() => {
@@ -114,7 +117,7 @@ export function SiteImages() {
             onIgnore={qualifying ? (item) => ignore([item], () => pick.toggle(item.id, false)) : undefined}
             footerFor={footerFor}
             filtered={search.applied !== "" || search.site !== "all" || search.min > 0 || search.section !== "" || type !== null}
-            onClear={() => { search.reset(); go(view, null); }}
+            onClear={() => { go(view, null, true); search.clearLocal(); }}
           />
           </Refreshing>
         </>
@@ -193,6 +196,7 @@ function useSearch() {
     changeSite: (id: string) => put("site", id, "all"),
     changeText: setText,
     changeMin: (px: number) => put("min", String(px), "0"),
+    clearLocal: () => { setText(""); setApplied(""); setSection(""); },
     reset: () => { setText(""); setApplied(""); setSection(""); setParams((previous) => { const next = new URLSearchParams(previous); ["q", "site", "min", "section"].forEach((key) => next.delete(key)); return next; }, { replace: true }); },
   };
 }
