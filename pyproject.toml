@@ -41,7 +41,7 @@ observability = [
 ]
 dev = [
     "pytest>=8.0",
-    "ruff>=0.6",
+    "ruff>=0.17.3",
 ]
 
 [project.scripts]
