@@ -90,7 +90,10 @@ export function ImageCard(props: {
 function AddOrIgnore(props: { onAdd: () => void; onIgnore?: () => void }) {
   return (
     <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-1.5">
-      <Button size="sm" onClick={props.onAdd}>Ajouter à la bibliothèque</Button>
+      <Button size="sm" className="min-h-11 w-full sm:min-h-0 sm:w-auto" onClick={props.onAdd}>
+        <span className="sm:hidden">Ajouter</span>
+        <span className="hidden sm:inline">Ajouter à la bibliothèque</span>
+      </Button>
       <button type="button" className="px-1 text-[13px] text-muted underline underline-offset-2 hover:text-ink" onClick={props.onIgnore}>Ignorer</button>
     </div>
   );

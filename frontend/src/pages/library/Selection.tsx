@@ -1,9 +1,9 @@
 import { Suspense, lazy, useRef, useState } from "react";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Icon } from "../../components/icons";
+import { SelectionFrame } from "../../components/SelectionFrame";
 import { cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
-import { plural } from "../../lib/format";
 import { useLibraryMutations } from "../../lib/queries";
 import type { LabelInfo, LibraryItem } from "../../types";
 import type { CollectionIndex } from "./collections";
@@ -69,16 +69,7 @@ export function SelectionHeader({ items, visibleCount, folders, folderCounts, la
     button.current?.focus();
   };
   return (
-    <div className="sticky top-2 z-30 mb-6 flex min-h-16 items-center gap-2 rounded-2xl border border-ink bg-paper px-2 py-2 shadow-lift sm:px-3" role="region" aria-label="Sélection">
-      <button type="button" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-ink hover:bg-sunk" aria-label="Quitter la sélection" onClick={onClear}>
-        <Icon name="close" size={20} />
-      </button>
-      <div className="min-w-0 flex-1 leading-tight">
-        <p className="truncate font-display text-xl sm:text-2xl" aria-live="polite">{plural(items.length, "sélectionné")}</p>
-        {items.length < visibleCount ? (
-          <button type="button" className="whitespace-nowrap text-[13px] text-ink-soft underline underline-offset-2" onClick={onSelectAll}>Tout sélectionner ({visibleCount.toLocaleString("fr-FR")})</button>
-        ) : null}
-      </div>
+    <SelectionFrame count={items.length} total={visibleCount} onSelectAll={onSelectAll} onClear={onClear}>
       <div className="relative">
         <button
           ref={button}
@@ -99,6 +90,6 @@ export function SelectionHeader({ items, visibleCount, folders, folderCounts, la
           </Suspense>
         ) : null}
       </div>
-    </div>
+    </SelectionFrame>
   );
 }
