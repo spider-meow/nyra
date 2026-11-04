@@ -1391,6 +1391,9 @@ def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
     assert {i["id"] for i in first["items"]} | {i["id"] for i in second["items"]} == {str(ids["plain"]), str(ids["logo"])}
     assert listed("qualify", q="PLAIN") == {str(ids["plain"])} and tab("qualify", q="PLAIN")["counts"]["qualify"] == 2
     assert listed("ignored", site=str(uk)) == {str(ids["ignored"])}
+    detail = lambda image: client.get(f"{base}/site-images/{image}/detail", headers=_headers(client_id))  # noqa: E731
+    assert detail(ids["found"]).json()["visual"]["filename"] == "r.jpg" and detail(ids["plain"]).json() == {"pages": [], "page_total": 0, "visual": None}
+    assert detail(uuid.uuid4()).status_code == 404
     assert listed("qualify", min=1) == set() and listed("qualify", section="/nowhere") == set()  # no size known, no page under that path
     assert [(entry["label"], entry["count"]) for entry in tab("qualify")["sites"]] == [("t.test", 2)]
 

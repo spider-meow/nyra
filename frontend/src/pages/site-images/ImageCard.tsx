@@ -1,11 +1,12 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { Link } from "react-router";
 import { LabelChips } from "../../components/Labels";
 import { Button, Card, FadeImage, cx } from "../../components/ui";
 import { Modal, useToast } from "../../components/feedback";
 import { errorMessage } from "../../lib/api";
 import { formatDate, pathOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
-import { useSplitVariant } from "../../lib/siteImages";
+import { useSiteImageDetail, useSplitVariant } from "../../lib/siteImages";
 import type { ImageLabel, SiteImage, SiteImageVariant } from "../../types";
 import { PACKSHOT_KEYS, PackshotFeedback, usePackshotDecision } from "./PackshotFeedback";
 
@@ -124,7 +125,7 @@ function ZoomBody(props: { item: SiteImage; onClose: () => void }) {
           Vue pour la première fois le {formatDate(item.first_seen)}
           {variant.width && variant.height ? ` · ${variant.width} × ${variant.height} px` : ""}
         </p>
-        <Occurrences variant={variant} />
+        <Detail id={variant.id} fallback={<Occurrences variant={variant} />} />
         {variant.url_count > 1 ? (
           <p className="text-muted">Le même fichier est servi à {variant.url_count} adresses (tailles ou CDN différents).</p>
         ) : null}
@@ -175,6 +176,36 @@ function VersionStrip(props: { variants: SiteImageVariant[]; chosen: number; onC
         ))}
       </div>
     </div>
+  );
+}
+
+/** Where the image is and the visual of the library it looks like (one request, made once the sheet is open); the sample of pages of the card shows while it comes. */
+function Detail(props: { id: string; fallback: ReactNode }) {
+  const { link } = useOrg();
+  const detail = useSiteImageDetail(props.id);
+  const pages = detail.data?.pages.flatMap((answer) => answer.pages);
+  const first = detail.data?.pages[0];
+  if (!first || !pages) return <>{props.fallback}</>;
+  return (
+    <>
+      {first.visual ? (
+        <p className="rounded-lg border border-line bg-canvas px-3 py-2">
+          Ressemble à <Link className="font-medium text-ink underline underline-offset-2" to={`${link("library")}?visual=${first.visual.id}`}>{first.visual.filename}</Link> dans la bibliothèque · {Math.round(first.visual.score * 100)} %
+        </p>
+      ) : null}
+      <div>
+        <p className="font-medium">{plural(first.page_total, "page", "pages")}</p>
+        <ul className="mt-1 grid gap-1">
+          {pages.map(({ site, page }) => (
+            <li key={`${site}${page}`} className="flex min-w-0 items-baseline gap-2">
+              <span className="shrink-0 rounded-full bg-canvas px-2 py-0.5 text-[11px] text-muted">{site}</span>
+              <a href={page} target="_blank" rel="noreferrer noopener" className="truncate text-ink-soft hover:underline" title={page}>{page}</a>
+            </li>
+          ))}
+        </ul>
+        {detail.hasNextPage ? <Button size="sm" className="mt-2" loading={detail.isFetchingNextPage} onClick={() => void detail.fetchNextPage()}>Voir plus</Button> : null}
+      </div>
+    </>
   );
 }
 

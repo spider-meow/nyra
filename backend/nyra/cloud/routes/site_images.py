@@ -263,6 +263,28 @@ def site_images(view: str = "qualify", type: Optional[str] = None, offset: int =
     }
 
 
+MAX_DETAIL_PAGES = 50
+
+
+@router.get(f"{BRAND}/site-images/{{site_image_id}}/detail")
+def site_image_detail(site_image_id: uuid.UUID, offset: int = Query(0, ge=0), scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """The sheet of one image (any version of a photo): its pages by site version (`MAX_DETAIL_PAGES` from `offset`) and the
+    visual of the library it matches, if any. An image of another brand is "not found", like an unknown one."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        found = cloud_db.site_images_by_id(conn, scope.brand_id, [site_image_id])
+        if not found:
+            raise HTTPException(status_code=404, detail="Image introuvable.")
+        row = found[0]
+        ids = cloud_db.same_image_ids(conn, scope.brand_id, row["content_hash"], site_image_id)
+        pages, total = cloud_db.site_image_pages(conn, ids, offset, MAX_DETAIL_PAGES)
+        visual = cloud_db.site_image_visual(conn, ids)
+    return {
+        "pages": [{"site": page["site"], "page": page["page"]} for page in pages],
+        "page_total": total,
+        "visual": {"id": str(visual["id"]), "filename": visual["filename"], "score": round(float(visual["score"]), 3)} if visual else None,
+    }
+
+
 def _adopt_one(ctx: Ctx, scope: BrandScope, client, config: Config, body: AdoptBody, expiry: Optional[str],
                row: dict, taken: set[str]) -> tuple[Optional[dict], str]:
     """Add one site image to the library: (the entry for `added`, why it was refused).

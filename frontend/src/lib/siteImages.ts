@@ -35,6 +35,23 @@ export function useSiteImages(options: { view: SiteImageView; type: SiteImageTyp
   });
 }
 
+/** The sheet of an image (AXE-740): all its pages, fifty at a time, and the visual of the library it matches. Asked once opened, not per card. */
+export type SiteImageDetail = { pages: { site: string; page: string }[]; page_total: number; visual: { id: string; filename: string; score: number } | null };
+
+export function useSiteImageDetail(id: string) {
+  const { apiPath } = useOrg();
+  return useInfiniteQuery({
+    queryKey: ["site-images", "detail", id],
+    queryFn: ({ pageParam }) => api.get<SiteImageDetail>(`${apiPath(`/site-images/${id}/detail`)}?offset=${pageParam}`),
+    initialPageParam: 0,
+    getNextPageParam: (last, pages) => {
+      const loaded = pages.reduce((sum, page) => sum + page.pages.length, 0);
+      return loaded < last.page_total ? loaded : undefined;
+    },
+    refetchOnWindowFocus: false,
+  });
+}
+
 /** An image of the brand's sites recognised as a logo; `kept`: a person put it back into the comparison. */
 export type RecognisedLogo = { id: string; url: string; thumb_url: string; width: number | null; height: number | null; score: number; pages: number; kept: boolean };
 

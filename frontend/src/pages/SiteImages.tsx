@@ -47,7 +47,9 @@ export function SiteImages() {
   const typeCounts = useLastKnown(page?.type_counts); // the pills keep their numbers while another type loads
   const packshotsOn = useLastKnown(page?.packshots_enabled) ?? false; // the pill exists only for a brand that turned the category on (it stays while another tab loads)
   const [adding, setAdding] = useState<SiteImage[] | null>(null);
-  const [zoom, setZoom] = useState<SiteImage | null>(null);
+  // The open sheet is in the address (?image=<id>, an identifier only): the link shares it, Back closes it.
+  const zoom = items.find((item) => item.id === params.get("image")) ?? null;
+  const setZoom = (item: SiteImage | null) => setParams((previous) => { const next = new URLSearchParams(previous); if (item) next.set("image", item.id); else next.delete("image"); return next; }, { replace: false });
   const [typing, setTyping] = useState(false);
   const { ignore, ignoring } = useIgnore();
   const { labels, labelsOf } = useSiteLabels();
