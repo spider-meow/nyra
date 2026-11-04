@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Section } from "../../components/insights";
-import { Button, EmptyState, FieldLabel, Input, PageHeader, Skeleton } from "../../components/ui";
+import { Button, EmptyState, FieldLabel, Input, PageHeader, ListSkeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useStaffAdmins, useStaffMutations } from "../../lib/staff";
 import type { StaffAdmin } from "../../types";
@@ -67,7 +67,7 @@ export function Admins() {
     <>
       <PageHeader title="Platform admins" />
       <Section title="Platform admins">
-        {admins.isLoading ? <Skeleton className="h-24" /> : null}
+        {admins.isLoading ? <ListSkeleton rows={2} /> : null}
         {admins.error ? <EmptyState title="Impossible de charger la liste" body={errorMessage(admins.error)} /> : null}
         <ul className="divide-y divide-line">{admins.data?.admins.map((admin) => <AdminRow key={admin.user_id} admin={admin} />)}</ul>
         <AddAdmin />

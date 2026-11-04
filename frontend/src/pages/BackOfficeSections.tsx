@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { Section, Table } from "../components/insights";
-import { Button, Skeleton, Stat, cx } from "../components/ui";
+import { Section, SectionSkeleton, Table } from "../components/insights";
+import { Bar, Button, Skeleton, Stat, cx } from "../components/ui";
 import { bytes, duration, formatDateTime, jobLabel, num, percent } from "../lib/format";
 import type { PlatformInsights } from "../types";
 
@@ -23,12 +23,23 @@ export const toneClass = {
   alert: "border-expired/25 bg-expired-soft text-expired",
 };
 
+/** The first load of the back office: the banner, the figures in their cards and each section with its real title and the room it takes. */
 export function BackOfficeSkeleton() {
   return (
-    <div className="grid gap-4">
+    <div aria-busy="true" aria-hidden>
       <Skeleton className="h-20" />
-      <div className="grid gap-4 md:grid-cols-4">{[0, 1, 2, 3].map((key) => <Skeleton key={key} className="h-24" />)}</div>
-      <Skeleton className="h-72" />
+      <div className="mt-4 grid gap-4 md:grid-cols-4">{[0, 1, 2, 3].map((key) => <Stat key={key} value={<Bar width="4rem" />} label={<Bar />} hint={<Bar width="50%" />} />)}</div>
+      <SectionSkeleton className="mt-4" title="Lectures, toutes marques" described height={185} chart />
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <SectionSkeleton title="Où passe le temps" described height={200} />
+        <SectionSkeleton title="Tâches sur 30 jours" height={200} />
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <SectionSkeleton title="Réponses HTTP" height={120} />
+        <SectionSkeleton title="Formats des nouvelles images" height={120} />
+        <SectionSkeleton title="Dernière comparaison" height={120} />
+      </div>
+      <SectionSkeleton className="mt-4" title="Correspondances, toutes marques" height={120} />
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { AuditLog } from "../../components/AuditLog";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Section } from "../../components/insights";
-import { Button, EmptyState, LinkButton, FieldLabel, Input, PageHeader, Skeleton } from "../../components/ui";
+import { Button, EmptyState, LinkButton, FieldLabel, Input, PageHeader, ListSkeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDate } from "../../lib/format";
 import { useStaffMutations, useStaffOrgs } from "../../lib/staff";
@@ -124,7 +124,7 @@ export function Organizations() {
       <PageHeader title="Organisations et marques" />
       <div className="grid gap-4">
         <NewOrganization />
-        {orgs.isLoading ? <Skeleton className="h-40" /> : null}
+        {orgs.isLoading ? <ListSkeleton rows={3} /> : null}
         {orgs.error ? <EmptyState title="Impossible de charger les organisations" body={errorMessage(orgs.error)} /> : null}
         {orgs.data?.organizations.map((org) => <OrganizationCard key={org.id} org={org} />)}
       </div>

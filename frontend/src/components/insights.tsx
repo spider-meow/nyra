@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { bytes, confidenceLabel, duration, formatDateTime, hostOf, jobLabel, num, percent } from "../lib/format";
 import type { CompareStats, Confidence, CrawlRun, CrawlSummary, JobKindStats, MatchingStats } from "../types";
 import { BarHistory, ShareBar, SplitBar, type Bar } from "./charts";
-import { Card, cx } from "./ui";
+import { Bar as TextBar, Card, Skeleton, cx } from "./ui";
 
 /** Pieces shared by the organization's Statistiques page and the Nyra back office. */
 
@@ -18,6 +18,17 @@ export function Section(props: { title: string; description?: ReactNode; childre
       </div>
       {props.children}
     </Card>
+  );
+}
+
+/** A card of the page while its figures load: the title is there already, the body keeps the height the card has once loaded (`height`, in px: it depends on the data). */
+export function SectionSkeleton(props: { title: string; className?: string; height: number; described?: boolean; chart?: boolean }) {
+  return (
+    <Section className={props.className} title={props.title} description={props.described ? <TextBar width="70%" /> : undefined}>
+      <div style={{ height: props.height }}>
+        {props.chart ? <Skeleton className="h-full" /> : <div className="grid gap-3 text-sm">{Array.from({ length: Math.max(1, Math.round(props.height / 40)) }, (_, key) => <TextBar key={key} width={`${90 - (key % 3) * 15}%`} />)}</div>}
+      </div>
+    </Section>
   );
 }
 
