@@ -42,7 +42,7 @@ export function Packshots() {
         {enabled ? (
           <p className="text-sm text-muted">
             {detected.toLocaleString("fr-FR")} {detected > 1 ? "images détectées" : "image détectée"} ·{" "}
-            <Link className="font-medium text-ink underline underline-offset-2" to={`${link("online-images")}?view=packshots`}>Les voir</Link>
+            <Link className="font-medium text-ink underline underline-offset-2" to={`${link("online-images")}?view=ignored&type=packshots`}>Les voir</Link>
           </p>
         ) : null}
       </div>

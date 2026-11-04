@@ -11,33 +11,41 @@ import { LABELS_ENABLED, useAssignments, useLabels } from "../lib/labels";
 import { useOrg } from "../lib/org";
 import { useExclusionMutations } from "../lib/queries";
 import { useLogoMutations, useSiteImages } from "../lib/siteImages";
-import type { ImageLabel, LabelInfo, SiteImage, SiteImagesPage, SiteImageView } from "../types";
+import type { ImageLabel, LabelInfo, SiteImage, SiteImagesPage, SiteImageType, SiteImageView } from "../types";
 import { AddToLibrary } from "./site-images/AddToLibrary";
 import { ImageCard, Zoom } from "./site-images/ImageCard";
 import { LabelingMode, TypeButtons, TypeFilter, typeOf } from "./site-images/Typing";
 
-const TABS: [SiteImageView, string][] = [["qualify", "À qualifier"], ["found", "Retrouvées"], ["logos", "Logos"], ["packshots", "Packshots"], ["ignored", "Ignorées"], ["all", "Toutes"]];
+const TABS: [SiteImageView, string][] = [["qualify", "À qualifier"], ["found", "Retrouvées"], ["ignored", "Ignorées"]];
+const TYPES: [SiteImageType, string][] = [["packshots", "Packshots"], ["logos", "Logos"], ["photos", "Photos"]];
 const isView = (value: string | null): value is SiteImageView => TABS.some(([name]) => name === value);
+const isType = (value: string | null): value is SiteImageType => TYPES.some(([name]) => name === value);
+// The old links (one tab per type, and "Toutes") land on the nearest state + type.
+const LEGACY: Record<string, { view: SiteImageView; type: SiteImageType | null }> = { logos: { view: "qualify", type: "logos" }, packshots: { view: "ignored", type: "packshots" }, all: { view: "qualify", type: null } };
 
 /**
- * Everything read on the brand's sites, one tab per kind: what still has to be qualified (it matches nothing in the
- * library: each one either joins the library with its expiry date or is ignored), what was found in the library, the logos,
- * what was ignored, and all of it.
+ * Everything read on the brand's sites. The tabs are the state of an image (what still has to be qualified: it matches nothing
+ * in the library, so each one either joins the library with its expiry date or is ignored; what was found in the library; what
+ * was set aside) and the pills under them its type (packshot, logo, photo). An image is in one state.
  */
 export function SiteImages() {
   const { admin } = useOrg();
   const [params, setParams] = useSearchParams();
   const asked = params.get("view");
-  const view: SiteImageView = isView(asked) ? asked : "qualify";
+  const legacy = asked ? LEGACY[asked] : undefined;
+  const view: SiteImageView = legacy?.view ?? (isView(asked) ? asked : "qualify");
+  const askedType = params.get("type");
+  const type: SiteImageType | null = legacy ? legacy.type : isType(askedType) ? askedType : null;
   const search = useSearch();
-  const images = useSiteImages({ view, site: search.site, text: search.applied });
+  const images = useSiteImages({ view, type, site: search.site, text: search.applied });
   const items = useMemo(() => images.data?.pages.flatMap((page) => page.items) ?? [], [images.data]);
   const last = images.data?.pages.at(-1);
   const page: SiteImagesPage | undefined = last && { ...last, items };
   // A search, a site or a refresh with cards on screen: they stay (never passed off as the new answer: see `stale`), and so do the counters of the tabs.
   const refreshing = images.isFetching && !images.isFetchingNextPage && !images.isLoading;
   const counts = useLastKnown(page?.counts);
-  const packshotsOn = useLastKnown(page?.packshots_enabled) ?? false; // the tab exists only for a brand that turned the category on (it stays while another tab loads)
+  const typeCounts = useLastKnown(page?.type_counts); // the pills keep their numbers while another type loads
+  const packshotsOn = useLastKnown(page?.packshots_enabled) ?? false; // the pill exists only for a brand that turned the category on (it stays while another tab loads)
   const pick = useSelection();
   const [adding, setAdding] = useState<SiteImage[] | null>(null);
   const [zoom, setZoom] = useState<SiteImage | null>(null);
@@ -47,15 +55,25 @@ export function SiteImages() {
   const filter = useLabelFilter(items, labelsOf);
   const chosen = items.filter((item) => pick.selected.has(item.id));
   const qualifying = view === "qualify" && admin;
-  function changeView(next: SiteImageView) {
-    setParams(next === "qualify" ? {} : { view: next }, { replace: true });
-    search.reset();
+  // The address holds the state and the type, by identifier only; the default ("À qualifier", every type) leaves it clean.
+  function go(next: SiteImageView, nextType: SiteImageType | null) {
+    setParams({ ...(next === "qualify" ? {} : { view: next }), ...(nextType ? { type: nextType } : {}) }, { replace: true });
     pick.clear();
   }
+  function changeView(next: SiteImageView) {
+    go(next, type);
+    search.reset();
+  }
+  // Redirect an old link to its new address once.
+  useEffect(() => {
+    if (legacy) go(legacy.view, legacy.type);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [legacy]);
   return (
     <div className={cx(qualifying && chosen.length > 0 && "pb-20")}>
       <PageHeader title="Images en ligne" actions={admin && LABELS_ENABLED ? <Button onClick={() => setTyping(true)}>Étiqueter à la main</Button> : undefined} />
-      <ViewTabs view={view} counts={counts} packshots={packshotsOn || view === "packshots"} onChange={changeView} />
+      <ViewTabs view={view} counts={counts} onChange={changeView} />
+      <TypePills type={type} counts={typeCounts} total={counts?.[view]} packshots={packshotsOn || type === "packshots"} onChange={(next) => go(view, next)} />
       <ViewNote view={view} logosSetAside={page?.logos_set_aside} />
       {images.isLoading ? (
         <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" cell="aspect-[1/2]" />
@@ -77,7 +95,7 @@ export function SiteImages() {
             loadingMore={images.isFetchingNextPage}
             onAdd={qualifying ? (item) => setAdding([item]) : undefined}
             onIgnore={qualifying ? (item) => ignore([item], () => pick.toggle(item.id, false)) : undefined}
-            footerFor={admin && view === "logos" ? (item) => <KeepLogo item={item} setAside={page.logos_set_aside} /> : undefined}
+            footerFor={admin && type === "logos" ? (item) => <KeepLogo item={item} setAside={page.logos_set_aside} /> : undefined}
             filtered={search.applied !== "" || search.site !== "all"}
           />
           </Refreshing>
@@ -171,10 +189,10 @@ function useLabelFilter(items: SiteImage[], labelsOf: (item: SiteImage) => Image
 type LabelFilter = ReturnType<typeof useLabelFilter>;
 
 /** The tabs of the page, each with its total. */
-function ViewTabs(props: { view: SiteImageView; counts: SiteImagesPage["counts"] | undefined; packshots: boolean; onChange: (view: SiteImageView) => void }) {
+function ViewTabs(props: { view: SiteImageView; counts: SiteImagesPage["counts"] | undefined; onChange: (view: SiteImageView) => void }) {
   return (
     <div className="mb-4 flex w-full overflow-x-auto border-b border-line [scrollbar-width:none]" role="tablist" aria-label="Images en ligne">
-      {TABS.filter(([name]) => name !== "packshots" || props.packshots).map(([name, label]) => (
+      {TABS.map(([name, label]) => (
         <button
           key={name}
           type="button"
@@ -193,6 +211,27 @@ function ViewTabs(props: { view: SiteImageView; counts: SiteImagesPage["counts"]
   );
 }
 
+/** The type filter under the tabs: "Tout" or one type, each with how many images of the tab it holds. */
+function TypePills(props: { type: SiteImageType | null; counts: SiteImagesPage["type_counts"] | undefined; total: number | undefined; packshots: boolean; onChange: (type: SiteImageType | null) => void }) {
+  const pills: [SiteImageType | null, string, number | undefined][] = [[null, "Tout", props.total], ...TYPES.filter(([name]) => name !== "packshots" || props.packshots).map(([name, label]): [SiteImageType, string, number | undefined] => [name, label, props.counts?.[name]])];
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Type d'image">
+      <span className="text-[13px] text-muted">Type</span>
+      {pills.map(([name, label, count]) => (
+        <button
+          key={name ?? "all"}
+          type="button"
+          aria-pressed={props.type === name}
+          onClick={() => props.onChange(name)}
+          className={cx("rounded-full border px-3.5 py-1 text-[13px] font-medium", props.type === name ? "border-ink bg-ink text-white" : "border-line-strong bg-paper text-ink hover:bg-sunk")}
+        >
+          {label} {count !== undefined ? <span className="tabular opacity-75">{count.toLocaleString("fr-FR")}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /** One line under the tabs saying what the tab is and where the rest happens. */
 function ViewNote({ view, logosSetAside }: { view: SiteImageView; logosSetAside: boolean | undefined }) {
   const { link } = useOrg();
@@ -200,11 +239,7 @@ function ViewNote({ view, logosSetAside }: { view: SiteImageView; logosSetAside:
   const settings = <Link className={linkClass} to={`${link("settings")}?section=general`}>Réglages</Link>;
   const notes: Partial<Record<SiteImageView, ReactNode>> = {
     found: <>Ces images contiennent un visuel de la bibliothèque. Les décisions se prennent dans <Link className={linkClass} to={link("review")}>À traiter</Link>.</>,
-    logos: logosSetAside
-      ? <>Images reconnues comme logos : elles ne sont ni comparées ni proposées dans « À qualifier ». Le réglage se change dans les {settings}.</>
-      : <>Images reconnues comme logos. Le réglage « Ne pas comparer les logos » est désactivé : elles sont encore comparées et proposées dans « À qualifier ». Pour les mettre à part, voir les {settings}.</>,
-    packshots: <>Photos de produit seul sur un fond uni, repérées par Nyra. Elles ne sont plus dans « À qualifier » mais restent comparées à la bibliothèque : rien n'est masqué. Une erreur de détection se corrige en désactivant le réglage dans les {settings}.</>,
-    ignored: <>Images mises de côté à la main : elles ne sont plus proposées. On les réintègre depuis les <Link className={linkClass} to={`${link("settings")}?section=general`}>Réglages</Link>.</>,
+    ignored: <>Images mises de côté : à la main, ou parce que Nyra les a reconnues comme logos {logosSetAside ? "(réglage « Ne pas comparer les logos »)" : ""} ou comme packshots. Elles ne sont plus proposées dans « À qualifier ». On les réintègre depuis les {settings}.</>,
   };
   return notes[view] ? <p key={view} className="fade-in mb-4 rounded-xl bg-side px-4 py-3 text-sm text-ink-soft">{notes[view]}</p> : null;
 }
