@@ -28,7 +28,7 @@ export function OrgHoldNotice({ hold }: { hold: Hold }) {
   const { other } = hold;
   const brand = other && org.brands.find((item) => item.id === other.brand_id);
   return (
-    <div id="org-hold" className="text-xs text-muted">
+    <div id="org-hold" className="fade-in text-xs text-muted">
       <p role="status">{other ? `Un passage est déjà en cours dans la marque ${other.brand_name}.` : hold.text}</p>
       <p>{other ? other.text : null} {hold.message}</p>
       {brand ? <Link className="text-ink underline" to={brandLink(org, brand.slug)}>Pour l'annuler, ouvrez la marque {brand.name}</Link> : null}

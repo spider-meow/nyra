@@ -1,4 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { usePresence } from "./feedback";
 import { Card, cx } from "./ui";
 
 const BUBBLE_WIDTH = 256; // `w-64`
@@ -11,6 +12,7 @@ const MARGIN = 16;
 export function InfoTip(props: { children: ReactNode; label?: string }) {
   const [open, setOpen] = useState(false);
   const [offset, setOffset] = useState(0);
+  const tip = usePresence(open);
   const wrapper = useRef<HTMLSpanElement>(null);
   const id = useId();
   // The bubble opens to the right of the "i", shifted left just enough to stay on screen (the "i" near an edge).
@@ -35,8 +37,14 @@ export function InfoTip(props: { children: ReactNode; label?: string }) {
       >
         i
       </button>
-      {open ? (
-        <span id={id} role="tooltip" style={{ left: offset }} className="tip-in absolute top-full z-40 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg bg-ink px-3 py-2 text-left text-[13px] leading-snug font-normal text-paper shadow-float">
+      {tip.mounted ? (
+        <span
+          id={id}
+          role="tooltip"
+          style={{ left: offset }}
+          onAnimationEnd={tip.onAnimationEnd}
+          className={cx(tip.leaving ? "fade-out" : "tip-in", "absolute top-full z-40 mt-2 w-64 max-w-[calc(100vw-2rem)] rounded-lg bg-ink px-3 py-2 text-left text-[13px] leading-snug font-normal text-paper shadow-float")}
+        >
           {props.children}
         </span>
       ) : null}

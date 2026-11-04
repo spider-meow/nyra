@@ -40,7 +40,7 @@ export function LoadError(props: { title: string; error: unknown; onRetry: () =>
 /** The content is there but its refresh failed: it may be out of date, and it says so (announced at once) next to a way to try again. */
 export function RefreshFailed(props: { error: unknown; onRetry: () => void; retrying?: boolean }) {
   return (
-    <p role="alert" className="mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-soon-soft px-4 py-2.5 text-sm text-soon">
+    <p role="alert" className="fade-in mb-3 flex flex-wrap items-center gap-3 rounded-xl bg-soon-soft px-4 py-2.5 text-sm text-soon">
       La mise à jour a échoué, ce qui est affiché peut être périmé : {errorMessage(props.error)}
       <Button size="sm" loading={props.retrying} onClick={props.onRetry}>Réessayer</Button>
     </p>

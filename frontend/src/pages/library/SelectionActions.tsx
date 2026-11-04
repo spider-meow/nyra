@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { Modal, Present, useToast } from "../../components/feedback";
+import { Modal, Present, usePresence, useToast } from "../../components/feedback";
 import { Icon, type IconName } from "../../components/icons";
 import { ContentTagger } from "../../components/Labels";
 import { Button, Input, cx } from "../../components/ui";
@@ -60,6 +60,7 @@ function Row(props: { icon: IconName; label: string; hint?: string; danger?: boo
 /** The menu: a bubble under the header button on a wide screen, a sheet from the bottom on a phone. Arrow keys move, Escape closes. */
 function Menu(props: { items: LibraryItem[]; labelsOn: boolean; removing: boolean; onPick: (dialog: Dialog | "remove") => void; onClose: () => void }) {
   const list = useRef<HTMLUListElement>(null);
+  const { leaving, onAnimationEnd } = usePresence(true);
   const sum = summarize(props.items);
   useEffect(() => {
     list.current?.querySelector<HTMLElement>("[role=menuitem]")?.focus();
@@ -82,8 +83,8 @@ function Menu(props: { items: LibraryItem[]; labelsOn: boolean; removing: boolea
 
   return (
     <>
-      <div className="fixed inset-0 z-30 bg-black/25 sm:bg-transparent" onMouseDown={props.onClose} />
-      <div className="fixed inset-x-0 bottom-0 z-40 rounded-t-2xl border border-line-strong bg-paper pb-6 pt-3 shadow-float sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 sm:rounded-xl sm:pb-0 sm:pt-0">
+      <div className={cx("fixed inset-0 z-30 bg-black/25 sm:bg-transparent", leaving ? "fade-out" : "fade-in")} inert={leaving} onMouseDown={props.onClose} />
+      <div inert={leaving} onAnimationEnd={onAnimationEnd} className={cx(leaving ? "fade-out" : "fade-in", "fixed inset-x-0 bottom-0 z-40 rounded-t-2xl border border-line-strong bg-paper pb-6 pt-3 shadow-float sm:absolute sm:inset-x-auto sm:bottom-auto sm:right-0 sm:top-full sm:mt-2 sm:w-80 sm:rounded-xl sm:pb-0 sm:pt-0")}>
         <div className="mx-auto mb-2 h-1 w-10 rounded-full bg-line-strong sm:hidden" aria-hidden />
         <p className="px-4 pb-1 text-[13px] text-muted sm:hidden">{plural(sum.count, "visuel sélectionné", "visuels sélectionnés")}</p>
         <ul ref={list} className="grid gap-0.5 p-1.5" role="menu" aria-label="Actions sur la sélection" onKeyDown={onKeyDown}>
@@ -233,7 +234,7 @@ export function SelectionActions({ open, onClose, items, folders, folderCounts, 
 
   return (
     <>
-      {open ? <Menu items={items} labelsOn={LABELS_ENABLED} removing={removing} onPick={pick} onClose={onClose} /> : null}
+      <Present show={open}><Menu items={items} labelsOn={LABELS_ENABLED} removing={removing} onPick={pick} onClose={onClose} /></Present>
       <Present show={dialog === "date"}><DateDialog items={items} bulk={bulk} onClose={close} /></Present>
       <Present show={dialog === "unlimited"}><UnlimitedDialog items={items} bulk={bulk} onClose={close} /></Present>
       <Present show={dialog === "tags"}><TagsDialog items={items} bulk={bulk} onClose={close} /></Present>
