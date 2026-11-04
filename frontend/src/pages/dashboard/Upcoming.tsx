@@ -1,5 +1,6 @@
-import { Link } from "react-router";
-import { Card, StatusBadge, cx } from "../../components/ui";
+import type { ReactNode } from "react";
+import { Link } from "react-router";;
+import { Bar, Card, Skeleton, StatusBadge, cx } from "../../components/ui";
 import { daysText, formatDate } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import type { Upcoming as UpcomingItem } from "../../types";
@@ -12,8 +13,7 @@ function dayMonth(iso: string): [string, string] {
   return [String(date.getDate()).padStart(2, "0"), monthFormat.format(date).replace(".", "")];
 }
 
-/** Rights expiring in the next 90 days, and whether each visual is still online. */
-export function Upcoming(props: { items: UpcomingItem[] }) {
+function Frame(props: { children: ReactNode }) {
   const { link } = useOrg();
   return (
     <Card padded={false} className="mt-6 overflow-hidden">
@@ -21,6 +21,33 @@ export function Upcoming(props: { items: UpcomingItem[] }) {
         <h2 className="text-[17px] font-semibold tracking-tight">Échéances des 90 prochains jours</h2>
         <Link to={link("library")} className="text-[13.5px] font-medium text-ink underline underline-offset-2">Toute la bibliothèque</Link>
       </div>
+      {props.children}
+    </Card>
+  );
+}
+
+/** The first load of `Upcoming`: the title and the link are there already, only the rows wait (same row, a bar in place of every word). */
+export function UpcomingSkeleton() {
+  return (
+    <Frame>
+      <ul className="divide-y divide-line" aria-hidden>
+        {[0, 1, 2, 3, 4].map((key) => (
+          <li key={key} className="flex items-center gap-4 px-6 py-3 text-sm">
+            <Skeleton className="h-[47px] w-[52px] shrink-0 rounded-md" />
+            <span className="min-w-0 flex-1"><Bar width="45%" /></span>
+            <Skeleton className="h-[22px] w-24 rounded-full" />
+            <span className="hidden w-24 shrink-0 sm:block"><Bar /></span>
+          </li>
+        ))}
+      </ul>
+    </Frame>
+  );
+}
+
+/** Rights expiring in the next 90 days, and whether each visual is still online. */
+export function Upcoming(props: { items: UpcomingItem[] }) {
+  return (
+    <Frame>
       {props.items.length ? (
         <ul className="divide-y divide-line">
           {props.items.map((item) => {
@@ -43,6 +70,6 @@ export function Upcoming(props: { items: UpcomingItem[] }) {
       ) : (
         <p className="px-6 py-8 text-sm text-muted">Aucune échéance dans les 90 prochains jours.</p>
       )}
-    </Card>
+    </Frame>
   );
 }

@@ -1,6 +1,6 @@
 import { Link } from "react-router";
 import { Icon } from "../../components/icons";
-import { LinkButton, cx } from "../../components/ui";
+import { Bar, LinkButton, Skeleton, cx } from "../../components/ui";
 import { formatDateTime, hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import type { Overview } from "../../types";
@@ -73,5 +73,28 @@ function Row(props: { label: string; value: number }) {
       <dt className="text-ink-soft">{props.label}</dt>
       <dd className="font-medium tabular">{props.value.toLocaleString("fr-FR")}</dd>
     </div>
+  );
+}
+
+/** The first load of `Hero`: the same grid and the same texts, with a bar in place of every word. */
+export function HeroSkeleton() {
+  return (
+    <section className="grid gap-8 rounded-xl border border-ink/20 bg-paper p-6 md:p-8 lg:grid-cols-[minmax(0,1fr)_300px] lg:items-center" aria-hidden>
+      <div>
+        <Skeleton className="h-[22px] w-40 rounded-full" />
+        <h2 className="font-display mt-5 text-[40px] leading-[1.15] md:text-[56px]"><Bar /><Bar width="85%" /><Bar width="30%" /></h2>
+        <p className="mt-4 max-w-xl text-[15px] leading-relaxed"><Bar /><Bar width="60%" /></p>
+        <Skeleton className="mt-6 h-11 w-44 rounded-lg" />
+        <p className="mt-5 max-w-xl border-t border-line pt-4 text-sm"><Bar /><Bar /><Bar width="40%" /></p>
+      </div>
+      <div className="rounded-xl border border-ink/20 bg-mint/40 p-5">
+        <p className="text-[13px]"><Bar width="40%" /></p>
+        <p className="mt-1 font-mono text-[13px]"><Bar width="55%" /></p>
+        <p className="text-[13px]"><Bar width="35%" /></p>
+        <dl className="mt-4 grid gap-2 border-t border-ink/10 pt-4 text-sm">
+          {[0, 1, 2].map((key) => <div key={key} className="flex justify-between gap-3"><span className="w-1/2"><Bar /></span><span className="w-10"><Bar /></span></div>)}
+        </dl>
+      </div>
+    </section>
   );
 }

@@ -298,7 +298,7 @@ export function Kbd(props: { children: ReactNode }) {
 const stickyTint = { yellow: "bg-yellow", mint: "bg-mint", blush: "bg-blush", teal: "bg-teal" } as const;
 
 /** A number and what it counts, on a pastel "sticky note" when a tint is given. */
-export function Stat(props: { value: ReactNode; label: string; tint?: keyof typeof stickyTint; hint?: ReactNode; children?: ReactNode }) {
+export function Stat(props: { value: ReactNode; label: ReactNode; tint?: keyof typeof stickyTint; hint?: ReactNode; children?: ReactNode }) {
   return (
     <div className={cx("flex min-w-0 flex-col rounded-xl border border-ink p-5", props.tint ? stickyTint[props.tint] : "bg-paper")}>
       <p className="font-display text-5xl leading-none tabular">{props.value}</p>
