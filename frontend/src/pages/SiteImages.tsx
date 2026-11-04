@@ -99,7 +99,8 @@ export function SiteImages() {
             onAdd={qualifying ? (item) => setAdding([item]) : undefined}
             onIgnore={qualifying ? (item) => ignore([item], () => pick.toggle(item.id, false)) : undefined}
             footerFor={footerFor}
-            filtered={search.applied !== "" || search.site !== "all"}
+            filtered={search.applied !== "" || search.site !== "all" || type !== null}
+            onClear={() => { search.reset(); go(view, null); }}
           />
           </Refreshing>
         </>
@@ -309,6 +310,7 @@ type GridProps = {
   labelsOf: (item: SiteImage) => ImageLabel[];
   selected: Set<string>;
   filtered: boolean;
+  onClear: () => void;
   onToggle: ((id: string, on: boolean) => void) | undefined;
   onZoom: (item: SiteImage) => void;
   onMore: () => void;
@@ -320,7 +322,7 @@ type GridProps = {
 
 function ImageGrid(props: GridProps) {
   const { page, items } = props;
-  if (!page.items.length) return <EmptyTab view={page.view} filtered={props.filtered} />;
+  if (!page.items.length) return <EmptyTab view={page.view} filtered={props.filtered} nothingRead={Object.values(page.counts).every((count) => count === 0)} onClear={props.onClear} />;
   return (
     <>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -376,19 +378,31 @@ function KeepLogo({ item, setAside }: { item: SiteImage; setAside: boolean }) {
   );
 }
 
-/** A tab with nothing in it: for "À qualifier" that is good news. */
-function EmptyTab({ view, filtered }: { view: SiteImageView; filtered: boolean }) {
+/** A tab with nothing in it, saying what to do: for "À qualifier" that is good news. */
+function EmptyTab({ view, filtered, nothingRead, onClear }: { view: SiteImageView; filtered: boolean; nothingRead: boolean; onClear: () => void }) {
   const { link, platformAdmin } = useOrg();
-  if (view === "qualify" && !filtered) {
+  if (filtered) {
+    return <EmptyState title="Aucun résultat pour ces filtres" body="Aucune image ne correspond à cette recherche, ce site ou ce type." action={<Button size="sm" onClick={onClear}>Tout effacer</Button>} />;
+  }
+  if (nothingRead) {
     return (
       <EmptyState
-        title="Toutes les images en ligne ont des droits vérifiés"
-        body="Chaque image trouvée sur les sites correspond à un visuel de la bibliothèque, a été ignorée ou est un logo. Les nouveautés apparaissent après chaque lecture des sites."
-        action={platformAdmin ? <Link className="text-sm underline" to={link("scans")}>Sites et lectures</Link> : undefined}
+        title="Aucune image lue pour cette marque"
+        body="Les images apparaissent après la première lecture de ses sites."
+        action={platformAdmin ? <Link className="text-sm underline" to={link("scans")}>Lancer une lecture</Link> : undefined}
       />
     );
   }
-  return <p className="py-10 text-center text-sm text-muted">{filtered ? "Aucune image ne correspond à cette recherche." : "Aucune image dans cet onglet."}</p>;
+  if (view === "qualify") {
+    return (
+      <EmptyState
+        title="Tout est qualifié"
+        body="Chaque image trouvée sur les sites correspond à un visuel de la bibliothèque, a été ajoutée, ou a été mise de côté. Les nouveautés apparaissent après chaque lecture des sites."
+        action={<Link className="text-sm underline" to={link("library")}>Ouvrir la bibliothèque</Link>}
+      />
+    );
+  }
+  return <p className="py-10 text-center text-sm text-muted">Aucune image dans cet onglet.</p>;
 }
 
 function SelectionBar(props: { count: number; ignoring: boolean; onAdd: () => void; onIgnore: () => void; onClear: () => void; children: ReactNode }) {
