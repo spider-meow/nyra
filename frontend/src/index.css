@@ -56,6 +56,19 @@
   --shadow-float: 0 4px 16px rgb(0 0 0 / 0.12);
 }
 
+/* Mouvement : le seul vocabulaire de l'interface (docs/BONNES_PRATIQUES.md, « Mouvement »).
+   Court (jamais plus de 250 ms), sorties plus brèves que les entrées, opacité / couleur / ombre / transform seulement.
+   Toute transition Tailwind sans `duration-*` prend `--default-transition-*` ci-dessous. */
+@theme static {
+  --motion-fast: 120ms; /* survols, couleurs, contrôles, sorties */
+  --motion-base: 160ms; /* apparitions */
+  --motion-soft: 200ms; /* surcouches : fenêtres, menus ; barres de progression */
+  --ease-enter: cubic-bezier(0.2, 0, 0, 1); /* arrive vite, se pose doucement */
+  --ease-exit: cubic-bezier(0.3, 0, 1, 1); /* part en accélérant */
+  --default-transition-duration: var(--motion-fast);
+  --default-transition-timing-function: var(--ease-enter);
+}
+
 html,
 body,
 #root {
@@ -101,7 +114,7 @@ a {
 }
 
 .toast-in {
-  animation: toast-in 160ms ease-out;
+  animation: toast-in var(--motion-base) var(--ease-enter);
 }
 
 @keyframes tip-in {
@@ -110,7 +123,7 @@ a {
 }
 
 .tip-in {
-  animation: tip-in 140ms ease-out;
+  animation: tip-in var(--motion-base) var(--ease-enter);
 }
 
 @keyframes progress-slide {
@@ -129,15 +142,44 @@ a {
 }
 
 .pop-in {
-  animation: pop-in 180ms ease-out;
+  animation: pop-in var(--motion-base) var(--ease-enter);
 }
 
+/* Apparitions prêtes à l'emploi : un fondu, ou un fondu avec un glissement de 4 px. Jamais de hauteur ni de largeur. */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fade-in {
+  animation: fade-in var(--motion-base) var(--ease-enter);
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.rise-in {
+  animation: rise-in var(--motion-base) var(--ease-enter);
+}
+
+/* « Réduire les animations » : plus rien ne bouge, d'un seul endroit. Les boucles s'arrêtent à leur première image
+   (la barre indéterminée reste visible, immobile) et les transitions deviennent instantanées. */
 @media (prefers-reduced-motion: reduce) {
-  .toast-in,
-  .tip-in,
-  .pop-in,
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
   .progress-indeterminate {
-    animation: none;
+    animation: none !important;
   }
 }
 
