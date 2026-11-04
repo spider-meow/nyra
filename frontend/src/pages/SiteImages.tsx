@@ -46,13 +46,13 @@ export function SiteImages() {
   const counts = useLastKnown(page?.counts);
   const typeCounts = useLastKnown(page?.type_counts); // the pills keep their numbers while another type loads
   const packshotsOn = useLastKnown(page?.packshots_enabled) ?? false; // the pill exists only for a brand that turned the category on (it stays while another tab loads)
-  const pick = useSelection();
   const [adding, setAdding] = useState<SiteImage[] | null>(null);
   const [zoom, setZoom] = useState<SiteImage | null>(null);
   const [typing, setTyping] = useState(false);
   const { ignore, ignoring } = useIgnore();
   const { labels, labelsOf } = useSiteLabels();
   const filter = useLabelFilter(items, labelsOf);
+  const pick = useSelection(items);
   const chosen = items.filter((item) => pick.selected.has(item.id));
   const qualifying = view === "qualify" && admin;
   // The one action of a card outside "À qualifier": put a logo back (Logos filter), or go and decide a found image in "À traiter".
@@ -141,17 +141,27 @@ function BulkBar(props: { chosen: SiteImage[]; labels: LabelInfo[]; ignoring: bo
   );
 }
 
-/** The cards ticked (qualify tab only). */
-function useSelection() {
+/** The cards ticked (qualify tab only): Shift + click ticks the range since the last click, Escape unticks all. */
+function useSelection(order: SiteImage[]) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [last, setLast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selected.size) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") setSelected(new Set()); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selected.size]);
   return {
     selected,
     setSelected,
     clear: () => setSelected(new Set()),
-    toggle: (id: string, on: boolean) => {
+    toggle: (id: string, on: boolean, range = false) => {
       const next = new Set(selected);
-      if (on) next.add(id);
-      else next.delete(id);
+      const from = last ? order.findIndex((item) => item.id === last) : -1;
+      const to = order.findIndex((item) => item.id === id);
+      const ids = range && from >= 0 && to >= 0 ? order.slice(Math.min(from, to), Math.max(from, to) + 1).map((item) => item.id) : [id];
+      for (const one of ids) { if (on) next.add(one); else next.delete(one); }
+      setLast(id);
       setSelected(next);
     },
   };
@@ -312,7 +322,7 @@ function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelI
             className="ml-auto pb-2 text-sm text-muted underline-offset-2 hover:text-ink hover:underline"
             onClick={() => selecting.onSelect(selecting.selected.size ? new Set() : new Set(selecting.items.map((item) => item.id)))}
           >
-            {selecting.selected.size ? "Tout désélectionner" : "Tout sélectionner"}
+            {selecting.selected.size ? "Tout désélectionner" : page.total > page.items.length ? `Sélectionner les ${page.items.length} affichées` : "Tout sélectionner"}
           </button>
         ) : null}
       </div>
@@ -329,7 +339,7 @@ type GridProps = {
   selected: Set<string>;
   filtered: boolean;
   onClear: () => void;
-  onToggle: ((id: string, on: boolean) => void) | undefined;
+  onToggle: ((id: string, on: boolean, range?: boolean) => void) | undefined;
   onZoom: (item: SiteImage) => void;
   onMore: () => void;
   loadingMore: boolean;
@@ -351,7 +361,7 @@ function ImageGrid(props: GridProps) {
             labels={props.labelsOf(item)}
             selected={props.selected.has(item.id)}
             selecting={props.selected.size > 0}
-            onSelect={props.onToggle ? (on) => props.onToggle?.(item.id, on) : undefined}
+            onSelect={props.onToggle ? (on, range) => props.onToggle?.(item.id, on, range) : undefined}
             onOpen={() => props.onZoom(item)}
             onAdd={props.onAdd ? () => props.onAdd?.(item) : undefined}
             onIgnore={props.onIgnore ? () => props.onIgnore?.(item) : undefined}

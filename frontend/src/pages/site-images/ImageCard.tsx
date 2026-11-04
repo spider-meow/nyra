@@ -19,7 +19,8 @@ export function ImageCard(props: {
   selected: boolean;
   /** Whether any card is ticked: the boxes then stay visible on every card, not only on the one under the pointer. */
   selecting: boolean;
-  onSelect?: (on: boolean) => void;
+  /** `range`: Shift was held (tick everything since the last click). */
+  onSelect?: (on: boolean, range: boolean) => void;
   onOpen: () => void;
   onAdd?: () => void;
   onIgnore?: () => void;
@@ -58,7 +59,7 @@ export function ImageCard(props: {
               props.selecting || props.selected ? "opacity-100" : "opacity-0",
             )}
             checked={props.selected}
-            onChange={(event) => props.onSelect?.(event.target.checked)}
+            onChange={(event) => props.onSelect?.(event.target.checked, (event.nativeEvent as MouseEvent).shiftKey === true)}
           />
         ) : null}
         {!item.compared ? (
