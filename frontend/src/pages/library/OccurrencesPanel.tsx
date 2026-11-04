@@ -115,7 +115,7 @@ function PageRows({ data, filter }: { data: OccurrencesData; filter: Filter }) {
     <ul className="grid grid-cols-1 gap-2">
       {data.pages.map((page) => (
         <li key={page.url} className="min-w-0">
-          <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="group flex items-center gap-3 rounded-xl border border-ink bg-paper p-2.5 transition-colors hover:border-line-strong hover:bg-sunk">
+          <a href={page.url} target="_blank" rel="noreferrer noopener" title={page.url} className="group flex items-center gap-3 rounded-xl border border-ink bg-paper p-2.5 hover:border-line-strong hover:bg-sunk">
             <Thumbs page={page} />
             <span className="min-w-0 flex-1">
               <span className="block truncate text-xs text-muted">{hostOf(page.url)}</span>

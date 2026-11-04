@@ -180,7 +180,7 @@ function ViewTabs(props: { view: SiteImageView; counts: SiteImagesPage["counts"]
           aria-selected={props.view === name}
           onClick={() => props.onChange(name)}
           className={cx(
-            "-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 text-[13.5px] transition-colors",
+            "-mb-px whitespace-nowrap border-b-2 px-4 py-2.5 text-[13.5px]",
             props.view === name ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink",
           )}
         >
@@ -222,7 +222,7 @@ function SiteTabs(props: { page: SiteImagesPage; search: Search }) {
           aria-selected={search.site === id}
           onClick={() => search.changeSite(id)}
           className={cx(
-            "-mb-px flex-1 whitespace-nowrap border-b-2 px-4 py-2.5 text-[13.5px] transition-colors",
+            "-mb-px flex-1 whitespace-nowrap border-b-2 px-4 py-2.5 text-[13.5px]",
             search.site === id ? "border-ink font-medium text-ink" : "border-transparent text-muted hover:text-ink",
           )}
         >

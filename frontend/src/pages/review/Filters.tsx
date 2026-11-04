@@ -72,8 +72,8 @@ export function ReviewTabs(props: { view: ReviewView }) {
           aria-selected={tab === value}
           onClick={() => setParam("tab", value === "found" ? null : value)}
           className={cx(
-            "inline-flex h-9 shrink-0 items-center gap-2 rounded-full px-4 text-[13.5px] whitespace-nowrap transition-colors",
-            tab === value ? "bg-ink font-medium text-paper" : "border border-ink bg-paper text-ink hover:bg-yellow",
+            "inline-flex h-9 shrink-0 items-center gap-2 rounded-full border border-ink px-4 text-[13.5px] whitespace-nowrap",
+            tab === value ? "bg-ink font-medium text-paper" : "bg-paper text-ink hover:bg-yellow",
           )}
         >
           {label} <span className={cx("tabular", tab === value ? "text-paper/70" : "text-muted")}>{count}</span>

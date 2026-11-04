@@ -36,7 +36,7 @@ function PhotoRow(props: { row: Row; selected: boolean; onSelect: (key: string) 
       aria-selected={props.selected}
       onClick={() => props.onSelect(row.key)}
       className={cx(
-        "flex w-full items-center gap-3.5 rounded-[14px] border px-3 py-2.5 text-left transition-colors",
+        "flex w-full items-center gap-3.5 rounded-[14px] border px-3 py-2.5 text-left",
         props.selected ? "border-focus bg-paper shadow-[0_0_0_3px_var(--color-peach-soft)]" : "border-transparent hover:bg-paper",
         row.hit.decision === "ecarte" && "opacity-55",
       )}

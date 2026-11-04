@@ -88,7 +88,7 @@ function FolderTile(props: { folder: Collection; count: number; subNames: string
   const present = SEGMENTS.filter((status) => statuses[status]);
   const summary = present.map((status) => `${statuses[status]} · ${statusLabel[status].toLowerCase()}`).join(", ");
   return (
-    <button type="button" onClick={props.onOpen} className="flex h-full w-full flex-col gap-2 rounded-xl border border-line bg-paper p-4 text-left transition-shadow hover:shadow-float">
+    <button type="button" onClick={props.onOpen} className="flex h-full w-full flex-col gap-2 rounded-xl border border-line bg-paper p-4 text-left hover:shadow-float">
       <span className="flex w-full items-start justify-between gap-3">
         <span className="font-display min-w-0 text-lg leading-tight [overflow-wrap:anywhere]">{props.folder.name}</span>
         <span className="text-sm text-ink-soft tabular">{props.count.toLocaleString("fr-FR")}</span>

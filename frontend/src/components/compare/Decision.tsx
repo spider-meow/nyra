@@ -36,7 +36,7 @@ function DecisionButton(props: { label: string; shortcut: string; active: boolea
       disabled={props.disabled}
       onClick={props.onClick}
       className={cx(
-        "flex h-14 flex-col items-center justify-center gap-0.5 rounded-[14px] border text-[13.5px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+        "flex h-14 flex-col items-center justify-center gap-0.5 rounded-[14px] border text-[13.5px] font-medium disabled:cursor-not-allowed disabled:opacity-40",
         props.active ? "border-ink bg-ink text-paper" : "border-line-strong bg-paper text-ink hover:border-faint",
       )}
     >
