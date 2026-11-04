@@ -145,6 +145,15 @@ qu'un parent monte et démonte (fenêtre, menu). (3) Un contrôle (lien, bouton,
 `FadeImage`. (5) Une zone de chargement a la forme de ce qu'elle remplace. Toute durée vient des jetons ; rien n'est animé en
 boucle, sauf un indicateur d'attente.
 
+## Textes explicatifs (interface)
+
+**On n'ajoute pas de texte explicatif à l'interface** : pas de phrase sous un onglet ou un titre pour dire ce que l'écran est, ni
+de bandeau qui commente ce qu'on voit, ni de paragraphe d'aide permanent. Si un écran a besoin d'être expliqué, c'est qu'il est mal
+nommé ou mal construit : on corrige le libellé, l'ordre ou la forme, pas la légende. Ce qui reste permis, parce qu'il sert à agir :
+le libellé d'un champ ou d'un bouton, un message d'erreur (ce qui s'est passé et quoi faire), un état vide qui dit quoi faire ensuite,
+et une infobulle ou un message de retour après une action (« Annuler »). Une information rare ou technique va dans une infobulle ou
+dans la documentation, pas sur l'écran.
+
 ## Tests
 
 Conformément à `ponytail` : la logique non triviale laisse **un** test

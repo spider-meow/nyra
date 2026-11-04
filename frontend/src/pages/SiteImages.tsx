@@ -94,7 +94,6 @@ export function SiteImages() {
       )}
       <ViewTabs view={view} counts={counts} onChange={changeView} />
       <TypePills type={type} counts={typeCounts} total={counts?.[view]} packshots={packshotsOn || type === "packshots"} onChange={(next) => go(view, next)} />
-      <ViewNote view={view} logosSetAside={page?.logos_set_aside} />
       {images.isLoading ? (
         <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" cell="aspect-[5/7]" />
       ) : !page ? (
@@ -267,18 +266,6 @@ function TypePills(props: { type: SiteImageType | null; counts: SiteImagesPage["
       ))}
     </div>
   );
-}
-
-/** One line under the tabs saying what the tab is and where the rest happens. */
-function ViewNote({ view, logosSetAside }: { view: SiteImageView; logosSetAside: boolean | undefined }) {
-  const { link } = useOrg();
-  const linkClass = "font-medium text-ink underline underline-offset-2";
-  const settings = <Link className={linkClass} to={`${link("settings")}?section=general`}>Réglages</Link>;
-  const notes: Partial<Record<SiteImageView, ReactNode>> = {
-    found: <>Ces images contiennent un visuel de la bibliothèque. Les décisions se prennent dans <Link className={linkClass} to={link("review")}>À traiter</Link>.</>,
-    ignored: <>Images mises de côté : à la main, ou parce que Nyra les a reconnues comme logos {logosSetAside ? "(réglage « Ne pas comparer les logos »)" : ""} ou comme packshots. Elles ne sont plus proposées dans « À qualifier ». On les réintègre depuis les {settings}.</>,
-  };
-  return notes[view] ? <p key={view} className="fade-in mb-4 rounded-xl bg-side px-4 py-3 text-sm text-ink-soft">{notes[view]}</p> : null;
 }
 
 /** One tab per site version (US, FR, INT...), when there are several. */
