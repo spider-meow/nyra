@@ -122,7 +122,7 @@ d'un cas.
 
 Toute requête dont le résultat s'affiche a ses trois états : premier chargement (squelette à la forme de la page), rafraîchissement avec données
 (le contenu reste, atténué, `aria-busy`, après 200 ms) et erreur (avec « Réessayer »). Ils sont écrits une fois (`components/busy.tsx`) et la page par
-page est dans [`ETATS_DE_CHARGEMENT.md`](ETATS_DE_CHARGEMENT.md). Une ancienne donnée ne se fait jamais passer pour la réponse à la nouvelle demande.
+page est dans [`ETATS_DE_CHARGEMENT.md`](ETATS_DE_CHARGEMENT.md). Un squelette reprend le balisage de ce qui arrive (une barre `Bar` à la place des mots), ce qui est déjà vrai reste vrai, et rien ne saute à l'arrivée des données : « Écrire un squelette » dans le même document. Une ancienne donnée ne se fait jamais passer pour la réponse à la nouvelle demande.
 
 ## Mouvement (interface)
 
