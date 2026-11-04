@@ -339,6 +339,9 @@ function ImageGrid(props: GridProps) {
           />
         ))}
       </div>
+      {items.some((item) => item.packshot_measures) ? (
+        <p className="mt-3 text-xs text-muted">Équipe Nyra, carte sous le focus : <kbd className="font-mono">P</kbd> packshot · <kbd className="font-mono">N</kbd> pas un packshot · <kbd className="font-mono">⌫</kbd> revenir à la détection.</p>
+      ) : null}
       {page.items.length < page.total ? (
         <div className="mt-4 text-center">
           <Button size="sm" loading={props.loadingMore} onClick={props.onMore}>Afficher plus · {page.items.length}/{page.total}</Button>
