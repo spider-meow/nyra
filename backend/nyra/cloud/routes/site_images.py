@@ -37,6 +37,7 @@ from .common import (
     get_ctx,
     group_status,
     heavy_image,
+    hydrate,
     iso,
     log,
     online_images,
@@ -239,12 +240,16 @@ def site_images(view: str = "qualify", type: Optional[str] = None, offset: int =
         raise HTTPException(status_code=400, detail="Type inconnu.")
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)
-        tabs = online_images(conn, scope.brand_id, config)
+        light = not (q.strip() or section.strip())  # a text search reads names and pages: the full rows
+        tabs = online_images(conn, scope.brand_id, config, light=light)
         logos_set_aside = cloud_logos.is_enabled(conn, scope.brand_id)
         packshots_enabled = cloud_packshots.is_enabled(conn, scope.brand_id)
     needle = q.strip().lower()
     wanted = [group for group in tabs[view] if (type is None or group["type"] == type) and _wanted(group, site, needle, section.strip(), min)]
     page = wanted[offset : offset + limit]
+    if light:
+        with cloud_db.connect(ctx.settings.database_url) as conn:
+            page = hydrate(conn, scope.brand_id, page)
     leads = [variant[0] for group in page for variant in _variants(group["rows"])]
     urls = ctx.sign(cloud_storage.BUCKET_SITE_IMAGES, [row["thumb_path"] for row in leads] + [row["storage_path"] for row in leads])
     items = [_site_image_item(group, urls) for group in page]

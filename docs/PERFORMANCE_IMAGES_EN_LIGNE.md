@@ -10,11 +10,23 @@ aucune correspondance dans la bibliothèque. Une seule mesure par ligne, sur une
 | Nouvelle empreinte (`site_images_signature`, couvre aussi taille, vignette, comparaison, score de logo, pages) | 0,18 s |
 | `online_images`, empreinte inchangée (réponse gardée en mémoire) | 0,18 s |
 
-Ce qui est fait : la réponse de `online_images` est gardée par marque (4 marques au plus) tant que l'empreinte calculée dans la base
+Chemin allégé (une page sans recherche de texte) : les lignes ne portent que ce qu'il faut pour les états, les groupes et les comptes
+(pas d'adresse, pas de chemin, pas de pages) ; les lignes complètes ne sont lues que pour les entrées de la page affichée (`hydrate`).
+
+| Étape (même base) | Durée |
+|---|---|
+| Chemin complet, première fois | 0,83 s |
+| Chemin allégé, première fois | 0,43 s |
+| Chemin allégé, empreinte inchangée | 0,17 s |
+| Lignes complètes des 60 entrées d'une page (`hydrate`) | 0,01 s |
+
+Une recherche de texte (`q`, `section`) lit les lignes complètes (noms et pages) : chemin complet.
+
+Ce qui est fait (premier niveau) : la réponse de `online_images` est gardée par marque (4 marques au plus) tant que l'empreinte calculée dans la base
 ne change pas ; les demandes suivantes (autre page, autre filtre de type, compteurs) passent de ~0,8 s à ~0,2 s.
 
 Ce qui n'est pas fait (à ne pas présenter comme tel) :
-- la **première** demande après un changement lit et regroupe encore toutes les images (~0,8 s à 30 000) ;
+- la **première** demande après un changement lit et regroupe encore toutes les images dans le processus (~0,43 s à 30 000 avec le chemin allégé, ~0,83 s pour une recherche de texte) : sous les 300 ms visés seulement quand la réponse est en mémoire ;
 - les comptes et le regroupement ne sont **pas** faits en SQL : l'exclusion se calcule en Python sur des distances de hash
   (`match.excluded_site_ids`), et le regroupement par photo (`group_rows`) aussi. Les passer en SQL demande de refaire ces deux règles
   en base, avec des tests de comparaison ancien / nouveau chemin sur les mêmes données ;

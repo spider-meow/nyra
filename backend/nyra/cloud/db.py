@@ -1007,7 +1007,7 @@ def occurrence_summary(conn: psycopg.Connection, brand_id: uuid.UUID, reference_
 SITE_IMAGE_PAGE_SAMPLE = 20
 
 
-def site_images_with_pages(conn: psycopg.Connection, brand_id: uuid.UUID, *, matched: Optional[bool] = None) -> list[Row]:
+def site_images_with_pages(conn: psycopg.Connection, brand_id: uuid.UUID, *, matched: Optional[bool] = None, ids: Optional[list[uuid.UUID]] = None) -> list[Row]:
     """The images read on the brand's sites (the ones that were stored), with their pages, newest first: every one, or only
     those where a visual of the library was found (`matched=True`) or was not (`False`).
 
@@ -1034,13 +1034,27 @@ def site_images_with_pages(conn: psycopg.Connection, brand_id: uuid.UUID, *, mat
         WHERE s.brand_id = %(brand)s AND si.phash IS NOT NULL AND si.storage_path IS NOT NULL
           AND (%(matched)s::boolean IS NULL
                OR EXISTS (SELECT 1 FROM matches m WHERE m.site_image_id = si.id) = %(matched)s::boolean)
+          AND (%(ids)s::uuid[] IS NULL OR si.id = ANY(%(ids)s::uuid[]))
         ORDER BY si.first_seen DESC, si.url
         """,
-        {"sample": SITE_IMAGE_PAGE_SAMPLE, "brand": brand_id, "matched": matched},
+        {"sample": SITE_IMAGE_PAGE_SAMPLE, "brand": brand_id, "matched": matched, "ids": ids},
     ).fetchall()
     for row in rows:
         row["pages"] = list(row["pages"])
     return rows
+
+
+def site_images_light(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
+    """The same images as `site_images_with_pages`, in the same order, with only what states, groups and counts them take: no address,
+    no path, no pages (`site_images_with_pages(ids=...)` brings those for the entries of one page)."""
+    return conn.execute(
+        """
+        SELECT si.id, si.content_hash, si.variant_group, si.width, si.height, si.phash, si.dhash, si.logo_score, si.site_id, s.url AS site_url, s.label AS site_label,
+               EXISTS (SELECT 1 FROM matches m WHERE m.site_image_id = si.id) AS matched
+        FROM site_images si JOIN sites s ON s.id = si.site_id
+        WHERE s.brand_id = %s AND si.phash IS NOT NULL AND si.storage_path IS NOT NULL
+        ORDER BY si.first_seen DESC, si.url
+        """, (brand_id,)).fetchall()
 
 
 def unmatched_site_images(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
