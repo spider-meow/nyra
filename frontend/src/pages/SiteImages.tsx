@@ -29,7 +29,7 @@ const LEGACY: Record<string, { view: SiteImageView; type: SiteImageType | null }
  * was set aside) and the pills under them its type (packshot, logo, photo). An image is in one state.
  */
 export function SiteImages() {
-  const { admin } = useOrg();
+  const { admin, link } = useOrg();
   const [params, setParams] = useSearchParams();
   const asked = params.get("view");
   const legacy = asked ? LEGACY[asked] : undefined;
@@ -55,6 +55,9 @@ export function SiteImages() {
   const filter = useLabelFilter(items, labelsOf);
   const chosen = items.filter((item) => pick.selected.has(item.id));
   const qualifying = view === "qualify" && admin;
+  // The one action of a card outside "À qualifier": put a logo back (Logos filter), or go and decide a found image in "À traiter".
+  const footerFor = admin && type === "logos" ? (item: SiteImage) => <KeepLogo item={item} setAside={page?.logos_set_aside ?? false} />
+    : view === "found" ? () => <Link className="text-[13px] font-medium text-ink underline underline-offset-2" to={link("review")}>Voir dans À traiter</Link> : undefined;
   // The address holds the state and the type, by identifier only; the default ("À qualifier", every type) leaves it clean.
   function go(next: SiteImageView, nextType: SiteImageType | null) {
     setParams({ ...(next === "qualify" ? {} : { view: next }), ...(nextType ? { type: nextType } : {}) }, { replace: true });
@@ -95,7 +98,7 @@ export function SiteImages() {
             loadingMore={images.isFetchingNextPage}
             onAdd={qualifying ? (item) => setAdding([item]) : undefined}
             onIgnore={qualifying ? (item) => ignore([item], () => pick.toggle(item.id, false)) : undefined}
-            footerFor={admin && type === "logos" ? (item) => <KeepLogo item={item} setAside={page.logos_set_aside} /> : undefined}
+            footerFor={footerFor}
             filtered={search.applied !== "" || search.site !== "all"}
           />
           </Refreshing>
@@ -327,6 +330,7 @@ function ImageGrid(props: GridProps) {
             item={item}
             labels={props.labelsOf(item)}
             selected={props.selected.has(item.id)}
+            selecting={props.selected.size > 0}
             onSelect={props.onToggle ? (on) => props.onToggle?.(item.id, on) : undefined}
             onOpen={() => props.onZoom(item)}
             onAdd={props.onAdd ? () => props.onAdd?.(item) : undefined}

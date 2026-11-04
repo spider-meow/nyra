@@ -6,32 +6,30 @@ import { errorMessage } from "../../lib/api";
 import { formatDate, pathOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { useSplitVariant } from "../../lib/siteImages";
-import type { ImageLabel, SiteImage, SiteImageStatus, SiteImageVariant } from "../../types";
+import type { ImageLabel, SiteImage, SiteImageVariant } from "../../types";
 import { PackshotFeedback } from "./PackshotFeedback";
 
-/** Why an image is listed: its status, in words. */
-const PILLS: Record<SiteImageStatus, { label: string; tone: string }> = {
-  qualify: { label: "Droits non vérifiés", tone: "bg-urgent-soft text-urgent" },
-  found: { label: "Dans la bibliothèque", tone: "bg-ok-soft text-ok" },
-  logo: { label: "Logo", tone: "bg-unknown-soft text-unknown" },
-  packshot: { label: "Packshot", tone: "bg-unknown-soft text-unknown" },
-  ignored: { label: "Ignorée", tone: "bg-unknown-soft text-unknown" },
-};
-
+/**
+ * A card shows what helps to decide: the picture (a click enlarges it), its name, the page it comes from and one action.
+ * Its state is the tab, its type the filter: neither is repeated here; sizes, versions and measures are in the detail.
+ */
 export function ImageCard(props: {
   item: SiteImage;
   labels: ImageLabel[];
   selected: boolean;
+  /** Whether any card is ticked: the boxes then stay visible on every card, not only on the one under the pointer. */
+  selecting: boolean;
   onSelect?: (on: boolean) => void;
   onOpen: () => void;
   onAdd?: () => void;
   onIgnore?: () => void;
-  /** Actions of the tab the card is shown in, in place of "Ajouter" and "Ignorer". */
+  /** The action of the tab the card is shown in, in place of "Ajouter" and "Ignorer". */
   footer?: ReactNode;
 }) {
   const { item } = props;
+  const page = item.pages[0];
   return (
-    <Card padded={false} className={cx("flex flex-col overflow-hidden", props.selected && "ring-2 ring-focus")}>
+    <Card padded={false} className={cx("group flex flex-col overflow-hidden", props.selected && "bg-yellow/45 ring-2 ring-focus")}>
       <div className="relative">
         <button type="button" className="block w-full bg-canvas" onClick={props.onOpen} aria-label={`Agrandir ${item.filename}`}>
           {item.thumb ? (
@@ -44,7 +42,10 @@ export function ImageCard(props: {
           <input
             type="checkbox"
             aria-label={`Sélectionner ${item.filename}`}
-            className="absolute top-2 left-2 h-4 w-4 accent-ink"
+            className={cx(
+              "absolute top-2 left-2 h-5 w-5 accent-ink focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100",
+              props.selecting || props.selected ? "opacity-100" : "opacity-0",
+            )}
             checked={props.selected}
             onChange={(event) => props.onSelect?.(event.target.checked)}
           />
@@ -57,18 +58,14 @@ export function ImageCard(props: {
         ) : null}
       </div>
       <div className="flex flex-1 flex-col gap-1 p-3">
-        <StatusPill item={item} />
         <p className="truncate text-sm font-medium" title={item.filename}>{item.filename}</p>
         <LabelChips labels={props.labels} />
-        <p className="text-xs text-muted">
-          {item.sites.join(", ")} · {plural(item.page_count, "page")}
-          {item.width && item.height ? ` · ${item.width} × ${item.height}` : ""}
+        <p className="flex min-w-0 gap-1 text-xs text-muted">
+          {page ? (
+            <a href={page} target="_blank" rel="noreferrer noopener" className="truncate hover:text-ink hover:underline" title={page}>{pathOf(page)}</a>
+          ) : null}
+          <span className="shrink-0">{page ? "· " : ""}{plural(item.page_count, "page")}</span>
         </p>
-        {item.pages[0] ? (
-          <a href={item.pages[0]} target="_blank" rel="noreferrer noopener" className="truncate text-xs text-muted hover:text-ink hover:underline" title={item.pages[0]}>
-            {pathOf(item.pages[0])}
-          </a>
-        ) : null}
         {props.footer ?? (props.onAdd ? <AddOrIgnore onAdd={props.onAdd} onIgnore={props.onIgnore} /> : null)}
         {item.packshot_measures ? <PackshotFeedback item={item} /> : null}
       </div>
@@ -76,19 +73,11 @@ export function ImageCard(props: {
   );
 }
 
-function StatusPill({ item }: { item: SiteImage }) {
-  return (
-    <span className={cx("w-fit rounded-full px-2 py-0.5 text-[11px] font-medium", PILLS[item.status].tone)}>
-      {item.status === "logo" && item.logo?.kept ? "Logo remis dans la comparaison" : PILLS[item.status].label}
-    </span>
-  );
-}
-
 function AddOrIgnore(props: { onAdd: () => void; onIgnore?: () => void }) {
   return (
-    <div className="mt-auto flex items-center gap-3 pt-1.5 text-[13px]">
-      <button type="button" className="font-medium text-ink underline-offset-2 hover:underline" onClick={props.onAdd}>+ Ajouter</button>
-      <button type="button" className="text-muted underline-offset-2 hover:text-ink hover:underline" onClick={props.onIgnore}>Ignorer</button>
+    <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-1.5">
+      <Button size="sm" onClick={props.onAdd}>Ajouter à la bibliothèque</Button>
+      <button type="button" className="px-1 text-[13px] text-muted underline underline-offset-2 hover:text-ink" onClick={props.onIgnore}>Ignorer</button>
     </div>
   );
 }
