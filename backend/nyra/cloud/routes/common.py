@@ -390,33 +390,35 @@ def group_type(rows: list[dict], packshots: set) -> str:
     return "packshots" if any(row["id"] in packshots for row in rows) else "photos"
 
 
-# What `online_images` computed, per (brand, the two thresholds that decide what an exclusion covers), with the fingerprint it was computed for.
+# What `online_images` computed, per (brand, the two thresholds that decide what an exclusion covers, light or not), with the fingerprint it was computed for.
 # The entries are only read by the routes (they never change one): a new fingerprint replaces the whole entry.
 _online_cache: dict[tuple, tuple[str, dict[str, list[dict]]]] = {}
 _online_lock = threading.Lock()
-ONLINE_IMAGES_CACHE_MAX = 4
+ONLINE_IMAGES_CACHE_MAX = 8
 
 
-def online_images(conn, brand_id: uuid.UUID, config: Config) -> dict[str, list[dict]]:
+def online_images(conn, brand_id: uuid.UUID, config: Config, *, light: bool = False) -> dict[str, list[dict]]:
     """Every image read on the brand's sites, one entry per photo, under each tab of `VIEWS`, each entry carrying its `type`.
     `qualify` is `unreferenced_images`: what matches nothing in the library, was not set aside and, when the brand asks for it,
     is not a logo or a packshot. The recognised logos stay in it (and under the type "logos") unless the brand sets them aside.
 
-    The result is kept per brand while a fingerprint computed in the database (`site_images_signature` + the logos and packshots
-    sets) is unchanged: reading and grouping every image takes 0.7 s for 30,000 (measured on a test database, docs/PERFORMANCE_IMAGES_EN_LIGNE.md),
-    the fingerprint a tenth of that.
+    `light`: the rows hold only what states, groups and counts take (`cloud_db.site_images_light`), and `hydrate` brings the rest for
+    the entries of one page; a text search needs the full rows (names, pages).
 
-    ponytail: the first request after a change still reads and groups every image, and the cache holds `ONLINE_IMAGES_CACHE_MAX`
-    brands in memory. Past that, count the tabs in SQL and group only the page asked for."""
+    The result is kept per brand while a fingerprint computed in the database (`site_images_signature` + the logos and packshots
+    sets) is unchanged: see docs/PERFORMANCE_IMAGES_EN_LIGNE.md for what it saves.
+
+    ponytail: the first request after a change still reads and groups the brand's images in this process (exclusions are Hamming distances,
+    computed with numpy), and the cache holds `ONLINE_IMAGES_CACHE_MAX` results in memory. Past that, do the exclusions and the grouping in SQL."""
     cloud_logos.score_pending(conn, brand_id)  # the images read since the last time, so the Logos filter is never behind
     cloud_packshots.score_pending(conn, brand_id)  # the same for the Packshots filter (nothing unless the brand turned it on)
-    key = (brand_id, config.match.phash_threshold, config.match.dhash_threshold)
+    key = (brand_id, config.match.phash_threshold, config.match.dhash_threshold, light)
     signature = cloud_db.site_images_signature(conn, brand_id) + cloud_logos.fingerprint(conn, brand_id) + cloud_packshots.fingerprint(conn, brand_id)
     with _online_lock:
         cached = _online_cache.get(key)
     if cached and cached[0] == signature:
         return cached[1]
-    rows = cloud_db.site_images_with_pages(conn, brand_id)
+    rows = cloud_db.site_images_light(conn, brand_id) if light else cloud_db.site_images_with_pages(conn, brand_id)
     excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
     aside = cloud_logos.set_aside_ids(conn, brand_id)
     packshots = cloud_packshots.ids(conn, brand_id)
@@ -434,10 +436,22 @@ def online_images(conn, brand_id: uuid.UUID, config: Config) -> dict[str, list[d
         for group in groups:
             group["type"] = group_type(group["rows"], packshots)
     with _online_lock:
-        if len(_online_cache) >= ONLINE_IMAGES_CACHE_MAX:
+        if len(_online_cache) >= ONLINE_IMAGES_CACHE_MAX and key not in _online_cache:
             del _online_cache[next(iter(_online_cache))]
         _online_cache[key] = (signature, tabs)
     return tabs
+
+
+def hydrate(conn, brand_id: uuid.UUID, groups: list[dict]) -> list[dict]:
+    """The entries of a `light` result with their full rows (addresses, paths, pages), new dicts: the cached ones stay as they are.
+    An entry whose images vanished since is left out."""
+    full = {row["id"]: row for row in cloud_db.site_images_with_pages(conn, brand_id, ids=[row["id"] for group in groups for row in group["rows"]])}
+    out = []
+    for group in groups:
+        rows = [{**full[row["id"]], "recognised": row["recognised"], "status": row["status"]} for row in group["rows"] if row["id"] in full]
+        if rows:
+            out.append({"lead": rows[0], "rows": rows, "type": group["type"]})
+    return out
 
 
 def unreferenced_images(conn, brand_id: uuid.UUID, config: Config) -> list[dict]:

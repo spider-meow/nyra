@@ -1367,6 +1367,17 @@ def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
     def listed(view, **query):
         return {item["id"] for item in tab(view, **query)["items"]}
 
+    # The light path (rows without addresses and pages, hydrated for one page) gives the same entries as the full one (AXE-743).
+    from nyra.cloud.routes import common as routes_common
+    from nyra.config import Config
+
+    with cloud_db.connect(cloud_database_url) as conn:
+        shape = lambda tabs: {view: [(g["lead"]["id"], g["type"], [row["id"] for row in g["rows"]]) for g in groups] for view, groups in tabs.items()}  # noqa: E731
+        full, light = (routes_common.online_images(conn, cloud_brand, Config(), light=flag) for flag in (False, True))
+        assert shape(full) == shape(light) and sum(map(len, full.values())) == 4
+        hydrated = routes_common.hydrate(conn, cloud_brand, light["qualify"])
+        assert [g["lead"]["url"] for g in hydrated] == [g["lead"]["url"] for g in full["qualify"]]
+
     # Every tab with its total; the logo is still to qualify while the brand does not set logos aside.
     counts = tab("qualify")["counts"]
     assert counts == {"qualify": 2, "found": 1, "ignored": 1}
