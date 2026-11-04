@@ -1,4 +1,4 @@
-import { Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, StatusBadge, Thumb, cx } from "../../components/ui";
+import { Bar, Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, Skeleton, StatusBadge, Thumb, cx } from "../../components/ui";
 import { daysText, plural } from "../../lib/format";
 import type { NotFoundItem } from "../../types";
 import type { ReviewView, Row } from "./view";
@@ -19,6 +19,24 @@ export function OccurrenceList(props: { view: ReviewView }) {
         </div>
       ) : null}
       <p className="border-t border-line px-4 py-2.5 text-xs text-muted">{plural(rows.length, "photo")}</p>
+    </div>
+  );
+}
+
+/** The first load of `OccurrenceList`: the same box and rows (thumbnail, two lines, a badge), a bar in place of every word. */
+export function OccurrenceListSkeleton() {
+  return (
+    <div className="self-start rounded-xl border border-ink/20 bg-paper" aria-hidden>
+      <div className="flex flex-col gap-1 p-2">
+        {[0, 1, 2, 3, 4, 5].map((key) => (
+          <div key={key} className="flex w-full items-center gap-3.5 rounded-[14px] border border-transparent px-3 py-2.5">
+            <Skeleton className="h-[46px] w-[46px] shrink-0 rounded-md" />
+            <span className="min-w-0 flex-1"><span className="block text-sm"><Bar width="60%" /></span><span className="mt-0.5 block text-xs"><Bar width="80%" /></span></span>
+            <Skeleton className="h-[22px] w-[72px] shrink-0 rounded-full" />
+          </div>
+        ))}
+      </div>
+      <p className="border-t border-line px-4 py-2.5 text-xs"><Bar width="4rem" /></p>
     </div>
   );
 }
