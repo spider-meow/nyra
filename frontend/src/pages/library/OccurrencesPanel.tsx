@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useToast } from "../../components/feedback";
 import { Icon } from "../../components/icons";
 import { OrgHoldNotice, holdProps, useOrgHold } from "../../components/OrgHold";
-import { Button, Segmented, Skeleton, Thumb, cx } from "../../components/ui";
+import { Bar, Button, Segmented, Skeleton, Thumb, cx } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDateTime, hostOf, pathOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -25,7 +25,7 @@ export default function OccurrencesPanel({ item }: { item: LibraryItem }) {
     <>
       <Summary data={data} filter={filter} onFilter={(next) => { setFilter(next); setOffset(0); }} />
       <div className="max-h-72 overflow-x-hidden overflow-y-auto px-4 pb-3">
-        {found.isLoading ? <div className="grid gap-2" aria-busy="true">{[0, 1, 2].map((key) => <Skeleton key={key} className="h-[70px]" />)}</div> : null}
+        {found.isLoading ? <PageRowsSkeleton /> : null}
         {found.isError ? <RefreshFailed error={found.error} onRetry={() => void found.refetch()} retrying={found.isFetching} /> : null}
         {data ? <PageRows data={data} filter={filter} /> : null}
       </div>
@@ -100,6 +100,20 @@ function SearchBar({ item, data, onStarted }: { item: LibraryItem; data: Occurre
       </Button>
       {hold ? <div className="mt-2"><OrgHoldNotice hold={hold} /></div> : null}
     </div>
+  );
+}
+
+/** The first load of `PageRows`: the same row (thumbnails, host, path), a bar in place of every word. */
+function PageRowsSkeleton() {
+  return (
+    <ul className="grid grid-cols-1 gap-2" aria-busy="true" aria-hidden>
+      {[0, 1, 2].map((key) => (
+        <li key={key} className="flex items-center gap-3 rounded-xl border border-ink/20 bg-paper p-2.5">
+          <Skeleton className="h-12 w-12 shrink-0 rounded-md" />
+          <span className="min-w-0 flex-1"><span className="block text-xs"><Bar width="35%" /></span><span className="block text-sm"><Bar width="70%" /></span></span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
