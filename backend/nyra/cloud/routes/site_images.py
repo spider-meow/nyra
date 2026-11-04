@@ -246,6 +246,10 @@ def site_images(view: str = "qualify", type: Optional[str] = None, offset: int =
     items = [_site_image_item(group, urls) for group in page]
     if packshots_enabled and scope.member.staff and scope.member.role == "admin":
         _with_calibration(ctx, scope, [group["lead"] for group in page], items)
+    if not scope.member.staff:  # the detector's score is a tool of the Nyra team (AXE-745): a client only learns whether the logo was put back
+        for item in items:
+            if item["logo"]:
+                item["logo"]["score"] = None
     return {
         "view": view,
         "type": type,

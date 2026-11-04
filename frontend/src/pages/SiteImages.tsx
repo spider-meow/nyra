@@ -380,7 +380,7 @@ function KeepLogo({ item, setAside }: { item: SiteImage; setAside: boolean }) {
   const kept = item.logo.kept;
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className="text-xs text-muted">reconnu à {Math.round(item.logo.score * 100)} %</span>
+      <span className="text-xs text-muted">{item.logo.score === null ? "reconnu comme logo" : `reconnu à ${Math.round(item.logo.score * 100)} %`}</span>
       {setAside ? (
         <button
           type="button"

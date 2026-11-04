@@ -1381,7 +1381,9 @@ def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
     statuses = {item["id"]: item["status"] for view in ("qualify", "found", "ignored") for item in tab(view)["items"]}
     assert statuses == {str(ids["plain"]): "qualify", str(ids["found"]): "found", str(ids["logo"]): "logo", str(ids["ignored"]): "ignored"}
     logo = tab("qualify", type="logos")["items"][0]
-    assert logo["logo"]["score"] >= detector.THRESHOLD and logo["logo"]["kept"] is False and next(i for i in tab("qualify")["items"] if i["id"] == str(ids["plain"]))["logo"] is None
+    assert logo["logo"]["score"] is None  # a client does not get the detector's score (AXE-745)
+    staff_view = client.get(f"{base}/site-images?type=logos", headers=_headers(admin_id)).json()["items"][0]["logo"]
+    assert staff_view["score"] >= detector.THRESHOLD and logo["logo"]["kept"] is False and next(i for i in tab("qualify")["items"] if i["id"] == str(ids["plain"]))["logo"] is None
 
     # Pages, the text search and the site version narrow the entries; the totals of the tabs do not move.
     first, second = tab("qualify", limit=1), tab("qualify", limit=1, offset=1)
