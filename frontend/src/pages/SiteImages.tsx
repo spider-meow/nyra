@@ -37,7 +37,7 @@ export function SiteImages() {
   const askedType = params.get("type");
   const type: SiteImageType | null = legacy ? legacy.type : isType(askedType) ? askedType : null;
   const search = useSearch();
-  const images = useSiteImages({ view, type, site: search.site, text: search.applied });
+  const images = useSiteImages({ view, type, site: search.site, text: search.applied, min: search.min });
   const items = useMemo(() => images.data?.pages.flatMap((page) => page.items) ?? [], [images.data]);
   const last = images.data?.pages.at(-1);
   const page: SiteImagesPage | undefined = last && { ...last, items };
@@ -60,7 +60,13 @@ export function SiteImages() {
     : view === "found" ? () => <Link className="text-[13px] font-medium text-ink underline underline-offset-2" to={link("review")}>Voir dans À traiter</Link> : undefined;
   // The address holds the state and the type, by identifier only; the default ("À qualifier", every type) leaves it clean.
   function go(next: SiteImageView, nextType: SiteImageType | null) {
-    setParams({ ...(next === "qualify" ? {} : { view: next }), ...(nextType ? { type: nextType } : {}) }, { replace: true });
+    setParams((previous) => {
+      const out = new URLSearchParams(previous);
+      out.delete("view"); out.delete("type");
+      if (next !== "qualify") out.set("view", next);
+      if (nextType) out.set("type", nextType);
+      return out;
+    }, { replace: true });
     pick.clear();
   }
   function changeView(next: SiteImageView) {
@@ -99,7 +105,7 @@ export function SiteImages() {
             onAdd={qualifying ? (item) => setAdding([item]) : undefined}
             onIgnore={qualifying ? (item) => ignore([item], () => pick.toggle(item.id, false)) : undefined}
             footerFor={footerFor}
-            filtered={search.applied !== "" || search.site !== "all" || type !== null}
+            filtered={search.applied !== "" || search.site !== "all" || search.min > 0 || type !== null}
             onClear={() => { search.reset(); go(view, null); }}
           />
           </Refreshing>
@@ -151,20 +157,24 @@ function useSelection() {
   };
 }
 
-/** The site version and the text asked for (the text is sent after a short pause). */
+/** The text, the site version and the minimum size asked for: all in the address (identifiers and numbers only), so a link shares the list. The text is sent after a short pause. */
 function useSearch() {
-  const [site, setSite] = useState("all");
-  const [text, setText] = useState("");
-  const [applied, setApplied] = useState("");
+  const [params, setParams] = useSearchParams();
+  const put = (key: string, value: string, empty: string) =>
+    setParams((previous) => { const next = new URLSearchParams(previous); if (value === empty) next.delete(key); else next.set(key, value); return next; }, { replace: true });
+  const [text, setText] = useState(params.get("q") ?? "");
+  const [applied, setApplied] = useState(text.trim());
   useEffect(() => {
-    const timer = setTimeout(() => setApplied(text.trim()), 300);
+    const timer = setTimeout(() => { setApplied(text.trim()); put("q", text.trim(), ""); }, 300);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [text]);
   return {
-    site, text, applied,
-    changeSite: setSite,
+    site: params.get("site") ?? "all", text, applied, min: Number(params.get("min")) || 0,
+    changeSite: (id: string) => put("site", id, "all"),
     changeText: setText,
-    reset: () => { setSite("all"); setText(""); setApplied(""); },
+    changeMin: (px: number) => put("min", String(px), "0"),
+    reset: () => { setText(""); setApplied(""); setParams((previous) => { const next = new URLSearchParams(previous); ["q", "site", "min"].forEach((key) => next.delete(key)); return next; }, { replace: true }); },
   };
 }
 type Search = ReturnType<typeof useSearch>;
@@ -285,6 +295,14 @@ function FilterBar(props: { page: SiteImagesPage; search: Search; labels: LabelI
         <div className="w-full sm:w-72">
           <FieldLabel htmlFor="img-search">Rechercher</FieldLabel>
           <Input id="img-search" type="search" placeholder="Nom de fichier ou page" value={search.text} onChange={(event) => search.changeText(event.target.value)} />
+        </div>
+        <div>
+          <FieldLabel htmlFor="img-min">Taille minimale</FieldLabel>
+          <select id="img-min" value={search.min} onChange={(event) => search.changeMin(Number(event.target.value))} className="h-10 rounded-md border border-line-strong bg-paper px-3 text-sm">
+            <option value={0}>Toutes</option>
+            <option value={300}>≥ 300 px</option>
+            <option value={600}>≥ 600 px</option>
+          </select>
         </div>
         {/* While the answer to a search or a site comes, the count is the previous one: it says so instead of passing for the new one. */}
         <p className="pb-2 text-sm text-muted">{props.stale ? "Mise à jour…" : plural(page.total, page.view === "qualify" ? "image à vérifier" : "image", page.view === "qualify" ? "images à vérifier" : "images")}</p>

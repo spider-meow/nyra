@@ -181,10 +181,16 @@ def _logo(rows: list[dict]) -> Optional[dict]:
     return {"score": round(max(float(row["logo_score"]) for row in recognised), 3), "kept": all(row["logo_kept"] for row in recognised)}
 
 
-def _wanted(group: dict, site: Optional[uuid.UUID], needle: str) -> bool:
-    """Whether an entry is on the site version and holds the text (in a file name or a page) asked for."""
+def _wanted(group: dict, site: Optional[uuid.UUID], needle: str, section: str = "", min_side: int = 0) -> bool:
+    """Whether an entry is on the site version, in the section (the start of a page's path), at least `min_side` px on its
+    short side (its largest file) and holds the text (in a file name or a page) asked for."""
     rows = group["rows"]
     if site is not None and not any(row["site_id"] == site for row in rows):
+        return False
+    lead = group["lead"]
+    if min_side and min(lead["width"] or 0, lead["height"] or 0) < min_side:
+        return False
+    if section and not any(urlparse(page).path.startswith(section) for row in rows for page in row["pages"]):
         return False
     if not needle:
         return True
@@ -215,11 +221,12 @@ def _with_calibration(ctx: Ctx, scope: BrandScope, leads: list[dict], items: lis
 
 @router.get(f"{BRAND}/site-images")
 def site_images(view: str = "qualify", type: Optional[str] = None, offset: int = Query(0, ge=0), limit: int = Query(60, ge=1, le=200),  # noqa: A002
-                site: Optional[uuid.UUID] = None, q: str = Query("", max_length=200),
+                site: Optional[uuid.UUID] = None, q: str = Query("", max_length=200), section: str = Query("", max_length=200),
+                min: int = Query(0, ge=0, le=10000),  # noqa: A002
                 scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     """One state of "Images en ligne", `limit` entries from `offset`: `qualify` (read on the sites, nothing in the library
     matches it: rights unknown), `found` (a visual of the library is in it) or `ignored`. `type` keeps the `packshots`
-    (when the brand turned the category on), `logos` or `photos` of it; `site` and `q` narrow the entries. `counts` are
+    (when the brand turned the category on), `logos` or `photos` of it; `site`, `q`, `section` (the start of a page's path) and `min` (px on the short side) narrow the entries. `counts` are
     the totals of every state and `type_counts` those of this state by type, whatever `type`, `site` and `q`; `sites` are the
     site versions of this state. Only the thumbnails of the entries returned are signed."""
     if view not in VIEWS:
@@ -232,7 +239,7 @@ def site_images(view: str = "qualify", type: Optional[str] = None, offset: int =
         logos_set_aside = cloud_logos.is_enabled(conn, scope.brand_id)
         packshots_enabled = cloud_packshots.is_enabled(conn, scope.brand_id)
     needle = q.strip().lower()
-    wanted = [group for group in tabs[view] if (type is None or group["type"] == type) and _wanted(group, site, needle)]
+    wanted = [group for group in tabs[view] if (type is None or group["type"] == type) and _wanted(group, site, needle, section.strip(), min)]
     page = wanted[offset : offset + limit]
     leads = [variant[0] for group in page for variant in _variants(group["rows"])]
     urls = ctx.sign(cloud_storage.BUCKET_SITE_IMAGES, [row["thumb_path"] for row in leads] + [row["storage_path"] for row in leads])

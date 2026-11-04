@@ -1389,6 +1389,7 @@ def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
     assert {i["id"] for i in first["items"]} | {i["id"] for i in second["items"]} == {str(ids["plain"]), str(ids["logo"])}
     assert listed("qualify", q="PLAIN") == {str(ids["plain"])} and tab("qualify", q="PLAIN")["counts"]["qualify"] == 2
     assert listed("ignored", site=str(uk)) == {str(ids["ignored"])}
+    assert listed("qualify", min=1) == set() and listed("qualify", section="/nowhere") == set()  # no size known, no page under that path
     assert [(entry["label"], entry["count"]) for entry in tab("qualify")["sites"]] == [("t.test", 2)]
 
     # Setting the logos aside moves them from "À qualifier" to "Ignorées", still under the type "Logos".
