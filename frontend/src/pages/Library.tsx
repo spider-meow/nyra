@@ -1,8 +1,8 @@
-import { LoadError, SkeletonGrid } from "../components/busy";
+import { LoadError } from "../components/busy";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import { Present, useToast } from "../components/feedback";
-import { Button, EmptyState, PageHeader, Skeleton } from "../components/ui";
+import { Bar, Button, EmptyState, PageHeader, Skeleton } from "../components/ui";
 import { useOrg } from "../lib/org";
 import { useAssignments, useLabels } from "../lib/labels";
 import { useLibrary, useLibraryThumbs } from "../lib/queries";
@@ -11,7 +11,7 @@ import { readAddress, writeAddress } from "./library/address";
 import { EditReference } from "./library/EditReference";
 import { ImportCsv } from "./library/ImportCsv";
 import { CollectionTree, FolderBar } from "./library/CollectionTree";
-import { LibraryGrid, RecentCards } from "./library/Grid";
+import { LibraryGrid, RecentCards, ReferenceCardSkeleton } from "./library/Grid";
 import { SelectionHeader, useRemoveReferences } from "./library/Selection";
 import { LibraryToolbar } from "./library/Toolbar";
 import { DropZone, LibraryActions, UploadNotices, useUpload } from "./library/Upload";
@@ -19,16 +19,32 @@ import { newest, useLibraryView, type Tab } from "./library/view";
 
 const RECENT_CARDS = 4; // one row at the widest layout
 
+/** The first load, in the shape of the landing: the folders, the controls, then the newest visuals on one row (same columns as `RecentCards`). */
+function LibrarySkeleton() {
+  const row = "flex items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-sm";
+  return (
+    <div className="lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8" aria-busy="true" aria-hidden>
+      <div className="mb-5 flex flex-col gap-0.5 lg:mb-0">
+        <div className={row}><span className="w-1/2"><Bar /></span></div>
+        {[0, 1].map((key) => <div key={key} className={`${row} rounded-xl border border-line bg-paper`}><span className="w-2/5"><Bar /></span></div>)}
+      </div>
+      <div className="min-w-0">
+        <div className="mb-5" /> {/* the room `FolderBar` takes at the top */}
+        <Skeleton className="mb-4 h-10 w-44 rounded-xl" />
+        <Skeleton className="h-10 w-full rounded-full sm:w-72" />
+        <h2 className="mt-5 mb-3 text-sm font-semibold"><Bar width="8rem" /></h2>
+        <ul className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-4 max-xl:[&>li:nth-child(n+4)]:hidden max-sm:[&>li:nth-child(n+3)]:hidden">
+          {[0, 1, 2, 3].map((key) => <ReferenceCardSkeleton key={key} />)}
+        </ul>
+        <div className="mt-6 flex justify-center"><Skeleton className="h-10 w-52 rounded-lg" /></div>
+      </div>
+    </div>
+  );
+}
+
 /** What stands in for the library while it loads, fails to load, or is empty. */
 function LibraryNotice(props: { loading: boolean; error: unknown; admin: boolean; uploading: boolean; onPick: () => void; onRetry: () => void; retrying: boolean }) {
-  if (props.loading) {
-    return (
-      <div className="lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8">
-        <Skeleton className="mb-5 h-72 lg:mb-0" />
-        <SkeletonGrid className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4"><Skeleton className="aspect-[4/3]" /></SkeletonGrid>
-      </div>
-    );
-  }
+  if (props.loading) return <LibrarySkeleton />;
   if (props.error) return <LoadError title="Impossible de charger la bibliothèque" error={props.error} onRetry={props.onRetry} retrying={props.retrying} />;
   return (
     <EmptyState
