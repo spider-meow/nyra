@@ -10,7 +10,7 @@ import { plural } from "../lib/format";
 import { LABELS_ENABLED, useAssignments, useLabels } from "../lib/labels";
 import { useOrg } from "../lib/org";
 import { useExclusionMutations } from "../lib/queries";
-import { useLogoMutations, useSiteImages } from "../lib/siteImages";
+import { useLogoMutations, useRequalify, useSiteImages } from "../lib/siteImages";
 import type { ImageLabel, LabelInfo, SiteImage, SiteImagesPage, SiteImageType, SiteImageView } from "../types";
 import { AddToLibrary } from "./site-images/AddToLibrary";
 import { ImageCard, Zoom } from "./site-images/ImageCard";
@@ -59,6 +59,7 @@ export function SiteImages() {
   const qualifying = view === "qualify" && admin;
   // The one action of a card outside "À qualifier": put a logo back (Logos filter), or go and decide a found image in "À traiter".
   const footerFor = admin && type === "logos" ? (item: SiteImage) => <KeepLogo item={item} setAside={page?.logos_set_aside ?? false} />
+    : admin && view === "ignored" ? (item: SiteImage) => (item.status === "ignored" ? <Requalify item={item} /> : null)
     : view === "found" ? () => <Link className="text-[13px] font-medium text-ink underline underline-offset-2" to={link("review")}>Voir dans À traiter</Link> : undefined;
   // The address holds the state and the type, by identifier only; the default ("À qualifier", every type) leaves it clean.
   function go(next: SiteImageView, nextType: SiteImageType | null) {
@@ -382,6 +383,18 @@ function ImageGrid(props: GridProps) {
       {!items.length ? <p className="py-6 text-center text-sm text-muted">Aucune image ne correspond à ces filtres.</p> : null}
     </>
   );
+}
+
+/** "Remettre à qualifier" for an image ignored by hand: every file of the photo goes back together. */
+function Requalify({ item }: { item: SiteImage }) {
+  const requalify = useRequalify();
+  const toast = useToast();
+  const run = () =>
+    requalify.mutate(item.variants.map((variant) => variant.id), {
+      onSuccess: (result) => toast.show(result.exclusions ? { tone: "success", message: "Remise dans À qualifier", description: "Elle sera comparée de nouveau à la bibliothèque." } : { tone: "info", message: "Rien à retirer", description: "Cette image n'a pas été ignorée à la main." }),
+      onError: (error) => toast.show({ tone: "error", message: "L'image n'a pas été remise", description: errorMessage(error) }),
+    });
+  return <button type="button" disabled={requalify.isPending} onClick={run} className="text-[13px] font-medium text-ink underline underline-offset-2 disabled:opacity-60">Remettre à qualifier</button>;
 }
 
 /** For the logos tab: put a logo back into the comparison, or set it aside again (administrators). Without the setting there is nothing to put back. */
