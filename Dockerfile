@@ -36,7 +36,7 @@ CMD ["nyra", "serve", "--host", "0.0.0.0", "--port", "8000"]
 # --- worker ------------------------------------------------------------------------
 # Playwright's image ships Chromium and its system libraries; pin the same
 # Playwright version so the preinstalled browser matches the Python package.
-FROM mcr.microsoft.com/playwright/python:v1.63.0-noble AS worker
+FROM mcr.microsoft.com/playwright/python:v1.64.1-noble AS worker
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 \
     HF_HOME=/opt/hf PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app
@@ -45,7 +45,7 @@ WORKDIR /app
 RUN pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2" torchvision
 COPY pyproject.toml README.md ./
 COPY backend/ ./backend/
-RUN pip install ".[worker,observability]" playwright==1.63.0 && playwright install chromium
+RUN pip install ".[worker,observability]" playwright==1.64.1 && playwright install chromium
 COPY config.yaml ./
 # Bake the CLIP weights into the image so the first job doesn't download them.
 RUN python -c "from nyra.config import load_config; from nyra.match import _load_clip; c = load_config().match; _load_clip(c.clip_model_name, c.clip_pretrained)" \
