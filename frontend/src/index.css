@@ -155,6 +155,16 @@ a {
   animation: fade-in var(--motion-base) var(--ease-enter);
 }
 
+/* Sorties : plus courtes que les entrées, courbe qui accélère ; l'élément reste monté jusqu'à la fin (usePresence). */
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.fade-out {
+  animation: fade-out var(--motion-fast) var(--ease-exit) forwards;
+}
+
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }

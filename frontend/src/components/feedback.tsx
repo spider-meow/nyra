@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type AnimationEvent, type ReactNode, type RefObject } from "react";
 import { Icon } from "./icons";
 import { Button, cx } from "./ui";
 
@@ -218,50 +218,123 @@ function keepFocusInside(event: KeyboardEvent, panel: HTMLElement | null) {
   (event.shiftKey ? controls[controls.length - 1] : controls[0]).focus();
 }
 
-export function Modal(props: { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean; footer?: ReactNode }) {
-  const panel = useRef<HTMLDivElement>(null);
+// --- sorties --------------------------------------------------------------------
 
+const PresenceContext = createContext<{ leaving: boolean; exited: () => void } | null>(null);
+
+/**
+ * What goes away fades out before it leaves the page. `open` false: it stays mounted (`leaving`) while its exit animation
+ * plays, and goes when that animation ends (`onAnimationEnd` goes on the element that plays it). Under `Present` the
+ * owner's `show` plays the same part for a component that its parent mounts and unmounts.
+ */
+export function usePresence(open: boolean) {
+  const presence = useContext(PresenceContext);
+  const on = open && !presence?.leaving;
+  const [mounted, setMounted] = useState(on);
+  if (on && !mounted) setMounted(true);
+  const leaving = mounted && !on;
+  const exited = () => {
+    setMounted(false);
+    presence?.exited();
+  };
+  // Safety net, far beyond the longest exit: a hidden tab or an element that is not displayed never ends its animation.
   useEffect(() => {
-    if (!props.open) return;
+    if (!leaving) return;
+    const timer = setTimeout(exited, 500);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaving]);
+  const onAnimationEnd = (event: AnimationEvent) => {
+    if (leaving && event.target === event.currentTarget) exited();
+  };
+  return { mounted, leaving, on, onAnimationEnd };
+}
+
+/** Keeps `children` (as they were when `show` turned false) until the dialog or menu inside them has played its exit. */
+export function Present(props: { show: boolean; children: ReactNode }) {
+  const [mounted, setMounted] = useState(props.show);
+  const last = useRef(props.children);
+  if (props.show && !mounted) setMounted(true);
+  useLayoutEffect(() => {
+    if (props.show) last.current = props.children;
+  });
+  if (!mounted) return null;
+  const exited = () => {
+    if (!props.show) setMounted(false);
+  };
+  return <PresenceContext.Provider value={{ leaving: !props.show, exited }}>{props.show ? props.children : last.current}</PresenceContext.Provider>;
+}
+
+type ModalProps = { open: boolean; onClose: () => void; title: string; children: ReactNode; wide?: boolean; footer?: ReactNode };
+
+/** Only the dialog on top answers Tab and Escape (one inside another, or one still leaving, must not). */
+const topDialog = (panel: HTMLElement | null) =>
+  [...document.querySelectorAll<HTMLElement>('[role="dialog"]')].filter((dialog) => !dialog.closest("[inert]")).at(-1) === panel;
+
+/** While `on`: the focus goes into the dialog and comes back to where it was, Tab goes round, Escape closes, the page does not scroll. */
+function useDialogKeys(on: boolean, panel: RefObject<HTMLDivElement | null>, onClose: () => void) {
+  useEffect(() => {
+    if (!on) return;
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const target =
       panel.current?.querySelector<HTMLElement>("[data-autofocus]") ??
-      panel.current?.querySelector<HTMLElement>(".overflow-y-auto input, .overflow-y-auto select, .overflow-y-auto button");
+      panel.current?.querySelector<HTMLElement>(".overflow-y-auto input, .overflow-y-auto select, .overflow-y-auto button") ??
+      panel.current;
     target?.focus();
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") props.onClose();
+      if (!topDialog(panel.current)) return;
+      if (event.key === "Escape") onClose();
       if (event.key === "Tab") keepFocusInside(event, panel.current);
     };
     document.addEventListener("keydown", onKey);
+    const overflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-      previous?.focus();
+      document.body.style.overflow = overflow;
+      if (previous?.isConnected) previous.focus(); // the menu that opened the dialog may be gone
     };
     // Only re-run on open/close.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.open]);
+  }, [on]);
+}
 
-  if (!props.open) return null;
+export function Modal(props: ModalProps) {
+  const { mounted, leaving, on, onAnimationEnd } = usePresence(props.open);
+  const panel = useRef<HTMLDivElement>(null);
+  // Title, body and footer outlive their owner's state during the exit (a confirmation empties them as it closes).
+  const last = useRef(props);
+  useLayoutEffect(() => {
+    if (on) last.current = props;
+  });
+  const shown = on ? props : last.current;
+  useDialogKeys(on, panel, props.onClose);
+
+  if (!mounted) return null;
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]" onMouseDown={props.onClose}>
+    <div
+      className={cx("fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4 backdrop-blur-[2px]", leaving ? "fade-out" : "fade-in")}
+      inert={leaving}
+      onMouseDown={props.onClose}
+      onAnimationEnd={onAnimationEnd}
+    >
       <div
         ref={panel}
         role="dialog"
         aria-modal="true"
-        aria-label={props.title}
-        className={cx("flex max-h-[90dvh] w-full flex-col rounded-xl bg-paper shadow-float", props.wide ? "max-w-3xl" : "max-w-md")}
+        aria-label={shown.title}
+        tabIndex={-1}
+        className={cx("flex max-h-[90dvh] w-full flex-col rounded-xl bg-paper shadow-float outline-none", shown.wide ? "max-w-3xl" : "max-w-md", !leaving && "rise-in")}
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-4 px-6 pt-5 pb-3">
-          <h2 className="min-w-0 truncate text-lg font-semibold tracking-tight">{props.title}</h2>
+          <h2 className="min-w-0 truncate text-lg font-semibold tracking-tight">{shown.title}</h2>
           <button type="button" className="grid h-9 w-9 shrink-0 place-items-center rounded-md text-muted hover:bg-line hover:text-ink" aria-label="Fermer" onClick={props.onClose}>
             <Icon name="close" size={16} strokeWidth={2} />
           </button>
         </div>
-        <div className="overflow-y-auto px-6 pb-5">{props.children}</div>
-        {props.footer ? <div className="flex flex-wrap justify-end gap-2 border-t border-line bg-sunk px-6 py-3.5 rounded-b-[20px]">{props.footer}</div> : null}
+        <div className="overflow-y-auto px-6 pb-5">{shown.children}</div>
+        {shown.footer ? <div className="flex flex-wrap justify-end gap-2 border-t border-line bg-sunk px-6 py-3.5 rounded-b-[20px]">{shown.footer}</div> : null}
       </div>
     </div>
   );

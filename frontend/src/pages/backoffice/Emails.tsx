@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Modal } from "../../components/feedback";
+import { Modal, Present } from "../../components/feedback";
 import { Section } from "../../components/insights";
 import { Button, EmptyState, PageHeader, Segmented, Skeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
@@ -86,7 +86,7 @@ export function Emails() {
           </ul>
         ) : null}
       </Section>
-      {open ? <PreviewDialog entry={open} onClose={() => setOpen(null)} /> : null}
+      <Present show={open !== null}>{open ? <PreviewDialog entry={open} onClose={() => setOpen(null)} /> : null}</Present>
     </>
   );
 }
