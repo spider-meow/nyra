@@ -1084,6 +1084,30 @@ def unreferenced_signature(conn: psycopg.Connection, brand_id: uuid.UUID) -> str
     return f"{row['images']}{row['exclusions']}"
 
 
+def site_images_signature(conn: psycopg.Connection, brand_id: uuid.UUID) -> str:
+    """Like `unreferenced_signature`, for everything the tabs of "Images en ligne" show: it also moves with an image's size,
+    thumbnail, comparison, logo score, logo put back and pages. Computed in the database: a few dozen characters come out."""
+    return conn.execute(
+        """
+        SELECT md5(COALESCE(string_agg(
+                   si.id::text || ':' || COALESCE(si.content_hash, '') || ':' || COALESCE(si.variant_group::text, '') || ':'
+                   || COALESCE(si.phash, '') || ':' || COALESCE(si.dhash, '') || ':' || COALESCE(si.url, '') || ':'
+                   || COALESCE(si.thumb_path, '') || ':' || COALESCE(si.width, 0) || 'x' || COALESCE(si.height, 0) || ':'
+                   || COALESCE(si.logo_score::text, '') || ':' || COALESCE(si.logo_kept::text, '') || ':'
+                   || (si.compared_at IS NOT NULL)::text || ':' || si.site_id::text || ':' || COALESCE(pg.n, 0) || ':' || COALESCE(pg.last_page::text, '') || ':'
+                   || EXISTS (SELECT 1 FROM matches m WHERE m.site_image_id = si.id)::text, ',' ORDER BY si.id), '')) AS signature
+          FROM site_images si JOIN sites s ON s.id = si.site_id
+          LEFT JOIN LATERAL (SELECT count(*) AS n, max(ip.page_id::text) AS last_page FROM image_pages ip WHERE ip.image_id = si.id) pg ON true
+         WHERE s.brand_id = %s AND si.phash IS NOT NULL AND si.storage_path IS NOT NULL
+        """, (brand_id,)).fetchone()["signature"] + exclusions_signature(conn, brand_id)
+
+
+def exclusions_signature(conn: psycopg.Connection, brand_id: uuid.UUID) -> str:
+    return conn.execute(
+        "SELECT md5(COALESCE(string_agg(e.hash || ':' || e.hash_type, ',' ORDER BY e.hash, e.hash_type), '')) AS exclusions FROM excluded_hashes e WHERE e.brand_id = %s",
+        (brand_id,)).fetchone()["exclusions"]
+
+
 def site_images_by_id(conn: psycopg.Connection, brand_id: uuid.UUID, ids: list[uuid.UUID]) -> list[Row]:
     return conn.execute(
         """SELECT si.* FROM site_images si JOIN sites s ON s.id = si.site_id

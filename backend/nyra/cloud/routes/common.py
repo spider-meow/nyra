@@ -390,16 +390,32 @@ def group_type(rows: list[dict], packshots: set) -> str:
     return "packshots" if any(row["id"] in packshots for row in rows) else "photos"
 
 
+# What `online_images` computed, per (brand, the two thresholds that decide what an exclusion covers), with the fingerprint it was computed for.
+# The entries are only read by the routes (they never change one): a new fingerprint replaces the whole entry.
+_online_cache: dict[tuple, tuple[str, dict[str, list[dict]]]] = {}
+_online_lock = threading.Lock()
+ONLINE_IMAGES_CACHE_MAX = 4
+
+
 def online_images(conn, brand_id: uuid.UUID, config: Config) -> dict[str, list[dict]]:
     """Every image read on the brand's sites, one entry per photo, under each tab of `VIEWS`, each entry carrying its `type`.
     `qualify` is `unreferenced_images`: what matches nothing in the library, was not set aside and, when the brand asks for it,
     is not a logo or a packshot. The recognised logos stay in it (and under the type "logos") unless the brand sets them aside.
 
-    ponytail: reads and groups every image of the brand on each request (measured on a test database, without exclusions:
-    0.3 s for 10,000 images, 1 s for 30,000, growing in step with them). Past that, count the tabs in SQL and group only
-    the tab asked for, or cache by a fingerprint like `unreferenced_count` does."""
+    The result is kept per brand while a fingerprint computed in the database (`site_images_signature` + the logos and packshots
+    sets) is unchanged: reading and grouping every image takes 0.7 s for 30,000 (measured on a test database, docs/PERFORMANCE_IMAGES_EN_LIGNE.md),
+    the fingerprint a tenth of that.
+
+    ponytail: the first request after a change still reads and groups every image, and the cache holds `ONLINE_IMAGES_CACHE_MAX`
+    brands in memory. Past that, count the tabs in SQL and group only the page asked for."""
     cloud_logos.score_pending(conn, brand_id)  # the images read since the last time, so the Logos filter is never behind
     cloud_packshots.score_pending(conn, brand_id)  # the same for the Packshots filter (nothing unless the brand turned it on)
+    key = (brand_id, config.match.phash_threshold, config.match.dhash_threshold)
+    signature = cloud_db.site_images_signature(conn, brand_id) + cloud_logos.fingerprint(conn, brand_id) + cloud_packshots.fingerprint(conn, brand_id)
+    with _online_lock:
+        cached = _online_cache.get(key)
+    if cached and cached[0] == signature:
+        return cached[1]
     rows = cloud_db.site_images_with_pages(conn, brand_id)
     excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
     aside = cloud_logos.set_aside_ids(conn, brand_id)
@@ -417,6 +433,10 @@ def online_images(conn, brand_id: uuid.UUID, config: Config) -> dict[str, list[d
     for groups in tabs.values():
         for group in groups:
             group["type"] = group_type(group["rows"], packshots)
+    with _online_lock:
+        if len(_online_cache) >= ONLINE_IMAGES_CACHE_MAX:
+            del _online_cache[next(iter(_online_cache))]
+        _online_cache[key] = (signature, tabs)
     return tabs
 
 
