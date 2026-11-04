@@ -3,7 +3,6 @@ import { Modal } from "../../components/feedback";
 import { Icon } from "../../components/icons";
 import { Button, Input, cx } from "../../components/ui";
 import { num, plural } from "../../lib/format";
-import type { LibraryItem } from "../../types";
 import type { CollectionIndex } from "./collections";
 import { folderRows, highlight, searchFolders, type FolderRow } from "./folderSearch";
 
@@ -35,7 +34,7 @@ function Choice(props: { chosen: boolean; stop: boolean; depth: number; icon: bo
 }
 
 /** « Classer N visuels » : where to put the selection. The whole tree, indented, or the matches of what is typed with the path above each. */
-export function FolderDialog(props: { items: LibraryItem[]; folders: CollectionIndex; counts: Record<string, number>; busy: boolean; onFile: (id: string | null) => void; onClose: () => void }) {
+export function FolderDialog(props: { count: number; folders: CollectionIndex; counts: Record<string, number>; busy: boolean; onFile: (id: string | null) => void; onClose: () => void }) {
   const [choice, setChoice] = useState<string | null | undefined>(undefined); // undefined: nothing chosen yet; null: out of any collection
   const [query, setQuery] = useState("");
   const list = useRef<HTMLUListElement>(null);
@@ -73,7 +72,7 @@ export function FolderDialog(props: { items: LibraryItem[]; folders: CollectionI
       open
       wide
       onClose={props.onClose}
-      title={`Classer ${plural(props.items.length, "visuel", "visuels")}`}
+      title={`Classer ${plural(props.count, "visuel", "visuels")}`}
       footer={
         <>
           <p className="line-clamp-2 min-w-0 basis-full break-words text-[13px] text-muted sm:flex-1 sm:basis-0" aria-live="polite" title={where}>{where ? `Destination : ${where}` : "Choisissez une destination."}</p>

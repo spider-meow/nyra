@@ -15,6 +15,8 @@ export type ToastInput = {
   progress?: number | null;
   /** `keep`: the toast stays after the click (it will be updated). */
   action?: { label: string; onClick: () => void; keep?: boolean; disabled?: boolean };
+  /** A second link-like action beside `action`, e.g. "Ouvrir la bibliothèque" next to "Annuler". */
+  secondary?: { label: string; onClick: () => void };
   /** Milliseconds before it goes away; loading toasts stay until updated. */
   duration?: number;
 };
@@ -167,17 +169,24 @@ function ToastCard(props: { toast: Toast; onDismiss: () => void; onGone: () => v
           <p className="font-medium leading-5">{toast.message}</p>
           {toast.description ? <p className="mt-0.5 text-[13px] leading-5 opacity-75">{toast.description}</p> : null}
           {toast.action ? (
-            <button
-              type="button"
-              className="mt-1.5 text-[13px] font-medium underline underline-offset-2 hover:opacity-80 disabled:cursor-default disabled:no-underline disabled:opacity-60"
-              disabled={toast.action.disabled}
-              onClick={() => {
-                toast.action?.onClick();
-                if (!toast.action?.keep) onDismiss();
-              }}
-            >
-              {toast.action.label}
-            </button>
+            <div className="mt-1.5 flex flex-wrap gap-x-4">
+              <button
+                type="button"
+                className="text-[13px] font-medium underline underline-offset-2 hover:opacity-80 disabled:cursor-default disabled:no-underline disabled:opacity-60"
+                disabled={toast.action.disabled}
+                onClick={() => {
+                  toast.action?.onClick();
+                  if (!toast.action?.keep) onDismiss();
+                }}
+              >
+                {toast.action.label}
+              </button>
+              {toast.secondary ? (
+                <button type="button" className="text-[13px] font-medium underline underline-offset-2 hover:opacity-80" onClick={() => { toast.secondary?.onClick(); onDismiss(); }}>
+                  {toast.secondary.label}
+                </button>
+              ) : null}
+            </div>
           ) : null}
         </div>
         {toast.tone !== "loading" ? (

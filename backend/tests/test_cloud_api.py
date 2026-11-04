@@ -1753,6 +1753,14 @@ def test_site_images_without_a_reference_are_listed_and_can_join_the_library(
     again = client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json={"site_image_ids": [campaign["id"]]}).json()
     assert again["added"][0]["filename"] == "Campagne été (2).jpg"
 
+    # A batch can carry one date per image; a date with unlimited rights, or an invalid one, refuses everything.
+    one = {"site_image_ids": [campaign["id"]], "expiries": {campaign["id"]: "2031-05-06"}}
+    assert client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json={**one, "unlimited_rights": True}).status_code == 400
+    assert client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json={**one, "expiries": {campaign["id"]: "pas une date"}}).status_code == 400
+    dated = client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json=one).json()
+    shelf = {item["filename"]: item for item in client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]}
+    assert shelf[dated["added"][0]["filename"]]["expiry_date"] == "2031-05-06"
+
     # A collection can be chosen at the same time (it must be this brand's); an unknown one refuses the whole addition.
     folder = client.post(f"{base}/collections", headers=_headers(admin_id), json={"name": "Campagnes"}).json()["collection"]["id"]
     assert client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json={"site_image_ids": [campaign["id"]], "collection_id": str(uuid.uuid4())}).status_code == 404

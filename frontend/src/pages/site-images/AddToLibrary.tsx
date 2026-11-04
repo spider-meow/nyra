@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { Suspense, lazy, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { Modal, useToast, type ToastInput } from "../../components/feedback";
 import { Button, Checkbox, FieldLabel, Input } from "../../components/ui";
@@ -6,20 +6,26 @@ import { errorMessage } from "../../lib/api";
 import { formatDate, plural } from "../../lib/format";
 import { useAssignments } from "../../lib/labels";
 import { useOrg } from "../../lib/org";
-import { useLibrary, useSiteImageMutations } from "../../lib/queries";
+import { useLibrary, useLibraryMutations, useSiteImageMutations } from "../../lib/queries";
 import { collectionIndex } from "../library/collections";
 import type { SiteImage } from "../../types";
 import { typeOf } from "./Typing";
 
-type Fields = { expiry: string; unlimited: boolean; credit: string; name: string; collection: string };
+// "Classer" is the library's own panel (search and tree), loaded when first opened.
+const FolderDialog = lazy(() => import("../library/FolderDialog").then((module) => ({ default: module.FolderDialog })));
+
+type Fields = { expiry: string; unlimited: boolean; credit: string; name: string; collection: string; own: Record<string, string> };
 
 type Adopted = { added: { site_image_id: string; filename: string }[]; failed: { reason: string }[] };
 
-function adoptedToast(result: Adopted, hasRights: boolean, open: () => void): ToastInput {
+function adoptedToast(result: Adopted, hasRights: boolean, open: () => void, undo: () => void): ToastInput {
   if (result.added.length && !result.failed.length) {
     return {
       tone: "success",
-      action: { label: "Ouvrir la bibliothèque", onClick: open },
+      // The visuals just created are deleted again (their links to the site images go with them): the images are to qualify again.
+      action: { label: "Annuler", onClick: undo },
+      secondary: { label: "Ouvrir la bibliothèque", onClick: open },
+      duration: 10000,
       message: result.added.length > 1 ? `${result.added.length} visuels ajoutés à la bibliothèque` : `${result.added[0].filename} ajouté à la bibliothèque`,
       description: hasRights
         ? "Ils sont déjà reliés à leurs pages : retrouvez-les dans « À traiter »."
@@ -37,8 +43,9 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
   const { adopt } = useSiteImageMutations();
   const toast = useToast();
   const navigate = useNavigate();
+  const { remove } = useLibraryMutations();
   const { link } = useOrg();
-  const [fields, setFields] = useState<Fields>({ expiry: "", unlimited: false, credit: "", name: "", collection: "" });
+  const [fields, setFields] = useState<Fields>({ expiry: "", unlimited: false, credit: "", name: "", collection: "", own: {} });
   const [openedFor, setOpenedFor] = useState<string | null>(null);
   const items = props.items;
   const assignments = useAssignments("site").data?.assignments;
@@ -47,7 +54,7 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
   const key = items?.map((item) => item.id).join(",") ?? null;
   if (key !== openedFor) {
     setOpenedFor(key);
-    setFields({ expiry: "", unlimited: packshots, credit: "", name: items?.length === 1 ? items[0].filename : "", collection: "" });
+    setFields({ expiry: "", unlimited: packshots, credit: "", name: items?.length === 1 ? items[0].filename : "", collection: "", own: {} });
   }
   if (!items) return null;
   const single = items.length === 1;
@@ -62,13 +69,15 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
         unlimited_rights: fields.unlimited,
         credit: fields.credit,
         ...(fields.collection ? { collection_id: fields.collection } : {}),
+        ...(Object.values(fields.own).some(Boolean) ? { expiries: fields.own } : {}),
         filenames: single && fields.name.trim() ? { [items[0].id]: fields.name.trim() } : {},
       },
       {
         onSuccess: (result) => {
           props.onDone(result.added.map((item) => item.site_image_id));
           props.onClose();
-          toast.show(adoptedToast(result, Boolean(fields.expiry) || fields.unlimited, () => navigate(link("library"))));
+          toast.show(adoptedToast(result, Boolean(fields.expiry) || fields.unlimited || Object.values(fields.own).some(Boolean), () => navigate(link("library")),
+            () => remove.mutate(result.added.map((item) => item.filename), { onError: (error) => toast.show({ tone: "error", message: "L'ajout n'a pas été annulé", description: errorMessage(error) }) })));
         },
         onError: (error) => toast.show({ tone: "error", message: "L'ajout n'a pas abouti", description: errorMessage(error) }),
       },
@@ -98,10 +107,12 @@ function AdoptFields(props: { items: SiteImage[]; fields: Fields; packshots: boo
   const { items, fields } = props;
   const { expiry } = fields;
   const single = items.length === 1;
-  // The folders of the library (one request, shared with the library page): "Classer" at the time of the addition.
-  const collections = useLibrary().data?.collections;
-  const folders = collections ? collectionIndex(collections) : null;
-  const choices = folders ? [...folders.byId.keys()].map((id) => ({ id, label: folders.path(id) })).sort((a, b) => a.label.localeCompare(b.label, "fr", { numeric: true })) : [];
+  // The folders of the library (one request, shared with the library page): "Classer" is the library's own panel.
+  const library = useLibrary().data;
+  const folders = library ? collectionIndex(library.collections) : null;
+  const [choosing, setChoosing] = useState(false);
+  const counts: Record<string, number> = {};
+  for (const item of library?.items ?? []) if (item.collection_id) counts[item.collection_id] = (counts[item.collection_id] ?? 0) + 1;
   return (
     <form id="adopt-form" className="grid gap-4" onSubmit={props.onSubmit}>
       <div className="flex gap-2 overflow-x-auto">
@@ -131,14 +142,32 @@ function AdoptFields(props: { items: SiteImage[]; fields: Fields; packshots: boo
           <Input id="adopt-credit" maxLength={500} placeholder="Photographe, agence" value={fields.credit} onChange={(event) => props.onChange({ ...fields, credit: event.target.value })} />
         </div>
       </div>
-      {choices.length ? (
+      {folders && folders.byId.size ? (
         <div>
           <FieldLabel htmlFor="adopt-collection" hint="facultatif">Collection</FieldLabel>
-          <select id="adopt-collection" value={fields.collection} onChange={(event) => props.onChange({ ...fields, collection: event.target.value })} className="h-10 w-full rounded-md border border-line-strong bg-paper px-3 text-sm">
-            <option value="">Sans collection</option>
-            {choices.map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
-          </select>
+          <button id="adopt-collection" type="button" onClick={() => setChoosing(true)} className="flex h-10 w-full items-center justify-between rounded-md border border-line-strong bg-paper px-3 text-left text-sm">
+            <span className="truncate">{fields.collection ? folders.path(fields.collection) : "Sans collection"}</span>
+            <span className="shrink-0 text-muted underline underline-offset-2">Choisir</span>
+          </button>
+          {choosing ? (
+            <Suspense fallback={null}>
+              <FolderDialog count={items.length} folders={folders} counts={counts} busy={false} onFile={(id) => { props.onChange({ ...fields, collection: id ?? "" }); setChoosing(false); }} onClose={() => setChoosing(false)} />
+            </Suspense>
+          ) : null}
         </div>
+      ) : null}
+      {!single && !fields.unlimited ? (
+        <details className="text-sm">
+          <summary className="cursor-pointer text-ink-soft underline underline-offset-2">Une échéance différente pour certaines images</summary>
+          <div className="mt-2 grid gap-2">
+            {items.map((item) => (
+              <label key={item.id} className="flex items-center gap-3">
+                <span className="min-w-0 flex-1 truncate text-muted">{item.filename}</span>
+                <Input type="date" aria-label={`Échéance de ${item.filename}`} className="w-40" value={fields.own[item.id] ?? ""} onChange={(event) => props.onChange({ ...fields, own: { ...fields.own, [item.id]: event.target.value } })} />
+              </label>
+            ))}
+          </div>
+        </details>
       ) : null}
       <p className="text-xs text-muted">
         {fields.unlimited
