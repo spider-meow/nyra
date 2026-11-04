@@ -1,7 +1,7 @@
 import { useEffect, useRef, type PointerEvent } from "react";
 import { Icon } from "../../components/icons";
 import { LabelChips } from "../../components/Labels";
-import { Button, FadeImage, StatusBadge, cx } from "../../components/ui";
+import { Bar, Button, FadeImage, Skeleton, StatusBadge, cx } from "../../components/ui";
 import { formatDate, rightsText } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import type { ImageLabel, LibraryItem } from "../../types";
@@ -79,6 +79,19 @@ export function RecentCards(props: { items: LibraryItem[]; total: number; thumbs
         <Button onClick={props.onAll}>Afficher tous les visuels ({props.total.toLocaleString("fr-FR")})</Button>
       </div>
     </section>
+  );
+}
+
+/** The first load of a card: the same box and the same lines, a bar in place of every word. */
+export function ReferenceCardSkeleton() {
+  return (
+    <li className="flex flex-col overflow-hidden rounded-xl border border-ink/20 bg-paper" aria-hidden>
+      <Skeleton className="aspect-[4/3] rounded-none" />
+      <span className="flex flex-col gap-2 px-3.5 pt-3 pb-3.5">
+        <span className="text-[13.5px]"><Bar width="75%" /></span>
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1"><Skeleton className="h-[22px] w-[118px] rounded-full" /><span className="w-[68px] text-[11.5px]"><Bar /></span></span>
+      </span>
+    </li>
   );
 }
 
