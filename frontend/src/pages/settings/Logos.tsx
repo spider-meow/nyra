@@ -2,7 +2,7 @@ import { LoadError } from "../../components/busy";
 import { Link } from "react-router";
 import { useToast } from "../../components/feedback";
 import { SettingsBlock } from "../../components/SettingsBlock";
-import { Checkbox, Skeleton } from "../../components/ui";
+import { Checkbox, SettingsSkeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useOrg } from "../../lib/org";
 import { useLogoMutations, useLogos } from "../../lib/siteImages";
@@ -13,7 +13,7 @@ export function Logos() {
   const logos = useLogos();
   const { setEnabled } = useLogoMutations();
   const toast = useToast();
-  if (logos.isLoading) return <Skeleton className="h-40" />;
+  if (logos.isLoading) return <SettingsSkeleton groups={[2]} />;
   if (!logos.data) return <LoadError title="Impossible de charger le réglage" error={logos.error} onRetry={() => void logos.refetch()} retrying={logos.isFetching} />;
   const { enabled, items } = logos.data;
   return (

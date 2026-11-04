@@ -144,7 +144,7 @@ export function DecisionBadge(props: { decision: Decision | null }) {
 }
 
 /** `quiet` is the soft border of the settings; `danger` frames what cannot be undone. */
-export function Card(props: { children: ReactNode; className?: string; padded?: boolean; tone?: "quiet" | "danger" }) {
+export function Card(props: { children: ReactNode; className?: string; padded?: boolean; tone?: "quiet" | "danger"; "aria-hidden"?: boolean }) {
   const border = props.tone === "quiet" ? "border-line" : props.tone === "danger" ? "border-expired/40" : "border-ink";
   return (
     <section className={cx("rounded-xl border bg-paper", border, props.padded !== false && "p-6", props.className)}>
@@ -254,6 +254,27 @@ export function Skeleton(props: { className?: string }) {
  */
 export function Bar(props: { width?: string; className?: string }) {
   return <span className={cx("skeleton inline-block h-[0.7lh] max-w-full rounded-md bg-line/70 align-middle", props.className)} style={{ width: props.width ?? "100%" }} aria-hidden />;
+}
+
+/** The first load of a settings section: titled groups, each a card of rows (a title and its explanation on the left, the control on the right); `groups` is the number of rows of each. */
+export function SettingsSkeleton(props: { groups?: number[] }) {
+  return (
+    <div className="grid gap-6" aria-hidden>
+      {(props.groups ?? [3, 1, 1]).map((rows, group) => (
+        <section key={group}>
+          <h3 className="mb-2 text-sm font-semibold"><Bar width="6rem" /></h3>
+          <Card padded={false} className="divide-y divide-line">
+            {Array.from({ length: rows }, (_, row) => (
+              <div key={row} className="flex items-center justify-between gap-6 px-5 py-4">
+                <div className="min-w-0 flex-1"><p className="text-sm"><Bar width="35%" /></p><p className="text-[13px]"><Bar width="80%" /><Bar width="50%" /></p></div>
+                <Skeleton className="h-10 w-40 shrink-0 rounded-md" />
+              </div>
+            ))}
+          </Card>
+        </section>
+      ))}
+    </div>
+  );
 }
 
 /** An image that fades in once it has loaded instead of popping in. The box is the caller's, so nothing moves when it arrives. */

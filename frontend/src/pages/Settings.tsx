@@ -1,7 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { useSearchParams } from "react-router";
 import { Icon, type IconName } from "../components/icons";
-import { cx, EmptyState, PageHeader, Skeleton } from "../components/ui";
+import { cx, EmptyState, PageHeader, SettingsSkeleton } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { useOrg } from "../lib/org";
 import { useSettings } from "../lib/queries";
@@ -46,12 +46,15 @@ function General() {
   );
 }
 
+/** The rows of each group of « Général » (identity, logos, packshots, excluded images, automatic reads, maintenance, danger zone): what its skeleton stands for. */
+const GENERAL_GROUPS = [3, 1, 1, 1, 3, 1, 1];
+
 const SECTIONS: Section[] = [
   { id: "account", label: "Profil et sécurité", icon: "user", group: "moi", render: () => <Account /> },
   { id: "notifications", label: "Notifications", icon: "bell", group: "moi", render: () => <Notifications /> },
   { id: "general", label: "Général", icon: "idBadge", group: "marque", render: () => <General /> },
   { id: "collections", label: "Collections", icon: "folders", group: "marque", adminOnly: true, render: () => <Collections /> },
-  { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Suspense fallback={<Skeleton className="h-40" />}><Team /></Suspense> },
+  { id: "team", label: "Équipe", icon: "users", group: "organisation", render: () => <Suspense fallback={<SettingsSkeleton groups={[3]} />}><Team /></Suspense> },
   { id: "audit", label: "Journal d'activité", icon: "eye", group: "organisation", adminOnly: true, render: () => <Audit /> },
   { id: "detection", label: "Détection", icon: "radar", group: "organisation", platformOnly: true, render: (data) => <Detection data={data} /> },
   { id: "usage", label: "Usage", icon: "stats", group: "organisation", platformOnly: true, render: () => <Usage /> },
@@ -101,8 +104,7 @@ export function Settings() {
   const settings = useSettings();
   const [params, setParams] = useSearchParams();
 
-  if (settings.isLoading) return <><PageHeader title="Réglages" /><Skeleton className="h-96" /></>;
-  if (settings.error || !settings.data) return <EmptyState title="Réglages indisponibles" body={errorMessage(settings.error)} />;
+  if (!settings.isLoading && (settings.error || !settings.data)) return <EmptyState title="Réglages indisponibles" body={errorMessage(settings.error)} />;
 
   // A platform admin has no membership, so no e-mail of Nyra to switch on or off.
   // An address `?section=usage` of someone who may not see it lands on « Général », like an unknown section.
@@ -115,7 +117,7 @@ export function Settings() {
         <Nav sections={visible} activeId={active.id} onPick={(id) => setParams({ section: id }, { replace: true })} />
         <div key={active.id} className="fade-in min-w-0 max-w-3xl flex-1">
           <h2 className="mb-6 text-xl font-semibold tracking-tight">{active.label}</h2>
-          {active.render(settings.data)}
+          {settings.data ? active.render(settings.data) : <SettingsSkeleton groups={active.id === "general" ? GENERAL_GROUPS : [3]} />}
         </div>
       </div>
     </>

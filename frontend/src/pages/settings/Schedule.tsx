@@ -1,6 +1,6 @@
 import { LoadError } from "../../components/busy";
 import { SettingsBlock, SettingsRow } from "../../components/SettingsBlock";
-import { Checkbox, fieldClass, Skeleton } from "../../components/ui";
+import { Checkbox, fieldClass, SettingsSkeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useOrg } from "../../lib/org";
 import { useSchedule, useSetSchedule } from "../../lib/queries";
@@ -26,7 +26,7 @@ export function Schedule() {
   const save = useSetSchedule();
   const data = query.data;
 
-  if (query.isLoading) return <Skeleton className="h-40" />;
+  if (query.isLoading) return <SettingsSkeleton groups={[3]} />;
   if (!data) return <LoadError title="Lectures automatiques indisponibles" error={query.error} onRetry={() => void query.refetch()} retrying={query.isFetching} />;
   const locked = !admin || save.isPending;
   return (

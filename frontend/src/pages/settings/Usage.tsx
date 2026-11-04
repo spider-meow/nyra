@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { SettingsBlock, SettingsRow } from "../../components/SettingsBlock";
 import { usageText, UsageBar, usageTone } from "../../components/UsageLines";
-import { cx, EmptyState, Skeleton } from "../../components/ui";
+import { cx, EmptyState, SettingsSkeleton } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { useOrg } from "../../lib/org";
 import type { OrgUsage, UsageItem } from "../../types";
@@ -17,7 +17,7 @@ function hint(item: UsageItem): string | undefined {
 export function Usage() {
   const { org, orgApiPath } = useOrg();
   const usage = useQuery({ queryKey: ["usage", org.org_id], queryFn: () => api.get<OrgUsage>(orgApiPath("/usage")) });
-  if (usage.isLoading) return <Skeleton className="h-72" />;
+  if (usage.isLoading) return <SettingsSkeleton groups={[4]} />;
   if (!usage.data) return <EmptyState title="Usage indisponible" body={errorMessage(usage.error)} />;
   return (
     <SettingsBlock title="Usage et limites" description="Ce que votre organisation a utilisé, sur l'ensemble de ses marques. Une lecture qui atteindrait la limite du mois s'arrête avant la fin ; au-delà, ajouter est refusé jusqu'au mois suivant ou jusqu'à une nouvelle limite.">
