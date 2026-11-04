@@ -277,6 +277,20 @@ export function SettingsSkeleton(props: { groups?: number[] }) {
   );
 }
 
+/** The first load of a list of people, organisations or lines: rows with a name on the left and an action on the right. */
+export function ListSkeleton(props: { rows?: number }) {
+  return (
+    <ul className="divide-y divide-line" aria-busy="true" aria-hidden>
+      {Array.from({ length: props.rows ?? 4 }, (_, key) => (
+        <li key={key} className="flex items-center justify-between gap-4 py-3 text-sm">
+          <div className="min-w-0 flex-1"><p className="font-medium"><Bar width="35%" /></p><p className="text-[13px]"><Bar width="20%" /></p></div>
+          <Skeleton className="h-8 w-24 shrink-0 rounded-lg" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 /** An image that fades in once it has loaded instead of popping in. The box is the caller's, so nothing moves when it arrives. */
 export function FadeImage(props: ImgHTMLAttributes<HTMLImageElement> & { src: string }) {
   // Once loaded it stays visible: a new `src` (a renewed signed URL) keeps the old picture until the new one arrives, never a blank.

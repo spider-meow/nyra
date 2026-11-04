@@ -1,21 +1,10 @@
 import { ShareBar } from "../components/charts";
-import { CompareFacts, Facts, MatchingTable, Section } from "../components/insights";
-import { Bar, PageHeader, Skeleton, Stat } from "../components/ui";
+import { CompareFacts, Facts, MatchingTable, Section, SectionSkeleton } from "../components/insights";
+import { Bar, PageHeader, Stat } from "../components/ui";
 import { bytes, duration, formatDateTime, num, percent } from "../lib/format";
 import type { OrgInsights } from "../types";
 
 /** The blocks of the Statistiques page that carry their own figures; the shared charts live in components/insights. */
-
-/** A card of the page while its figures load: the title is there already, the body keeps the height the card has once loaded (`height`, in px: it depends on the data). */
-function SectionSkeleton(props: { title: string; className?: string; height: number; described?: boolean; chart?: boolean }) {
-  return (
-    <Section className={props.className} title={props.title} description={props.described ? <Bar width="70%" /> : undefined}>
-      <div style={{ height: props.height }}>
-        {props.chart ? <Skeleton className="h-full" /> : <div className="grid gap-3 text-sm">{Array.from({ length: Math.max(1, Math.round(props.height / 40)) }, (_, key) => <Bar key={key} width={`${90 - (key % 3) * 15}%`} />)}</div>}
-      </div>
-    </Section>
-  );
-}
 
 /** The first load of the page: the title, the two rows of figures in their tints, and each card with its real title and the height it takes once loaded. */
 export function StatisticsSkeleton() {

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Modal, Present } from "../../components/feedback";
 import { Section } from "../../components/insights";
-import { Button, EmptyState, PageHeader, Segmented, Skeleton } from "../../components/ui";
+import { Button, EmptyState, ListSkeleton, PageHeader, Segmented, Skeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useEmailPreview, useEmailTest, useStaffEmails } from "../../lib/staff";
 import type { MailEntry } from "../../types";
@@ -74,7 +74,7 @@ export function Emails() {
     <>
       <PageHeader title="E-mails" />
       <Section title="E-mails du produit" description={list.data ? (list.data.configured ? `Envoi : configuré (expéditeur ${list.data.sender})` : "Envoi non configuré : ajoutez RESEND_API_KEY et NYRA_MAIL_FROM au serveur") : undefined}>
-        {list.isLoading ? <Skeleton className="h-40" /> : null}
+        {list.isLoading ? <ListSkeleton rows={4} /> : null}
         {list.error ? (
           <div role="alert">
             <EmptyState title="Impossible de charger la liste" body={errorMessage(list.error)} action={<Button size="sm" onClick={() => void list.refetch()}>Réessayer</Button>} />

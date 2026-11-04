@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Select } from "../../components/Dropdown";
 import { useConfirm, useToast } from "../../components/feedback";
 import { Section } from "../../components/insights";
-import { Button, Checkbox, EmptyState, FieldLabel, Input, PageHeader, Skeleton } from "../../components/ui";
+import { Button, Checkbox, EmptyState, FieldLabel, Input, PageHeader, ListSkeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDate, formatDateTime } from "../../lib/format";
 import { useStaffMutations, useStaffOrgs, useStaffUsers } from "../../lib/staff";
@@ -114,7 +114,7 @@ function OrgAdmins(props: { users: StaffUser[] | undefined; loading: boolean; er
   const rows = (props.users ?? [])
     .flatMap((user) => user.memberships.filter((m) => m.role === "admin").map((m) => ({ ...m, user })))
     .sort((a, b) => a.org_name.localeCompare(b.org_name) || a.user.email.localeCompare(b.user.email));
-  if (props.loading) return <Skeleton className="h-40" />;
+  if (props.loading) return <ListSkeleton rows={4} />;
   if (props.error) return <EmptyState title="Impossible de charger les administrateurs" body={errorMessage(props.error)} />;
   return (
     <Section title={`${rows.length} ${rows.length > 1 ? "administrateurs" : "administrateur"} d'organisation`} description="Contrôle périodique : chaque personne doit être connue de l'organisation et toujours y travailler. « Retirer » est dans la liste des comptes ci-dessous. La case « E-mail mensuel » autorise ou bloque le résumé mensuel pour cette personne.">
@@ -167,7 +167,7 @@ export function Accounts() {
         <AddPerson />
         <OrgAdmins users={users.data?.users} loading={users.isLoading} error={users.error} />
         <Section title={`${users.data?.users.length ?? 0} comptes`} aside={<Input aria-label="Chercher un e-mail" placeholder="Chercher un e-mail" value={search} onChange={(event) => setSearch(event.target.value)} className="w-56" />}>
-          {users.isLoading ? <Skeleton className="h-40" /> : null}
+          {users.isLoading ? <ListSkeleton rows={4} /> : null}
           {users.error ? <EmptyState title="Impossible de charger les comptes" body={errorMessage(users.error)} /> : null}
           <ul className="divide-y divide-line">{list.map((user) => <UserRow key={user.user_id} user={user} />)}</ul>
         </Section>

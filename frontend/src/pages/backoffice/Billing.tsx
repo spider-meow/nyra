@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Select } from "../../components/Dropdown";
 import { Section, Table } from "../../components/insights";
-import { Button, EmptyState, PageHeader, Skeleton } from "../../components/ui";
+import { Button, EmptyState, PageHeader, ListSkeleton } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { formatDate } from "../../lib/format";
 import { useStaffOrgs } from "../../lib/staff";
@@ -39,7 +39,7 @@ export function Billing() {
         title="Facturation"
         actions={<Button variant="primary" disabled={!lines.length} onClick={() => download(lines, month)}>Exporter en CSV</Button>}
       />
-      {orgs.isLoading ? <Skeleton className="h-60" /> : null}
+      {orgs.isLoading ? <ListSkeleton rows={5} /> : null}
       {orgs.error ? <EmptyState title="Impossible de charger la facturation" body={errorMessage(orgs.error)} /> : null}
       {orgs.data ? (
         <div className="grid gap-4">
