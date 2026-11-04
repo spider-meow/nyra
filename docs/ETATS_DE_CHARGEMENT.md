@@ -5,7 +5,7 @@ minuteur) :
 
 | État | Quand | Ce qu'on montre |
 |---|---|---|
-| **Premier chargement** | rien à afficher encore | un squelette **à la forme de ce qui arrive** (même nombre de colonnes, mêmes proportions : rien ne saute à l'arrivée) : `SkeletonGrid`, ou un `Skeleton` de la taille de la zone |
+| **Premier chargement** | rien à afficher encore | un squelette **à la forme de ce qui arrive** : le balisage du vrai composant, avec `Bar` à la place des mots et `Skeleton` à la place des images et des blocs (voir « Écrire un squelette » plus bas) ; ce qui est déjà vrai (titre, onglets, boutons) reste vrai |
 | **Rafraîchissement avec données** | les données sont là, une nouvelle réponse arrive (recherche, filtre, onglet, retour sur la page, changement de marque) | le contenu **reste**, un peu atténué, avec une fine ligne de progression en haut et `aria-busy="true"` : `Refreshing`. Seulement après **200 ms** (une réponse immédiate ne change rien à l'écran) et pour **300 ms au moins** une fois montré (pas de clignotement). Une annonce polie (`role="status"`) le dit aux lecteurs d'écran, sans déplacer le focus |
 | **Erreur** | la requête a échoué | rien à montrer : `LoadError` (le motif et « Réessayer »). Du contenu est déjà là : `RefreshFailed` au-dessus (« ce qui est affiché peut être périmé »), annoncé tout de suite (`role="alert"`) |
 
@@ -43,10 +43,9 @@ Deux règles qui vont avec :
 Plusieurs requêtes gardaient déjà les anciennes données le temps d'une nouvelle réponse (`keepPreviousData` dans `lib/queries.ts`), sans rien le
 montrer : c'est ce que `Refreshing` rend visible.
 
-## Inventaire des squelettes (AXE-747, 4 novembre 2026)
+## Inventaire des squelettes (AXE-747, 4 novembre 2026, avant l'épic)
 
-Relevé de chaque `Skeleton` / `SkeletonGrid` du code (46 sites d'appel dans 33 fichiers ; `Skeleton` est le seul à porter `animate-pulse`, avec la ligne
-de `Refreshing`). « Fidèle » : même structure et mêmes dimensions que ce qui arrive ; « devinée » : un bloc de hauteur arbitraire.
+État **avant** l'épic AXE-746 (« Squelette actuel », « Verdict »), relevé de chaque `Skeleton` / `SkeletonGrid` du code (46 sites d'appel dans 33 fichiers). Depuis, chaque ligne a été refaite par l'issue de la dernière colonne (voir « Écrire un squelette » et la mesure plus bas). « Fidèle » : même structure et mêmes dimensions que ce qui arrive ; « devinée » : un bloc de hauteur arbitraire.
 
 | Écran | Fichier | Squelette actuel | Forme réelle | Verdict | Traité par |
 |---|---|---|---|---|---|
@@ -65,17 +64,37 @@ de `Refreshing`). « Fidèle » : même structure et mêmes dimensions que ce qu
 | Back-office | `BackOffice.tsx`, `BackOfficeSections.tsx`, `backoffice/*` (8 fichiers) | blocs `h-20` à `h-96` | tableaux, cartes de chiffres, aperçus | devinée | AXE-756 |
 | Journal d'audit | `components/AuditLog.tsx` | bloc `h-24` | liste d'événements | devinée | AXE-756 |
 
-**Mesure du saut** (Chromium, bureau 1280×800, API simulée qui répond 1,5 s plus tard ; indicateur : bas du contenu avant et après l'arrivée, car
-le *Cumulative Layout Shift* du navigateur ne compte que les éléments qui bougent et reste à 0,000 quand un squelette est remplacé par un autre élément) :
+## Écrire un squelette (AXE-746)
 
-| Écran | Bas du contenu : squelette | chargé | saut |
-|---|---|---|---|
-| Tableau de bord | 508 px | 1334 px | **+826 px** |
-| Bibliothèque | 552 px | 688 px | **+136 px** |
-| Images en ligne | 837 px | 1018 px | **+181 px** |
+Un squelette n'est pas un rectangle de la taille devinée : c'est **le balisage de ce qui arrive, avec une barre à la place de chaque mot**.
 
-Les autres écrans ne sont pas mesurés ici : leur mesure se fait au début de leur issue, avec la paire « squelette / écran chargé » qui sert de maquette.
-Même méthode à la fin (AXE-757) pour comparer.
+- **Ce qui est déjà vrai ne devient pas squelette** : le titre de la page, les onglets, les boutons, les étiquettes des champs, les titres de sections. Seul ce qui attend les données est remplacé.
+- **Les mots** : `Bar` (`components/ui.tsx`) est une barre aussi haute que la ligne de texte qu'elle remplace (`1lh`, la hauteur de ligne du parent). On met `Bar` dans le même `<p className="text-sm">` que le vrai texte : la hauteur est la même sans la calculer. Largeur : `width="60%"`, ou la ligne entière par défaut.
+- **Les images, pastilles, boutons** : `Skeleton` avec la taille réelle (`aspect-square`, `h-[22px] w-24 rounded-full`), copiée du composant réel.
+- **Une grille de cartes** : `SkeletonGrid`, qui reçoit en enfant le squelette d'**une** carte (la même boîte, les mêmes lignes). Les colonnes sont celles de la vraie grille.
+- **Les réglages** : `SettingsSkeleton` (groupes de lignes titre + explication + commande), **les listes** : `ListSkeleton`, **les sections de chiffres** : `SectionSkeleton` (titre réel, corps à la hauteur qu'il aura chargé).
+- **Une seule animation** : `.skeleton` (`index.css`), une pulsation douce de 1,6 s, qui s'arrête avec « Réduire les animations » (mesuré : durée 0,01 ms, une itération, opacité 1). Pas de balayage lumineux : il est plus chargé visuellement et n'apporte rien sur un grand écran. `animate-pulse` n'est plus utilisé nulle part.
+- **Ce qui dépend des données** (le nombre de lignes d'un tableau, le texte qui passe à la ligne) ne peut pas être exact : on prend le cas courant, et on le dit.
+
+## Mesure du saut (AXE-747, AXE-757)
+
+Chromium, bureau 1280×800, API simulée qui répond 1,5 s plus tard ; indicateur : **bas du contenu avant et après l'arrivée des données** (le *Cumulative Layout Shift* du navigateur ne compte que les éléments qui bougent et reste à 0,000 quand un squelette est remplacé par un autre élément). « Avant » : `main` avant l'épic AXE-746 ; « après » : la même mesure, même simulation.
+
+| Écran | Saut avant | Saut après |
+|---|---|---|
+| Tableau de bord | +826 px | +49 px |
+| Images en ligne | +181 px | 0 px |
+| Visuels à remplacer | +52 px | 0 px |
+| Rapports | +58 px | 0 px |
+| Statistiques | +2148 px | +65 px |
+| Sites et lectures | +148 px | −5 px |
+| Réglages (Général) | +1081 px | +54 px |
+| À traiter | +505 px | +446 px |
+| Bibliothèque | +136 px | +136 px |
+
+Les deux dernières lignes sont à lire avec prudence : **À traiter** dépend du nombre de lignes (le squelette en montre 6, la simulation en rend 8), et la mesure automatique de la **Bibliothèque** relève un élément hors flux plus bas que le contenu visible (les boutons du squelette et de l'écran chargé sont alignés sur les captures, pas dans ce chiffre).
+
+**Pas comparés à un écran chargé** (les données sont trop lourdes à simuler) : la fiche d'un visuel (`visual/Visual.tsx`, toujours un bloc `h-96`), les tableaux et graphiques du serveur et de l'usage du back-office, l'aperçu d'un e-mail, et les sections de réglages autres que Général. Leur squelette est le bloc ou le `SettingsSkeleton` de la section, sans mesure.
 
 ## Le contrôle automatique : évalué, pas écrit
 
@@ -91,4 +110,4 @@ sont **légitimes** (une donnée annexe lue par une page qui a déjà son propre
 - Les zones sans schéma dans le tableau (Bibliothèque, adresses des Lectures, Notifications, Back office, Accès).
 - Un retour immédiat pour toutes les actions longues : fait pour « Ignorer » de la barre de sélection d'Images en ligne ; les autres ont déjà
   un bouton `loading` (À traiter, sélection de la bibliothèque, import) mais n'ont pas été relues une à une.
-- Les captures avant/après dans un vrai navigateur (bureau et téléphone), sous réseau bridé : non faites (pas d'API ni de Supabase en local).
+- Les captures avant/après dans un vrai navigateur, **sous réseau bridé** et sur de vraies données : non faites ; les mesures ci-dessus utilisent une API simulée, sur bureau (le téléphone n'a été mesuré que pour le tableau de bord et Images en ligne).
