@@ -2,7 +2,7 @@ import { LoadError, Refreshing } from "../components/busy";
 import { useState } from "react";
 import { useToast } from "../components/feedback";
 import { OrgHoldNotice, holdProps, useOrgHold } from "../components/OrgHold";
-import { Button, Card, EmptyState, FieldLabel, PageHeader, Skeleton } from "../components/ui";
+import { Bar, Button, Card, EmptyState, FieldLabel, PageHeader, Skeleton } from "../components/ui";
 import { Select } from "../components/Dropdown";
 import { errorMessage } from "../lib/api";
 import { formatDateTime } from "../lib/format";
@@ -63,7 +63,20 @@ export function Reports() {
 function ReportList() {
   const { admin } = useOrg();
   const reports = useReports();
-  if (reports.isLoading) return <Skeleton className="h-40" />;
+  if (reports.isLoading) {
+    return (
+      <Card padded={false}>
+        <ul className="divide-y divide-line" aria-busy="true" aria-hidden>
+          {[0, 1, 2].map((key) => (
+            <li key={key} className="flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-3.5">
+              <div className="min-w-0 flex-1"><p className="font-medium"><Bar width="12rem" /></p><p className="text-[13px]"><Bar width="60%" /></p></div>
+              <div className="flex flex-wrap gap-2 text-sm"><Skeleton className="h-9 w-36 rounded-lg" /><Skeleton className="h-9 w-40 rounded-lg" /></div>
+            </li>
+          ))}
+        </ul>
+      </Card>
+    );
+  }
   if (reports.error && !reports.data) return <LoadError title="Rapports indisponibles" error={reports.error} onRetry={() => void reports.refetch()} retrying={reports.isFetching} />;
   if (!reports.data?.reports.length) return <EmptyState title="Aucun rapport" body={admin ? "Générez le premier rapport ci-dessus." : "Aucun rapport n'a encore été généré."} />;
   return (

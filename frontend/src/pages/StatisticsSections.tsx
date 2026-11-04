@@ -1,19 +1,50 @@
 import { ShareBar } from "../components/charts";
 import { CompareFacts, Facts, MatchingTable, Section } from "../components/insights";
-import { Skeleton, Stat } from "../components/ui";
+import { Bar, PageHeader, Skeleton, Stat } from "../components/ui";
 import { bytes, duration, formatDateTime, num, percent } from "../lib/format";
 import type { OrgInsights } from "../types";
 
 /** The blocks of the Statistiques page that carry their own figures; the shared charts live in components/insights. */
 
-export function StatisticsSkeleton() {
+/** A card of the page while its figures load: the title is there already, the body keeps the height the card has once loaded (`height`, in px: it depends on the data). */
+function SectionSkeleton(props: { title: string; className?: string; height: number; described?: boolean; chart?: boolean }) {
   return (
-    <div className="grid gap-4">
-      <Skeleton className="h-9 w-64" />
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {[0, 1, 2, 3, 4, 5, 6, 7].map((key) => <Skeleton key={key} className="h-28" />)}
+    <Section className={props.className} title={props.title} description={props.described ? <Bar width="70%" /> : undefined}>
+      <div style={{ height: props.height }}>
+        {props.chart ? <Skeleton className="h-full" /> : <div className="grid gap-3 text-sm">{Array.from({ length: Math.max(1, Math.round(props.height / 40)) }, (_, key) => <Bar key={key} width={`${90 - (key % 3) * 15}%`} />)}</div>}
       </div>
-      <Skeleton className="h-64" />
+    </Section>
+  );
+}
+
+/** The first load of the page: the title, the two rows of figures in their tints, and each card with its real title and the height it takes once loaded. */
+export function StatisticsSkeleton() {
+  const tints = ["yellow", "mint", "blush", "teal"] as const;
+  const stats = (row: string) => tints.map((tint) => <Stat key={row + tint} tint={tint} value={<Bar width="4rem" />} label={<><Bar /><Bar width="60%" /></>} hint={<><Bar /><Bar width="50%" /></>} />);
+  return (
+    <div aria-busy="true" aria-hidden>
+      <PageHeader title="Statistiques" />
+      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{stats("a")}</div>
+      <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">{stats("b")}</div>
+      <SectionSkeleton className="mt-6" title="Historique des lectures" described height={185} chart />
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <SectionSkeleton title="Où passe le temps" described height={250} />
+        <SectionSkeleton title="Dernière lecture en détail" described height={250} />
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <SectionSkeleton title="Formats des images" described height={250} />
+        <SectionSkeleton title="Anatomie des images" described height={250} />
+        <SectionSkeleton title="Réponses HTTP des pages" described height={250} />
+      </div>
+      <div className="mt-4 grid gap-4 lg:grid-cols-2">
+        <SectionSkeleton title="Correspondances et décisions" height={320} />
+        <div className="grid content-start gap-4">
+          <SectionSkeleton title="Comparaison" height={20} />
+          <SectionSkeleton title="Bibliothèque" height={216} />
+        </div>
+      </div>
+      <SectionSkeleton className="mt-4" title="Tâches" described height={70} />
+      <SectionSkeleton className="mt-4" title="Toutes les lectures" described height={350} />
     </div>
   );
 }
