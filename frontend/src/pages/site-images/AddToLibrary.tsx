@@ -6,11 +6,12 @@ import { errorMessage } from "../../lib/api";
 import { formatDate, plural } from "../../lib/format";
 import { useAssignments } from "../../lib/labels";
 import { useOrg } from "../../lib/org";
-import { useSiteImageMutations } from "../../lib/queries";
+import { useLibrary, useSiteImageMutations } from "../../lib/queries";
+import { collectionIndex } from "../library/collections";
 import type { SiteImage } from "../../types";
 import { typeOf } from "./Typing";
 
-type Fields = { expiry: string; unlimited: boolean; credit: string; name: string };
+type Fields = { expiry: string; unlimited: boolean; credit: string; name: string; collection: string };
 
 type Adopted = { added: { site_image_id: string; filename: string }[]; failed: { reason: string }[] };
 
@@ -37,7 +38,7 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
   const toast = useToast();
   const navigate = useNavigate();
   const { link } = useOrg();
-  const [fields, setFields] = useState<Fields>({ expiry: "", unlimited: false, credit: "", name: "" });
+  const [fields, setFields] = useState<Fields>({ expiry: "", unlimited: false, credit: "", name: "", collection: "" });
   const [openedFor, setOpenedFor] = useState<string | null>(null);
   const items = props.items;
   const assignments = useAssignments("site").data?.assignments;
@@ -46,7 +47,7 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
   const key = items?.map((item) => item.id).join(",") ?? null;
   if (key !== openedFor) {
     setOpenedFor(key);
-    setFields({ expiry: "", unlimited: packshots, credit: "", name: items?.length === 1 ? items[0].filename : "" });
+    setFields({ expiry: "", unlimited: packshots, credit: "", name: items?.length === 1 ? items[0].filename : "", collection: "" });
   }
   if (!items) return null;
   const single = items.length === 1;
@@ -60,6 +61,7 @@ export function AddToLibrary(props: { items: SiteImage[] | null; onClose: () => 
         expiry_date: fields.expiry,
         unlimited_rights: fields.unlimited,
         credit: fields.credit,
+        ...(fields.collection ? { collection_id: fields.collection } : {}),
         filenames: single && fields.name.trim() ? { [items[0].id]: fields.name.trim() } : {},
       },
       {
@@ -96,6 +98,10 @@ function AdoptFields(props: { items: SiteImage[]; fields: Fields; packshots: boo
   const { items, fields } = props;
   const { expiry } = fields;
   const single = items.length === 1;
+  // The folders of the library (one request, shared with the library page): "Classer" at the time of the addition.
+  const collections = useLibrary().data?.collections;
+  const folders = collections ? collectionIndex(collections) : null;
+  const choices = folders ? [...folders.byId.keys()].map((id) => ({ id, label: folders.path(id) })).sort((a, b) => a.label.localeCompare(b.label, "fr", { numeric: true })) : [];
   return (
     <form id="adopt-form" className="grid gap-4" onSubmit={props.onSubmit}>
       <div className="flex gap-2 overflow-x-auto">
@@ -125,6 +131,15 @@ function AdoptFields(props: { items: SiteImage[]; fields: Fields; packshots: boo
           <Input id="adopt-credit" maxLength={500} placeholder="Photographe, agence" value={fields.credit} onChange={(event) => props.onChange({ ...fields, credit: event.target.value })} />
         </div>
       </div>
+      {choices.length ? (
+        <div>
+          <FieldLabel htmlFor="adopt-collection" hint="facultatif">Collection</FieldLabel>
+          <select id="adopt-collection" value={fields.collection} onChange={(event) => props.onChange({ ...fields, collection: event.target.value })} className="h-10 w-full rounded-md border border-line-strong bg-paper px-3 text-sm">
+            <option value="">Sans collection</option>
+            {choices.map((choice) => <option key={choice.id} value={choice.id}>{choice.label}</option>)}
+          </select>
+        </div>
+      ) : null}
       <p className="text-xs text-muted">
         {fields.unlimited
           ? "Droits illimités : le visuel reste reconnu sur les sites, sans jamais expirer."

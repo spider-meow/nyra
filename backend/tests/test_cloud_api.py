@@ -1753,6 +1753,13 @@ def test_site_images_without_a_reference_are_listed_and_can_join_the_library(
     again = client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json={"site_image_ids": [campaign["id"]]}).json()
     assert again["added"][0]["filename"] == "Campagne été (2).jpg"
 
+    # A collection can be chosen at the same time (it must be this brand's); an unknown one refuses the whole addition.
+    folder = client.post(f"{base}/collections", headers=_headers(admin_id), json={"name": "Campagnes"}).json()["collection"]["id"]
+    assert client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json={"site_image_ids": [campaign["id"]], "collection_id": str(uuid.uuid4())}).status_code == 404
+    filed = client.post(f"{base}/site-images/adopt", headers=_headers(admin_id), json={"site_image_ids": [campaign["id"]], "collection_id": folder}).json()
+    library = {item["filename"]: item for item in client.get(f"{base}/library", headers=_headers(admin_id)).json()["items"]}
+    assert library[filed["added"][0]["filename"]]["collection_id"] == folder and library["Campagne été.jpg"]["collection_id"] is None
+
 
 def test_crops_of_one_photo_are_one_entry_listing_each_version_and_where_it_was_read(
     client, org_with_users, cloud_brand, cloud_database_url, fake_storage_client
