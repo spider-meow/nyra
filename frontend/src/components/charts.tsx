@@ -354,7 +354,7 @@ export function ShareBar(props: { ratio: number; children?: ReactNode }) {
   return (
     <div className="flex items-center gap-2">
       <div className="h-1.5 min-w-12 flex-1 overflow-hidden rounded-full bg-canvas" aria-hidden>
-        <div className="h-full rounded-full" style={{ width: `${ratio * 100}%`, background: SERIES[0] }} />
+        <div className="h-full rounded-full transition-[width]" style={{ width: `${ratio * 100}%`, background: SERIES[0] }} />
       </div>
       {props.children}
     </div>

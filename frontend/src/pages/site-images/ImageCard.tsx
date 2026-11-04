@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { LabelChips } from "../../components/Labels";
-import { Button, Card, cx } from "../../components/ui";
+import { Button, Card, FadeImage, cx } from "../../components/ui";
 import { Modal, useToast } from "../../components/feedback";
 import { errorMessage } from "../../lib/api";
 import { formatDate, pathOf, plural } from "../../lib/format";
@@ -35,7 +35,7 @@ export function ImageCard(props: {
       <div className="relative">
         <button type="button" className="block w-full bg-canvas" onClick={props.onOpen} aria-label={`Agrandir ${item.filename}`}>
           {item.thumb ? (
-            <img src={item.thumb} alt="" loading="lazy" className="aspect-square w-full object-contain" />
+            <FadeImage src={item.thumb} alt="" loading="lazy" className="aspect-square w-full object-contain" />
           ) : (
             <span className="block aspect-square w-full" />
           )}
