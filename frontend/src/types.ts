@@ -286,14 +286,18 @@ export type SiteImage = {
 };
 
 export type SiteImageStatus = "qualify" | "found" | "logo" | "packshot" | "ignored";
-/** The tabs of "Images en ligne". */
-export type SiteImageView = "qualify" | "found" | "logos" | "packshots" | "ignored" | "all";
-/** One page of one tab, with the total of every tab and the site versions (US, FR...) of this one. */
+/** The tabs of "Images en ligne": the state of an image. */
+export type SiteImageView = "qualify" | "found" | "ignored";
+/** The type filter under the tabs. */
+export type SiteImageType = "packshots" | "logos" | "photos";
+/** One page of one tab, with the total of every tab, the totals of this tab by type, and the site versions (US, FR...) of this one. */
 export type SiteImagesPage = {
   view: SiteImageView;
+  type: SiteImageType | null;
   items: SiteImage[];
   total: number;
   counts: Record<SiteImageView, number>;
+  type_counts: Record<SiteImageType, number>;
   sites: { id: string; label: string; count: number }[];
   /** Whether the brand leaves the logos out of the comparison (Réglages > Général > Logos). */
   logos_set_aside: boolean;

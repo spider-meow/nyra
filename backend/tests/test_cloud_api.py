@@ -1047,22 +1047,22 @@ def test_packshots_are_a_category_that_leaves_to_qualify_but_never_the_compariso
                  f"{len(ids):016x}", f"{len(ids):016x}", look, uniform),
             ).fetchone()["id"]
     store = CloudMatchStore(org_id=org_id, brand_id=cloud_brand, database_url=cloud_database_url)
-    tab = lambda view: client.get(f"{base}/site-images", headers=_headers(admin_id), params={"view": view}).json()  # noqa: E731
+    tab = lambda view, **query: client.get(f"{base}/site-images", headers=_headers(admin_id), params={"view": view, **query}).json()  # noqa: E731
     unreferenced = lambda: client.get(f"{base}/overview", headers=_headers(admin_id)).json()["dashboard"]["unreferenced_online"]  # noqa: E731
 
     # Off by default: nothing is detected, nothing leaves "À qualifier".
     assert client.get(f"{base}/packshots", headers=_headers(client_id)).status_code == 403
     assert client.get(f"{base}/packshots", headers=_headers(admin_id)).json() == {"available": True, "enabled": False, "detected": 0}
-    assert tab("qualify")["total"] == 3 and tab("packshots")["total"] == 0 and tab("qualify")["packshots_enabled"] is False
+    assert tab("qualify")["total"] == 3 and tab("ignored", type="packshots")["total"] == 0 and tab("qualify")["packshots_enabled"] is False
     assert unreferenced() == 3
 
     # Turned on by an administrator: what is a product on a flat border goes to its tab; the other two stay to qualify; an analysis job is queued.
     assert client.put(f"{base}/packshots/setting", headers=_headers(client_id), json={"enabled": True}).status_code == 403
     turned_on = client.put(f"{base}/packshots/setting", headers=_headers(admin_id), json={"enabled": True}).json()
     assert turned_on["enabled"] is True and turned_on["scored"] == 3 and turned_on["job"]["kind"] == "index"
-    packs, qualify = tab("packshots"), tab("qualify")
+    packs, qualify = tab("ignored", type="packshots"), tab("qualify")
     assert [item["url"] for item in packs["items"]] == ["https://t.test/bottle.jpg"] and packs["packshots_enabled"] is True
-    assert qualify["total"] == 2 and qualify["counts"]["packshots"] == 1 and qualify["counts"]["all"] == 3  # still listed under "Toutes"
+    assert qualify["total"] == 2 and qualify["counts"]["ignored"] == 1 and qualify["type_counts"]["packshots"] == 0  # set aside: under "Ignorées", type "Packshots"
     assert unreferenced() == 2
     assert client.get(f"{base}/packshots", headers=_headers(admin_id)).json() == {"available": True, "enabled": True, "detected": 1}
     # The comparison with the library never reads it: a packshot is not left out of it (that is what the logos setting does).
@@ -1071,17 +1071,17 @@ def test_packshots_are_a_category_that_leaves_to_qualify_but_never_the_compariso
     # An image whose border was not measured yet is not a packshot yet.
     with cloud_db.connect(cloud_database_url) as conn:
         conn.execute("UPDATE site_images SET bg_uniform = NULL WHERE id = %s", (ids["bottle"],))
-    assert tab("packshots")["total"] == 0 and tab("qualify")["total"] == 3
+    assert tab("ignored", type="packshots")["total"] == 0 and tab("qualify")["total"] == 3
 
     # Turned off: everything is back.
     assert client.put(f"{base}/packshots/setting", headers=_headers(admin_id), json={"enabled": False}).json()["job"] is None
-    assert tab("packshots")["total"] == 0 and unreferenced() == 3
+    assert tab("ignored", type="packshots")["total"] == 0 and unreferenced() == 3
 
     # Before the migration: off, the tab answers empty, and turning it on says why it cannot.
     monkeypatch.setattr(cloud_packshots, "has_columns", lambda conn: False)
     assert client.get(f"{base}/packshots", headers=_headers(admin_id)).json() == {"available": False, "enabled": False, "detected": 0}
     assert client.put(f"{base}/packshots/setting", headers=_headers(admin_id), json={"enabled": True}).status_code == 409
-    assert tab("packshots")["total"] == 0
+    assert tab("ignored", type="packshots")["total"] == 0
 
 
 def test_the_nyra_team_judges_the_detector_image_by_image_and_nobody_else_can(
@@ -1110,7 +1110,7 @@ def test_the_nyra_team_judges_the_detector_image_by_image_and_nobody_else_can(
     staff, org_admin_headers, as_client = _headers(staff_id), _headers(org_admin), _headers(client_id)
     feedback = f"{base}/packshots/feedback"
     judge = lambda name, yes, headers=staff, note="": client.put(feedback, headers=headers, json={"site_image_id": str(ids[name]), "is_packshot": yes, "note": note})  # noqa: E731
-    cards = lambda headers: {item["url"].rsplit("/", 1)[1][:-4]: item for item in client.get(f"{base}/site-images", headers=headers, params={"view": "all"}).json()["items"]}  # noqa: E731
+    cards = lambda headers: {item["url"].rsplit("/", 1)[1][:-4]: item for view in ("qualify", "found", "ignored") for item in client.get(f"{base}/site-images", headers=headers, params={"view": view}).json()["items"]}  # noqa: E731
 
     # Needs the category turned on for the brand: there is nothing to judge before.
     assert judge("bottle", False).status_code == 409
@@ -1202,19 +1202,19 @@ def test_the_answer_of_the_nyra_team_wins_over_the_packshot_detector_and_follows
         conn.execute("UPDATE brands SET detect_packshots = true WHERE id = %s", (other_brand,))
     staff = _headers(staff_id)
     judge = lambda name, yes: client.put(f"{base}/packshots/feedback", headers=staff, json={"site_image_id": str(ids[name]), "is_packshot": yes})  # noqa: E731
-    tab = lambda view: client.get(f"{base}/site-images", headers=staff, params={"view": view}).json()  # noqa: E731
-    urls = lambda view: {item["url"].rsplit("/", 1)[1][:-4] for item in tab(view)["items"]}  # noqa: E731
+    tab = lambda view, **query: client.get(f"{base}/site-images", headers=staff, params={"view": view, **query}).json()  # noqa: E731
+    urls = lambda view, **query: {item["url"].rsplit("/", 1)[1][:-4] for item in tab(view, **query)["items"]}  # noqa: E731
     unreferenced = lambda: client.get(f"{base}/overview", headers=_headers(staff_id)).json()["dashboard"]["unreferenced_online"]  # noqa: E731
 
     client.put(f"{base}/packshots/setting", headers=staff, json={"enabled": True})
-    assert urls("packshots") == {"bottle"} and urls("qualify") == {"styled", "scene"} and unreferenced() == 2  # the detector alone
+    assert urls("ignored", type="packshots") == {"bottle"} and urls("qualify") == {"styled", "scene"} and unreferenced() == 2  # the detector alone
 
     # The answers win: the intruder leaves the tab and goes back to qualify, the missed one enters, counters included.
     assert judge("bottle", False).status_code == 200 and judge("styled", True).status_code == 200
-    assert urls("packshots") == {"styled"} and urls("qualify") == {"bottle", "scene"}
-    assert tab("qualify")["counts"]["packshots"] == 1 and unreferenced() == 2
+    assert urls("ignored", type="packshots") == {"styled"} and urls("qualify") == {"bottle", "scene"}
+    assert tab("qualify")["counts"]["ignored"] == 1 and unreferenced() == 2
     assert judge("scene", True).status_code == 200
-    assert tab("qualify")["counts"]["packshots"] == 2 and unreferenced() == 1
+    assert tab("qualify")["counts"]["ignored"] == 2 and unreferenced() == 1
 
     # The site is read again: the row is replaced, the answer stays with the file (same hash).
     with cloud_db.connect(cloud_database_url) as conn:
@@ -1224,12 +1224,12 @@ def test_the_answer_of_the_nyra_team_wins_over_the_packshot_detector_and_follows
             " VALUES (%s, %s, 'https://t.test/styled.jpg', 'a', 'b', 'styled', %s, %s, %s, 0.2)", (org_id, site, "f" * 16, "f" * 16, product_look))
         cloud_packshots.score_pending(conn, other_brand)
         assert len(cloud_packshots.ids(conn, other_brand)) == 1  # the other brand keeps its bottle: the answer "pas un packshot" of this brand is not shared
-    assert urls("packshots") == {"styled", "scene"} and "bottle" not in urls("packshots")
+    assert urls("ignored", type="packshots") == {"styled", "scene"} and "bottle" not in urls("ignored", type="packshots")
 
     # Taking an answer back gives the image to the detector; the report of measures does not move with the decisions.
     assert client.delete(f"{base}/packshots/feedback/{ids['bottle']}", headers=staff).status_code == 200
     assert client.delete(f"{base}/packshots/feedback/{ids['scene']}", headers=staff).status_code == 200
-    assert urls("packshots") == {"bottle", "styled"} and urls("qualify") == {"scene"}
+    assert urls("ignored", type="packshots") == {"bottle", "styled"} and urls("qualify") == {"scene"}
     report = client.get(f"{base}/packshots/feedback", headers=staff).json()
     assert report["feedbacks"] == 1 and report["false_negatives"] == 1 and report["false_positives"] == 0
 
@@ -1250,7 +1250,7 @@ def test_an_administrator_splits_a_group_of_crops_by_hand(client, org_with_users
                  f"{len(ids):016x}", f"{len(ids):016x}", None if name == "alone" else group),
             ).fetchone()["id"]
     admin = _headers(admin_id)
-    cards = lambda: client.get(f"{base}/site-images", headers=admin, params={"view": "all"}).json()["items"]  # noqa: E731
+    cards = lambda: [item for view in ("qualify", "found", "ignored") for item in client.get(f"{base}/site-images", headers=admin, params={"view": view}).json()["items"]]  # noqa: E731
     split = lambda name, headers=admin: client.post(f"{base}/site-images/split", headers=headers, json={"site_image_id": str(ids[name])})  # noqa: E731
     groups = lambda: dict(conn_rows(cloud_database_url))  # noqa: E731
 
@@ -1369,29 +1369,32 @@ def test_online_images_are_listed_by_tab_with_totals_pages_and_filters(
 
     # Every tab with its total; the logo is still to qualify while the brand does not set logos aside.
     counts = tab("qualify")["counts"]
-    assert counts == {"qualify": 2, "found": 1, "logos": 1, "packshots": 0, "ignored": 1, "all": 4}
+    assert counts == {"qualify": 2, "found": 1, "ignored": 1}
     assert listed("qualify") == {str(ids["plain"]), str(ids["logo"])}
-    assert listed("found") == {str(ids["found"])} and listed("logos") == {str(ids["logo"])} and listed("ignored") == {str(ids["ignored"])}
-    assert len(listed("all")) == 4
+    assert listed("found") == {str(ids["found"])} and listed("qualify", type="logos") == {str(ids["logo"])} and listed("ignored") == {str(ids["ignored"])}
+    assert listed("qualify", type="photos") == {str(ids["plain"])} and tab("qualify")["type_counts"] == {"packshots": 0, "logos": 1, "photos": 1}
     assert client.get(f"{base}/site-images?view=bogus", headers=_headers(client_id)).status_code == 400
+    assert client.get(f"{base}/site-images?type=bogus", headers=_headers(client_id)).status_code == 400
+    assert client.get(f"{base}/site-images?view=logos", headers=_headers(client_id)).status_code == 400  # an old name: the page redirects, not the server
 
     # Each entry says why it is where it is; a logo carries the detector's answer.
-    statuses = {item["id"]: item["status"] for item in tab("all")["items"]}
+    statuses = {item["id"]: item["status"] for view in ("qualify", "found", "ignored") for item in tab(view)["items"]}
     assert statuses == {str(ids["plain"]): "qualify", str(ids["found"]): "found", str(ids["logo"]): "logo", str(ids["ignored"]): "ignored"}
-    logo = tab("logos")["items"][0]
+    logo = tab("qualify", type="logos")["items"][0]
     assert logo["logo"]["score"] >= detector.THRESHOLD and logo["logo"]["kept"] is False and next(i for i in tab("qualify")["items"] if i["id"] == str(ids["plain"]))["logo"] is None
 
     # Pages, the text search and the site version narrow the entries; the totals of the tabs do not move.
-    first, second = tab("all", limit=3), tab("all", limit=3, offset=3)
-    assert first["total"] == 4 and len(first["items"]) == 3 and len(second["items"]) == 1
-    assert {i["id"] for i in first["items"]} | {i["id"] for i in second["items"]} == set(statuses)
-    assert listed("all", q="PLAIN") == {str(ids["plain"])} and tab("all", q="PLAIN")["counts"]["all"] == 4
-    assert listed("all", site=str(uk)) == {str(ids["ignored"])}
-    assert sorted((entry["label"], entry["count"]) for entry in tab("all")["sites"]) == [("t.test", 1), ("t.test", 3)]
+    first, second = tab("qualify", limit=1), tab("qualify", limit=1, offset=1)
+    assert first["total"] == 2 and len(first["items"]) == 1 and len(second["items"]) == 1
+    assert {i["id"] for i in first["items"]} | {i["id"] for i in second["items"]} == {str(ids["plain"]), str(ids["logo"])}
+    assert listed("qualify", q="PLAIN") == {str(ids["plain"])} and tab("qualify", q="PLAIN")["counts"]["qualify"] == 2
+    assert listed("ignored", site=str(uk)) == {str(ids["ignored"])}
+    assert [(entry["label"], entry["count"]) for entry in tab("qualify")["sites"]] == [("t.test", 2)]
 
-    # Setting the logos aside takes them out of the tab to qualify, not out of the logos tab.
+    # Setting the logos aside moves them from "À qualifier" to "Ignorées", still under the type "Logos".
     assert client.put(f"{base}/logos/setting", headers=_headers(admin_id), json={"enabled": True}).status_code == 200
-    assert tab("qualify")["counts"]["qualify"] == 1 and listed("qualify") == {str(ids["plain"])} and listed("logos") == {str(ids["logo"])}
+    assert tab("qualify")["counts"]["qualify"] == 1 and listed("qualify") == {str(ids["plain"])}
+    assert listed("ignored", type="logos") == {str(ids["logo"])} and listed("ignored") == {str(ids["logo"]), str(ids["ignored"])}
 
 
 def test_putting_a_logo_back_covers_every_file_of_the_photo(
@@ -1410,7 +1413,7 @@ def test_putting_a_logo_back_covers_every_file_of_the_photo(
                    VALUES (%s, %s, %s, %s, %s, %s, '0f0f0f0f0f0f0f0f', '0f0f0f0f0f0f0f0f', %s, %s, %s, 0.99) RETURNING id""",
                 (org_id, site, f"https://t.test/{name}.png", f"{org_id}/{name}.jpg", f"{org_id}/thumbs/{name}.jpg", name, side, side, group),
             ).fetchone()["id"]))
-    logo = lambda: client.get(f"{base}/site-images?view=logos", headers=_headers(admin_id)).json()["items"][0]  # noqa: E731
+    logo = lambda: client.get(f"{base}/site-images?type=logos", headers=_headers(admin_id)).json()["items"][0]  # noqa: E731
     item = logo()
     assert len(item["variants"]) == 2 and item["logo"]["kept"] is False
     keep = client.post(f"{base}/logos/keep", headers=_headers(admin_id),

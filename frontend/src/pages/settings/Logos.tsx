@@ -36,7 +36,7 @@ export function Logos() {
         />
         <p className="text-sm text-muted">
           {items.length.toLocaleString("fr-FR")} {items.length > 1 ? "images reconnues comme logos" : "image reconnue comme logo"} ·{" "}
-          <Link className="font-medium text-ink underline underline-offset-2" to={`${link("online-images")}?view=logos`}>Les voir et en remettre une dans la comparaison</Link>
+          <Link className="font-medium text-ink underline underline-offset-2" to={`${link("online-images")}?type=logos`}>Les voir et en remettre une dans la comparaison</Link>
         </p>
       </div>
     </SettingsBlock>

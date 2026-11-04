@@ -26,6 +26,7 @@ from .common import (
     BRAND,
     IMAGE_SUFFIXES,
     MAX_UPLOAD_BYTES,
+    TYPES,
     VIEWS,
     BrandScope,
     Ctx,
@@ -213,22 +214,25 @@ def _with_calibration(ctx: Ctx, scope: BrandScope, leads: list[dict], items: lis
 
 
 @router.get(f"{BRAND}/site-images")
-def site_images(view: str = "qualify", offset: int = Query(0, ge=0), limit: int = Query(60, ge=1, le=200),
+def site_images(view: str = "qualify", type: Optional[str] = None, offset: int = Query(0, ge=0), limit: int = Query(60, ge=1, le=200),  # noqa: A002
                 site: Optional[uuid.UUID] = None, q: str = Query("", max_length=200),
                 scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
-    """One tab of "Images en ligne", `limit` entries from `offset`: `qualify` (read on the sites, nothing in the library
-    matches it: rights unknown), `found` (a visual of the library is in it), `logos`, `packshots` (when the brand turned the category on), `ignored`, or `all`. `site` and `q`
-    narrow the entries; `counts` are the totals of every tab and `sites` the site versions of this tab, whatever `site`
-    and `q`. Only the thumbnails of the entries returned are signed."""
+    """One state of "Images en ligne", `limit` entries from `offset`: `qualify` (read on the sites, nothing in the library
+    matches it: rights unknown), `found` (a visual of the library is in it) or `ignored`. `type` keeps the `packshots`
+    (when the brand turned the category on), `logos` or `photos` of it; `site` and `q` narrow the entries. `counts` are
+    the totals of every state and `type_counts` those of this state by type, whatever `type`, `site` and `q`; `sites` are the
+    site versions of this state. Only the thumbnails of the entries returned are signed."""
     if view not in VIEWS:
         raise HTTPException(status_code=400, detail="Onglet inconnu.")
+    if type is not None and type not in TYPES:
+        raise HTTPException(status_code=400, detail="Type inconnu.")
     with cloud_db.connect(ctx.settings.database_url) as conn:
         config = ctx.org_config(conn, scope.org_id)
         tabs = online_images(conn, scope.brand_id, config)
         logos_set_aside = cloud_logos.is_enabled(conn, scope.brand_id)
         packshots_enabled = cloud_packshots.is_enabled(conn, scope.brand_id)
     needle = q.strip().lower()
-    wanted = [group for group in tabs[view] if _wanted(group, site, needle)]
+    wanted = [group for group in tabs[view] if (type is None or group["type"] == type) and _wanted(group, site, needle)]
     page = wanted[offset : offset + limit]
     leads = [variant[0] for group in page for variant in _variants(group["rows"])]
     urls = ctx.sign(cloud_storage.BUCKET_SITE_IMAGES, [row["thumb_path"] for row in leads] + [row["storage_path"] for row in leads])
@@ -237,9 +241,11 @@ def site_images(view: str = "qualify", offset: int = Query(0, ge=0), limit: int 
         _with_calibration(ctx, scope, [group["lead"] for group in page], items)
     return {
         "view": view,
+        "type": type,
         "items": items,
         "total": len(wanted),
         "counts": {name: len(groups) for name, groups in tabs.items()},
+        "type_counts": {name: sum(group["type"] == name for group in tabs[view]) for name in TYPES},
         "sites": _site_tabs(tabs[view]),
         "logos_set_aside": logos_set_aside,
         "packshots_enabled": packshots_enabled,

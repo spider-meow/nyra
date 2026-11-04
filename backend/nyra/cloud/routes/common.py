@@ -370,9 +370,11 @@ def _group_unreferenced(conn, brand_id: uuid.UUID, config: Config, rows: list[di
     return _qualify(rows, excluded)
 
 
-# The tabs of "Images en ligne", and what each lists. A row's `status` is the first that applies: found in the library
-# (`found`), set aside by hand (`ignored`), recognised as a logo (`logo`), a packshot while the brand's setting is on (`packshot`), else still to qualify (`qualify`).
-VIEWS = ("qualify", "found", "logos", "packshots", "ignored", "all")
+# "Images en ligne" has two axes. The STATE is a tab (`VIEWS`); an entry is in one of them: found in the library (`found`), set aside
+# (`ignored`: by hand, or recognised as a logo / a packshot while the brand's setting sets them aside), else still to qualify (`qualify`).
+# The TYPE is a filter over the tab (`TYPES`): a logo, a packshot (the brand's setting must be on), else a photo.
+VIEWS = ("qualify", "found", "ignored")
+TYPES = ("packshots", "logos", "photos")
 STATUS_ORDER = ("found", "ignored", "logo", "packshot", "qualify")
 
 
@@ -381,32 +383,41 @@ def group_status(rows: list[dict]) -> str:
     return min((row["status"] for row in rows), key=STATUS_ORDER.index)
 
 
+def group_type(rows: list[dict], packshots: set) -> str:
+    """The type of an entry (one of `TYPES`): a logo if one of its images is recognised as one, else a packshot, else a photo."""
+    if any(row["recognised"] for row in rows):
+        return "logos"
+    return "packshots" if any(row["id"] in packshots for row in rows) else "photos"
+
+
 def online_images(conn, brand_id: uuid.UUID, config: Config) -> dict[str, list[dict]]:
-    """Every image read on the brand's sites, one entry per photo, under each tab. `qualify` is `unreferenced_images`:
-    what matches nothing in the library, was not set aside and, when the brand asks for it, is not a logo. The logos tab
-    lists every recognised logo whether or not the brand sets them aside.
+    """Every image read on the brand's sites, one entry per photo, under each tab of `VIEWS`, each entry carrying its `type`.
+    `qualify` is `unreferenced_images`: what matches nothing in the library, was not set aside and, when the brand asks for it,
+    is not a logo or a packshot. The recognised logos stay in it (and under the type "logos") unless the brand sets them aside.
 
     ponytail: reads and groups every image of the brand on each request (measured on a test database, without exclusions:
     0.3 s for 10,000 images, 1 s for 30,000, growing in step with them). Past that, count the tabs in SQL and group only
     the tab asked for, or cache by a fingerprint like `unreferenced_count` does."""
-    cloud_logos.score_pending(conn, brand_id)  # the images read since the last time, so the Logos tab is never behind
-    cloud_packshots.score_pending(conn, brand_id)  # the same for the Packshots tab (nothing unless the brand turned it on)
+    cloud_logos.score_pending(conn, brand_id)  # the images read since the last time, so the Logos filter is never behind
+    cloud_packshots.score_pending(conn, brand_id)  # the same for the Packshots filter (nothing unless the brand turned it on)
     rows = cloud_db.site_images_with_pages(conn, brand_id)
     excluded = match_module.excluded_site_ids(rows, cloud_db.load_exclusions(conn, brand_id), config.match)
     aside = cloud_logos.set_aside_ids(conn, brand_id)
     packshots = cloud_packshots.ids(conn, brand_id)
+    left_out = excluded | aside | packshots
     for row in rows:
         row["recognised"] = row["logo_score"] is not None and row["logo_score"] >= detector.THRESHOLD
         row["status"] = ("found" if row["matched"] else "ignored" if row["id"] in excluded else "logo" if row["recognised"]
                          else "packshot" if row["id"] in packshots else "qualify")
-    return {
-        "qualify": _qualify(rows, excluded | aside | packshots),
+    tabs = {
+        "qualify": _qualify(rows, left_out),
         "found": group_rows([row for row in rows if row["matched"]]),
-        "logos": group_rows([row for row in rows if row["recognised"]]),
-        "packshots": group_rows([row for row in rows if row["id"] in packshots]),
-        "ignored": group_rows([row for row in rows if row["id"] in excluded]),
-        "all": group_rows(rows),
+        "ignored": group_rows([row for row in rows if not row["matched"] and row["id"] in left_out]),
     }
+    for groups in tabs.values():
+        for group in groups:
+            group["type"] = group_type(group["rows"], packshots)
+    return tabs
 
 
 def unreferenced_images(conn, brand_id: uuid.UUID, config: Config) -> list[dict]:

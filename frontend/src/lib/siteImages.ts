@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
-import type { SiteImagesPage, SiteImageView } from "../types";
+import type { SiteImagesPage, SiteImageType, SiteImageView } from "../types";
 import { api } from "./api";
 import { useOrg } from "./org";
 import { useInvalidate } from "./queries";
@@ -9,13 +9,14 @@ import { useInvalidate } from "./queries";
 export const SITE_IMAGES_PAGE = 60;
 
 /** One tab of "Images en ligne", narrowed to a site version and a text, a page of entries at a time (`fetchNextPage`). */
-export function useSiteImages(options: { view: SiteImageView; site: string; text: string }) {
+export function useSiteImages(options: { view: SiteImageView; type: SiteImageType | null; site: string; text: string }) {
   const { apiPath, brand } = useOrg();
-  const { view, site, text } = options;
+  const { view, type, site, text } = options;
   return useInfiniteQuery({
-    queryKey: ["site-images", brand.id, view, site, text],
+    queryKey: ["site-images", brand.id, view, type, site, text],
     queryFn: ({ pageParam }) => {
       const params = new URLSearchParams({ view, offset: String(pageParam), limit: String(SITE_IMAGES_PAGE), q: text });
+      if (type) params.set("type", type);
       if (site !== "all") params.set("site", site);
       return api.get<SiteImagesPage>(`${apiPath("/site-images")}?${params}`);
     },
