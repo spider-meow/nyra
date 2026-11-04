@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { LabelChips } from "../../components/Labels";
 import { Button, Card, FadeImage, cx } from "../../components/ui";
 import { Modal, useToast } from "../../components/feedback";
@@ -7,7 +7,7 @@ import { formatDate, pathOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
 import { useSplitVariant } from "../../lib/siteImages";
 import type { ImageLabel, SiteImage, SiteImageVariant } from "../../types";
-import { PackshotFeedback } from "./PackshotFeedback";
+import { PACKSHOT_KEYS, PackshotFeedback, usePackshotDecision } from "./PackshotFeedback";
 
 /**
  * A card shows what helps to decide: the picture (a click enlarges it), its name, the page it comes from and one action.
@@ -28,7 +28,18 @@ export function ImageCard(props: {
 }) {
   const { item } = props;
   const page = item.pages[0];
+  const { decide } = usePackshotDecision(item);
+  // Nyra team (the measures are sent to nobody else): P, N and Backspace answer for the card under the focus, and the focus goes to the next card.
+  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    const answer = PACKSHOT_KEYS[event.key];
+    if (!item.packshot_measures || answer === undefined || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (event.target instanceof HTMLInputElement && event.target.type !== "checkbox") return;
+    event.preventDefault();
+    decide(answer);
+    (event.currentTarget.nextElementSibling?.querySelector("button, input") as HTMLElement | null)?.focus();
+  }
   return (
+    <div className="contents" onKeyDown={onKeyDown}>
     <Card padded={false} className={cx("group flex flex-col overflow-hidden", props.selected && "bg-yellow/45 ring-2 ring-focus")}>
       <div className="relative">
         <button type="button" className="block w-full bg-canvas" onClick={props.onOpen} aria-label={`Agrandir ${item.filename}`}>
@@ -70,6 +81,7 @@ export function ImageCard(props: {
         {item.packshot_measures ? <PackshotFeedback item={item} /> : null}
       </div>
     </Card>
+    </div>
   );
 }
 
