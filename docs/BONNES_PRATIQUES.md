@@ -152,7 +152,7 @@ de bandeau qui commente ce qu'on voit, ni de paragraphe d'aide permanent. Si un 
 nommé ou mal construit : on corrige le libellé, l'ordre ou la forme, pas la légende. Ce qui reste permis, parce qu'il sert à agir :
 le libellé d'un champ ou d'un bouton, un message d'erreur (ce qui s'est passé et quoi faire), un état vide qui dit quoi faire ensuite,
 et une infobulle ou un message de retour après une action (« Annuler »). Une information rare ou technique va dans une infobulle ou
-dans la documentation, pas sur l'écran.
+dans la documentation, pas sur l'écran. L'inventaire du passage fait sur tout le site est dans [`TEXTES_EXPLICATIFS.md`](TEXTES_EXPLICATIFS.md).
 
 ## Tests
 
