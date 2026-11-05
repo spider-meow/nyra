@@ -101,7 +101,7 @@ export function RunCard(props: { list: Site[]; selected: Site[] }) {
               checked={newOnly}
               onChange={setNewOnly}
               label="Lire seulement les pages nouvelles"
-              hint="Plus rapide, mais une image changée sur une page connue passe inaperçue. Sinon, toutes les pages sont relues."
+              hint="Plus rapide, mais une image changée sur une page connue passe inaperçue."
             />
           </div>
           <MaxPages value={maxPages} onChange={setMaxPages} defaults={defaults} />
@@ -125,7 +125,6 @@ function MaxPages(props: { value: number | ""; onChange: (value: number | "") =>
         value={props.value}
         onChange={(event) => props.onChange(event.target.value ? Number(event.target.value) : "")}
       />
-      <p className="mt-1 text-xs text-muted">Un plafond : un site plus petit est lu en entier, et la lecture s'arrête d'elle-même.</p>
     </div>
   );
 }
@@ -136,10 +135,10 @@ function EstimateLine(props: { estimate: CrawlEstimate; sites: Site[]; thenMatch
   const known = sites.filter((site) => estimate.sites[site.id]);
   const unknown = sites.filter((site) => !estimate.sites[site.id]);
   const seconds = known.reduce((sum, site) => sum + (estimate.sites[site.id]?.seconds ?? 0), 0) + (estimate.compare_seconds ?? 0);
-  if (!known.length) return <p className="min-w-48 flex-1 text-xs text-muted">Durée inconnue : pas encore assez de lectures pour la prévoir. Elle le sera après la première.</p>;
+  if (!known.length) return <p className="min-w-48 flex-1 text-xs text-muted">Durée inconnue : pas encore de lecture pour la prévoir.</p>;
   return (
     <p className="min-w-48 flex-1 text-xs text-muted">
-      Durée estimée : {unknown.length ? "au moins " : "environ "}{approxDuration(seconds)}, d'après les dernières lectures.
+      Durée estimée : {unknown.length ? "au moins " : "environ "}{approxDuration(seconds)}.
       {unknown.length ? ` Sans historique : ${unknown.map((site) => site.label || hostOf(site.url)).join(", ")}.` : ""}
       {props.thenMatch && estimate.compare_seconds === null ? " La comparaison n'est pas comptée (jamais mesurée)." : ""}
     </p>

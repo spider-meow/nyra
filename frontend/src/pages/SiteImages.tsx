@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router";
 import { Present, useToast } from "../components/feedback";
+import { InfoTip } from "../components/SettingsBlock";
 import { SelectionFrame } from "../components/SelectionFrame";
 import { ContentFilter, ContentTagger } from "../components/Labels";
 import { LoadError, RefreshFailed, Refreshing, SkeletonGrid } from "../components/busy";
@@ -402,7 +403,11 @@ function ImageGrid(props: GridProps) {
         ))}
       </div>
       {items.some((item) => item.packshot_measures) ? (
-        <p className="mt-3 text-xs text-muted">Équipe Nyra, carte sous le focus : <kbd className="font-mono">P</kbd> packshot · <kbd className="font-mono">N</kbd> pas un packshot · <kbd className="font-mono">⌫</kbd> revenir à la détection.</p>
+        <p className="mt-3 flex justify-end">
+          <InfoTip label="Raccourcis de l'équipe Nyra">
+            Carte sous le focus : <kbd className="font-mono">P</kbd> packshot · <kbd className="font-mono">N</kbd> pas un packshot · <kbd className="font-mono">⌫</kbd> revenir à la détection.
+          </InfoTip>
+        </p>
       ) : null}
       {page.items.length < page.total ? (
         <div className="mt-4 text-center">

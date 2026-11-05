@@ -22,13 +22,14 @@ file avance »), l'état de la configuration d'envoi d'e-mails, les messages d'a
 
 Relevé d'après le code le 5 novembre 2026 ; la colonne « Fait » est remplie par chaque PR (voir « Découpage »).
 
-### Tableau de bord, À traiter, Bibliothèque, Images en ligne, Sites et lectures (PR B)
+### Tableau de bord, À traiter, Bibliothèque, Images en ligne, Sites et lectures (PR B, fait)
 
 | Écran | Fichier | Texte | Décision |
 |---|---|---|---|
 | Tableau de bord | `dashboard/Start.tsx` | « Trois étapes pour savoir quels visuels retirer du site. » | Retirer |
 | Tableau de bord | `dashboard/Hero.tsx` | « Leurs droits sont échus mais ils apparaissent toujours sur le site. Chaque jour compte. » / « D'après la dernière lecture… » | Retirer |
-| Tableau de bord | `dashboard/Hero.tsx` | Note « Par ailleurs, N images… jamais eu ses droits vérifiés. Certaines sont peut-être expirées : elles ne sont pas comptées ici… » | Raccourcir (garder le lien) |
+| Tableau de bord | `dashboard/Hero.tsx` | Note « Par ailleurs, N images… jamais eu ses droits vérifiés. Certaines sont peut-être expirées : elles ne sont pas comptées ici… » | Raccourcir (garder le lien) ; l'explication passe en infobulle |
+| Tableau de bord | `Dashboard.tsx` | Carte « images en ligne dont les droits n'ont jamais été vérifiés » : « Certaines sont peut-être expirées. » avant le lien | Retirer (le lien « Les vérifier » reste) |
 | À traiter | `review/List.tsx` | Bandeau « Ces visuels n'ont été retrouvés nulle part… » (non trouvés) | Infobulle |
 | À traiter | `review/Related.tsx` | « Votre décision s'applique à toutes. Cliquez sur l'une pour la comparer. » | Raccourcir |
 | Bibliothèque | `library/Toolbar.tsx` | Bandeau de l'onglet Expirés « Ces visuels ne sont plus sous droits… » | Infobulle (le lien « Voir ce qui est encore en ligne » reste) |
@@ -38,7 +39,7 @@ Relevé d'après le code le 5 novembre 2026 ; la colonne « Fait » est remplie 
 | Sites et lectures | `scans/RunCard.tsx` | « Un plafond : un site plus petit est lu en entier… » | Retirer |
 | Sites et lectures | `scans/RunCard.tsx` | « Durée inconnue : pas encore assez de lectures pour la prévoir… » | Raccourcir |
 | Sites et lectures | `scans/RunCard.tsx` | Aide de la case « sans relire les pages connues » | Raccourcir |
-| Sites et lectures | `scans/SitesCard.tsx` | Notes sous chaque adresse (`STATE_PILL.note`) | À trancher à la lecture |
+| Sites et lectures | `scans/SitesCard.tsx` | Note « Démarre dès qu'une place se libère sur le serveur. » sous une adresse en attente (le badge dit déjà « En attente ») | Retirer |
 
 ### Statistiques et back-office (PR C)
 

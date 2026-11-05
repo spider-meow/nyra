@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import { Icon } from "../../components/icons";
+import { InfoTip } from "../../components/SettingsBlock";
 import { Bar, LinkButton, Skeleton, cx } from "../../components/ui";
 import { formatDateTime, hostOf, plural } from "../../lib/format";
 import { useOrg } from "../../lib/org";
@@ -20,11 +21,6 @@ export function Hero(props: { overview: Overview }) {
           <span className={cx("marker", !hero && "!bg-mint")}>{hero}</span>{" "}
           {hero ? `${hero > 1 ? "visuels expirés sont encore" : "visuel expiré est encore"} en ligne` : "visuel expiré en ligne"}
         </h2>
-        <p className="mt-4 max-w-xl text-[15px] leading-relaxed text-ink-soft">
-          {hero
-            ? "Leurs droits sont échus mais ils apparaissent toujours sur le site. Chaque jour compte."
-            : "D'après la dernière lecture. Les faux positifs et les visuels déjà retirés ne sont pas comptés."}
-        </p>
         {hero ? (
           // The dashboard counts every deadline, so the list it opens does too (window=3650).
           <LinkButton to={`${link("review")}?status=expire&window=3650`} variant="primary" size="lg" className="mt-6">
@@ -38,7 +34,7 @@ export function Hero(props: { overview: Overview }) {
             <Link className="font-medium text-ink underline underline-offset-2" to={link("online-images")}>
               {plural(dashboard.unreferenced_online, "image en ligne n'a", "images en ligne n'ont")} jamais eu ses droits vérifiés
             </Link>
-            . Certaines sont peut-être expirées : elles ne sont pas comptées ici tant qu'elles ne sont pas dans la bibliothèque.
+            <InfoTip>Certaines sont peut-être expirées : elles ne sont pas comptées ici tant qu'elles ne sont pas dans la bibliothèque.</InfoTip>
           </p>
         ) : null}
       </div>
@@ -83,9 +79,8 @@ export function HeroSkeleton() {
       <div>
         <Skeleton className="h-[22px] w-40 rounded-full" />
         <h2 className="font-display mt-5 text-[40px] leading-[1.15] md:text-[56px]"><Bar /><Bar width="85%" /><Bar width="30%" /></h2>
-        <p className="mt-4 max-w-xl text-[15px] leading-relaxed"><Bar /><Bar width="60%" /></p>
         <Skeleton className="mt-6 h-11 w-44 rounded-lg" />
-        <p className="mt-5 max-w-xl border-t border-line pt-4 text-sm"><Bar /><Bar /><Bar width="40%" /></p>
+        <p className="mt-5 max-w-xl border-t border-line pt-4 text-sm"><Bar width="70%" /></p>
       </div>
       <div className="rounded-xl border border-ink/20 bg-mint/40 p-5">
         <p className="text-[13px]"><Bar width="40%" /></p>
