@@ -52,7 +52,6 @@ function Access(props: { form: OverridesForm }) {
           checked={form.boolOf("crawl.dismiss_overlays")}
           onChange={(value) => form.set("crawl.dismiss_overlays", String(value))}
           label="Passer les bandeaux cookies et les contrôles d'âge"
-          hint="Refuse les cookies quand c'est possible, renseigne une date de naissance fictive et valide."
         />
         <Checkbox
           checked={form.boolOf("crawl.respect_robots_txt")}

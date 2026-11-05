@@ -336,7 +336,7 @@ function NoBrand(props: { org: Organization }) {
     );
   }
   return (
-    <Centered title="Première marque" body={`Chaque marque de ${org.name} a sa bibliothèque et ses adresses (un site par marché, par exemple).`}>
+    <Centered title="Première marque">
       <form className="mt-5 grid gap-4" onSubmit={(event) => void submit(event)}>
         <div>
           <FieldLabel htmlFor="brand-name">Nom de la marque</FieldLabel>

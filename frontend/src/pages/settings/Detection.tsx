@@ -58,13 +58,13 @@ function Advanced(props: { form: OverridesForm }) {
             checked={form.boolOf(VERIFY[0])}
             onChange={(value) => form.set(VERIFY[0], String(value))}
             label="Vérifier chaque ressemblance sur les détails de l'image"
-            hint="Écarte les autres prises de vue d'un même produit. Recommandé."
+            hint="Écarte les autres prises de vue d'un même produit."
           />
           <Checkbox
             checked={form.boolOf(TWINS)}
             onChange={(value) => form.set(TWINS, String(value))}
             label="Ne comparer qu'une fois les visuels quasi identiques"
-            hint="Deux visuels de la bibliothèque qui sont la même image (même export, même fichier réenregistré) sont comparés une seule fois : le résultat vaut pour les deux, et les deux restent dans la bibliothèque. Désactivé par défaut."
+            hint="Le résultat vaut pour les deux visuels, qui restent tous deux dans la bibliothèque. Désactivé par défaut."
           />
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {field(VERIFY[1], "Points communs minimum", "nombre")}
@@ -96,17 +96,17 @@ export function Detection(props: { data: Settings }) {
         </div>
       </SettingsBlock>
       <SettingsBlock title="Expirations à surveiller">
-        <SettingsRow label="Délai par défaut, en jours" hint="Les visuels qui expirent dans ce délai apparaissent dans « À traiter » et dans les rapports.">
-          <Input {...numberProps(form, "report.default_within_days")} aria-label="Délai par défaut, en jours" className="w-28" />
+        <SettingsRow label="Alerter avant l'expiration, en jours">
+          <Input {...numberProps(form, "report.default_within_days")} aria-label="Alerter avant l'expiration, en jours" className="w-28" />
         </SettingsRow>
       </SettingsBlock>
-      <SettingsBlock title="Pages redirigées" description="Quand une page qui montrait un visuel renvoie maintenant vers une autre page.">
+      <SettingsBlock title="Pages redirigées" description="Quand une page qui montrait un visuel renvoie maintenant vers une autre page. Une redirection temporaire, vers l'accueil, vers un autre site, une autre rubrique ou une page de connexion ou de consentement ne conclut rien.">
         <div className="p-5">
           <Checkbox
             checked={form.boolOf(REDIRECTS)}
             onChange={(value) => form.set(REDIRECTS, String(value))}
             label="Conclure sur une redirection permanente vers une page de la même rubrique"
-            hint="La page d'arrivée est lue à la place : le visuel y est encore en ligne, ou il en est retiré. Une redirection temporaire, vers l'accueil, vers un autre site, une autre rubrique ou une page de connexion ou de consentement ne conclut rien. Désactivé par défaut tant que la règle n'a pas été mesurée sur de vraies adresses."
+            hint="La page d'arrivée est lue à la place. Désactivé par défaut tant que la règle n'a pas été mesurée."
           />
         </div>
       </SettingsBlock>

@@ -36,7 +36,7 @@ export function Packshots() {
             })
           }
           label="Ranger les packshots dans leur propre onglet"
-          hint="Ils quittent « À qualifier » mais restent dans « Toutes » et restent comparés à la bibliothèque : rien n'est masqué ni ignoré."
+          hint="Ils quittent « À qualifier » mais restent comparés à la bibliothèque."
         />
         {!available ? <p className="text-sm text-muted">Ce réglage demande une mise à jour de la base (migration des packshots) qui n'est pas encore appliquée.</p> : null}
         {enabled ? (

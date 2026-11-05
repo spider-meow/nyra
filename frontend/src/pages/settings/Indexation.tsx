@@ -21,7 +21,7 @@ export function Indexation() {
     >
       <SettingsRow
         label={pending ? `${pending.toLocaleString("fr-FR")} visuels pas encore indexés` : "Tous les visuels sont indexés"}
-        hint={running ? "Une indexation est en cours. Sa progression s'affiche en bas de l'écran." : "Elle peut prendre quelques minutes, selon le nombre de visuels."}
+        hint={running ? "Une indexation est en cours. Sa progression s'affiche en bas de l'écran." : undefined}
       >
         <CursorTip tip={allDone && !running ? "Tous les visuels sont déjà indexés : il n'y a rien à rattraper." : undefined}>
           <Button variant="primary" loading={start.isPending || running} disabled={allDone} onClick={launch}>Lancer l'indexation</Button>
