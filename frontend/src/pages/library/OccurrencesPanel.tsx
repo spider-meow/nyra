@@ -94,7 +94,6 @@ function SearchBar({ item, data, onStarted }: { item: LibraryItem; data: Occurre
   if (!admin) return null;
   return (
     <div className="px-4 py-3">
-      {!data?.located_at ? <p className="mb-2 text-xs text-muted">Vérifie chaque image déjà lue, recadrages compris. Peut prendre plusieurs minutes.</p> : null}
       <Button className="w-full" onClick={start} loading={locate.isPending} disabled={Boolean(running) || Boolean(hold)} {...holdProps(hold)} title={running ? "Une recherche est déjà en cours pour un autre visuel." : undefined}>
         {data?.located_at ? "Relancer la recherche" : "Lancer la recherche"}
       </Button>

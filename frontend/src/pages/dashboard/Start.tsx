@@ -11,7 +11,6 @@ export function Start(props: { noLibrary: boolean; neverCrawled: boolean }) {
       <PageHeader title="Tableau de bord" />
       <Card>
         <h2 className="font-display text-3xl">Mise en route</h2>
-        <p className="mt-1 text-sm text-muted">Trois étapes pour savoir quels visuels retirer du site.</p>
         <ol className="mt-5 grid gap-4 text-[15px]">
           <Step done={!noLibrary} index={1} title="Déposer les visuels sous droits et leur date d'expiration" to={link("library")} cta="Ouvrir la bibliothèque" />
           <Step done={!neverCrawled} index={2} title={platformAdmin ? "Ajouter les sites sur lesquels ils pourraient encore apparaître, puis les lire" : "L'équipe Nyra ajoute les sites sur lesquels ils pourraient encore apparaître, puis les lit"} to={link("scans")} cta="Sites et lectures" disabled={noLibrary} team={platformAdmin} />

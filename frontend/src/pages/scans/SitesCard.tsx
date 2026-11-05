@@ -70,10 +70,10 @@ export function SitesCard(props: {
 
 type SiteState = "reading" | "queued" | "waiting" | "error" | "never" | "ok";
 
-const STATE_PILL: Record<SiteState, { label: string; tone: string; note?: string }> = {
+const STATE_PILL: Record<SiteState, { label: string; tone: string }> = {
   reading: { label: "En cours", tone: "bg-soon-soft text-soon" },
   queued: { label: "En attente", tone: "bg-unknown-soft text-unknown" },
-  waiting: { label: "En attente", tone: "bg-unknown-soft text-unknown", note: "Démarre dès qu'une place se libère sur le serveur." },
+  waiting: { label: "En attente", tone: "bg-unknown-soft text-unknown" },
   error: { label: "Dernière lecture en échec", tone: "bg-expired-soft text-expired" },
   never: { label: "Jamais lue", tone: "bg-unknown-soft text-unknown" },
   ok: { label: "Lue", tone: "bg-ok-soft text-ok" },
@@ -203,7 +203,6 @@ function SiteRow(props: { site: Site; state: SiteState; selectable: boolean; sel
           <a href={site.url} target="_blank" rel="noreferrer noopener" className="hover:underline">{site.url}</a>
         </p>
         {scopePath(site.url) ? <p className="text-xs text-muted">Limitée à {scopePath(site.url)}</p> : null}
-        {STATE_PILL[props.state].note ? <p className="text-xs text-muted">{STATE_PILL[props.state].note}</p> : null}
       </div>
       {site.last_crawled_at ? (
         <p className="hidden text-right text-xs text-muted sm:block">

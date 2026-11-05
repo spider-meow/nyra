@@ -9,7 +9,7 @@ export function RelatedReferences(props: { pairs: Pair[]; activeId: string; onPi
   return (
     <div className="rounded-xl border border-line-strong p-3">
       <p className="text-[13px] font-semibold">Cette photo correspond à {plural(pairs.length, "référence")}</p>
-      <p className="mt-0.5 text-xs text-muted">Votre décision s'applique à toutes. Cliquez sur l'une pour la comparer.</p>
+      <p className="mt-0.5 text-xs text-muted">Votre décision s'applique à toutes.</p>
       <div className="mt-2.5 flex flex-wrap gap-1.5">
         {pairs.map((pair) => (
           <button

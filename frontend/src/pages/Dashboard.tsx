@@ -89,10 +89,7 @@ function Stats(props: { dashboard: Overview["dashboard"]; stats: Overview["stats
         tint="blush"
         hint={
           dashboard.unreferenced_online ? (
-            <>
-              Certaines sont peut-être expirées.{" "}
-              <Link className="font-medium text-ink underline underline-offset-2" to={link("online-images")}>Les vérifier</Link>
-            </>
+            <Link className="font-medium text-ink underline underline-offset-2" to={link("online-images")}>Les vérifier</Link>
           ) : (
             "Toutes les images en ligne ont des droits vérifiés."
           )

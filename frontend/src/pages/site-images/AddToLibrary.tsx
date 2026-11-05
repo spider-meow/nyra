@@ -126,9 +126,7 @@ function AdoptFields(props: { items: SiteImage[]; fields: Fields; packshots: boo
           <FieldLabel htmlFor="adopt-name">Nom dans la bibliothèque</FieldLabel>
           <Input id="adopt-name" maxLength={200} value={fields.name} onChange={(event) => props.onChange({ ...fields, name: event.target.value })} />
         </div>
-      ) : (
-        <p className="text-sm text-muted">Chaque image garde le nom de son fichier sur le site. L'échéance ci-dessous vaut pour les {items.length}.</p>
-      )}
+      ) : null}
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <FieldLabel htmlFor="adopt-expiry" hint="facultatif">Date d'expiration des droits</FieldLabel>

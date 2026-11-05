@@ -1,4 +1,5 @@
 import { Bar, Button, Card, ConfidenceBadge, DecisionBadge, EmptyState, Skeleton, StatusBadge, Thumb, cx } from "../../components/ui";
+import { InfoTip } from "../../components/SettingsBlock";
 import { daysText, plural } from "../../lib/format";
 import type { NotFoundItem } from "../../types";
 import type { ReviewView, Row } from "./view";
@@ -77,9 +78,10 @@ export function MissingList(props: { items: NotFoundItem[] }) {
   if (!props.items.length) return <EmptyState title="Aucun visuel manquant" body="Toutes les références de cette fenêtre ont au moins une occurrence en ligne." />;
   return (
     <Card padded={false} className="overflow-hidden">
-      <p className="border-b border-line bg-sunk px-5 py-3.5 text-sm text-muted">
-        Ces visuels n'ont été retrouvés nulle part. « Pas encore comparé » signifie qu'ils ont été ajoutés après la dernière comparaison : ce n'est pas une preuve d'absence.
-      </p>
+      <h2 className="flex items-center gap-2 border-b border-line bg-sunk px-5 py-3.5 text-sm font-semibold">
+        Visuels retrouvés nulle part
+        <InfoTip>« Pas encore comparé » signifie qu'ils ont été ajoutés après la dernière comparaison : ce n'est pas une preuve d'absence.</InfoTip>
+      </h2>
       <ul className="divide-y divide-line">
         {props.items.map((item) => (
           <li key={item.reference_id} className="flex items-center gap-3 px-5 py-3">
