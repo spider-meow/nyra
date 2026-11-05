@@ -106,7 +106,7 @@ export function HistorySection() {
     <Section
       className="mt-4"
       title="Usage dans le temps"
-      description="Un relevé par minute et par conteneur, moyenné par pas de temps. Les lignes pointillées sont les limites et les seuils d'alerte ; une coupure veut dire que le conteneur n'a rien publié."
+      info="Un relevé par minute et par conteneur, moyenné par pas de temps. Les lignes pointillées sont les limites et les seuils d'alerte ; une coupure veut dire que le conteneur n'a rien publié."
       aside={<Segmented label="Période" value={range} options={RANGES.map(({ value, label }) => ({ value, label }))} onChange={setRange} />}
     >
       {history.isLoading ? <Skeleton className="h-72" /> : null}

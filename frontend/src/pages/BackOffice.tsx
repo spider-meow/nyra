@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import {
   CompareFacts,
   CountList,
+  FALSE_POSITIVE_INFO,
   HistoryChart,
   JobsTable,
   MatchingTable,
@@ -74,12 +75,12 @@ function BackOfficeContent() {
       <PlatformStats totals={totals} crawls={crawls} />
       <BrandsSection brands={brands} total={data.total_brands} />
 
-      <Section className="mt-4" title="Lectures, toutes marques" description="Les 60 dernières sur 90 jours. Survolez une barre pour la marque et le détail." aside={<MetricTabs value={metric} onChange={setMetric} />}>
+      <Section className="mt-4" title="Lectures, toutes marques" aside={<MetricTabs value={metric} onChange={setMetric} />}>
         <HistoryChart runs={crawls.history} metric={metric} withOrg />
       </Section>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Section title="Où passe le temps" description="Cumul des lectures sur 90 jours, toutes marques.">
+        <Section title="Où passe le temps" info="Cumul des lectures sur 90 jours, toutes marques.">
           <PhasesChart phases={crawls.summary.phases_seconds} />
         </Section>
         <Section title="Tâches sur 30 jours">
@@ -99,7 +100,7 @@ function BackOfficeContent() {
         </Section>
       </div>
 
-      <Section className="mt-4" title="Correspondances, toutes marques">
+      <Section className="mt-4" title="Correspondances, toutes marques" info={FALSE_POSITIVE_INFO}>
         <MatchingTable matching={data.matching} />
       </Section>
 

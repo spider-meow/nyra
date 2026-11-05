@@ -2,16 +2,21 @@ import type { ReactNode } from "react";
 import { bytes, confidenceLabel, duration, formatDateTime, hostOf, jobLabel, num, percent } from "../lib/format";
 import type { CompareStats, Confidence, CrawlRun, CrawlSummary, JobKindStats, MatchingStats } from "../types";
 import { BarHistory, ShareBar, SplitBar, type Bar } from "./charts";
+import { InfoTip } from "./SettingsBlock";
 import { Bar as TextBar, Card, Skeleton, cx } from "./ui";
 
 /** Pieces shared by the organization's Statistiques page and the Nyra back office. */
 
-export function Section(props: { title: string; description?: ReactNode; children: ReactNode; className?: string; aside?: ReactNode }) {
+/** `info`: what is rare or technical about the card, in a bubble (ⓘ) instead of a line under the title; `description` is for a value (a date, a count). */
+export function Section(props: { title: string; description?: ReactNode; info?: ReactNode; children: ReactNode; className?: string; aside?: ReactNode }) {
   return (
     <Card className={cx("min-w-0", props.className)}>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h2 className="font-semibold">{props.title}</h2>
+          <h2 className="flex items-center gap-2 font-semibold">
+            {props.title}
+            {props.info ? <InfoTip>{props.info}</InfoTip> : null}
+          </h2>
           {props.description ? <p className="mt-0.5 text-sm text-muted">{props.description}</p> : null}
         </div>
         {props.aside}
@@ -31,6 +36,9 @@ export function SectionSkeleton(props: { title: string; className?: string; heig
     </Section>
   );
 }
+
+/** What the false-positive rate of `MatchingTable` measures: given as the `info` of the card that holds it. */
+export const FALSE_POSITIVE_INFO = "Le taux de faux positifs n'est calculé que sur les correspondances déjà décidées : c'est une mesure de précision, pas de rappel.";
 
 export function Facts(props: { rows: [string, ReactNode][] }) {
   return (
@@ -236,9 +244,6 @@ export function MatchingTable(props: { matching: MatchingStats }) {
     <div className="grid gap-4">
       <Table head={["Confiance", ...head.slice(1)]} rows={rows} empty="Aucune correspondance pour l'instant." />
       {levels.length ? <Table head={["Niveau", ...head.slice(1)]} rows={levels} /> : null}
-      <p className="text-xs text-muted">
-        Le taux de faux positifs n'est calculé que sur les correspondances déjà décidées : c'est une mesure de précision, pas de rappel.
-      </p>
     </div>
   );
 }

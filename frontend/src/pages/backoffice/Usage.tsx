@@ -91,7 +91,7 @@ export function Usage() {
       {data ? (
         <div className="grid gap-4">
           {data.truncated ? <p className="text-sm text-expired">Seules les {data.organizations.length} premières organisations (par nom) sont affichées.</p> : null}
-          <Section title="Ce mois-ci" description="Pages lues et invitations du jour ; les autres lignes sont l'état actuel. Orange à partir de 80 % de la limite, rouge quand elle est atteinte.">
+          <Section title="Ce mois-ci" info="Pages lues et invitations du jour ; les autres lignes sont l'état actuel. Orange à partir de 80 % de la limite, rouge quand elle est atteinte.">
             <Table
               head={["Organisation", ...(data.organizations[0]?.items.map((item) => item.label) ?? []), ""]}
               align={alignOf(data.organizations[0]?.items.length ?? 0)}

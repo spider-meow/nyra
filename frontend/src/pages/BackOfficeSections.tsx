@@ -29,9 +29,9 @@ export function BackOfficeSkeleton() {
     <div aria-busy="true" aria-hidden>
       <Skeleton className="h-20" />
       <div className="mt-4 grid gap-4 md:grid-cols-4">{[0, 1, 2, 3].map((key) => <Stat key={key} value={<Bar width="4rem" />} label={<Bar />} hint={<Bar width="50%" />} />)}</div>
-      <SectionSkeleton className="mt-4" title="Lectures, toutes marques" described height={185} chart />
+      <SectionSkeleton className="mt-4" title="Lectures, toutes marques" height={185} chart />
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <SectionSkeleton title="Où passe le temps" described height={200} />
+        <SectionSkeleton title="Où passe le temps" height={200} />
         <SectionSkeleton title="Tâches sur 30 jours" height={200} />
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
@@ -106,7 +106,7 @@ export function BrandsSection(props: { brands: PlatformInsights["brands"]; total
   const [shown, setShown] = useState(BRANDS_PAGE);
   const loaded = props.brands.length;
   return (
-    <Section className="mt-6" title="Marques" description="Stockage, lectures sur 90 jours, qualité du matching, échecs sur 30 jours.">
+    <Section className="mt-6" title="Marques">
       <Table
         head={["Marque", "Sites", "Images", "Poids moy.", "Visuels", "Expirés", "Stockage", "Lectures", "Dernière", "Durée moy.", "Pages/min", "CLIP img/s", "Corresp.", "Taux FP", "Échecs 30 j", ""]}
         rows={props.brands.slice(0, shown).map((org) => [
@@ -144,7 +144,6 @@ export function BrandsSection(props: { brands: PlatformInsights["brands"]; total
           {loaded > shown ? <Button size="sm" onClick={() => setShown(shown + BRANDS_PAGE)}>Voir plus</Button> : null}
         </div>
       ) : null}
-      <p className="mt-3 text-xs text-muted">« Détail » ouvre la page Statistiques de la marque si votre compte en est administrateur.</p>
     </Section>
   );
 }

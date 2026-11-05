@@ -35,7 +35,7 @@ function AddPerson() {
   }
 
   return (
-    <Section title="Ajouter une personne" description="À n'importe quelle organisation. Sans compte, elle est invitée par e-mail ; vous pouvez aussi vous ajouter vous-même pour ouvrir l'espace d'un client.">
+    <Section title="Ajouter une personne" info="À n'importe quelle organisation. Sans compte, elle est invitée par e-mail ; vous pouvez aussi vous ajouter vous-même pour ouvrir l'espace d'un client.">
       <form className="flex flex-wrap items-end gap-3" onSubmit={submit}>
         <div className="min-w-56 flex-1">
           <FieldLabel htmlFor="person-email">E-mail</FieldLabel>
@@ -117,7 +117,7 @@ function OrgAdmins(props: { users: StaffUser[] | undefined; loading: boolean; er
   if (props.loading) return <ListSkeleton rows={4} />;
   if (props.error) return <EmptyState title="Impossible de charger les administrateurs" body={errorMessage(props.error)} />;
   return (
-    <Section title={`${rows.length} ${rows.length > 1 ? "administrateurs" : "administrateur"} d'organisation`} description="Contrôle périodique : chaque personne doit être connue de l'organisation et toujours y travailler. « Retirer » est dans la liste des comptes ci-dessous. La case « E-mail mensuel » autorise ou bloque le résumé mensuel pour cette personne.">
+    <Section title={`${rows.length} ${rows.length > 1 ? "administrateurs" : "administrateur"} d'organisation`} info="Contrôle périodique : chaque personne doit être connue de l'organisation et toujours y travailler. « Retirer » est dans la liste des comptes ci-dessous. La case « E-mail mensuel » autorise ou bloque le résumé mensuel pour cette personne.">
       {rows.length === 0 ? <EmptyState title="Aucun administrateur d'organisation" body="Chaque organisation devrait en avoir au moins un." /> : null}
       <div className="overflow-x-auto">
         <table className="w-full min-w-[680px] text-sm">

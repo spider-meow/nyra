@@ -1,5 +1,5 @@
 import { ShareBar } from "../components/charts";
-import { CompareFacts, Facts, MatchingTable, Section, SectionSkeleton } from "../components/insights";
+import { CompareFacts, FALSE_POSITIVE_INFO, Facts, MatchingTable, Section, SectionSkeleton } from "../components/insights";
 import { Bar, PageHeader, Stat } from "../components/ui";
 import { bytes, duration, formatDateTime, num, percent } from "../lib/format";
 import type { OrgInsights } from "../types";
@@ -15,15 +15,15 @@ export function StatisticsSkeleton() {
       <PageHeader title="Statistiques" />
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">{stats("a")}</div>
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">{stats("b")}</div>
-      <SectionSkeleton className="mt-6" title="Historique des lectures" described height={185} chart />
+      <SectionSkeleton className="mt-6" title="Historique des lectures" height={185} chart />
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <SectionSkeleton title="Où passe le temps" described height={250} />
+        <SectionSkeleton title="Où passe le temps" height={250} />
         <SectionSkeleton title="Dernière lecture en détail" described height={250} />
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         <SectionSkeleton title="Formats des images" described height={250} />
-        <SectionSkeleton title="Anatomie des images" described height={250} />
-        <SectionSkeleton title="Réponses HTTP des pages" described height={250} />
+        <SectionSkeleton title="Anatomie des images" height={250} />
+        <SectionSkeleton title="Réponses HTTP des pages" height={250} />
       </div>
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <SectionSkeleton title="Correspondances et décisions" height={320} />
@@ -32,8 +32,8 @@ export function StatisticsSkeleton() {
           <SectionSkeleton title="Bibliothèque" height={216} />
         </div>
       </div>
-      <SectionSkeleton className="mt-4" title="Tâches" described height={70} />
-      <SectionSkeleton className="mt-4" title="Toutes les lectures" described height={350} />
+      <SectionSkeleton className="mt-4" title="Tâches" height={70} />
+      <SectionSkeleton className="mt-4" title="Toutes les lectures" height={350} />
     </div>
   );
 }
@@ -116,7 +116,7 @@ export function AnatomySection(props: { site: OrgInsights["site"] }) {
   const { site } = props;
   const dedupRatio = site.image_urls ? 1 - site.distinct_files / site.image_urls : null;
   return (
-    <Section title="Anatomie des images" description="Fichiers distincts du site">
+    <Section title="Anatomie des images">
       <Facts
         rows={[
           ["Dimensions moyennes", site.avg_width ? `${num(site.avg_width)} × ${num(site.avg_height)} px` : "—"],
@@ -155,7 +155,7 @@ function LibrarySection(props: { library: OrgInsights["library"] }) {
 export function DecisionsAndLibrary(props: { matching: OrgInsights["matching"]; compare: OrgInsights["compare"]; library: OrgInsights["library"] }) {
   return (
     <div className="mt-4 grid gap-4 lg:grid-cols-2">
-      <Section title="Correspondances et décisions">
+      <Section title="Correspondances et décisions" info={FALSE_POSITIVE_INFO}>
         <MatchingTable matching={props.matching} />
       </Section>
       <div className="grid min-w-0 content-start gap-4">

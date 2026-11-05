@@ -46,12 +46,12 @@ function StatisticsContent() {
 
       <StatisticsStats insights={insights.data} />
 
-      <Section className="mt-6" title="Historique des lectures" description="Survolez une barre pour le détail. Une mesure à la fois." aside={<MetricTabs value={metric} onChange={setMetric} />}>
+      <Section className="mt-6" title="Historique des lectures" aside={<MetricTabs value={metric} onChange={setMetric} />}>
         <HistoryChart runs={history} metric={metric} />
       </Section>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Section title="Où passe le temps" description={`Cumul sur les ${num(summary.finished)} dernière(s) lecture(s). Les pages sont lues en parallèle : le cumul dépasse la durée réelle.`}>
+        <Section title="Où passe le temps" info={`Cumul sur les ${num(summary.finished)} dernière(s) lecture(s). Les pages sont lues en parallèle : le cumul dépasse la durée réelle.`}>
           <PhasesChart phases={summary.phases_seconds} />
         </Section>
         <LastCrawlSection last={last} />
@@ -60,18 +60,18 @@ function StatisticsContent() {
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
         <FormatsSection formats={formats} />
         <AnatomySection site={site} />
-        <Section title="Réponses HTTP des pages" description="Cumul des lectures récentes">
+        <Section title="Réponses HTTP des pages">
           <CountList counts={summary.http_statuses} label={httpLabel} />
         </Section>
       </div>
 
       <DecisionsAndLibrary matching={matching} compare={compare} library={library} />
 
-      <Section className="mt-4" title="Tâches" description="Toutes les tâches de l'organisation depuis le début.">
+      <Section className="mt-4" title="Tâches">
         <JobsTable jobs={jobs} />
       </Section>
 
-      <Section className="mt-4" title="Toutes les lectures" description="Les 30 dernières, la plus récente en haut. Le tableau reprend les valeurs du graphique.">
+      <Section className="mt-4" title="Toutes les lectures">
         <Table head={crawlRunHead} rows={crawlRunRows(history)} empty="Pas encore de lecture." />
       </Section>
     </Refreshing>
