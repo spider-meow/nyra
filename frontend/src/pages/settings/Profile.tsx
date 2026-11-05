@@ -38,7 +38,7 @@ function LogoRow() {
   };
 
   return (
-    <SettingsRow label="Logo" hint="Affiché en haut de la barre latérale. PNG, JPEG ou WebP, de préférence carré.">
+    <SettingsRow label="Logo" hint="PNG, JPEG ou WebP, de préférence carré.">
       <input ref={file} type="file" accept="image/png,image/jpeg,image/webp" hidden aria-label="Choisir un logo" onChange={pick} />
       {admin ? (
         <>

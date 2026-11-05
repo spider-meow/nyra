@@ -37,7 +37,7 @@ export function Schedule() {
           disabled={locked}
           onChange={(enabled) => save.mutate(enabled ? { enabled, day_of_month: data.day_of_month } : { enabled })}
           label="Lire les sites de cette marque deux fois par mois"
-          hint="Nyra relit les sites de la marque deux fois par mois, tôt le matin (entre le 1er et le 3, puis entre le 13 et le 16). Une fois par mois, après la seconde lecture, les administrateurs reçoivent un e-mail de résumé : nouveaux visuels à traiter et visuels qui expirent dans 30 et 90 jours."
+          hint="Deux lectures par mois, tôt le matin. Les administrateurs reçoivent un résumé par e-mail chaque mois."
         />
         {admin ? null : <p className="text-[13px] text-muted">Seuls les administrateurs peuvent modifier ce réglage.</p>}
         {save.error ? <p role="alert" className="text-sm text-terracotta">{errorMessage(save.error)}</p> : null}

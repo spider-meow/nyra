@@ -61,19 +61,23 @@ Relevé d'après le code le 5 novembre 2026 ; la colonne « Fait » est remplie 
 | Back-office | `backoffice/Organizations.tsx` | « Un client, avec une première marque du même nom (facturée comme toute marque)… » | Infobulle (mention de facturation : on ne la supprime pas) |
 | Statistiques, back-office | `components/insights.tsx` | Note sous le tableau « Le taux de faux positifs n'est calculé que sur les correspondances déjà décidées… » | Infobulle de la carte « Correspondances » |
 
-### Réglages et connexion (PR D)
+### Réglages et connexion (PR D, fait)
 
 Les descriptions de `SettingsBlock` sont déjà des infobulles : rien à faire. Restent les `hint` des lignes, un par un.
 
 | Écran | Fichier | Texte | Décision |
 |---|---|---|---|
-| Réglages | `settings/Profile.tsx` | « Affiché en haut de la barre latérale. PNG, JPEG ou WebP… » | Garder, raccourci (format attendu) |
+| Réglages | `settings/Profile.tsx` | « Affiché en haut de la barre latérale. PNG, JPEG ou WebP, de préférence carré. » | Raccourci : « PNG, JPEG ou WebP, de préférence carré. » |
 | Réglages | `settings/Profile.tsx` | « Le nom change aussi l'adresse de la marque. » | Garder (conséquence) |
-| Réglages | `settings/Logos.tsx`, `settings/Packshots.tsx` | Aides des cases (« Les images reconnues comme logos ne sont plus proposées… ») | Raccourcir à la conséquence |
-| Réglages | `settings/Schedule.tsx` | Aide de la case (deux phrases sur les dates et l'e-mail mensuel) | Raccourcir |
-| Réglages | `settings/Reading.tsx`, `settings/Detection.tsx` | Aides de champs et de cases | Une par une : conséquence gardée, description retirée |
-| Réglages | `settings/Indexation.tsx` | « Elle peut prendre quelques minutes, selon le nombre de visuels. » | Retirer |
+| Réglages | `settings/Logos.tsx` | « Les images reconnues comme logos ne sont plus proposées… » | Garder (c'est la conséquence de la case) |
+| Réglages | `settings/Packshots.tsx` | « Ils quittent « À qualifier » mais restent dans « Toutes »… rien n'est masqué ni ignoré. » | Raccourci à la conséquence |
+| Réglages | `settings/Schedule.tsx` | Aide de la case (deux phrases sur les dates et l'e-mail mensuel) | Raccourci : deux lectures par mois, résumé par e-mail chaque mois |
+| Réglages | `settings/Detection.tsx` | « Recommandé. » ; aide de « comparer une seule fois » ; aide des redirections | Raccourcis ; les cas de redirection qui ne concluent rien passent dans l'infobulle du bloc |
+| Réglages | `settings/Detection.tsx` | Libellé « Délai par défaut, en jours » + aide | Libellé corrigé : « Alerter avant l'expiration, en jours », aide retirée |
+| Réglages | `settings/Reading.tsx` | Aide de « Passer les bandeaux cookies et les contrôles d'âge » | Retirer (le libellé le dit) ; l'aide de robots.txt (avertissement) reste |
+| Réglages | `settings/Indexation.tsx` | « Elle peut prendre quelques minutes, selon le nombre de visuels. » | Retirer (l'état « en cours » reste) |
 | Réglages | `settings/DangerZone.tsx` | « Sa bibliothèque, ses adresses… sont effacés. Impossible à annuler. » | Garder (conséquence) |
+| Réglages | `settings/Account.tsx`, `Usage.tsx`, `Reading.tsx` (unités) | Rôle, lien de réinitialisation, valeurs d'usage, « Par lecture. », « Les images plus petites… sont ignorées. » | Garder (valeurs et conséquences) |
 | Connexion | `Access.tsx` | « Chaque marque de {org} a sa bibliothèque et ses adresses… » (Première marque) | Retirer |
 
 ## Découpage
