@@ -41,7 +41,7 @@ Relevé d'après le code le 5 novembre 2026 ; la colonne « Fait » est remplie 
 | Sites et lectures | `scans/RunCard.tsx` | Aide de la case « sans relire les pages connues » | Raccourcir |
 | Sites et lectures | `scans/SitesCard.tsx` | Note « Démarre dès qu'une place se libère sur le serveur. » sous une adresse en attente (le badge dit déjà « En attente ») | Retirer |
 
-### Statistiques et back-office (PR C)
+### Statistiques et back-office (PR C, fait)
 
 `Section.description` devient une infobulle `ⓘ` (prop `info`) ; les descriptions qui ne sont que des valeurs restent des valeurs.
 
@@ -57,8 +57,9 @@ Relevé d'après le code le 5 novembre 2026 ; la colonne « Fait » est remplie 
 | Back-office | `backoffice/ServerHistory.tsx` | « Un relevé par minute et par conteneur… Les lignes pointillées sont les limites… » | Infobulle |
 | Back-office | `backoffice/Usage.tsx` | « Pages lues et invitations du jour… Orange à partir de 80 %… » | Infobulle |
 | Back-office | `backoffice/Usage.tsx` | « Laissez vide pour garder la limite par défaut… » | Garder (sert à agir) |
-| Back-office | `backoffice/Accounts.tsx` | « À n'importe quelle organisation… », « Contrôle périodique : chaque personne doit être connue… » | Retirer |
-| Back-office | `backoffice/Organizations.tsx` | « Un client, avec une première marque du même nom… » | Retirer |
+| Back-office | `backoffice/Accounts.tsx` | « À n'importe quelle organisation… », « Contrôle périodique : chaque personne doit être connue… » | Infobulle (elles disent ce que fait l'action) |
+| Back-office | `backoffice/Organizations.tsx` | « Un client, avec une première marque du même nom (facturée comme toute marque)… » | Infobulle (mention de facturation : on ne la supprime pas) |
+| Statistiques, back-office | `components/insights.tsx` | Note sous le tableau « Le taux de faux positifs n'est calculé que sur les correspondances déjà décidées… » | Infobulle de la carte « Correspondances » |
 
 ### Réglages et connexion (PR D)
 

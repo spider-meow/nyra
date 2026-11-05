@@ -30,7 +30,7 @@ function NewOrganization() {
   }
 
   return (
-    <Section title="Nouvelle organisation" description="Un client, avec une première marque du même nom (facturée comme toute marque) et son premier administrateur.">
+    <Section title="Nouvelle organisation" info="Un client, avec une première marque du même nom (facturée comme toute marque) et son premier administrateur.">
       <form className="flex flex-wrap items-end gap-3" onSubmit={submit}>
         <div className="min-w-48 flex-1">
           <FieldLabel htmlFor="org-name">Nom du client</FieldLabel>

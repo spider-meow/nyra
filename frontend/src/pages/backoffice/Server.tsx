@@ -91,7 +91,7 @@ export function Server() {
       {services.length ? (
         <>
           <HostStats host={services[0].reading.host} />
-          <Section title="Conteneurs" description="Mis à jour toutes les 5 s. Un worker publie ses chiffres toutes les 15 s, même pendant une lecture.">
+          <Section title="Conteneurs" info="Mis à jour toutes les 5 s. Un worker publie ses chiffres toutes les 15 s, même pendant une lecture.">
             <Table head={["Service", "État", "CPU", "Mémoire"]} align={["left", "left", "left", "left"]} rows={services.map(serviceRow)} />
           </Section>
           <HistorySection />
