@@ -1,5 +1,6 @@
 """Where a visual is still online, page by page: the last read of each site, the pages read again, the links stamped."""
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from nyra.cloud import db as cloud_db
@@ -299,7 +300,7 @@ def test_a_redirect_never_concludes_on_a_suspect_read_or_a_page_not_read_again(c
         assert set(states().values()) == {"unknown"}
 
 
-def test_a_visual_whose_pages_are_gone_or_redirected_clearly_is_replaced_and_an_ambiguous_redirect_says_so(cloud_database_url, cloud_org, cloud_brand):
+def test_a_redirected_page_never_keeps_a_visual_from_being_replaced_whatever_the_rule_and_the_kind(cloud_database_url, cloud_org, cloud_brand):
     with cloud_db.connect(cloud_database_url) as conn:
         site, _ = _setup(conn, cloud_org, cloud_brand)
         clear = _visual(conn, cloud_org, cloud_brand, site, "clear", decision="retenu", pages=[("/removed", False, True)])
@@ -309,9 +310,9 @@ def test_a_visual_whose_pages_are_gone_or_redirected_clearly_is_replaced_and_an_
             _redirected(conn, cloud_org, site, image, f"/{'clear' if ref == clear else 'ambiguous'}/old", kind, seen=False)
         def replaced(conclude):
             return {item["row"]["filename"]: item["replaced"] for item in presence.visuals(presence.by_visual(conn, cloud_brand, conclude=conclude))}
-        assert replaced(False) == {"clear": False, "ambiguous": False}  # before: the redirected page blocks both for ever
-        assert replaced(True) == {"clear": True, "ambiguous": False}  # the clear one is replaced; the ambiguous one still waits, and says why
-        assert presence.replaced_references(conn, cloud_brand, conclude=True) == frozenset({clear})
+        assert replaced(False) == {"clear": True, "ambiguous": True}  # AXE-835: a page that redirects cannot be read again to settle, so it does not wait
+        assert replaced(True) == {"clear": True, "ambiguous": True}
+        assert presence.replaced_references(conn, cloud_brand, conclude=True) == frozenset({clear, ambiguous})
 
 
 def test_the_rule_is_an_organization_setting_that_starts_off():
@@ -343,7 +344,7 @@ def test_a_person_validates_a_redirect_to_the_home_page_by_marking_it_replaced_a
     assert on == {"home": "gone", "home-unmarked": "unknown", "home-waiting": "unknown", "home-on-target": "still", "temporary": "unknown"}
 
 
-def test_the_list_of_visuals_says_which_pages_were_sent_elsewhere_and_a_validated_visual_is_replaced(cloud_database_url, cloud_org, cloud_brand):
+def test_the_list_of_visuals_says_which_pages_were_sent_elsewhere_and_does_not_count_them(cloud_database_url, cloud_org, cloud_brand):
     with cloud_db.connect(cloud_database_url) as conn:
         site, _ = _setup(conn, cloud_org, cloud_brand)
         ref = _visual(conn, cloud_org, cloud_brand, site, "v", decision="retenu", pages=[("/removed", False, True)])
@@ -351,9 +352,25 @@ def test_the_list_of_visuals_says_which_pages_were_sent_elsewhere_and_a_validate
         _redirected(conn, cloud_org, site, image, "/v/old", "home", seen=False)
         _redirected(conn, cloud_org, site, image, "/v/other", "temporary", seen=False)
         [waiting] = presence.visuals(presence.by_visual(conn, cloud_brand, conclude=True))
-        assert waiting["redirected"] == {"home": 1, "temporary": 1} and not waiting["replaced"]  # said, and not silently blocked
+        assert waiting["redirected"] == {"home": 1, "temporary": 1} and waiting["pages"] == 1 and waiting["unknown"] == 0 and waiting["replaced"]  # said, not counted, not blocking
         pages = presence.pages_showing(conn, cloud_brand, ref, ["https://a.test/v/old", "https://a.test/v/other"])
         presence.set_replaced(conn, cloud_org, ref, [pages["https://a.test/v/old"], pages["https://a.test/v/other"]], replaced=True, user_id=None)
         conn.execute("UPDATE page_replacements SET marked_at = %s", (READ - timedelta(days=1),))
         [after] = presence.visuals(presence.by_visual(conn, cloud_brand, conclude=True))
-    assert after["redirected"] == {"temporary": 1} and not after["replaced"]  # the validated page is gone; the temporary redirect still blocks
+    assert after["redirected"] == {"temporary": 1} and after["pages"] == 2 and after["replaced"]  # the validated page is read like any page; the temporary one stays apart
+
+
+def test_a_page_sent_elsewhere_is_not_counted_nor_waited_for_and_a_visual_with_only_such_pages_is_replaced():
+    """AXE-835, on plain rows (no database): `redirected` pages leave `unknown`, `pages` and `marked`; a redirect that was concluded (state still or gone) counts as any page."""
+    def row(ref, state, pages, kind=None, marked=False, unlinked=0):
+        return {"reference_id": ref, "state": state, "pages": pages, "redirect_kind": kind, "marked": marked, "unlinked": unlinked}
+    a, b, c, d = (uuid.uuid4() for _ in range(4))
+    items = {item["row"]["reference_id"]: item for item in presence.visuals([
+        row(a, "gone", 2), row(a, "unknown", 3, "temporary", marked=True), row(a, "unknown", 1, "home"),
+        row(b, "unknown", 1, "script"),
+        row(c, "still", 1, "clear"), row(c, "unknown", 1, "temporary"),
+        row(d, "gone", 1, unlinked=1), row(d, "unknown", 1, "barrier", unlinked=1)])}
+    assert (items[a]["pages"], items[a]["unknown"], items[a]["marked"], items[a]["redirected"], items[a]["replaced"]) == (2, 0, 0, {"temporary": 3, "home": 1}, True)
+    assert items[b]["pages"] == 0 and items[b]["replaced"]
+    assert (items[c]["pages"], items[c]["still"], items[c]["replaced"]) == (1, 1, False)  # a concluded redirect is a page; it still shows the visual
+    assert not items[d]["replaced"]  # a match with no known page still blocks

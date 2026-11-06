@@ -10,7 +10,7 @@ A page that answered with another page (a redirection) is unknown too, unless th
 redirection is `clear` (`crawl.redirect_kind`: permanent, same section, target read with success): the images of the target are attached to the
 page asked for, so it then reads like any page, "still" if the visual is on the target and "gone" if it is not. A page sent to the home page or a
 parent page (`home`, ambiguous) reads that way only once a person marked it replaced for the visual and it was read again after the mark. Any other kind
-stays unknown, and says why (`redirect_kind`).
+stays unknown, and says why (`redirect_kind`); in the list of visuals (`visuals`) such a page is counted apart and never keeps a visual from being replaced.
 Nothing is stored: the images and links are never deleted when they disappear from a site, so the state is worked out
 from the dates of the last read. A check of one page counts once a full read of its site has finished, and a later full read that does not read the page
 again sets it back to unknown. Every photo not set aside as a false positive counts, confirmed or not. Limits: an image
@@ -172,17 +172,21 @@ def by_visual(conn: psycopg.Connection, brand_id: uuid.UUID, *, conclude: bool =
 def visuals(rows: list[Row]) -> list[dict]:
     """One entry per visual from `by_visual`: its pages per state, and whether it is replaced: every page was read again
     and none shows it (a page not read again is never taken for gone, so a visual not measured yet, or with no page known, or with a
-    match no page is known for, is not replaced). `redirected`: the pages still unknown that answered with another page, by kind."""
+    match no page is known for, is not replaced). `redirected`: the pages that answered with another page and that nothing concluded, by kind
+    (AXE-835): reading them again cannot settle them, so they are not in `unknown` nor in `pages`, and they never keep a visual from being replaced."""
     found: dict[uuid.UUID, dict] = {}
     for row in rows:
         item = found.setdefault(row["reference_id"], {"row": row, **dict.fromkeys(STATES, 0), "marked": 0, "redirected": {}})
-        if row["state"]:
-            item[row["state"]] += row["pages"]
-            item["marked"] += row["pages"] if row["marked"] else 0
-            if row["state"] == "unknown" and row["redirect_kind"]:  # pages sent elsewhere that nothing concluded: said, never silent
-                item["redirected"][row["redirect_kind"]] = item["redirected"].get(row["redirect_kind"], 0) + row["pages"]
+        if not row["state"]:
+            continue
+        if row["state"] == "unknown" and row["redirect_kind"]:
+            item["redirected"][row["redirect_kind"]] = item["redirected"].get(row["redirect_kind"], 0) + row["pages"]
+            continue
+        item[row["state"]] += row["pages"]
+        item["marked"] += row["pages"] if row["marked"] else 0
     return [{"row": item["row"], **{state: item[state] for state in STATES}, "marked": item["marked"], "redirected": item["redirected"], "pages": sum(item[state] for state in STATES),
-             "replaced": sum(item[state] for state in STATES) > 0 and item["still"] == 0 and item["unknown"] == 0 and not item["row"]["unlinked"]} for item in found.values()]
+             "replaced": sum(item[state] for state in STATES) + sum(item["redirected"].values()) > 0 and item["still"] == 0 and item["unknown"] == 0 and not item["row"]["unlinked"]}
+            for item in found.values()]
 
 
 def replaced_references(conn: psycopg.Connection, brand_id: uuid.UUID, *, conclude: bool = False) -> frozenset:
