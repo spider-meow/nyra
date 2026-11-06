@@ -49,7 +49,7 @@ export function Visuals() {
             { value: "all", label: `Tous · ${all.length}` },
           ]}
         />
-        <InfoTip>Les visuels dont une correspondance a été confirmée dans « À traiter ». Les pages comptées sont celles de toutes ses photos non écartées. Un visuel est remplacé quand toutes ses pages ont été relues et qu'aucune ne le montre plus.</InfoTip>
+        <InfoTip>Les visuels dont une correspondance a été confirmée dans « À traiter ». Les pages comptées sont celles de toutes ses photos non écartées. Un visuel est remplacé quand toutes ses pages ont été relues et qu'aucune ne le montre plus. Une page qui redirige ailleurs n'est pas comptée.</InfoTip>
       </div>
       {shown.length ? (
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
@@ -75,13 +75,13 @@ function figures(item: VisualItem): [string, string] {
   return item.unknown === item.pages ? ["Pas encore mesuré", `à relire${marked}`] : ["0 page confirmée", `${item.unknown.toLocaleString("fr-FR")} à relire${marked}`];
 }
 
-/** The pages sent elsewhere that nothing concluded: said on the line, never a silent block. The home page or a parent page waits for a person once the rule is on. */
+/** The pages sent elsewhere that nothing concluded: said on the line, apart from the pages counted (they cannot be read again to settle, so they never keep a visual from being replaced). With the rule on, a person can still validate one sent to the home page or a parent page. */
 function redirectNote(item: VisualItem, concluded: boolean): string {
   const home = item.redirected?.home ?? 0;
   const other = Object.entries(item.redirected ?? {}).reduce((sum, [kind, count]) => sum + (kind === "home" ? 0 : count), 0);
   const parts = [
-    home ? `${plural(home, "page renvoyée vers l'accueil", "pages renvoyées vers l'accueil")} : ${concluded ? "à valider sur la page du visuel" : "rien n'est conclu"}` : "",
-    other ? `${plural(other, "page renvoyée ailleurs", "pages renvoyées ailleurs")} : rien n'est conclu` : "",
+    home ? `${plural(home, "page renvoyée vers l'accueil", "pages renvoyées vers l'accueil")} : hors décompte${concluded ? ", à valider sur la page du visuel" : ""}` : "",
+    other ? `${plural(other, "page renvoyée ailleurs", "pages renvoyées ailleurs")} : hors décompte` : "",
   ];
   return parts.filter(Boolean).join(" · ");
 }

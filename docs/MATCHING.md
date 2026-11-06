@@ -323,7 +323,7 @@ Adding a function with a threshold means adding a row here, with its switch and 
 
 Off by default (`report.conclude_redirected_pages`, the flag rule above). A page that answered with another page is recorded with where it ended and
 what kind of redirect it is (`crawl.redirect_kind`, stored in `pages.redirect_kind`). Without the setting such a page is always « pas relue »
-(unknown), whatever the kind, and it blocks its visual from ever being « remplacé ». With it, only `clear` concludes: a permanent redirect (every hop
+(unknown), whatever the kind (it is left out of the count of the list of visuals and no longer blocks « remplacé », see « Apart from the count »). With it, only `clear` concludes: a permanent redirect (every hop
 301 or 308), on the same host (`www.` ignored), to a page whose first path segment is the same (`/p/old` to `/p/new`, not `/en-us/x` to `/fr/x`) and
 that is as deep as the page asked for (a shallower target is the home page or a category: `home`), read with a 2xx status, not behind a consent wall,
 not on a login / age / country path (path and query), inside the address's path (AXE-635), whose images were all downloaded (else `incomplete`), and
@@ -344,6 +344,8 @@ can validate it: marking the page « Remplacée » for the visual (the existing 
 like any page, « retirée » when the visual is not on the target (« encore en ligne » when it is, which says the mark was wrong). The mark waits, as ever,
 until the page is read again; before that, and for every other kind (`temporary`, `script`, `other_section`, `other_site`, `barrier`, `error`,
 `incomplete`), nothing changes. « Visuels à remplacer » shows the pages sent elsewhere that remain unknown, by kind.
+
+*Apart from the count (AXE-835).* A page sent elsewhere that nothing concluded cannot be settled by reading it again, so in the list of visuals (`presence.visuals`) it is left out of `unknown`, `pages`, `marked` and the gauge, and said apart (`redirected`, by kind). It no longer keeps a visual from being « remplacé » (every page counted was read again and none shows it; a visual whose only pages are such redirects is replaced), whatever the setting and the kind, `home` included. Limit: the visual may still be on the target of such a redirect, unseen. The visual's own page (`counts`, `pages`) still lists these pages as « pas relues ».
 
 ## Packshots (AXE-527)
 
