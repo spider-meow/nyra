@@ -74,6 +74,16 @@ def test_the_stored_descriptions_match_the_prompts_and_a_product_scores_above_a_
     assert ((scores >= 0) & (scores <= 1)).all()
 
 
+def test_every_kind_of_product_the_team_said_was_missed_is_described():
+    """AXE-679: a gift box, crystal glasses and a case on white were missed (the descriptions only spoke of bottles). Each description of a product,
+    scored alone, passes the threshold, and none of the other descriptions does: a description added for a family that scores below the threshold would do nothing."""
+    text = packshots._text()
+    scores = packshots.product_probability(text)
+    products = len(packshots.PRODUCT_PROMPTS)
+    assert (scores[:products] >= packshots.PRODUCT_THRESHOLD).all(), scores[:products]
+    assert (scores[products:] < 0.5).all(), scores[products:]
+
+
 def test_the_columns_are_looked_for_once_and_nothing_is_read_before_the_migration(monkeypatch):
     """Without migration 20261030000044 every answer is "off" and no query touches a column that is not there."""
     monkeypatch.setattr(cloud_packshots, "has_columns", lambda conn: False)

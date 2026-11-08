@@ -25,6 +25,9 @@ PRODUCT_PROMPTS = (
     "a packshot of a bottle on a plain white background", "a studio product photo of a cognac bottle on a white background",
     "a product photograph isolated on a plain background", "a decanter and its gift box on a white background",
     "a single product centered on a neutral backdrop",
+    # AXE-679: the five above all describe a bottle; a gift box, a glass or a case on white scored 0.03 to 0.9 (46 of 61 missed packshots of one brand came back, `docs/MATCHING.md`).
+    "a gift box on a white background", "a pair of crystal glasses on a white background", "a set of wine glasses on a plain background",
+    "a luxury packaging box isolated on a white background", "a product case or cabinet on a white background",
 )
 OTHER_PROMPTS = (
     "a lifestyle photograph", "a photo of a person", "a landscape photograph", "an interior room", "a bottle on a bar with glasses and people",
@@ -34,8 +37,9 @@ OTHER_PROMPTS = (
 LOGIT_SCALE = 100.0  # CLIP's own temperature
 # Both thresholds are strict on purpose: calling a rights-managed photograph a packshot is the costly mistake, missing a packshot costs one more image to look at.
 # ponytail: picked on 96 random images of ONE brand's site, labelled by one person (13 packshots: precision 13 of 13, recall 13 of 13, the
-# lower bound of the precision is about 0.77), and the uniformity threshold was chosen looking at those same images. To measure on another brand
-# and on more images before relying on it (`docs/MATCHING.md`).
+# lower bound of the precision is about 0.77), and the uniformity threshold was chosen looking at those same images. The team's answers on that
+# brand (AXE-679, `docs/MATCHING.md`) showed the misses came from the descriptions, not the thresholds; the false positives (an artwork on paper, a sketch, a
+# dark scene) have no measure that separates them without losing packshots. To measure on more brands before relying on it.
 PRODUCT_THRESHOLD = 0.9
 UNIFORM_THRESHOLD = 0.9
 _FILE = Path(__file__).parent / "resources" / "packshot_text.npz"
