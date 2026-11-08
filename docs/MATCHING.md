@@ -307,7 +307,7 @@ precision and recall have been measured on real images.** Current state (20 Oct 
 | Keypoint check of CLIP candidates | 20 inliers, 5 % / 20 % | `match.verify_clip_matches` (organization) | **on**; effectively off when OpenCV is missing (the signature then reads "unverified") | 1,057 images of one brand, copies made by us |
 | Labels (types, contents) | 0.82 (`CONTENT_THRESHOLD`) | `NYRA_LABELS=1` (API) and `VITE_LABELS=1` (interface), build-time | **off**: the routes are not registered, the screens not built | no |
 | Logos set aside | 0.95 (`logos.THRESHOLD`) | per brand, `brands.set_aside_logos` (Réglages > Général, administrators) | **off** | 1,716 images of one brand; precision only, recall not counted |
-| Packshots (`nyra/packshots.py`) | CLIP product probability >= 0.9 AND border of the image one flat colour >= 0.9 | `brands.detect_packshots` (per brand, Réglages > Général > Packshots, administrators) | **off** | **partly**: 96 random images of one brand's site, one person labelling (precision 13 of 13, recall 13 of 13; lower bound of the precision about 0.77) |
+| Packshots (`nyra/packshots.py`) | CLIP product probability >= 0.9 AND border of the image one flat colour >= 0.9 | `brands.detect_packshots` (per brand, Réglages > Général > Packshots, administrators) | **off** | **partly**: 96 random images of one brand's site, one person labelling (precision 13 of 13, recall 13 of 13; lower bound of the precision about 0.77); then the team's 67 answers on that brand, all of them errors (AXE-679, below): 46 of 61 missed packshots came back with five more product descriptions, 6 false positives remain |
 | Twin references compared once (`reference_twins`) | both hashes within 2 bits and CLIP ≥ 0.985, groups of 40 at most | `match.group_reference_twins` (organization, Réglages > Détection) | **off** | **no** (chosen stricter than every match threshold; to measure on a library before turning it on) |
 | Redirected pages concluded (`crawl.redirect_kind`, `presence`) | permanent (301/308) redirect, same host and first path segment, target 2xx and not a consent wall, not a login / age / country path | `report.conclude_redirected_pages` (organization, Réglages > Détection) | **off** | **no** (written from the issue, no real address replayed yet: to measure before turning it on) |
 | Grouping of crops (`variants`) | CLIP ≥ 0.75 for 5 neighbours, then ≥ 20 inliers and ≥ 20 % of both images | none | **ON for every brand, after every comparison** | **no** (the thresholds were measured for brand-to-site matches, not for site-to-site grouping) |
@@ -355,8 +355,9 @@ still reads them** (the library's own visuals are often packshots: leaving them 
 hidden or ignored; turning the setting off puts everything back.
 
 *The rule* (`nyra/packshots.py`): `product_probability >= 0.9` AND `edge_uniformity >= 0.9`.
-- `product_probability`: CLIP zero-shot on the stored embedding (the share of the softmax on five "product on a plain background" descriptions against fourteen others,
-  `resources/packshot_text.npz`, regenerate with `python -m nyra.packshots`). **Alone it is not enough**: it gives about 1.0 to every photograph with a bottle in it,
+- `product_probability`: CLIP zero-shot on the stored embedding (the share of the softmax on ten "product on a plain background" descriptions (five of a bottle, since AXE-679
+  five of a gift box, crystal glasses and a case) against fourteen others, `resources/packshot_text.npz`, regenerate with `python -m nyra.packshots`; **changing a description
+  makes the stored scores out of date**: a migration puts `packshot_score` back to null, see `DEPLOYMENT.md`). **Alone it is not enough**: it gives about 1.0 to every photograph with a bottle in it,
   advertising visuals and lifestyle scenes included.
 - `edge_uniformity`: the share of the pixels of a thin border (6 px on the picture shrunk to 128 px) within 14 grey levels of the border's median colour. Measured on
   the pixels because CLIP does not see "plain background" (descriptions about the background alone: precision 0.73 at recall 0.62).
@@ -372,8 +373,8 @@ hidden or ignored; turning the setting off puts everything back.
 
 About 11 % of that site's images are detected (126 of 1,113). *Not measured / limits:* one site, one person labelling, 13 positives (the lower bound of the precision is
 about 0.77, not 1.00), and the border threshold was chosen looking at the same images. Packshots on a studio gradient (a range of several bottles) or on a dark textured
-backdrop are missed; an illustration on a flat colour may be taken for one. Measure on another brand, and with more images, before relying on it: the Packshots tab is
-the place to look (the thresholds are `PRODUCT_THRESHOLD` and `UNIFORM_THRESHOLD`).
+backdrop are missed; an illustration on a flat colour may be taken for one (the team's answers, below, say how often). Measure on another brand, and with more images, before relying on it: the Packshots tab is
+the place to look (the thresholds are `PRODUCT_THRESHOLD` and `UNIFORM_THRESHOLD`). The table above is the measure of 30 October with the first five descriptions; the figures of the next section are about the ten.
 
 *Where the measures live* (migration `20261030000044`): `site_images.packshot_score` (the product probability, worked out from the stored embedding) and `bg_uniform`
 (the border, measured on the pixels when a crawl reads the image). Images read before the setting was turned on are measured by the next `index` job, which reads their
@@ -412,6 +413,43 @@ with its stored measures against the thresholds in force, so a threshold that wa
 What to do with it: look at the false positives (`product` and `border` both above the thresholds, yet "not a packshot": which of the two lets them through, and by how much) and the
 false negatives (which measure falls short). Try other values on those same cases before proposing a new threshold, say how many images the change rests on, and change
 `PRODUCT_THRESHOLD` / `UNIFORM_THRESHOLD` of `nyra/packshots.py` only when the figures support it; update the measure table above with the new figures and their limits.
+
+### What the team's answers said, and what was changed (AXE-679, 8 November 2026)
+
+*The answers read:* one brand (Louis XIII), 68 answers, 1 without a measure, so **67 images judged: 61 missed packshots (false negatives) and 6 false positives, nobody
+said "right" about a detected image**. So precision (0 of 6) and recall (0 of 61) printed by the report are 0 by construction: they say nothing about the detector, only list the cases it got
+wrong, chosen by the person who tags. (The issue counted 70 answers, 15 and 55, on 1 November; the report counts one answer per file, the latest: not looked into further.)
+
+*The 61 missed packshots* are all real packshots on white, **none of them a bottle alone**: closed gift boxes (« Art de la table »), coffrets and cabinets, sets of crystal glasses,
+a spear, a fan display. **The product measure is what misses them**: 56 of 61 pass the border (>= 0.9) and fail the product probability (0.03 to 0.90), 3 fail the border alone
+(0.895 to 0.897, product 1.0: a bottle with its box, a fan display), 2 fail both. The five descriptions of `PRODUCT_PROMPTS` all spoke of a bottle.
+
+*The 6 false positives* are four distinct images, three families: an artwork of a bottle in double exposure on cream paper (three files; product 1.00, border 1.00), a pencil sketch on paper
+(0.96, 0.99) and two dark scenes (a decanter on a backdrop of wood rings, 0.99 and border 0.93; a bottle, glasses and a coffret on black, 1.00 and 0.96). **Both measures let them through**: the
+border is one flat colour (paper, black) and CLIP says product.
+
+*Tried on the same 67 images, and on the whole brand (3,809 rows, 1,780 files) and on a second brand (Remy Martin, 3,339 rows, 1,402 files, no answers):*
+
+| Rule | Missed packshots found (of 61) | False positives still detected (of 6) | Louis XIII files detected | Remy Martin files detected |
+|---|---|---|---|---|
+| In force before (5 descriptions, 0.9 / 0.9) | 0 | 6 | 884 | 159 |
+| **+ 5 descriptions of a gift box, glasses, a case (adopted)** | **46** | 6 | **945** | **163** (none lost) |
+| + a description of a sketch and of an artwork among the "others" | 46 | 5 | 944 | 163 |
+| border threshold 0.85 (with the five) | 50 | 6 | 961 | not measured |
+| border threshold 0.95 | 43 | 5 | 886 | not measured |
+| border threshold 0.97 | 40 | 4 | 849 | not measured |
+
+*Decision.* **The five descriptions are adopted, no threshold moves.** They give back 46 of the 61 images the team named, and add 15 other files on that brand and 4 on Remy Martin; the 19 were
+looked at by the author of the change, and all are products on a plain background (boxes, a case, a cabinet, glasses, a pair of leather tags). **The sketch and artwork descriptions are not adopted**: they remove one false
+positive, one image, which is not enough to change a rule. **The thresholds stay**: raising the border one to remove the two dark scenes costs 6 real packshots for 2 false positives (0.97: 40 found instead of 46; 4 false positives still);
+lowering it to 0.85 finds 4 more of the 61 but adds 16 files nobody looked at, and does nothing for the false positives. **What is left** is 15 missed packshots (product 0.24 to 0.91: mostly boxes and a close-up of a glass; or border 0.86 to 0.92: a bottle with its box, a fan display, a coffret) and the 6 false positives: no measure of the two
+tells the artwork on paper or the dark scene from a plain packshot. A person's answer on the image (AXE-680) is how they are put right.
+
+*Limits, to read before the figures.* One brand, one person tagging, errors only. **The descriptions were written after looking at these same 67 images**, so the 46 are measured on the cases that guided them, not on fresh ones; what is
+fresh is the 19 other files (one brand, one second brand), judged by one reader, not by the team, with no count of what was missed outside the 67. The count of distinct files is lower than the count
+of answers (an artwork three times, one box in eight views): 67 answers are far fewer than 67 different products (not counted). The comparison with the library does not read the packshots (`set_aside_ids` is the logos'), so no comparison signature
+changes and no pass has to be full; what changes is the product score stored on each site image, put back to null by migration `20261108000048` and worked out again from the stored embeddings (`DEPLOYMENT.md`).
+Test: `test_every_kind_of_product_the_team_said_was_missed_is_described` (each description alone passes the threshold, no "other" one does); the answers themselves are client data and are not in the repository, so no test replays the 67 images.
 
 ## Twin references
 
