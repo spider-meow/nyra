@@ -7,35 +7,28 @@
 {%- elif group.days_left == 0 -%}Expire aujourd'hui
 {%- else -%}Expire dans {{ group.days_left }} j{%- endif -%}
 {%- endmacro -%}
-{%- macro reference(group) -%}
-<article class="ref">
-  <header class="ref-head">
-    {% if thumbs.get(group.ref_thumb) %}<img class="thumb" src="{{ thumbs[group.ref_thumb] }}" alt="">{% else %}<div class="thumb empty"></div>{% endif %}
-    <div class="ref-meta">
-      <h3>{{ group.filename }}</h3>
-      <p>{{ badge(group.status) }} <span class="muted">{{ days(group) }}{% if group.expiry_date %} · {{ group.expiry_date }}{% endif %}</span></p>
-      {% if group.credit or group.notes %}<p class="muted small">{{ group.credit }}{% if group.credit and group.notes %} · {% endif %}{{ group.notes }}</p>{% endif %}
-    </div>
-    <p class="count">{{ group.hits|length }} occurrence{{ 's' if group.hits|length > 1 }}</p>
-  </header>
-  <table>
-    <thead><tr><th class="c-img">Image</th><th>Adresse de l'image et pages</th><th class="c-conf">Confiance</th><th class="c-dec">Décision</th></tr></thead>
-    <tbody>
-    {% for hit in group.hits %}
-      <tr>
-        <td class="c-img">{% if thumbs.get(hit.site_thumb) %}<img class="thumb sm" src="{{ thumbs[hit.site_thumb] }}" alt="">{% endif %}</td>
-        <td>
-          <a class="url" href="{{ hit.site_url }}">{{ hit.site_url }}</a>
-          {% for p in hit.pages[:6] %}<a class="page" href="{{ p }}">{{ p }}</a>{% endfor %}
-          {% if hit.pages|length > 6 %}<span class="muted small">et {{ hit.pages|length - 6 }} autre{{ 's' if hit.pages|length - 6 > 1 }} page{{ 's' if hit.pages|length - 6 > 1 }}</span>{% endif %}
-        </td>
-        <td class="c-conf">{{ confidence_labels.get(hit.confidence, hit.confidence) }}<span class="muted small"> · {{ (hit.score * 100)|round|int }} %</span></td>
-        <td class="c-dec">{{ decision_labels.get(hit.decision or '', '·') }}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
+{%- macro line(row) -%}
+{%- set group = row.group %}{% set hit = row.hit %}
+<article class="line a-{{ row.section }}">
+  <div class="pics">
+    {% if thumb_class.get(group.ref_thumb) %}<div class="thumb {{ thumb_class[group.ref_thumb] }}" role="img" aria-label="Visuel de la bibliothèque"></div>{% else %}<div class="thumb empty"></div>{% endif %}
+    {% if thumb_class.get(hit.site_thumb) %}<div class="thumb {{ thumb_class[hit.site_thumb] }}" role="img" aria-label="Image trouvée sur le site"></div>{% else %}<div class="thumb empty"></div>{% endif %}
+  </div>
+  <div class="body">
+    <h3>{{ group.filename }}</h3>
+    {% if row.page %}<a class="page" href="{{ row.page }}">{{ row.page }}</a>{% else %}<span class="muted small">Page non connue</span>{% endif %}
+    <p class="state">{{ badge(row.status) }} <span>{{ days(group) }}{% if group.expiry_date %} <span class="muted">· {{ group.expiry_date }}</span>{% endif %}</span></p>
+    <p class="muted small presence p-{{ row.presence }}">{{ presence_labels[row.presence] }}{% if row.read_on %} · lu le {{ row.read_on }}{% endif %}{% if row.reason %} · {{ row.reason }}{% endif %}
+      · {{ confidence_labels.get(hit.confidence, hit.confidence) }} {{ (hit.score * 100)|round|int }} %{% if hit.decision %} · {{ decision_labels.get(hit.decision, '') }}{% endif %}</p>
+    {% if group.credit or group.notes %}<p class="muted small">{{ group.credit }}{% if group.credit and group.notes %} · {% endif %}{{ group.notes }}</p>{% endif %}
+  </div>
+  <p class="todo t-{{ row.section }}"><span class="muted small">À faire</span>{{ row.action }}</p>
 </article>
+{%- endmacro -%}
+{%- macro block(name, title, empty, folded=false) -%}
+{%- set items = sections[name] %}
+{%- if folded %}{% if items %}<details class="fold"><summary><h2>{{ title }} <span class="n">{{ items|length }} page{{ 's' if items|length > 1 }}</span></h2></summary>{% for row in items %}{{ line(row) }}{% endfor %}</details>{% endif %}
+{%- else %}<section><h2>{{ title }} <span class="n">{{ items|length }} page{{ 's' if items|length > 1 }}</span></h2>{% for row in items %}{{ line(row) }}{% else %}<p class="empty-note">{{ empty }}</p>{% endfor %}</section>{% endif %}
 {%- endmacro -%}
 <!DOCTYPE html>
 <html lang="fr">
@@ -61,21 +54,27 @@
   .tile.alert strong { color: var(--expired); }
   h2 { font-size: 18px; margin: 36px 0 4px; }
   h2 + p { margin: 0 0 14px; }
-  .ref { border: 1px solid var(--line); border-radius: 12px; margin: 0 0 14px; overflow: hidden; break-inside: avoid; }
-  .ref-head { display: grid; grid-template-columns: 72px 1fr auto; gap: 14px; align-items: center; padding: 14px; background: var(--soft); }
-  .ref-head h3 { margin: 0 0 4px; font-size: 15px; word-break: break-all; }
-  .ref-head p { margin: 0; }
-  .count { font-size: 12px; color: var(--muted); white-space: nowrap; }
-  .thumb { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; background: #fff; }
+  .n { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .line { display: grid; grid-template-columns: 148px 1fr 150px; gap: 16px; align-items: start; padding: 14px; border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 10px; margin: 0 0 10px; break-inside: avoid; }
+  .line.a-remove { border-left-color: var(--expired); } .line.a-soon { border-left-color: var(--urgent); } .line.a-check { border-left-color: var(--soon); }
+  .pics { display: flex; gap: 8px; }
+  .body h3 { margin: 0 0 3px; font-size: 15px; word-break: break-all; }
+  .body p { margin: 4px 0 0; }
+  .state { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .todo { margin: 0; display: flex; flex-direction: column; gap: 2px; font-weight: 600; font-size: 14px; text-align: right; }
+  .t-remove { color: var(--expired); } .t-soon { color: var(--urgent); } .t-check { color: var(--soon); }
+  .p-still { color: var(--expired); } .p-gone { color: var(--ok); }
+  .thumb { background-size: cover; background-position: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; flex: none; width: 70px; height: 70px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); display: block; background: #fff; }
   .thumb.sm { width: 56px; height: 56px; }
   .thumb.empty { background: var(--line); }
+  .fold > summary { cursor: pointer; list-style: none; } .fold > summary h2 { display: inline-block; } .fold > summary h2::before { content: '▸ '; } .fold[open] > summary h2::before { content: '▾ '; }
+  .warn { border: 1px solid var(--soon); border-radius: 10px; padding: 10px 14px; margin: 16px 0 0; color: var(--soon); font-weight: 600; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-top: 1px solid var(--line); }
   th { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
-  .c-img { width: 84px; } .c-conf { width: 150px; } .c-dec { width: 110px; }
+  .c-img { width: 84px; }
   a { color: inherit; }
-  a.url { display: block; font-size: 12px; word-break: break-all; }
-  a.page { display: block; font-size: 12px; color: var(--muted); word-break: break-all; margin-top: 2px; }
+  a.page { display: block; font-size: 12px; color: var(--muted); word-break: break-all; }
   .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; border: 1px solid currentColor; }
   .s-expired { color: var(--expired); } .s-urgent { color: var(--urgent); } .s-soon { color: var(--soon); }
   .s-ok { color: var(--ok); } .s-unknown { color: var(--unknown); }
@@ -83,13 +82,14 @@
   .nf td { vertical-align: middle; }
   .empty-note { color: var(--muted); font-style: italic; padding: 8px 0; }
   footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--muted); }
-  @media (max-width: 720px) { body { padding: 20px 16px; } .tiles { grid-template-columns: repeat(2, 1fr); } .c-conf, .c-dec { width: auto; } }
+  @media (max-width: 720px) { body { padding: 20px 16px; } .tiles { grid-template-columns: repeat(2, 1fr); } .line { grid-template-columns: 1fr; } .todo { text-align: left; } }
   @media print {
     body { padding: 0; font-size: 12px; }
     @page { margin: 14mm; }
     a { text-decoration: none; }
-    .ref, .tile { break-inside: avoid; }
+    .line, .tile { break-inside: avoid; }
   }
+  {{ thumb_css }}
 </style>
 </head>
 <body>
@@ -112,31 +112,31 @@
   </div>
   <p class="muted small">{{ stats.get('reference_images', 0) }} références comparées à {{ stats.get('site_images', 0) }} images lues sur {{ stats.get('pages_crawled', 0) }} pages. Les occurrences marquées « faux positif » ne figurent pas dans ce rapport.</p>
 
-  <h2>Trouvés sur le site</h2>
-  <p class="muted">Correspondance confirmée ou probable, du plus urgent au moins urgent.</p>
-  {% for group in confirmed %}{{ reference(group) }}{% else %}<p class="empty-note">Aucun visuel trouvé dans cette fenêtre.</p>{% endfor %}
+  {% if suspect_sites %}<p class="warn">La dernière lecture de {{ suspect_sites|join(', ') }} semble incomplète : aucun visuel n'est marqué retiré.</p>{% endif %}
+  {{ block('remove', 'À retirer maintenant', "Rien d'expiré en ligne.") }}
+  {{ block('soon', 'Expirent bientôt', "Aucun visuel en ligne n'expire dans les 90 jours.") }}
+  {{ block('check', 'À vérifier', "Rien à vérifier.") }}
+  {{ block('done', 'Déjà retirés ou remplacés', '', true) }}
+  {{ block('other', 'Droits en règle ou sans date', '', true) }}
 
-  <h2>À vérifier</h2>
-  <p class="muted">Ressemblance plus faible : un contrôle visuel s'impose avant toute action.</p>
-  {% for group in to_verify %}{{ reference(group) }}{% else %}<p class="empty-note">Rien à vérifier.</p>{% endfor %}
-
-  <h2>Non trouvés</h2>
-  <p class="muted">« Pas encore comparée » signifie que la référence a été ajoutée après la dernière comparaison : ce n'est pas une preuve d'absence.</p>
-  {% if not_found %}
+  {% for done, title in ((true, 'Non trouvés : comparés, rien trouvé'), (false, 'Non trouvés : pas encore comparés')) %}
+  {% set items = not_found|selectattr('compared', 'equalto', done)|list %}
+  <h2>{{ title }} <span class="n">{{ items|length }}</span></h2>
+  {% if items %}
   <table class="nf">
-    <thead><tr><th class="c-img"></th><th>Référence</th><th>Échéance</th><th>Vérification</th></tr></thead>
+    <thead><tr><th class="c-img"></th><th>Référence</th><th>Échéance</th></tr></thead>
     <tbody>
-    {% for item in not_found %}
+    {% for item in items %}
       <tr>
-        <td class="c-img">{% if thumbs.get(item.ref_thumb) %}<img class="thumb sm" src="{{ thumbs[item.ref_thumb] }}" alt="">{% endif %}</td>
+        <td class="c-img">{% if thumb_class.get(item.ref_thumb) %}<div class="thumb sm {{ thumb_class[item.ref_thumb] }}"></div>{% endif %}</td>
         <td>{{ item.filename }}{% if item.credit %}<div class="muted small">{{ item.credit }}</div>{% endif %}</td>
         <td>{{ badge(item.status) }} <span class="muted small">{{ days(item) }}</span></td>
-        <td>{% if item.compared %}Comparée, rien trouvé{% else %}<span class="muted">Pas encore comparée</span>{% endif %}</td>
       </tr>
     {% endfor %}
     </tbody>
   </table>
-  {% else %}<p class="empty-note">Toutes les références de cette fenêtre ont au moins une occurrence.</p>{% endif %}
+  {% else %}<p class="empty-note">{{ 'Toutes les références ont au moins une occurrence ou ne sont pas encore comparées.' if done else 'Toutes les références ont été comparées.' }}</p>{% endif %}
+  {% endfor %}
 
   <footer>Réglages de détection : {{ settings }}. Sites lus : {{ site_read_on or "date inconnue" }}.<br>Rapport produit par Nyra. Détection automatique par empreinte perceptuelle et similarité visuelle ; les correspondances « à vérifier » demandent une confirmation humaine.</footer>
 </body>

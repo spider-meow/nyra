@@ -29,6 +29,7 @@ from typing import Any, Callable, Optional, Sequence
 from urllib.parse import urlparse
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
 from nyra.config import Config
 from nyra.match import CONFIDENCE_HIGH, CONFIDENCE_TO_VERIFY, describe_signature
@@ -52,6 +53,13 @@ SOON_DAYS, LATER_DAYS = 30, 90  # the only place of the two thresholds: "sous 30
 PRESENCE_STILL, PRESENCE_GONE, PRESENCE_UNKNOWN = "still", "gone", "unknown"  # the states of `cloud/presence.py`
 
 PRESENCE_LABELS = {PRESENCE_STILL: "En ligne", PRESENCE_GONE: "Retiré", PRESENCE_UNKNOWN: "Inconnue"}
+
+REDIRECT_REASONS = {  # why a page that answered with another page is "Inconnue" (`crawl.redirect_kind`); same meaning as `lib/presence.ts`
+    "clear": "Redirection permanente, règle non activée", "temporary": "Redirection temporaire", "script": "Redirigée par un script",
+    "home": "Renvoyée vers l'accueil ou une page parente", "incomplete": "Image de la page d'arrivée non lue",
+    "other_section": "Renvoyée vers une autre rubrique ou un autre pays", "other_site": "Renvoyée vers un autre site",
+    "barrier": "Renvoyée vers une barrière (consentement, connexion, âge, pays)", "error": "La page d'arrivée a répondu en erreur",
+}
 
 ACTION_REMOVE, ACTION_CHECK, ACTION_NONE = "À retirer", "À vérifier", "Rien à faire"
 
@@ -368,19 +376,29 @@ MATCHES_COLUMNS = ("filename", "page", "site_url", "status", "expiry_date", "day
 NOT_FOUND_COLUMNS = ("filename", "expiry_date", "days_left", "status", "credit", "notes", "verification")
 
 
-def _render_html(*, grouped: dict, missing: list[dict], within_days: int, stats: dict, summary: dict, thumbs: dict,
-                 organization: str, stamp: dict[str, str]) -> str:
+SECTIONS = ("remove", "soon", "check", "done", "other")
+
+
+def _render_html(*, rows: list[dict], missing: list[dict], within_days: int, stats: dict, summary: dict, thumbs: dict,
+                 organization: str, stamp: dict[str, str], suspect_sites: Sequence[str]) -> str:
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(["html", "j2"]))
+    # each distinct thumbnail is written once, as a CSS class: a visual shown on 50 pages does not repeat its bytes 50 times
+    # (numbered in the order they appear, so the same data gives the same bytes)
+    appearing = [key for row in rows for key in (row["group"].get("ref_thumb"), row["hit"].get("site_thumb"))]
+    appearing += [item.get("ref_thumb") for item in missing]
+    thumb_class = {key: f"t{i}" for i, key in enumerate(dict.fromkeys(key for key in appearing if thumbs.get(key)))}
     return env.get_template("report.html.j2").render(
         organization=organization,
-        confirmed=grouped["confirmed"],
-        to_verify=grouped["to_verify"],
+        sections={name: [row for row in rows if row["section"] == name] for name in SECTIONS},
         not_found=missing,
+        suspect_sites=list(suspect_sites),
+        presence_labels=PRESENCE_LABELS,
         within_days=within_days,
         generated_at=datetime.now(timezone.utc).strftime("%d/%m/%Y à %H:%M UTC"),
         stats=stats,
         summary=summary,
-        thumbs=thumbs,
+        thumb_class=thumb_class,
+        thumb_css=Markup("".join(f".{name}{{background-image:url({thumbs[key]})}}" for key, name in thumb_class.items())),
         status_labels=STATUS_LABELS,
         confidence_labels=CONFIDENCE_LABELS,
         decision_labels=DECISION_LABELS,
@@ -403,8 +421,22 @@ def page_rows(groups: list[dict], presence: dict, replaced: frozenset) -> list[d
                                             confidence=hit["confidence"], decision=hit.get("decision"), presence=state,
                                             replaced=group["reference_id"] in replaced)
                 rows.append({"group": group, "hit": hit, "page": page, "presence": state, "read_on": _day(seen.get("crawled_at")),
-                             "redirect_kind": seen.get("redirect_kind"), "status": status, "action": action})
+                             "reason": REDIRECT_REASONS.get(seen.get("redirect_kind") or "") if state == PRESENCE_UNKNOWN else None,
+                             "status": status, "action": action, "section": _section(action, hit.get("decision"), state,
+                                                                                  group["reference_id"] in replaced)})
     return rows
+
+
+def _section(action: str, decision: Optional[str], presence: str, replaced: bool) -> str:
+    """Where a row sits in the report, most urgent first: `remove`, `soon`, `check`, then `done` (removed, replaced or gone
+    from the page: kept as proof) and `other` (rights in order, unlimited, or no date)."""
+    if action == ACTION_REMOVE:
+        return "remove"
+    if action == ACTION_CHECK:
+        return "check"
+    if action != ACTION_NONE:
+        return "soon"
+    return "done" if decision == DECISION_REMOVED or replaced or presence == PRESENCE_GONE else "other"
 
 
 def _occurrence_rows(rows: list[dict]) -> list[dict]:
@@ -479,11 +511,12 @@ def build_report(
         "to_verify": len(grouped["to_verify"]),
         "not_found": len(missing),
     })
-    html = _render_html(grouped=grouped, missing=missing, within_days=within_days, stats=stats, summary=summary,
-                        thumbs=thumbs, organization=organization, stamp=stamp)
+    rows = page_rows(groups, presence or {}, replaced)
+    html = _render_html(rows=rows, missing=missing, within_days=within_days, stats=stats, summary=summary, thumbs=thumbs,
+                        organization=organization, stamp=stamp, suspect_sites=provenance.get("suspect_sites") or ())
     return ReportFiles(
         html=html.encode("utf-8"),
-        matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(page_rows(groups, presence or {}, replaced)), stamp),
+        matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(rows), stamp),
         not_found_csv=_csv_bytes(NOT_FOUND_COLUMNS, _not_found_rows(missing), stamp),
         summary=summary,
     )
