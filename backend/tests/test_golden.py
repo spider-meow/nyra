@@ -409,9 +409,9 @@ EXPECTED_SUMMARY = {'confirmed': 4,
                'reference_id': 'c-verify'}],
  'urgent_online': 2}
 
-EXPECTED_HTML_SHA256 = '0b640bcdd2ad4e56f57e5a9c30921e60d620eafd601ffa29bc9f0b0e4b851253'
+EXPECTED_HTML_SHA256 = '0875b76c583b26c16454cd445e7bef8226108abfaba6c05779b88a9896770274'
 
-EXPECTED_THUMBS = 10
+EXPECTED_THUMBS = 4  # distinct thumbnails: each is written once, as a CSS class
 
 
 def test_report_reads_presence_page_by_page_and_never_asks_to_remove_what_is_gone_or_replaced():
@@ -431,3 +431,20 @@ def test_report_reads_presence_page_by_page_and_never_asks_to_remove_what_is_gon
     assert (by_page["https://ex.com/p1"]["presence"], by_page["https://ex.com/p1"]["action"]) == ("Retiré", "Rien à faire")
     assert by_page["https://ex.com/p2"]["presence"] == "Inconnue"  # a page nobody read again is never taken for gone
     assert {line["action"] for line in csv_rows(presence=seen, replaced=frozenset({ref})).values()} == {"Rien à faire"}
+
+
+def test_report_html_is_one_line_per_visual_and_page_most_urgent_first():
+    rows = [r for r in REPORT_ROWS if r["filename"] == "a-expired.jpg" and r["confidence"] == "haut"]
+    ref = rows[0]["reference_id"]
+    seen = {(ref, "https://ex.com/p0"): {"state": "still", "crawled_at": "2025-12-30T10:00:00"},
+            (ref, "https://ex.com/p1"): {"state": "gone", "crawled_at": "2025-12-30T10:00:00"}}
+    files = report.build_report(rows, [], within_days=90, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1), presence=seen,
+                                provenance={"suspect_sites": ["US"]})
+    html = files.html.decode("utf-8")
+    assert html.index("À retirer maintenant") < html.index("Expirent bientôt") < html.index("À vérifier") < html.index("Déjà retirés ou remplacés")
+    assert html.count('class="line a-remove"') == 8 and html.count('class="line a-done"') == 1  # the gone page is kept as proof, not to remove
+    assert "La dernière lecture de US semble incomplète" in html
+    assert "Rien d&#39;expiré en ligne" not in html and "Aucun visuel en ligne n&#39;expire" in html  # an empty section says why
+    many = [dict(rows[0], site_image_id=f"x{i}", pages=[f"https://ex.com/q{i}"]) for i in range(1, 40)]
+    big = report.build_report(many, [], within_days=90, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1)).html
+    assert len(big) < 3 * len(files.html) + 20000  # a thumbnail is written once, not once per page
