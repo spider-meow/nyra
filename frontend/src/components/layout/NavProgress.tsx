@@ -46,9 +46,9 @@ export function NavProgress() {
           role="progressbar"
           aria-label="Chargement"
           onAnimationEnd={bar.onAnimationEnd}
-          className={cx("fixed inset-x-0 top-0 z-50 h-[3px] overflow-hidden bg-yellow", bar.leaving ? "fade-out" : "fade-in")}
+          className={cx("fixed inset-x-0 top-0 z-50 h-1 overflow-hidden bg-yellow shadow-[0_1px_4px_rgb(26_51_0/0.25)]", bar.leaving ? "fade-out" : "fade-in")}
         >
-          <div className="progress-indeterminate h-full w-1/4 bg-ink" />
+          <div className="progress-indeterminate h-full w-2/5 bg-ink" />
         </div>
       ) : null}
     </>
