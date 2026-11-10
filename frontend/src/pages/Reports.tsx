@@ -50,12 +50,11 @@ export function Reports() {
 
 /** The figures of a report, in the words of the dashboard and the monthly e-mail. */
 function figures(report: Report): string[] {
-  const { expired_online: expired, urgent_online: urgent, to_verify: toVerify, not_found: notFound } = report.stats;
+  const { expired_online: expired, urgent_online: urgent, to_verify: toVerify } = report.stats;
   const parts: string[] = [];
   if (typeof expired === "number") parts.push(`${expired} ${expired === 1 ? "expiré" : "expirés"} en ligne`);
   if (typeof urgent === "number") parts.push(`${urgent} sous 30 jours`);
   if (typeof toVerify === "number") parts.push(`${toVerify} à vérifier`);
-  if (typeof notFound === "number") parts.push(`${notFound} non ${notFound === 1 ? "trouvé" : "trouvés"}`);
   return parts;
 }
 
