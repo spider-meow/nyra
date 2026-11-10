@@ -1098,7 +1098,7 @@ class Worker:
             saved_id = cloud_db.create_report(
                 conn, org_id=org_id, brand_id=brand_id, within_days=within_days, storage_path_html=paths["html"],
                 storage_path_csv=paths["csv"], storage_path_not_found_csv=paths["not_found"],
-                stats={**stats, **{k: v for k, v in files.summary.items() if k != "upcoming"}},
+                stats={**stats, **{k: v for k, v in files.summary.items() if k != "upcoming"}, "site_read_on": files.site_read_on},
                 generated_by=uuid.UUID(created_by) if created_by else None,
             )
         return "Rapport prêt.", {"report_id": str(saved_id)}

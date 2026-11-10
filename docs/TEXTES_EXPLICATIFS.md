@@ -101,6 +101,13 @@ mail mensuel emploient ces mots et ces seuils (`report.SOON_DAYS`, `LATER_DAYS` 
 | « À vérifier » | ressemblance faible, tant qu'une personne n'a pas confirmé |
 | « Rien à faire » | faux positif, retiré, remplacé, plus sur la page, droits illimités ou dans les délais |
 
+### Page Rapports (AXE-867)
+
+Chaque rapport de la liste dit : la date, ses chiffres (« N expirés en ligne · N sous 30 jours · N à vérifier · N non trouvés », les mots du
+tableau de bord), la date de lecture des sites, et « Périmé » si une lecture des sites s'est terminée depuis. « Générer un nouveau
+rapport » n'est sur que le plus récent, pour un administrateur. Il n'y a plus de choix de fenêtre : le rapport couvre toutes les
+échéances et ses sections disent l'urgence.
+
 ## Découpage
 
 A. cet inventaire (docs). B. écrans de travail. C. Statistiques et back-office. D. Réglages et connexion.

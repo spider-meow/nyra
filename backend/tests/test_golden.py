@@ -409,7 +409,7 @@ EXPECTED_SUMMARY = {'confirmed': 4,
                'reference_id': 'c-verify'}],
  'urgent_online': 2}
 
-EXPECTED_HTML_SHA256 = '0875b76c583b26c16454cd445e7bef8226108abfaba6c05779b88a9896770274'
+EXPECTED_HTML_SHA256 = '45635eb54ff615478bbb7b104c51772051beaec01f3f6750d95bf73b640cda23'
 
 EXPECTED_THUMBS = 4  # distinct thumbnails: each is written once, as a CSS class
 
@@ -441,9 +441,11 @@ def test_report_html_is_one_line_per_visual_and_page_most_urgent_first():
     files = report.build_report(rows, [], within_days=90, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1), presence=seen,
                                 provenance={"suspect_sites": ["US"]})
     html = files.html.decode("utf-8")
-    assert html.index("À retirer maintenant") < html.index("Expirent bientôt") < html.index("À vérifier") < html.index("Déjà retirés ou remplacés")
-    assert html.count('class="line a-remove"') == 8 and html.count('class="line a-done"') == 1  # the gone page is kept as proof, not to remove
+    assert html.index("À retirer maintenant") < html.index("Expirent bientôt") < html.index("À vérifier")
+    assert html.count('class="line a-remove"') == 8  # the page gone from the site is not to remove, and not in the report
+    assert "Déjà retirés" not in html and "Non trouvés" not in html and 'class="line a-done"' not in html
     assert "La dernière lecture de US semble incomplète" in html
+    assert html.count("Sur la page") == 8 and "ex.com/p0</a>" in html  # every line says which page the visual is on
     assert "Rien d&#39;expiré en ligne" not in html and "Aucun visuel en ligne n&#39;expire" in html  # an empty section says why
     many = [dict(rows[0], site_image_id=f"x{i}", pages=[f"https://ex.com/q{i}"]) for i in range(1, 40)]
     big = report.build_report(many, [], within_days=90, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1)).html

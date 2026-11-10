@@ -104,8 +104,8 @@ def test_pipeline_end_to_end(tmp_path: Path):
     assert "Réglages de détection" in html_content and "écart de 8 / 8 bits" in html_content
     assert "bottle.jpg" in html_content
     assert "https://example.com/products/bottle" in html_content
-    # unrelated.jpg was checked and found nowhere on the site -> flagged, not silently dropped
-    assert "unrelated.jpg" in html_content
+    # unrelated.jpg was checked and found nowhere: it is not in the report page (only in not_found.csv, below)
+    assert "unrelated.jpg" not in html_content
 
     csv_content = csv_out_path.read_text(encoding="utf-8")
     assert "bottle.jpg" in csv_content

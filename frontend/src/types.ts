@@ -200,7 +200,10 @@ export type Report = {
   id: string;
   within_days: number;
   generated_at: string;
-  stats: Record<string, number>;
+  /** Counts per state, and `site_read_on` (text): when the sites were read. */
+  stats: Record<string, number | string>;
+  /** A read of the sites finished after the report was made. Absent from an older server. */
+  stale?: boolean;
   files: { "report.html": string; "matches.csv": string; "not_found.csv": string };
 };
 

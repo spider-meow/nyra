@@ -309,6 +309,7 @@ class ReportFiles:
     matches_csv: bytes
     not_found_csv: bytes
     summary: dict[str, Any]
+    site_read_on: str = ""  # when the sites were read ("" when no read is recorded), kept with the report for the list
 
 
 def _data_uri(data: Optional[bytes], max_size: int = 240) -> Optional[str]:
@@ -376,21 +377,19 @@ MATCHES_COLUMNS = ("filename", "page", "site_url", "status", "expiry_date", "day
 NOT_FOUND_COLUMNS = ("filename", "expiry_date", "days_left", "status", "credit", "notes", "verification")
 
 
-SECTIONS = ("remove", "soon", "check", "done", "other")
+SECTIONS = ("remove", "soon", "check", "other")  # `done` rows (removed, replaced, gone) stay in the CSV only
 
 
-def _render_html(*, rows: list[dict], missing: list[dict], within_days: int, stats: dict, summary: dict, thumbs: dict,
+def _render_html(*, rows: list[dict], within_days: int, stats: dict, summary: dict, thumbs: dict,
                  organization: str, stamp: dict[str, str], suspect_sites: Sequence[str]) -> str:
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(["html", "j2"]))
     # each distinct thumbnail is written once, as a CSS class: a visual shown on 50 pages does not repeat its bytes 50 times
     # (numbered in the order they appear, so the same data gives the same bytes)
     appearing = [key for row in rows for key in (row["group"].get("ref_thumb"), row["hit"].get("site_thumb"))]
-    appearing += [item.get("ref_thumb") for item in missing]
     thumb_class = {key: f"t{i}" for i, key in enumerate(dict.fromkeys(key for key in appearing if thumbs.get(key)))}
     return env.get_template("report.html.j2").render(
         organization=organization,
         sections={name: [row for row in rows if row["section"] == name] for name in SECTIONS},
-        not_found=missing,
         suspect_sites=list(suspect_sites),
         presence_labels=PRESENCE_LABELS,
         within_days=within_days,
@@ -501,7 +500,7 @@ def build_report(
     missing = not_found_items(unmatched_rows, within_days, today)
     groups = grouped["confirmed"] + grouped["to_verify"]
 
-    keys = {group.get("ref_thumb") for group in groups} | {item.get("ref_thumb") for item in missing}
+    keys = {group.get("ref_thumb") for group in groups}
     keys |= {hit.get("site_thumb") for group in groups for hit in group["hits"]}
     thumbs = _load_thumbs(keys, thumb_loader)
 
@@ -512,13 +511,14 @@ def build_report(
         "not_found": len(missing),
     })
     rows = page_rows(groups, presence or {}, replaced)
-    html = _render_html(rows=rows, missing=missing, within_days=within_days, stats=stats, summary=summary, thumbs=thumbs,
+    html = _render_html(rows=rows, within_days=within_days, stats=stats, summary=summary, thumbs=thumbs,
                         organization=organization, stamp=stamp, suspect_sites=provenance.get("suspect_sites") or ())
     return ReportFiles(
         html=html.encode("utf-8"),
         matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(rows), stamp),
         not_found_csv=_csv_bytes(NOT_FOUND_COLUMNS, _not_found_rows(missing), stamp),
         summary=summary,
+        site_read_on=stamp["site_read_on"],
     )
 
 
