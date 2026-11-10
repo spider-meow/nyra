@@ -51,6 +51,8 @@ SOON_DAYS, LATER_DAYS = 30, 90  # the only place of the two thresholds: "sous 30
 
 PRESENCE_STILL, PRESENCE_GONE, PRESENCE_UNKNOWN = "still", "gone", "unknown"  # the states of `cloud/presence.py`
 
+PRESENCE_LABELS = {PRESENCE_STILL: "En ligne", PRESENCE_GONE: "Retiré", PRESENCE_UNKNOWN: "Inconnue"}
+
 ACTION_REMOVE, ACTION_CHECK, ACTION_NONE = "À retirer", "À vérifier", "Rien à faire"
 
 STATUS_LABELS = {
@@ -361,8 +363,8 @@ def _csv_bytes(fieldnames: Sequence[str], rows: list[dict], stamp: dict[str, str
     return ("﻿" + buf.getvalue()).encode("utf-8")
 
 
-MATCHES_COLUMNS = ("filename", "expiry_date", "days_left", "status", "credit", "notes", "confidence", "decision",
-                   "score", "level", "site_url", "pages")
+MATCHES_COLUMNS = ("filename", "page", "site_url", "status", "expiry_date", "days_left", "presence", "read_on", "decision",
+                   "confidence", "action", "credit", "notes", "score", "level")
 NOT_FOUND_COLUMNS = ("filename", "expiry_date", "days_left", "status", "credit", "notes", "verification")
 
 
@@ -387,24 +389,44 @@ def _render_html(*, grouped: dict, missing: list[dict], within_days: int, stats:
     )
 
 
-def _occurrence_rows(groups: list[dict]) -> list[dict]:
+def page_rows(groups: list[dict], presence: dict, replaced: frozenset) -> list[dict]:
+    """One row per visual and page, the unit the report is read in: rights, presence on that page (`presence`:
+    (reference, page address) -> state and read date, from `cloud.presence.page_states`; a page it does not know is
+    unknown), what a person decided, and the action `page_state` gives. A hit with no known page gets one row with no page."""
+    rows = []
+    for group in groups:
+        for hit in group["hits"]:
+            for page in hit["pages"] or [""]:
+                seen = presence.get((group["reference_id"], page)) or {}
+                state = seen.get("state", PRESENCE_UNKNOWN)
+                status, action = page_state(days_left=group["days_left"], unlimited=group["status"] == STATUS_UNLIMITED,
+                                            confidence=hit["confidence"], decision=hit.get("decision"), presence=state,
+                                            replaced=group["reference_id"] in replaced)
+                rows.append({"group": group, "hit": hit, "page": page, "presence": state, "read_on": _day(seen.get("crawled_at")),
+                             "redirect_kind": seen.get("redirect_kind"), "status": status, "action": action})
+    return rows
+
+
+def _occurrence_rows(rows: list[dict]) -> list[dict]:
     return [
         {
-            "filename": group["filename"],
-            "expiry_date": group["expiry_date"] or "",
-            "days_left": "" if group["days_left"] is None else group["days_left"],
-            "status": STATUS_LABELS[group["status"]],
-            "credit": group["credit"],
-            "notes": group["notes"],
-            "confidence": CONFIDENCE_LABELS.get(hit["confidence"], hit["confidence"]),
-            "decision": DECISION_LABELS.get(hit.get("decision") or "", ""),
-            "score": f"{hit['score']:.2f}",
-            "level": hit["level"],
-            "site_url": hit["site_url"],
-            "pages": " | ".join(hit["pages"]),
+            "filename": row["group"]["filename"],
+            "page": row["page"],
+            "site_url": row["hit"]["site_url"],
+            "status": STATUS_LABELS[row["status"]],
+            "expiry_date": row["group"]["expiry_date"] or "",
+            "days_left": "" if row["group"]["days_left"] is None else row["group"]["days_left"],
+            "presence": PRESENCE_LABELS[row["presence"]],
+            "read_on": row["read_on"],
+            "decision": DECISION_LABELS.get(row["hit"].get("decision") or "", ""),
+            "confidence": CONFIDENCE_LABELS.get(row["hit"]["confidence"], row["hit"]["confidence"]),
+            "action": row["action"],
+            "credit": row["group"]["credit"],
+            "notes": row["group"]["notes"],
+            "score": f"{row['hit']['score']:.2f}",
+            "level": row["hit"]["level"],
         }
-        for group in groups
-        for hit in group["hits"]
+        for row in rows
     ]
 
 
@@ -434,6 +456,7 @@ def build_report(
     today: Optional[date] = None,
     provenance: Optional[dict[str, Any]] = None,
     replaced: frozenset = frozenset(),
+    presence: Optional[dict] = None,
 ) -> ReportFiles:
     """`provenance` is what the matches were produced with: `signature` (the one `run_matching` stored) and `read_at`
     ((oldest, newest) of the last finished read of each site). Both are printed in the HTML footer and in two columns of each CSV."""
@@ -460,7 +483,7 @@ def build_report(
                         thumbs=thumbs, organization=organization, stamp=stamp)
     return ReportFiles(
         html=html.encode("utf-8"),
-        matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(groups), stamp),
+        matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(page_rows(groups, presence or {}, replaced)), stamp),
         not_found_csv=_csv_bytes(NOT_FOUND_COLUMNS, _not_found_rows(missing), stamp),
         summary=summary,
     )
