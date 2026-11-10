@@ -309,7 +309,7 @@ traceback is in the worker's log.
   `web` is not restarted when hung (the worker no longer needs it).
 - **Maximum duration per kind of job** (`JOB_LIMITS` in `cloud/worker.py`; **starting values** to adjust from the
   durations in the Statistiques page): `crawl` 12 h (all the brand's sites, then the comparison), `index` 6 h, `match`
-  1 h, `locate` 1 h, `report` 30 min, `check` 30 min. Each can be set in `.env` with `NYRA_JOB_LIMIT_<KIND>_MIN`
+  3 h, `locate` 1 h, `report` 30 min, `check` 30 min. Each can be set in `.env` with `NYRA_JOB_LIMIT_<KIND>_MIN`
   (whole minutes, 1 to 1440; anything else is ignored with a warning in the log). Past it, the job is marked failed
   (its crawl runs closed) with « … a dépassé sa durée maximale de N min. Le travail déjà enregistré est conservé :
   relancez-la, ou réduisez … » and the worker exits to restart (a hung job cannot be stopped from a thread). It is
