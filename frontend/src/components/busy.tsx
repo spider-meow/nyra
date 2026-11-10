@@ -6,19 +6,18 @@ import { Button, EmptyState, cx } from "./ui";
 /**
  * The three states of a request that is shown (AXE-632), written once; `docs/ETATS_DE_CHARGEMENT.md` says what each page does:
  * - first load, nothing to show yet: a skeleton built from the markup of what arrives, with `Bar` for text and `Skeleton` for images and blocks (`SkeletonGrid` for a grid of cards);
- * - refresh with the content already there: `Refreshing` (the content stays, a little paler, with a thin line of progress after 200 ms, `aria-busy`
- *   and a polite announcement);
+ * - refresh with the content already there: `Refreshing` (the content stays exactly as it is, `aria-busy` and a polite announcement; the bar of
+ *   `NavProgress` shows the wait);
  * - failure: `LoadError` when there is nothing to show, `RefreshFailed` above the content that is.
  */
 
-/** Wraps content that stays on screen while a refresh comes (`active`): paler after 200 ms, a thin line on top, `aria-busy`, a polite announcement. The focus is never moved. */
+/** Wraps content that stays on screen while a refresh comes (`active`): `aria-busy` and a polite announcement after 200 ms. The content is NOT dimmed and the focus is never moved: the bar at the top of the screen (`NavProgress`) says that something is loading. */
 export function Refreshing(props: { active: boolean; children: ReactNode; label?: string; className?: string }) {
   const show = useRefreshing(props.active);
   return (
     <div aria-busy={props.active} className={cx("relative", props.className)}>
-      {show ? <span aria-hidden className="fade-in absolute inset-x-0 -top-1.5 h-0.5 skeleton rounded-full bg-bark" /> : null}
       <span role="status" className="sr-only">{show ? props.label ?? "Mise à jour des résultats…" : ""}</span>
-      <div className={cx("fade-in transition-opacity", show && "opacity-60")}>{props.children}</div>
+      <div className="fade-in">{props.children}</div>
     </div>
   );
 }
