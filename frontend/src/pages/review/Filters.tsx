@@ -20,8 +20,8 @@ export function ReviewFilters(props: { view: ReviewView }) {
         <Select id="status" value={statusFilter} onChange={(event) => setParam("status", event.target.value === "all" ? null : event.target.value)}>
           <option value="all">Tous</option>
           <option value="expire">Expirés</option>
-          <option value="<30j">Moins de 30 jours</option>
-          <option value="<90j">Moins de 90 jours</option>
+          <option value="<30j">Sous 30 jours</option>
+          <option value="<90j">Sous 90 jours</option>
           <option value="inconnue">Sans échéance</option>
         </Select>
       </div>

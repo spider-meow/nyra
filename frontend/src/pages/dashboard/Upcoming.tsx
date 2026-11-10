@@ -59,7 +59,7 @@ export function Upcoming(props: { items: UpcomingItem[] }) {
                   <span className="text-[11px] tracking-wide text-muted uppercase">{month}</span>
                 </span>
                 <span className="min-w-0 flex-1 truncate">{item.filename}</span>
-                <StatusBadge status={item.days_left < 0 ? "expire" : item.days_left < 30 ? "<30j" : "<90j"} label={daysText(item.days_left)} />
+                <StatusBadge status={item.days_left < 0 ? "expire" : item.days_left <= 30 ? "<30j" : "<90j"} label={daysText(item.days_left)} />
                 <span className={cx("hidden w-24 shrink-0 text-right text-[13px] sm:block", item.online ? "font-medium text-expired" : "text-muted")}>
                   {item.online ? "En ligne" : "Pas trouvé"}
                 </span>

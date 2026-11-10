@@ -2,8 +2,8 @@ import type { Confidence, Decision, JobKind, Status } from "../types";
 
 export const statusLabel: Record<Status, string> = {
   expire: "Expiré",
-  "<30j": "Moins de 30 jours",
-  "<90j": "Moins de 90 jours",
+  "<30j": "Sous 30 jours",
+  "<90j": "Sous 90 jours",
   ok: "Dans les délais",
   inconnue: "Sans échéance",
   illimite: "Droits illimités",
