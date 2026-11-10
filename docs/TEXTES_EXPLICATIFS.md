@@ -80,6 +80,27 @@ Les descriptions de `SettingsBlock` sont déjà des infobulles : rien à faire. 
 | Réglages | `settings/Account.tsx`, `Usage.tsx`, `Reading.tsx` (unités) | Rôle, lien de réinitialisation, valeurs d'usage, « Par lecture. », « Les images plus petites… sont ignorées. » | Garder (valeurs et conséquences) |
 | Connexion | `Access.tsx` | « Chaque marque de {org} a sa bibliothèque et ses adresses… » (Première marque) | Retirer |
 
+## Vocabulaire des états d'un visuel (AXE-862)
+
+Une seule règle (`report.page_state`) donne l'état d'un visuel sur une page ; le rapport, le tableau de bord, la bibliothèque et le
+mail mensuel emploient ces mots et ces seuils (`report.SOON_DAYS`, `LATER_DAYS` : 30 et 90 jours, le jour même compris).
+
+| Droits | Libellé |
+|---|---|
+| expiré | « Expiré » |
+| 0 à 30 jours | « Sous 30 jours » |
+| 31 à 90 jours | « Sous 90 jours » |
+| plus de 90 jours | « Dans les délais » |
+| illimités | « Droits illimités » (jamais expiré, quelle que soit la date) |
+| pas de date | « Date inconnue » |
+
+| Action | Quand |
+|---|---|
+| « À retirer » | expiré, pas encore retiré, remplacé ni écarté (une page non relue ne le cache pas) |
+| « Expire dans N j » | sous 30 ou 90 jours |
+| « À vérifier » | ressemblance faible, tant qu'une personne n'a pas confirmé |
+| « Rien à faire » | faux positif, retiré, remplacé, plus sur la page, droits illimités ou dans les délais |
+
 ## Découpage
 
 A. cet inventaire (docs). B. écrans de travail. C. Statistiques et back-office. D. Réglages et connexion.

@@ -132,12 +132,12 @@ def test_flipped_reuse_matches_through_mirror_hashes():
 
 # --- report -------------------------------------------------------------------------
 
-def _row(ref_id, site_id, decision=None, *, confidence="haut", expiry="2020-01-01", content_hash=None):
+def _row(ref_id, site_id, decision=None, *, confidence="haut", expiry="2020-01-01", content_hash=None, unlimited_rights=False):
     return {
         "reference_id": ref_id, "filename": f"{ref_id}.jpg", "expiry_date": expiry, "credit": "", "notes": "",
         "site_image_id": site_id, "site_url": f"https://ex.com/{site_id}.jpg", "content_hash": content_hash,
         "level": "phash", "score": 0.95, "confidence": confidence, "decision": decision,
-        "pages": [f"https://ex.com/page-{site_id}"],
+        "pages": [f"https://ex.com/page-{site_id}"], "unlimited_rights": unlimited_rights,
     }
 
 
@@ -251,6 +251,39 @@ def test_dashboard_counts_only_live_occurrences():
     assert summary["pending_review"] == 1
     assert summary["upcoming"][0]["reference_id"] == "soon"
     assert report.dashboard(rows, [], today, replaced=frozenset({"expired-live"}))["expired_online"] == 0  # replaced: read again, gone
+
+
+def test_one_rule_for_the_state_of_a_visual_on_a_page():
+    def state(days, **kw):
+        base = dict(days_left=days, unlimited=False, confidence=report.CONFIDENCE_HIGH)
+        return report.page_state(**{**base, **kw})
+
+    # the thresholds include the day itself, and are the digest's too
+    assert [report.urgency_status(d) for d in (-1, 0, 30, 31, 90, 91, None)] == [
+        report.STATUS_EXPIRED, report.STATUS_URGENT, report.STATUS_URGENT, report.STATUS_SOON, report.STATUS_SOON,
+        report.STATUS_OK, report.STATUS_UNKNOWN]
+    assert (report.SOON_DAYS, report.LATER_DAYS) == (30, 90)
+    assert state(-3) == (report.STATUS_EXPIRED, report.ACTION_REMOVE)
+    assert state(0)[1] == "Expire aujourd'hui" and state(30)[1] == "Expire dans 30 j" and state(90)[1] == "Expire dans 90 j"
+    assert state(91)[1] == report.ACTION_NONE and state(None)[1] == report.ACTION_NONE
+    # never "expired online" once removed, replaced, gone from the page or dismissed
+    for kw in ({"decision": report.DECISION_REMOVED}, {"decision": report.DECISION_FALSE_POSITIVE}, {"replaced": True},
+               {"presence": report.PRESENCE_GONE}):
+        assert state(-3, **kw)[1] == report.ACTION_NONE
+    assert state(-3, presence=report.PRESENCE_UNKNOWN)[1] == report.ACTION_REMOVE  # an unread page proves nothing
+    # a weak match waits for a person; once confirmed it is treated like any other
+    weak = {"confidence": report.CONFIDENCE_TO_VERIFY}
+    assert state(-3, **weak)[1] == report.ACTION_CHECK
+    assert state(-3, decision=report.DECISION_REMOVE, **weak)[1] == report.ACTION_REMOVE
+    # unlimited rights never expire, whatever the date says
+    assert state(-3, unlimited=True) == (report.STATUS_UNLIMITED, report.ACTION_NONE)
+    assert state(-3, unlimited=True, **weak)[1] == report.ACTION_CHECK
+
+
+def test_dashboard_never_counts_unlimited_rights_as_expired():
+    rows = [_row("free", "a", unlimited_rights=True), _row("old", "b")]
+    summary = report.dashboard(rows, [], date(2026, 1, 1))
+    assert summary["expired_online"] == 1 and all(item["reference_id"] != "free" for item in summary["upcoming"])
 
 
 # --- decoding -----------------------------------------------------------------------

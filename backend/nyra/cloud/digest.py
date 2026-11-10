@@ -40,6 +40,7 @@ from urllib.parse import quote
 import httpx
 import psycopg
 
+from ..report import LATER_DAYS, SOON_DAYS  # the two lists: within SOON_DAYS days, then SOON_DAYS + 1 to LATER_DAYS
 from . import audit, mailer, schedule
 from . import db as cloud_db
 from . import email_layout as layout
@@ -47,7 +48,6 @@ from .routes.members import EmailLimit
 
 log = logging.getLogger("nyra.cloud.digest")
 
-SOON_DAYS, LATER_DAYS = 30, 90  # the two lists: expires within SOON_DAYS days, then within SOON_DAYS + 1 to LATER_DAYS days
 MAX_CARDS = 20                  # brand blocks in one mail (about 3 KB each at most, Gmail clips near 100 KB); the rest is told in one line
 PERIOD_DAYS = 35                # how far back the first e-mail of an organization looks
 MAX_ADMINS = mailer.MAX_RECIPIENTS

@@ -113,7 +113,7 @@ def library(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(ge
             "expiry_date": expiry or "",
             "unlimited_rights": row["unlimited_rights"],
             "days_left": left,
-            "status": report_module.STATUS_UNLIMITED if row["unlimited_rights"] else report_module.urgency_status(left),
+            "status": report_module.rights_status(row, left),
             "credit": row["credit"] or "",
             "notes": row["notes"] or "",
             "tags": list(row["tags"]),

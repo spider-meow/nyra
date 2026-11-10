@@ -47,10 +47,16 @@ DECISION_FALSE_POSITIVE = "ecarte"
 DECISION_REMOVED = "traite"
 DECISIONS = {DECISION_REMOVE, DECISION_FALSE_POSITIVE, DECISION_REMOVED}
 
+SOON_DAYS, LATER_DAYS = 30, 90  # the only place of the two thresholds: "sous 30 jours" and "sous 90 jours" include the day itself
+
+PRESENCE_STILL, PRESENCE_GONE, PRESENCE_UNKNOWN = "still", "gone", "unknown"  # the states of `cloud/presence.py`
+
+ACTION_REMOVE, ACTION_CHECK, ACTION_NONE = "À retirer", "À vérifier", "Rien à faire"
+
 STATUS_LABELS = {
     STATUS_EXPIRED: "Expiré",
-    STATUS_URGENT: "Moins de 30 jours",
-    STATUS_SOON: "Moins de 90 jours",
+    STATUS_URGENT: f"Sous {SOON_DAYS} jours",
+    STATUS_SOON: f"Sous {LATER_DAYS} jours",
     STATUS_OK: "Dans les délais",
     STATUS_UNKNOWN: "Date inconnue",
     STATUS_UNLIMITED: "Droits illimités",
@@ -70,9 +76,9 @@ def urgency_status(days_left: Optional[int]) -> str:
         return STATUS_UNKNOWN
     if days_left < 0:
         return STATUS_EXPIRED
-    if days_left < 30:
+    if days_left <= SOON_DAYS:
         return STATUS_URGENT
-    if days_left < 90:
+    if days_left <= LATER_DAYS:
         return STATUS_SOON
     return STATUS_OK
 
@@ -80,6 +86,25 @@ def urgency_status(days_left: Optional[int]) -> str:
 def rights_status(row: dict, days_left: Optional[int]) -> str:
     """The status of a reference: unlimited rights never expire, whatever the date says."""
     return STATUS_UNLIMITED if row.get("unlimited_rights") else urgency_status(days_left)
+
+
+def page_state(*, days_left: Optional[int], unlimited: bool, confidence: str, decision: Optional[str] = None,
+               presence: str = PRESENCE_UNKNOWN, replaced: bool = False) -> tuple[str, str]:
+    """The one rule: where a visual stands on a page, as (rights status, action).
+
+    Rights (`rights_status`) x presence x what a person decided. A visual a person dismissed or marked removed, a
+    replaced one and one no longer on the page are never "à retirer": nothing is left to do. A weak match stays "à vérifier"
+    until a person confirms it; an unknown presence (page not read again) does not hide an expired visual."""
+    status = STATUS_UNLIMITED if unlimited else urgency_status(days_left)
+    if decision in (DECISION_FALSE_POSITIVE, DECISION_REMOVED) or replaced or presence == PRESENCE_GONE:
+        return status, ACTION_NONE
+    if confidence == CONFIDENCE_TO_VERIFY and decision != DECISION_REMOVE:
+        return status, ACTION_CHECK
+    if status == STATUS_EXPIRED:
+        return status, ACTION_REMOVE
+    if status in (STATUS_URGENT, STATUS_SOON):
+        return status, "Expire aujourd'hui" if days_left == 0 else f"Expire dans {days_left} j"
+    return status, ACTION_NONE
 
 
 def _is_free_to_use(group: dict) -> bool:
@@ -245,14 +270,14 @@ def dashboard(match_rows: list[dict], unmatched_rows: list[dict], today: Optiona
             pending_review.add(row["reference_id"])
 
     def status_of(row: dict) -> str:
-        return urgency_status(days_until(row.get("expiry_date"), today))
+        return rights_status(row, days_until(row.get("expiry_date"), today))
 
     expired_online = [row for row in live.values() if status_of(row) == STATUS_EXPIRED]
     urgent_online = [row for row in live.values() if status_of(row) == STATUS_URGENT]
     upcoming = []
     for row in [*{r["reference_id"]: r for r in match_rows}.values(), *unmatched_rows]:
         left = days_until(row.get("expiry_date"), today)
-        if left is not None and 0 <= left <= 90:
+        if left is not None and 0 <= left <= LATER_DAYS and not row.get("unlimited_rights"):
             upcoming.append({"reference_id": row["reference_id"], "filename": row["filename"],
                              "expiry_date": row.get("expiry_date"), "days_left": left,
                              "online": row["reference_id"] in live})
