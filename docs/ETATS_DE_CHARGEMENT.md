@@ -6,7 +6,7 @@ minuteur) :
 | État | Quand | Ce qu'on montre |
 |---|---|---|
 | **Premier chargement** | rien à afficher encore | un squelette **à la forme de ce qui arrive** : le balisage du vrai composant, avec `Bar` à la place des mots et `Skeleton` à la place des images et des blocs (voir « Écrire un squelette » plus bas) ; ce qui est déjà vrai (titre, onglets, boutons) reste vrai |
-| **Rafraîchissement avec données** | les données sont là, une nouvelle réponse arrive (recherche, filtre, onglet, retour sur la page, changement de marque) | le contenu **reste**, un peu atténué, avec une fine ligne de progression en haut et `aria-busy="true"` : `Refreshing`. Seulement après **200 ms** (une réponse immédiate ne change rien à l'écran) et pour **300 ms au moins** une fois montré (pas de clignotement). Une annonce polie (`role="status"`) le dit aux lecteurs d'écran, sans déplacer le focus |
+| **Rafraîchissement avec données** | les données sont là, une nouvelle réponse arrive (recherche, filtre, onglet, retour sur la page, changement de marque) | le contenu **reste tel quel, jamais atténué** : les anciennes données restent lisibles, en couleur, jusqu'à ce que les nouvelles les remplacent. L'attente est dite par **la barre du haut de l'écran** (`NavProgress`, une seule pour toute l'interface) et par `aria-busy="true"` : `Refreshing`. La barre n'apparaît qu'après **150 ms** (une réponse immédiate ne change rien à l'écran) et reste **300 ms au moins** une fois montrée (pas de clignotement). Une annonce polie (`role="status"`) le dit aux lecteurs d'écran, sans déplacer le focus |
 | **Erreur** | la requête a échoué | rien à montrer : `LoadError` (le motif et « Réessayer »). Du contenu est déjà là : `RefreshFailed` au-dessus (« ce qui est affiché peut être périmé »), annoncé tout de suite (`role="alert"`) |
 
 Deux règles qui vont avec :
@@ -14,7 +14,13 @@ Deux règles qui vont avec :
 - **Des anciennes données ne se font jamais passer pour la réponse à la nouvelle demande.** Pendant qu'une recherche ou un site charge, les cartes
   précédentes restent (`placeholderData`) mais le compteur dit « Mise à jour… » au lieu d'afficher l'ancien total ; ce qui ne dépend pas de la demande
   (les compteurs des onglets) garde sa dernière valeur connue (`useLastKnown`) au lieu de disparaître.
-- **Une action longue a un retour immédiat** (bouton `loading`, ligne de progression locale), pas seulement le toast de fin.
+- **Une action longue a un retour immédiat** (bouton `loading`, et la barre du haut), pas seulement le toast de fin.
+- **La barre du haut est unique** (AXE-869) : elle suit le changement de page du routeur, toute requête dont la réponse s'affiche (`useIsFetching`) et toute
+  action en cours (`useIsMutating`). Elle ignore le travail de fond que personne n'attend : les jobs (`jobs`, interrogés toutes les 2 ou 20 s), les
+  vignettes chargées au défilement (`library-thumbs`) et toute requête qui s'actualise d'elle-même plus souvent que toutes les minutes. Une page n'a
+  donc rien à brancher : une nouvelle requête allume la barre sans code de plus.
+- **On ne grise jamais l'écran.** Pas de voile, pas d'opacité réduite sur le contenu pendant qu'il se rafraîchit : on ne voit plus ce qu'on compare. Un voile
+  n'est permis que si une action désactive vraiment l'application (une fenêtre modale), jamais pour une recherche ou un filtre.
 
 ## Page par page
 
@@ -22,15 +28,15 @@ Deux règles qui vont avec :
 
 | Page | Premier chargement | Rafraîchissement avec données | Erreur |
 |---|---|---|---|
-| **Images en ligne** (`SiteImages.tsx`) | schéma : grille de squelettes (4 colonnes, 2 sur téléphone) | schéma : recherche, site, « Voir plus » (bouton `loading`) et rechargement ; le compteur dit « Mise à jour… » ; les compteurs d'onglets restent. « Ignorer » de la barre de sélection passe en « Ignorer… » tout de suite | schéma |
+| **Images en ligne** (`SiteImages.tsx`) | schéma : grille de squelettes (4 colonnes, 2 sur téléphone) | schéma, sans atténuation : recherche, site, « Voir plus » (bouton `loading`) et rechargement ; le compteur dit « Mise à jour… » ; les compteurs d'onglets restent. « Ignorer » de la barre de sélection passe en « Ignorer… » tout de suite | schéma |
 | **Journal d'audit** (`AuditLog.tsx`) | squelette | schéma | schéma |
 | **Tableau de bord** | squelette de la page | schéma | schéma |
 | **À traiter** (`Review.tsx`) | 6 lignes de squelette | schéma | schéma |
 | **Visuels à remplacer** | squelette | schéma | schéma |
-| **Où est-il utilisé ?** (`visual/Visual.tsx`) | squelette | schéma sur la liste des pages (un filtre garde l'ancienne liste, atténuée) | schéma (avant : un squelette qui ne finissait jamais, avec le message dessous) |
+| **Où est-il utilisé ?** (`visual/Visual.tsx`) | squelette | schéma sur la liste des pages (un filtre garde l'ancienne liste, en couleur) | schéma (avant : un squelette qui ne finissait jamais, avec le message dessous) |
 | **Rapports** | squelette | schéma sur la liste | schéma |
 | **Statistiques** | squelette de la page | schéma | schéma |
-| **Bibliothèque** | 6 lignes de squelette | **pas de schéma** : la liste est rechargée après chaque modification (étiquette, date, import) ; l'atténuer à chaque fois gênerait plus qu'elle n'informe | schéma (« Réessayer » ajouté) |
+| **Bibliothèque** | 6 lignes de squelette | la barre du haut seulement : la liste est rechargée après chaque modification (étiquette, date, import), le contenu ne bouge pas | schéma (« Réessayer » ajouté) |
 | **Où est-il utilisé ?** dans la fenêtre d'édition (`OccurrencesPanel.tsx`) | 3 lignes de squelette (avant : `Spinner`) | aucun | schéma (`RefreshFailed`) |
 | **Lectures** : historique | squelette | schéma | schéma |
 | **Lectures** : adresses (`SitesCard.tsx`) | squelette | aucun | message sans « Réessayer » |

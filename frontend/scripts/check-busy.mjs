@@ -64,4 +64,11 @@ assert.deepEqual(busyAt({ activeSince: 0, shownSince: null }, 50), { show: false
 assert.deepEqual(busyAt({ activeSince: 0, shownSince: 200 }, 300), { show: true, recheckIn: null }, "loading and shown: until the load ends");
 assert.deepEqual(busyAt({ activeSince: null, shownSince: 200 }, 250), { show: true, recheckIn: 250 }, "ended 50 ms after it was shown: 250 ms to go");
 assert.deepEqual(busyAt({ activeSince: null, shownSince: 200 }, 500), { show: false, recheckIn: null });
+
+// AXE-869: what is on screen is never dimmed while it refreshes (the bar at the top says so), and that bar listens to the requests and the actions.
+const refreshing = readFileSync(new URL("../src/components/busy.tsx", import.meta.url), "utf8");
+const body = refreshing.slice(refreshing.indexOf("export function Refreshing"), refreshing.indexOf("export function SkeletonGrid"));
+assert.ok(!/opacity-\d+|opacity:/.test(body), "Refreshing must not dim its content");
+const bar = readFileSync(new URL("../src/components/layout/NavProgress.tsx", import.meta.url), "utf8");
+assert.ok(bar.includes("useIsFetching") && bar.includes("useIsMutating"), "the bar follows the requests and the actions, not only the router");
 console.log("check:busy ok");
