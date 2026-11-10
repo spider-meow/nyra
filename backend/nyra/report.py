@@ -309,6 +309,7 @@ class ReportFiles:
     matches_csv: bytes
     not_found_csv: bytes
     summary: dict[str, Any]
+    site_read_on: str = ""  # when the sites were read ("" when no read is recorded), kept with the report for the list
 
 
 def _data_uri(data: Optional[bytes], max_size: int = 240) -> Optional[str]:
@@ -519,6 +520,7 @@ def build_report(
         matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(rows), stamp),
         not_found_csv=_csv_bytes(NOT_FOUND_COLUMNS, _not_found_rows(missing), stamp),
         summary=summary,
+        site_read_on=stamp["site_read_on"],
     )
 
 

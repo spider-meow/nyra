@@ -1375,6 +1375,13 @@ def list_reports(conn: psycopg.Connection, brand_id: uuid.UUID, limit: int = 50)
     ).fetchall()
 
 
+def latest_read_finished(conn: psycopg.Connection, brand_id: uuid.UUID) -> Optional[datetime]:
+    """When the latest read of any site of the brand finished (a done run), None when none did."""
+    return conn.execute(
+        """SELECT max(c.finished_at) AS at FROM crawl_runs c JOIN sites s ON s.id = c.site_id
+           WHERE s.brand_id = %s AND c.status = 'done'""", (brand_id,)).fetchone()["at"]
+
+
 def get_report(conn: psycopg.Connection, brand_id: uuid.UUID, report_id: uuid.UUID) -> Optional[Row]:
     return conn.execute("SELECT * FROM reports WHERE id = %s AND brand_id = %s", (report_id, brand_id)).fetchone()
 

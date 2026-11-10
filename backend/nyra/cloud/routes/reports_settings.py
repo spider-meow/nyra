@@ -47,6 +47,7 @@ def create_report(body: ReportBody, scope: BrandScope = Depends(brand_admin_dep)
 def list_reports(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
     with cloud_db.connect(ctx.settings.database_url) as conn:
         reports = cloud_db.list_reports(conn, scope.brand_id)
+        latest_read = cloud_db.latest_read_finished(conn, scope.brand_id)
     paths = [r[key] for r in reports for key in ("storage_path_html", "storage_path_csv", "storage_path_not_found_csv")]
     urls = ctx.sign(cloud_storage.BUCKET_REPORTS, paths)
     return {
@@ -54,6 +55,8 @@ def list_reports(scope: BrandScope = Depends(brand_member_dep), ctx: Ctx = Depen
             {
                 "id": str(r["id"]), "within_days": r["within_days"], "generated_at": iso(r["generated_at"]),
                 "stats": r["stats"],
+                # a read of the sites finished after the report was made: its figures may no longer be true
+                "stale": bool(latest_read and latest_read > r["generated_at"]),
                 "files": {
                     "report.html": urls.get(r["storage_path_html"], ""),
                     "matches.csv": urls.get(r["storage_path_csv"], ""),

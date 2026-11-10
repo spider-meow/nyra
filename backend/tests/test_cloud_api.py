@@ -1633,6 +1633,12 @@ def test_reports_are_queued_and_listed_with_signed_links(client, org_with_users,
     reports = client.get(f"{base}/reports", headers=_headers(client_id)).json()["reports"]
     assert reports[0]["files"]["report.html"].startswith("https://fake-storage.test/reports/")
     assert reports[0]["stats"]["expired_online"] == 2
+    assert reports[0]["stale"] is False  # no read of the sites since the report
+    with cloud_db.connect(cloud_database_url) as conn:
+        site = cloud_db.create_site(conn, org_id=org_id, brand_id=cloud_brand, url="https://stale.test/", label="")
+        conn.execute("INSERT INTO crawl_runs (org_id, site_id, status, started_at, finished_at) VALUES (%s, %s, 'done', now(), now() + interval '1 hour')",
+                     (org_id, site))
+    assert client.get(f"{base}/reports", headers=_headers(client_id)).json()["reports"][0]["stale"] is True  # a read finished after it
 
 
 def test_settings_are_per_organization_validated_and_admin_only(client, org_with_users):

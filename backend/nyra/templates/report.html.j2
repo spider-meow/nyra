@@ -100,7 +100,7 @@
     </div>
     <div class="muted small" style="text-align:right">
       Généré le {{ generated_at }}<br>
-      Fenêtre : expirés ou expirant sous {{ within_days }} jours
+      {% if within_days < 3650 %}Fenêtre : expirés ou expirant sous {{ within_days }} jours{% endif %}
     </div>
   </div>
 
