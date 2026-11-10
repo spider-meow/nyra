@@ -75,12 +75,12 @@ SCHEDULE_SECONDS = 300  # how often the monthly reads are looked for, see `sched
 # running longer is taken for hung (a frozen browser keeps the heartbeat thread beating): it is marked failed with that
 # message and the worker exits, so the container restarts. STARTING VALUES, to adjust from the durations in the
 # Statistiques page: a crawl reads every page of every address of the brand, then compares (a brand with several large
-# sites is long); an index embeds images on CPU, then compares (a first backfill is long); a match, a locate and a
-# report read stored data; a check reads 50 pages at most. Each can be set with `NYRA_JOB_LIMIT_<KIND>_MIN`.
+# sites is long); an index embeds images on CPU, then compares (a first backfill is long); a match (3 h: the comparison of a
+# large library with the images of several sites), a locate and a report read stored data; a check reads 50 pages at most. Each can be set with `NYRA_JOB_LIMIT_<KIND>_MIN`.
 JOB_LIMITS: dict[str, tuple[int, str, str]] = {
     "crawl": (12 * 60, "La lecture des sites", "le nombre de pages ou d'adresses"),
     "index": (6 * 60, "L'analyse des images", "le nombre d'images à analyser d'un coup"),
-    "match": (60, "La comparaison", "le nombre d'images à comparer"),
+    "match": (3 * 60, "La comparaison", "le nombre d'images à comparer"),
     "locate": (60, "La recherche de copies", "le nombre d'images lues sur les sites"),
     "report": (30, "La génération du rapport", "la période du rapport"),
     "check": (30, "La vérification des pages", "le nombre de pages à relire"),
