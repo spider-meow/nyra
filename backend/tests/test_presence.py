@@ -374,3 +374,17 @@ def test_a_page_sent_elsewhere_is_not_counted_nor_waited_for_and_a_visual_with_o
     assert items[b]["pages"] == 0 and items[b]["replaced"]
     assert (items[c]["pages"], items[c]["still"], items[c]["replaced"]) == (1, 1, False)  # a concluded redirect is a page; it still shows the visual
     assert not items[d]["replaced"]  # a match with no known page still blocks
+
+
+def test_the_report_gets_every_page_of_the_brand_in_one_read(cloud_database_url, cloud_org, cloud_brand):
+    after, before = READ + timedelta(minutes=2), READ - timedelta(days=1)
+    with cloud_db.connect(cloud_database_url) as conn:
+        site, ref = _setup(conn, cloud_org, cloud_brand)
+        image = _image(conn, cloud_org, site, ref, "a")
+        _page(conn, cloud_org, site, image, "/blogs/seen", seen=after)
+        _page(conn, cloud_org, site, image, "/blogs/removed", seen=before)
+        _page(conn, cloud_org, site, image, "/blogs/skipped", crawled=before, seen=before)
+        states = presence.page_states(conn, cloud_brand)
+    assert {key[1]: row["state"] for key, row in states.items()} == {
+        "https://a.test/blogs/seen": "still", "https://a.test/blogs/removed": "gone", "https://a.test/blogs/skipped": "unknown"}
+    assert all(key[0] == ref for key in states) and states[(ref, "https://a.test/blogs/seen")]["crawled_at"] == READ + timedelta(minutes=1)

@@ -61,7 +61,7 @@ def _pages(only_reference: bool, redirects: bool) -> str:
                "AND COALESCE(bool_or(p.read_started_at > pr.marked_at), false)))))") if redirects else "p.links_tracked"
     target = "p.redirect_url, p.redirect_hops, p.redirect_kind" if redirects else "NULL::text AS redirect_url, NULL::int AS redirect_hops, NULL::text AS redirect_kind"
     return f"""
-    SELECT m.reference_id, p.id AS page_id, p.url, s.id AS site_id, bool_or(pr.page_id IS NOT NULL) AS marked,
+    SELECT m.reference_id, p.id AS page_id, p.url, p.crawled_at, s.id AS site_id, bool_or(pr.page_id IS NOT NULL) AS marked,
            COALESCE(bool_or(p.read_started_at > pr.marked_at), false) AS checked, COALESCE(p.http_status = {CONSENT_WALL}, false) AS walled,
            '/' || split_part(split_part(regexp_replace(p.url, '^https?://[^/]+', ''), '?', 1), '/', 2) AS section,
            {target},
@@ -110,6 +110,14 @@ def pages(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID
         {"ref": reference_id, "brand": brand_id, "site": site, "section": section, "state": state, "marked": marked,
          "limit": min(limit, MAX_PAGES_PER_REQUEST), "offset": offset, "conclude": conclude},
     ).fetchall()
+
+
+def page_states(conn: psycopg.Connection, brand_id: uuid.UUID, *, conclude: bool = False) -> dict[tuple, Row]:
+    """Every (reference, page address) of the brand with its state and when the page was last read, for the report: one
+    query, whatever the number of visuals. (state, crawled_at, redirect_kind)."""
+    rows = conn.execute(f"SELECT g.reference_id, g.url, g.state, g.crawled_at, g.redirect_kind FROM ({_pages(False, has_redirect_columns(conn))}) g",
+                        {"brand": brand_id, "conclude": conclude}).fetchall()
+    return {(row["reference_id"], row["url"]): row for row in rows}
 
 
 def suspect_sites(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:

@@ -1064,7 +1064,10 @@ class Worker:
             unmatched = cloud_db.unmatched_rows(conn, brand_id)
             stats = asdict(cloud_db.get_stats(conn, brand_id))
             provenance = cloud_db.report_provenance(conn, brand_id)
-            replaced = cloud_presence.replaced_references(conn, brand_id, conclude=config.report.conclude_redirected_pages)
+            conclude = config.report.conclude_redirected_pages
+            replaced = cloud_presence.replaced_references(conn, brand_id, conclude=conclude)
+            presence = cloud_presence.page_states(conn, brand_id, conclude=conclude)
+            provenance["suspect_sites"] = [row["label"] or row["site_url"] for row in cloud_presence.suspect_sites(conn, brand_id)]
         for row in matches:
             row["ref_thumb"] = (cloud_storage.BUCKET_REFS, row["ref_thumb_path"] or row["ref_storage_path"])
             row["site_thumb"] = (cloud_storage.BUCKET_SITE_IMAGES, row["site_thumb_path"] or row["site_storage_path"])
@@ -1077,7 +1080,7 @@ class Worker:
 
         files = report_module.build_report(
             matches, unmatched, within_days=within_days, stats=stats, thumb_loader=loader,
-            organization=report_title(org, brand), provenance=provenance, replaced=replaced,
+            organization=report_title(org, brand), provenance=provenance, replaced=replaced, presence=presence,
         )
         report_id = uuid.uuid4()
         base = cloud_storage.path_for(org_id, str(report_id))
