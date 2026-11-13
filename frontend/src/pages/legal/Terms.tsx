@@ -10,16 +10,6 @@ export function Terms() {
       <Section title="Le service">
         <p>Nyra lit les pages publiques des sites que l'organisation déclare et les rapproche de sa bibliothèque de visuels. Les résultats sont une aide à la décision : ils sont relus par des personnes de l'organisation, qui décident quoi retirer. Nyra ne garantit pas qu'un visuel en ligne sera toujours trouvé.</p>
       </Section>
-      <Section title="Limites d'usage">
-        <p>Pour garder le service rapide pour tous, chaque organisation dispose de limites d'usage, par exemple :</p>
-        <List items={[
-          "5 000 pages lues par mois",
-          "10 marques et 10 adresses par marque",
-          "5 000 visuels en bibliothèque et 20 Go de stockage",
-          "50 membres et 20 invitations par jour",
-        ]} />
-        <p>Ces limites peuvent évoluer. Pour en changer, écrivez à {CONTACT}.</p>
-      </Section>
       <Section title="Engagements de l'organisation">
         <List items={[
           "Ne faire lire que des sites dont elle a la charge ou dont elle est autorisée à demander la lecture.",
