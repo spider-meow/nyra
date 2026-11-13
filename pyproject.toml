@@ -20,7 +20,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "psycopg[binary,pool]>=3.3.8",
     "pgvector>=0.5.1",
-    "supabase>=2.6",
+    "supabase>=2.34.1",
     "pyjwt[crypto]>=2.15.1",
 ]
 
