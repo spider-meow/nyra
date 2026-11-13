@@ -7,6 +7,7 @@ import { BrandMark, initials } from "../BrandMark";
 import { Dropdown } from "../Dropdown";
 import { Icon, type IconName } from "../icons";
 import { cx } from "../ui";
+import { LegalLinks } from "../../pages/legal/Layout";
 
 export type NavItem = { to: string; label: string; icon: IconName; count?: number; tone?: "alert" | "neutral" | "muted" | "warn"; newTab?: boolean };
 
@@ -168,6 +169,7 @@ export function Sidebar(props: { nav: ReturnType<typeof useNavItems>; orgs: Orga
         <NavItems list={nav.footerItems} onNavigate={onNavigate} />
       </nav>
       <Account orgs={props.orgs} />
+      <LegalLinks className="-mt-3 px-2.5" />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { Suspense, createContext, lazy, useContext, useEffect, useState, type Fo
 import { Link, Navigate, Outlet, useLocation, useNavigate, useParams, useRouteError } from "react-router";
 import { Layout } from "../components/Layout";
 import { Button, Card, Checkbox, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
+import { LegalLinks } from "./legal/Layout";
 import { ApiError, api, errorMessage } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { returnPath } from "../lib/paths";
@@ -28,6 +29,7 @@ function Centered(props: { title: string; body?: ReactNode; children?: ReactNode
           {props.body ? <p className="mt-2.5 text-sm leading-relaxed text-muted">{props.body}</p> : null}
           {props.children}
         </Card>
+        <LegalLinks className="mt-6 justify-center" />
       </div>
     </div>
   );
