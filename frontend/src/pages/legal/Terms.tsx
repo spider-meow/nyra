@@ -14,7 +14,6 @@ export function Terms() {
         <List items={[
           "Ne faire lire que des sites dont elle a la charge ou dont elle est autorisée à demander la lecture.",
           "Ne déposer que des visuels et des dates de droits dont elle a la maîtrise ; elle est seule responsable de l'exactitude des droits qu'elle déclare.",
-          "Ne pas tenter de contourner les limites, d'accéder aux données d'une autre organisation ou de perturber le service.",
         ]} />
         <p>Le robot de lecture se présente sous le nom NyraBot et respecte le fichier robots.txt des sites (<a className="underline" href="/robot">détails</a>).</p>
       </Section>
