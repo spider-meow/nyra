@@ -11,6 +11,13 @@ const PAGES = [
   { to: "/terms", label: "Conditions d'utilisation" },
 ];
 
+/** The three pages, as a row of links: foot of the interface, of the sign-in page and of each legal page. */
+export const LegalLinks = (props: { className?: string }) => (
+  <nav aria-label="Pages légales" className={`flex flex-wrap gap-x-4 gap-y-1 text-xs ${props.className ?? ""}`}>
+    {PAGES.map((page) => <Link key={page.to} to={page.to} className="text-muted underline hover:text-ink">{page.label}</Link>)}
+  </nav>
+);
+
 export const Section = (props: { title: string; children: ReactNode }) => (
   <section className="mt-9">
     <h2 className="font-display text-xl">{props.title}</h2>
@@ -36,9 +43,7 @@ export function LegalLayout(props: { title: string; children: ReactNode }) {
         <h1 className="font-display text-4xl leading-tight">{props.title}</h1>
         <p className="mt-2 text-xs text-muted">Dernière mise à jour : {UPDATED}</p>
         {props.children}
-        <nav aria-label="Pages légales" className="mt-12 flex flex-wrap gap-x-5 gap-y-1 border-t border-line pt-5 text-sm">
-          {PAGES.map((page) => <Link key={page.to} to={page.to} className="text-muted underline hover:text-ink">{page.label}</Link>)}
-        </nav>
+        <LegalLinks className="mt-12 border-t border-line pt-5 !text-sm" />
       </main>
     </div>
   );
