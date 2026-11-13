@@ -90,6 +90,7 @@ const router = createBrowserRouter([
       { path: "/robot", lazy: lazyPage(() => import("./pages/Robot").then((module) => module.Robot)), handle: { title: "Le robot Nyra" } },
       // Public legal texts, linked from the foot of the interface and of the sign-in page.
       { path: "/legal", lazy: lazyPage(() => import("./pages/legal/Mentions").then((module) => module.Mentions)), handle: { title: "Mentions légales" } },
+      { path: "/privacy", lazy: lazyPage(() => import("./pages/legal/Privacy").then((module) => module.Privacy)), handle: { title: "Confidentialité" } },
       // The French addresses of before: bookmarks and e-mails already sent keep working (see paths.ts).
       { path: "/connexion", lazy: legacy },
       { path: "/mot-de-passe", lazy: legacy },
