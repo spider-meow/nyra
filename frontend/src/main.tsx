@@ -84,6 +84,7 @@ const router = createBrowserRouter([
     errorElement: <PageError />,
     HydrateFallback: () => <div className="p-8"><Spinner label="Chargement…" /></div>,
     children: [
+      { path: "/", lazy: lazyPage(() => import("./pages/Home").then((module) => module.Home)) },
       { path: "/login", element: page(<Login />), handle: { title: "Connexion" } },
       { path: "/set-password", element: page(<SetPassword />), handle: { title: "Mot de passe" } },
       // Public and linked from nowhere but the robot's signature (config.yaml `crawl.user_agent`); the server marks it noindex.
@@ -96,7 +97,7 @@ const router = createBrowserRouter([
       {
         element: <RequireSession />,
         children: [
-          { path: "/", element: page(<OrgHome />) },
+          { path: "/app", element: page(<OrgHome />) },
           {
             path: "/back-office",
             lazy: lazyPage(() => import("./pages/BackOffice").then((module) => module.BackOffice)),

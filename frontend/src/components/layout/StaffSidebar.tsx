@@ -11,7 +11,7 @@ const STAFF_ITEMS: NavItem[] = [
   { to: "/back-office/accounts", label: "Comptes", icon: "users" },
   { to: "/back-office/emails", label: "E-mails", icon: "mail" },
   { to: "/back-office/platform-admins", label: "Platform admins", icon: "user" },
-  { to: "/", label: "Espaces clients", icon: "arrow" },
+  { to: "/app", label: "Espaces clients", icon: "arrow" },
 ];
 
 /** The back office's side column: no organization or brand on screen, so no switcher; the account block is the same. */
