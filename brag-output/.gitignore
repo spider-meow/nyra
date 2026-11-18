@@ -1,0 +1,10 @@
+# Regenerable intermediates of the launch video (node capture.mjs frames, python3 audio.py, npx tailwindcss)
+work/frames/
+work/stills/
+work/node_modules/
+work/package-lock.json
+work/out.css
+work/music.wav
+work/poster.png
+work/check*.png
+work/fonts/g.css

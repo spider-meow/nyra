@@ -1,0 +1,243 @@
+@import "tailwindcss" source(none);
+@source "./scene.html";
+
+/* Nyra design system, "creative sketchbook": cream paper, forest ink, highlighter yellow,
+   pastel cards, and one strict colour ladder for expiry. */
+@theme {
+  --font-sans: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Bricolage Grotesque", "Archivo Black", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  /* Cream paper, forest ink: the ink does the structure (text, main action, card borders) */
+  --color-ink: #1a3300;
+  --color-ink-soft: #3d5226;
+  --color-muted: #5f6e50;
+  --color-faint: #8a9680;
+  --color-line: #ebe7db;
+  --color-line-strong: #b6b6b6; /* pencil gray */
+  --color-canvas: #fdfcf8;
+  --color-side: #fdfcf8;
+  --color-sunk: #f7f4ec;
+  --color-paper: #ffffff;
+  --color-bar: #1a3300; /* floating action bars, tooltips */
+
+  /* Highlighter yellow for emphasis and the active state; pastel "sticky notes" for cards */
+  --color-yellow: #f6e27f;
+  --color-mint: #dce9cf;
+  --color-blush: #f4d9c6;
+  --color-teal: #d5e5e3;
+  --color-terracotta: #cb5521;
+
+  --color-accent: #1a3300;
+  --color-accent-hover: #3d5226;
+  --color-bark-800: #1a3300;
+  --color-bark-700: #1a3300;
+  --color-bark: #1a3300;
+  --color-peach: #f6e27f;
+  --color-peach-soft: rgb(246 226 127 / 0.45);
+
+  /* Status: one hue per urgency, used for text, borders and soft fills.
+     They also differ in lightness, not only in hue. */
+  --color-expired: #a8261b;
+  --color-expired-soft: #fbe7e3;
+  --color-urgent: #a34e0c;
+  --color-urgent-soft: #fcebdb;
+  --color-soon: #7d6200;
+  --color-soon-soft: #f8f0d2;
+  --color-ok: #2f6b45;
+  --color-ok-soft: #e4f0e7;
+  --color-unknown: #5f6e50;
+  --color-unknown-soft: #efede4;
+
+  --color-focus: #1a3300;
+  --color-focus-soft: rgb(246 226 127 / 0.7);
+
+  /* Almost no shadow: the borders and the colour fills separate things. */
+  --shadow-lift: 0 1px 2px rgb(0 0 0 / 0.05);
+  --shadow-float: 0 4px 16px rgb(0 0 0 / 0.12);
+}
+
+/* Mouvement : le seul vocabulaire de l'interface (docs/BONNES_PRATIQUES.md, « Mouvement »).
+   Court (jamais plus de 250 ms), sorties plus brèves que les entrées, opacité / couleur / ombre / transform seulement.
+   Toute transition Tailwind sans `duration-*` prend `--default-transition-*` ci-dessous. */
+@theme static {
+  --motion-fast: 120ms; /* survols, couleurs, contrôles, sorties */
+  --motion-base: 160ms; /* apparitions */
+  --motion-soft: 200ms; /* surcouches : fenêtres, menus ; barres de progression */
+  --ease-enter: cubic-bezier(0.2, 0, 0, 1); /* arrive vite, se pose doucement */
+  --ease-exit: cubic-bezier(0.3, 0, 1, 1); /* part en accélérant */
+  --default-transition-duration: var(--motion-fast);
+  --default-transition-timing-function: var(--ease-enter);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  letter-spacing: -0.006em;
+  -webkit-font-smoothing: antialiased;
+  color-scheme: light;
+}
+
+a {
+  text-underline-offset: 2px;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+::selection {
+  background: var(--color-peach-soft);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-display {
+  font-weight: 800;
+  letter-spacing: 0.01em;
+}
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.toast-in {
+  animation: toast-in var(--motion-base) var(--ease-enter);
+}
+
+@keyframes tip-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.96); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.tip-in {
+  animation: tip-in var(--motion-base) var(--ease-enter);
+}
+
+@keyframes progress-slide {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+
+.progress-indeterminate {
+  animation: progress-slide 1.4s ease-in-out infinite;
+}
+
+/* Buttons that appear once there is something to save. */
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.pop-in {
+  animation: pop-in var(--motion-base) var(--ease-enter);
+}
+
+/* Apparitions prêtes à l'emploi : un fondu, ou un fondu avec un glissement de 4 px. Jamais de hauteur ni de largeur. */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.fade-in {
+  animation: fade-in var(--motion-base) var(--ease-enter);
+}
+
+/* Squelette : une seule pulsation douce pour tout le site (immobile avec « réduire les animations », voir plus bas). */
+@keyframes skeleton-pulse {
+  50% { opacity: 0.55; }
+}
+
+.skeleton {
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+/* Un indicateur d'attente n'apparaît qu'au bout de 150 ms : un chargement rapide n'affiche rien (comme NavProgress et busy). */
+.fade-in-late {
+  animation: fade-in var(--motion-base) var(--ease-enter) 150ms backwards;
+}
+
+/* Sorties : plus courtes que les entrées, courbe qui accélère ; l'élément reste monté jusqu'à la fin (usePresence). */
+@keyframes fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+.fade-out {
+  animation: fade-out var(--motion-fast) var(--ease-exit) forwards;
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.rise-in {
+  animation: rise-in var(--motion-base) var(--ease-enter);
+}
+
+/* Les contrôles passent d'un état à l'autre en douceur (survol, appui, désactivé, état actif) : la règle est ici, une seule
+   fois, pour tous les liens, boutons et résumés. Pas de transition sur les champs ni sur l'anneau de focus (retour clavier
+   immédiat), ni sur les lignes de menu (la surbrillance suit les flèches). Une classe `transition-*` sur un contrôle
+   remplacerait cette liste de propriétés : ne pas en ajouter, sauf sur un élément qui n'est ni lien ni bouton. */
+@layer base {
+  :where(a, button, summary):not([role="menuitem"]) {
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity, box-shadow, translate;
+    transition-duration: var(--motion-fast);
+    transition-timing-function: var(--ease-enter);
+  }
+}
+
+/* « Réduire les animations » : plus rien ne bouge, d'un seul endroit. Les boucles s'arrêtent à leur première image
+   (la barre indéterminée reste visible, immobile) et les transitions deviennent instantanées. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .progress-indeterminate {
+    animation: none !important;
+  }
+}
+
+/* Suggestions come from a <datalist>; the browser's dropdown arrow on those fields is noise. */
+input[list]::-webkit-calendar-picker-indicator {
+  display: none !important;
+}
+
+/* A word in a headline, highlighted like with a marker pen. */
+.marker {
+  background: var(--color-yellow);
+  padding: 0 0.14em;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+/* The cross of a search field: the page's ink, not the browser's blue. */
+input[type="search"]::-webkit-search-cancel-button {
+  appearance: none;
+  height: 14px;
+  width: 14px;
+  cursor: pointer;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%235f6e50' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M6 6l12 12M18 6L6 18'/%3E%3C/svg%3E") center / contain no-repeat;
+}
