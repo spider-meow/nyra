@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="out.css">
+<style>
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: var(--color-canvas); }
+  #stage { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--color-canvas); }
+  .scene { position: absolute; inset: 0; display: none; }
+  .app { position: absolute; left: 0; top: 0; width: 1422px; height: 800px; transform-origin: 0 0; }
+  #cursor { position: absolute; left: 0; top: 0; width: 34px; height: 34px; z-index: 50; display: none; filter: drop-shadow(0 2px 4px rgb(0 0 0 / .25)); }
+  /* Every frame is a pure function of t: no CSS transition or animation may lag behind a capture. */
+  *, ::before, ::after { transition: none !important; animation: none !important; }
+  .ring { position: absolute; border-radius: 999px; border: 3px solid var(--color-ink); pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+
+  <!-- 1. Accroche : une fiche produit, sa photo expirée -->
+  <div class="scene" id="s1">
+    <h1 id="s1-title" class="font-display absolute left-0 right-0 top-[64px] text-center text-[76px] leading-none text-ink">Expirée. <span class="marker">Toujours en ligne.</span></h1>
+    <div id="s1-win" class="absolute left-[260px] top-[196px] h-[820px] w-[1400px] overflow-hidden rounded-[22px] border-2 border-ink bg-paper shadow-float">
+      <div class="flex h-[58px] items-center gap-3 border-b border-line bg-sunk px-6">
+        <span class="h-3.5 w-3.5 rounded-full bg-line-strong"></span><span class="h-3.5 w-3.5 rounded-full bg-line-strong"></span><span class="h-3.5 w-3.5 rounded-full bg-line-strong"></span>
+        <span class="ml-6 flex h-9 flex-1 items-center rounded-full border border-line bg-paper px-5 font-mono text-[17px] text-muted">maison-exemple.com/collection/cuvee-xo</span>
+      </div>
+      <div class="relative h-[762px] bg-[#16110c] text-[#efe3cc]">
+        <div class="flex h-[78px] items-center justify-between px-14 text-[15px] tracking-[0.28em]">
+          <span class="text-[19px] tracking-[0.42em]">MAISON EXEMPLE</span>
+          <span class="flex gap-10 text-[#b9a88a]"><span>COLLECTION</span><span>LA MAISON</span><span>BOUTIQUE</span></span>
+        </div>
+        <div class="grid grid-cols-[600px_1fr] items-center gap-16 px-14 pt-6">
+          <div id="s1-photo" class="relative h-[600px] w-[600px]"><div class="photo h-full w-full overflow-hidden rounded-[6px]" data-photo="bottle"></div></div>
+          <div>
+            <p class="text-[15px] tracking-[0.3em] text-[#b9a88a]">COLLECTION</p>
+            <p class="mt-5 text-[84px] leading-[0.95] tracking-tight" style="font-family: Georgia, serif">Cuvée XO</p>
+            <p class="mt-7 max-w-[470px] text-[21px] leading-relaxed text-[#cdbd9f]">Un assemblage patient, vieilli en fût de chêne, pour les grandes occasions.</p>
+            <span class="mt-10 inline-flex h-[58px] items-center border border-[#efe3cc] px-10 text-[16px] tracking-[0.3em]">DÉCOUVRIR</span>
+          </div>
+        </div>
+        <svg id="s1-mark" class="absolute left-[30px] top-[78px]" width="680" height="680" viewBox="0 0 680 680" fill="none">
+          <path d="M40 70 C 200 30, 520 26, 640 64 C 660 240, 662 460, 636 628 C 450 660, 210 664, 44 632 C 22 450, 20 250, 40 70 Z" stroke="#f6e27f" stroke-width="12" stroke-linecap="round" pathLength="1" stroke-dasharray="1" stroke-dashoffset="1"/>
+        </svg>
+        <div id="s1-badge" class="absolute left-[64px] top-[612px] origin-left" style="transform: scale(2.2)">
+          <span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap bg-expired-soft text-expired shadow-float"><span class="h-1.5 w-1.5 rounded-full bg-current"></span>Expiré depuis 47 j</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. Révélation -->
+  <div class="scene" id="s2">
+    <div class="absolute inset-0 grid place-items-center">
+      <div class="flex flex-col items-center">
+        <svg id="s2-logo" class="logo" width="230" height="230" viewBox="0 0 64 64"></svg>
+        <p id="s2-text" class="font-display mt-12 text-center text-[78px] leading-[1.08] text-ink">Nyra trouve vos <span class="marker" id="s2-mk">photos expirées</span><br>sur vos propres sites.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Tableau de bord (Layout + Sidebar + Hero) -->
+  <div class="scene" id="s3">
+    <div class="app" id="s3-app">
+      <div class="grid h-full grid-cols-[256px_minmax(0,1fr)] bg-canvas">
+        <aside class="h-full border-r border-line bg-side">
+          <div class="flex h-full flex-col gap-6 px-3.5 py-5">
+            <p class="-mb-3 px-2.5 font-display text-xs leading-none text-muted">Nyra</p>
+            <div class="flex h-12 items-center px-2.5"><span class="flex min-w-0 items-center gap-2.5"><span class="grid shrink-0 place-items-center rounded-lg bg-peach text-[13px] font-semibold text-bark-800" style="width:30px;height:30px">ME</span><span class="min-w-0 flex-1 truncate font-display text-[16px] leading-none">Maison Exemple</span></span></div>
+            <nav class="grid gap-0.5">
+              <a class="group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm bg-yellow font-medium text-ink"><svg data-icon="dashboard" class="text-ink"></svg><span class="flex-1">Tableau de bord</span><span class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11.5px] tabular bg-expired-soft font-medium text-expired">3</span></a>
+              <a class="group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm text-ink-soft"><svg data-icon="review" class="text-muted"></svg><span class="flex-1">À traiter</span><span class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11.5px] tabular bg-ink font-medium text-paper">12</span></a>
+              <a class="group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm text-ink-soft"><svg data-icon="report" class="text-muted"></svg><span class="flex-1">Visuels à remplacer</span></a>
+              <a class="group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm text-ink-soft"><svg data-icon="library" class="text-muted"></svg><span class="flex-1">Bibliothèque</span><span class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11.5px] tabular font-normal text-muted">248</span></a>
+              <a class="group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm text-ink-soft"><svg data-icon="alert" class="text-muted"></svg><span class="flex-1">Images en ligne</span><span class="inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1.5 text-[11.5px] tabular bg-urgent-soft font-medium text-urgent">37</span></a>
+              <a class="group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm text-ink-soft"><svg data-icon="report" class="text-muted"></svg><span class="flex-1">Rapports</span></a>
+            </nav>
+            <nav class="mt-auto -mb-3 grid gap-0.5">
+              <a class="group flex h-10 items-center gap-2.5 rounded-md px-3 text-sm text-ink-soft"><svg data-icon="settings" class="text-muted"></svg><span class="flex-1">Réglages</span></a>
+            </nav>
+            <div class="flex items-center gap-2.5 border-t border-line-strong px-2.5 pt-3.5">
+              <span class="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-peach text-xs font-semibold text-bark-800">CM</span>
+              <span class="min-w-0 flex-1 leading-tight"><span class="block truncate text-[13px]">camille@maison-exemple.com</span><span class="text-xs text-muted">Se déconnecter</span></span>
+            </div>
+          </div>
+        </aside>
+        <main class="min-w-0 px-14 py-10">
+          <header class="mb-8 flex flex-wrap items-end justify-between gap-4"><div class="min-w-0"><p class="mb-1.5 text-[13px] text-muted">Maison Exemple</p><h1 class="font-display text-[32px] leading-none md:text-4xl">Tableau de bord</h1></div></header>
+          <section class="grid gap-8 rounded-xl border border-ink bg-paper p-8 grid-cols-[minmax(0,1fr)_300px] items-center">
+            <div>
+              <span id="s3-pill" class="inline-flex items-center rounded-full border border-ink px-3 py-0.5 text-xs font-medium bg-yellow">À traiter en priorité</span>
+              <h2 id="s3-h2" class="font-display mt-5 text-[56px] leading-[1.15]"><span class="marker" id="s3-num">3</span> visuels expirés sont encore en ligne</h2>
+              <span id="s3-btn" class="mt-6 inline-flex h-12 items-center justify-center gap-2 rounded-lg bg-ink px-5 text-[15px] font-medium text-paper shadow-lift">Commencer le tri <svg data-icon="arrow" data-size="16" data-stroke="2"></svg></span>
+            </div>
+            <div class="rounded-xl border border-ink bg-mint p-5">
+              <p class="text-[13px] text-ink-soft">Dernière lecture</p>
+              <p class="mt-1 truncate font-mono text-[13px]">France · maison-exemple.com</p>
+              <p class="text-[13px] text-ink-soft" id="s3-when">Lecture en cours…</p>
+              <dl class="mt-4 grid gap-2 border-t border-ink/25 pt-4 text-sm">
+                <div class="flex justify-between gap-3"><dt class="text-ink-soft">Visuels trouvés en ligne</dt><dd class="font-medium tabular" data-count="41">0</dd></div>
+                <div class="flex justify-between gap-3"><dt class="text-ink-soft">Pages lues</dt><dd class="font-medium tabular" data-count="1284">0</dd></div>
+                <div class="flex justify-between gap-3"><dt class="text-ink-soft">Images comparées</dt><dd class="font-medium tabular" data-count="9412">0</dd></div>
+              </dl>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </div>
+
+  <!-- 4. Comparaison (CompareView + Pictures) -->
+  <div class="scene" id="s4">
+    <h1 id="s4-title" class="font-display absolute left-0 right-0 top-[58px] text-center text-[68px] leading-none text-ink">Même <span class="marker">recadrée</span>, même <span class="marker">retournée</span>.</h1>
+    <div id="s4-card" class="absolute left-[330px] top-[176px] w-[1260px] origin-top rounded-xl border border-ink bg-paper p-9" style="zoom: 1.0">
+      <div class="flex flex-col gap-5">
+        <div class="flex items-start justify-between gap-3">
+          <div class="min-w-0">
+            <h2 class="truncate text-[26px] font-semibold tracking-tight">cuvee-xo-cave.jpg</h2>
+            <p class="mt-2 flex items-center gap-3 text-[18px] text-muted">
+              <span class="inline-flex items-center gap-2 rounded-full px-3.5 py-1 text-[16px] font-medium whitespace-nowrap bg-expired-soft text-expired"><span class="h-2 w-2 rounded-full bg-current"></span>Expiré depuis 47 j</span>
+              <span>Échéance 1 oct. 2026</span>
+            </p>
+          </div>
+          <div class="inline-flex rounded-lg border border-line-strong bg-sunk p-[3px]"><span class="rounded-md bg-yellow px-4 py-1.5 text-[17px] font-medium text-ink">Côte à côte</span><span class="rounded-md px-4 py-1.5 text-[17px] text-muted">Superposition</span></div>
+        </div>
+        <div class="relative grid grid-cols-2 gap-5" id="s4-pics">
+          <figure class="m-0 min-w-0" id="s4-ref"><div class="block w-full overflow-hidden rounded-xl bg-side"><div class="photo aspect-square w-full" data-photo="bottle"></div></div><figcaption class="mt-2.5 text-[18px] font-medium">Référence</figcaption></figure>
+          <figure class="m-0 min-w-0" id="s4-site"><div class="block w-full overflow-hidden rounded-xl bg-side ring-3 ring-focus"><div class="photo aspect-square w-full" data-photo="bottle-crop"></div></div><figcaption class="mt-2.5 text-[18px] font-medium">Sur maison-exemple.com</figcaption></figure>
+          <svg id="s4-lines" class="pointer-events-none absolute inset-0 h-full w-full overflow-visible"></svg>
+        </div>
+        <div id="s4-conf" class="flex items-center gap-3 rounded-xl bg-peach-soft px-5 py-3.5 text-[19px] text-bark-800">
+          <span class="inline-flex items-center gap-2 rounded-full border border-line-strong bg-paper px-3.5 py-1 text-[17px] whitespace-nowrap text-ink"><span class="flex gap-[3px]"><span class="h-3.5 w-1 rounded-sm bg-bark"></span><span class="h-3.5 w-1 rounded-sm bg-bark"></span><span class="h-3.5 w-1 rounded-sm bg-bark"></span></span>Confirmé</span>
+          <span>Même image, éventuellement redimensionnée, recompressée ou retournée.</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 5. Décision (OccurrenceList + DecisionPanel) -->
+  <div class="scene" id="s5">
+    <h1 id="s5-title" class="font-display absolute left-0 right-0 top-[58px] text-center text-[72px] leading-none text-ink">L'algorithme propose. <span class="marker">Vous décidez.</span></h1>
+    <div class="app" id="s5-app" style="left:96px; top:236px">
+      <div class="grid grid-cols-[560px_1fr] gap-6 p-2">
+        <div class="self-start rounded-xl border border-ink bg-paper">
+          <div class="flex flex-col gap-1 p-2" id="s5-rows"></div>
+          <p class="border-t border-line px-4 py-2.5 text-xs text-muted">12 photos</p>
+        </div>
+        <div class="flex flex-col gap-4 rounded-xl border border-ink bg-paper p-6">
+          <div class="flex items-start justify-between gap-3">
+            <div><h2 class="text-lg font-semibold tracking-tight" id="s5-file">cuvee-xo-cave.jpg</h2>
+            <p class="mt-1.5 flex items-center gap-2 text-[13px] text-muted"><span class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium bg-expired-soft text-expired"><span class="h-1.5 w-1.5 rounded-full bg-current"></span><span id="s5-days">Expiré depuis 47 j</span></span></p></div>
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div class="overflow-hidden rounded-xl bg-side"><div class="photo aspect-[4/3] w-full" id="s5-ref" data-photo="bottle"></div></div>
+            <div class="overflow-hidden rounded-xl bg-side ring-3 ring-focus"><div class="photo aspect-[4/3] w-full" id="s5-site" data-photo="bottle-crop"></div></div>
+          </div>
+          <div class="rounded-xl bg-sunk p-3.5">
+            <div class="flex items-center justify-between gap-2"><p class="text-[13px] font-semibold">Est-ce bien ce visuel ?</p><span id="s5-badge"></span></div>
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <button id="s5-yes" class="flex h-14 flex-col items-center justify-center gap-0.5 rounded-[14px] border text-[13.5px] font-medium">C'est bien lui<span class="text-[11px] font-normal">C</span></button>
+              <button class="flex h-14 flex-col items-center justify-center gap-0.5 rounded-[14px] border border-line-strong bg-paper text-[13.5px] font-medium text-ink">Faux positif<span class="text-[11px] font-normal text-muted">F</span></button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6. Final -->
+  <div class="scene" id="s6">
+    <div class="absolute inset-0 grid place-items-center">
+      <div class="flex flex-col items-center">
+        <svg id="s6-logo" class="logo" width="200" height="200" viewBox="0 0 64 64"></svg>
+        <p id="s6-text" class="font-display mt-12 text-center text-[80px] leading-[1.08] text-ink">Vos droits photo,<br><span class="marker">vérifiés sur vos sites.</span></p>
+        <p id="s6-sub" class="mt-10 text-center text-[28px] text-ink-soft">Bibliothèque · Lecture des sites · Tri · Rapports</p>
+      </div>
+    </div>
+  </div>
+
+  <svg id="cursor" viewBox="0 0 24 24"><path d="M4 2 L4 20 L9 15.5 L12.5 22.5 L15.5 21 L12 14 L19 14 Z" fill="#1a3300" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/></svg>
+  <div class="ring" id="click" style="display:none"></div>
+</div>
+
+<script>
+const ICONS = {
+  dashboard: "M4 13h6V4H4zM14 20h6v-9h-6zM14 4h6v4h-6zM4 20h6v-3H4z",
+  review: "M4 7h16M4 12h10M4 17h6M16 16l2 2 4-4",
+  library: "M3 6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM21 16l-5-5-9 9M9 8.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z",
+  report: "M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6",
+  settings: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
+  alert: "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v6M12 16.5v.5",
+  arrow: "M5 12h14M13 6l6 6-6 6",
+};
+// The Nyra mark, from frontend/public/favicon.svg.
+const LOGO = "M4 33V3H13.5L26.36 23.14H26.91L26.45 3H33.59V33H25L11.23 11.73H10.73L11.14 33ZM47.45 41.36Q45.64 41.36 43.73 41.05Q41.82 40.73 40.11 40.11Q38.41 39.5 37.18 38.5L38.95 32Q40.550 33.5 42.8 34.23Q45.05 34.95 47.14 34.95Q49.55 34.95 51.11 34.02Q52.68 33.09 53.52 31.16Q54.36 29.23 54.5 26.36L54.73 22.41H53.64Q53.23 25.36 52.2 27.23Q51.18 29.09 49.61 29.98Q48.05 30.86 45.91 30.86Q43.27 30.86 41.5 29.55Q39.73 28.23 38.84 25.57Q37.95 22.91 37.95 18.95V9H45.32V17.14Q45.32 21.32 46.16 23.11Q47 24.91 48.82 24.91Q49.77 24.91 50.55 24.36Q51.32 23.82 51.86 22.82Q52.41 21.820 52.7 20.39Q53 18.95 53 17.18V9H60.32V26.64Q60.32 29.5 59.8 31.86Q59.27 34.23 58.25 36Q57.23 37.77 55.68 38.98Q54.14 40.18 52.09 40.77Q50.05 41.36 47.45 41.36ZM3.68 60.36V49.23V36.36H9.68L9.82 44.5H10.73Q11.05 41.32 11.93 39.43Q12.82 37.55 14.48 36.68Q16.14 35.82 18.59 35.82Q18.95 35.82 19.41 35.84Q19.86 35.86 20.45 35.950L20.18 43.77Q19.45 43.41 18.61 43.3Q17.77 43.18 17.14 43.18Q15.36 43.18 14.07 43.86Q12.77 44.55 12.02 45.95Q11.27 47.36 11.05 49.5V60.36ZM28.23 61Q26.23 61 24.68 60.2Q23.14 59.41 22.27 57.89Q21.41 56.36 21.41 54.18Q21.41 52.14 22.2 50.8Q23 49.45 24.52 48.66Q26.05 47.86 28.18 47.34Q30.32 46.82 33.05 46.41Q34.36 46.18 35.25 45.98Q36.14 45.77 36.59 45.32Q37.05 44.86 37.05 44Q37.05 42.86 36.23 42.05Q35.41 41.23 33.59 41.23Q32.32 41.23 31.3 41.68Q30.27 42.14 29.55 43Q28.82 43.86 28.45 45.09L22 43.18Q22.59 41.27 23.66 39.86Q24.73 38.45 26.23 37.52Q27.73 36.59 29.66 36.16Q31.59 35.73 33.77 35.73Q37.41 35.73 39.7 36.89Q42 38.05 43.11 40.48Q44.23 42.91 44.23 46.73V50.41Q44.23 52.05 44.3 53.7Q44.36 55.36 44.48 57.02Q44.59 58.68 44.77 60.36H38.32Q38.14 59.32 37.95 57.84Q37.77 56.36 37.68 54.82H36.82Q36.18 56.55 34.98 57.98Q33.77 59.41 32.07 60.2Q30.36 61 28.23 61ZM31.55 55.82Q32.36 55.82 33.2 55.52Q34.05 55.23 34.82 54.7Q35.59 54.18 36.23 53.41Q36.86 52.640 37.18 51.73L37.09 48.14L38.09 48.36Q37.23 48.91 36.18 49.23Q35.14 49.55 34.07 49.73Q33 49.91 31.98 50.11Q30.95 50.32 30.16 50.64Q29.36 50.95 28.91 51.5Q28.45 52.05 28.45 53Q28.45 54.27 29.32 55.05Q30.18 55.82 31.55 55.82Z";
+
+// Invented photos (no client image): a bottle in a cellar, and others for the list.
+let PHOTO_N = 0;
+function scenePhoto(kind) {
+  const uid = kind + "-" + (PHOTO_N++);
+  const defs = `<defs>
+    <linearGradient id="bg-${uid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a2614"/><stop offset=".62" stop-color="#7a4a22"/><stop offset=".63" stop-color="#2a1a0e"/><stop offset="1" stop-color="#140d07"/></linearGradient>
+    <radialGradient id="glow-${uid}" cx=".68" cy=".3" r=".5"><stop offset="0" stop-color="#ffcf7a" stop-opacity=".75"/><stop offset="1" stop-color="#ffcf7a" stop-opacity="0"/></radialGradient>
+    <linearGradient id="glass-${uid}" x1="0" x2="1"><stop offset="0" stop-color="#4a2208"/><stop offset=".35" stop-color="#b8661c"/><stop offset=".55" stop-color="#e39a3b"/><stop offset="1" stop-color="#3c1a06"/></linearGradient>
+  </defs>`;
+  const cellar = `<rect width="400" height="400" fill="url(#bg-${uid})"/><rect width="400" height="400" fill="url(#glow-${uid})"/>
+    ${[0,1,2,3,4].map(i => `<circle cx="${40+i*88}" cy="${70+(i%2)*40}" r="${10+(i%3)*7}" fill="#ffd28a" opacity=".18"/>`).join("")}
+    <ellipse cx="300" cy="190" rx="70" ry="88" fill="#5a3418" opacity=".55"/><ellipse cx="300" cy="190" rx="54" ry="70" fill="none" stroke="#2b190b" stroke-width="5" opacity=".7"/>
+    <g><path d="M170 340 L170 205 Q170 180 186 165 L190 120 L210 120 L214 165 Q230 180 230 205 L230 340 Q200 350 170 340 Z" fill="url(#glass-${uid})"/>
+    <rect x="188" y="96" width="24" height="28" rx="3" fill="#1b1209"/><rect x="178" y="232" width="44" height="52" rx="2" fill="#efe3cc"/><rect x="186" y="246" width="28" height="3" fill="#7a4a22"/><rect x="190" y="256" width="20" height="2" fill="#7a4a22"/>
+    <path d="M178 210 Q176 280 180 330" stroke="#ffe0a8" stroke-width="5" opacity=".55" fill="none" stroke-linecap="round"/></g>
+    <path d="M252 300 L262 340 L298 340 L308 300 Z" fill="#ffd28a" opacity=".35"/><path d="M256 316 L262 340 L298 340 L304 316 Z" fill="#c26a1c" opacity=".85"/>`;
+  if (kind === "bottle") return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice" width="100%" height="100%">${defs}${cellar}</svg>`;
+  if (kind === "bottle-crop")
+    // The same photo as found online: cropped, mirrored, with the site's own banner on top.
+    return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice" width="100%" height="100%">${defs}<g transform="translate(400 0) scale(-1 1) translate(-85.7 -57.1) scale(1.4286)">${cellar}</g>
+      <rect x="0" y="342" width="400" height="58" fill="#16110c" opacity=".88"/><text x="200" y="378" text-anchor="middle" font-family="Georgia,serif" font-size="22" letter-spacing="5" fill="#efe3cc">ÉDITION LIMITÉE</text></svg>`;
+  if (kind === "vineyard")
+    return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice" width="100%" height="100%"><rect width="400" height="400" fill="#f4c98a"/><circle cx="290" cy="150" r="48" fill="#fbe2a9"/><path d="M0 230 Q120 170 230 215 T400 200 V400 H0Z" fill="#9aa25a"/><path d="M0 290 Q160 230 400 280 V400 H0Z" fill="#5f6e30"/>${[0,1,2,3,4,5].map(i=>`<path d="M${-20+i*70} 400 Q${60+i*70} 320 ${140+i*70} 300" stroke="#3d4a1c" stroke-width="5" fill="none"/>`).join("")}</svg>`;
+  if (kind === "barrel")
+    return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice" width="100%" height="100%"><rect width="400" height="400" fill="#2a1d14"/>${[0,1,2].map(i=>`<g transform="translate(${30+i*120} ${i%2?150:120})"><ellipse cx="60" cy="90" rx="58" ry="80" fill="#8a5a2e"/><ellipse cx="60" cy="90" rx="44" ry="64" fill="#6e4422"/><ellipse cx="60" cy="90" rx="58" ry="80" fill="none" stroke="#1a120b" stroke-width="7"/></g>`).join("")}</svg>`;
+  return `<svg viewBox="0 0 400 400" preserveAspectRatio="xMidYMid slice" width="100%" height="100%"><rect width="400" height="400" fill="#d5e5e3"/><circle cx="200" cy="210" r="110" fill="#efe3cc"/><path d="M150 170 L250 170 L240 300 L160 300 Z" fill="#c26a1c" opacity=".8"/></svg>`;
+}
+
+const ROWS = [
+  { photo: "bottle-crop", where: "Trouvée sur France, Royaume-Uni", files: "3 fichiers · correspond à 1 référence", conf: 3 },
+  { photo: "vineyard", where: "Trouvée sur France", files: "1 fichier · correspond à 1 référence", conf: 3 },
+  { photo: "barrel", where: "Trouvée sur États-Unis", files: "2 fichiers · correspond à 1 référence", conf: 2 },
+  { photo: "glass", where: "Trouvée sur France", files: "1 fichier · correspond à 2 références", conf: 1 },
+];
+const CONF = { 3: "Confirmé", 2: "Probable", 1: "À vérifier" };
+
+function confBadge(n) {
+  const bars = [1, 2, 3].map(b => `<span class="h-2.5 w-[3px] rounded-sm ${b <= n ? "bg-bark" : "bg-line"}"></span>`).join("");
+  const tone = n === 1 ? "border-dashed border-faint text-ink-soft" : "border-line-strong text-ink";
+  return `<span class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs whitespace-nowrap ${tone}"><span class="flex gap-0.5">${bars}</span>${CONF[n]}</span>`;
+}
+const PENDING = `<span class="inline-flex rounded-md border border-dashed border-line-strong px-2 py-px text-xs whitespace-nowrap text-muted">À confirmer</span>`;
+const DONE = `<span class="inline-flex rounded-md px-2 py-px text-xs font-medium whitespace-nowrap bg-ink text-paper">Confirmé</span>`;
+
+function setup() {
+  document.querySelectorAll("svg[data-icon]").forEach(svg => {
+    const size = svg.dataset.size || 18;
+    svg.setAttribute("width", size); svg.setAttribute("height", size); svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none"); svg.setAttribute("stroke", "currentColor"); svg.setAttribute("stroke-width", svg.dataset.stroke || 1.75);
+    svg.setAttribute("stroke-linecap", "round"); svg.setAttribute("stroke-linejoin", "round"); svg.classList.add("shrink-0");
+    svg.innerHTML = `<path d="${ICONS[svg.dataset.icon]}"/>`;
+  });
+  document.querySelectorAll("svg.logo").forEach(svg => svg.innerHTML = `<path fill="#1a3300" d="${LOGO}"/>`);
+  document.getElementById("s5-rows").innerHTML = ROWS.map((r, i) => `
+    <div data-row="${i}" class="flex w-full items-center gap-3.5 rounded-[14px] border px-3 py-2.5 text-left">
+      <span class="block shrink-0 overflow-hidden rounded-md bg-side" style="width:46px;height:46px">${scenePhoto(r.photo)}</span>
+      <span class="min-w-0 flex-1"><span class="block truncate text-sm font-medium">${r.where}</span><span class="mt-0.5 block truncate text-xs text-muted">${r.files}</span></span>
+      <span class="flex shrink-0 items-center gap-1.5">${confBadge(r.conf)}<span class="dec">${PENDING}</span></span>
+    </div>`).join("");
+  document.querySelectorAll("[data-photo]").forEach(el => el.innerHTML = scenePhoto(el.dataset.photo));
+}
+
+// ---- timeline helpers: every frame is a pure function of t ----
+const clamp = (x) => Math.max(0, Math.min(1, x));
+const seg = (t, a, b) => clamp((t - a) / (b - a));
+const outCubic = (x) => 1 - Math.pow(1 - x, 3);
+const outBack = (x) => { const c = 1.6; return 1 + (c + 1) * Math.pow(x - 1, 3) + c * Math.pow(x - 1, 2); };
+const inOut = (x) => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const lerp = (a, b, x) => a + (b - a) * x;
+const $ = (id) => document.getElementById(id);
+
+const SCENES = [["s1", 0, 3], ["s2", 3, 6], ["s3", 6, 9.5], ["s4", 9.5, 13.5], ["s5", 13.5, 17], ["s6", 17, 20]];
+const EXIT = 0.2, ENTER = 0.35;
+
+function rise(el, t, a, dur = ENTER, dist = 18) {
+  const p = outCubic(seg(t, a, a + dur));
+  el.style.opacity = p; el.style.transform = `translateY(${(1 - p) * dist}px)`;
+}
+function markerSweep(el, t, a, dur = 0.35) {
+  const p = inOut(seg(t, a, a + dur));
+  el.style.backgroundImage = "linear-gradient(var(--color-yellow), var(--color-yellow))";
+  el.style.backgroundColor = "transparent";
+  el.style.backgroundRepeat = "no-repeat";
+  el.style.backgroundSize = `${p * 100}% 100%`;
+}
+function cursorAt(x, y, show) {
+  const c = $("cursor"); c.style.display = show ? "block" : "none"; c.style.transform = `translate(${x}px, ${y}px)`;
+}
+function clickRing(x, y, t, a) {
+  const r = $("click"); const p = seg(t, a, a + 0.35);
+  if (p <= 0 || p >= 1) { r.style.display = "none"; return; }
+  const s = 10 + 50 * outCubic(p);
+  r.style.display = "block"; r.style.left = `${x - s / 2}px`; r.style.top = `${y - s / 2}px`; r.style.width = r.style.height = `${s}px`; r.style.opacity = 1 - p;
+}
+
+function renderS1(t) {
+  const win = $("s1-win"); const p = outCubic(seg(t, 0, 0.5));
+  win.style.opacity = p; win.style.transform = `translateY(${(1 - p) * 40}px) scale(${lerp(1, 1.035, seg(t, 0, 3))})`;
+  $("s1-mark").querySelector("path").style.strokeDashoffset = 1 - inOut(seg(t, 0.5, 1.0));
+  const b = outBack(seg(t, 1.0, 1.35)); const badge = $("s1-badge");
+  badge.style.opacity = clamp(b * 2); badge.style.transform = `scale(${2.2 * (0.6 + 0.4 * b)})`;
+  rise($("s1-title"), t, 1.5);
+  markerSweep($("s1-title").querySelector(".marker"), t, 1.5, 0.4);
+}
+function renderS2(t) {
+  const l = outBack(seg(t, 3.0, 3.45)); const logo = $("s2-logo");
+  logo.style.opacity = clamp(l * 2); logo.style.transform = `scale(${0.7 + 0.3 * l})`;
+  rise($("s2-text"), t, 3.5); markerSweep($("s2-mk"), t, 3.75, 0.4);
+}
+function renderS3(t) {
+  // Camera: the whole app, then a push onto the hero card (centre 839,295 in app pixels).
+  const app = $("s3-app"); const k = inOut(seg(t, 6.6, 9.5));
+  const z = lerp(1.35, 1.62, k), tx = lerp(0, 960 - 839 * 1.62, k), ty = lerp(0, 575 - 295 * 1.62, k);
+  const p = outCubic(seg(t, 6, 6 + ENTER));
+  app.style.opacity = p; app.style.transform = `translate(${tx}px, ${ty + (1 - p) * 24}px) scale(${z})`;
+  const reading = seg(t, 6.3, 7.8);
+  document.querySelectorAll("#s3 [data-count]").forEach(dd => dd.textContent = Math.round(+dd.dataset.count * outCubic(reading)).toLocaleString("fr-FR"));
+  $("s3-when").textContent = reading < 1 ? "Lecture en cours…" : "18 nov. 2026, 04:15";
+  rise($("s3-pill"), t, 7.8, 0.3, 8);
+  rise($("s3-h2"), t, 8.0, 0.35, 12);
+  markerSweep($("s3-num"), t, 8.25, 0.25);
+  rise($("s3-btn"), t, 8.5, 0.3, 8);
+  const btn = $("s3-btn"); btn.style.background = t > 9.2 ? "var(--color-ink-soft)" : "";
+  // The cursor travels to « Commencer le tri » and clicks on the beat (9.0 s).
+  const r = btn.getBoundingClientRect(); const cx = r.left + r.width * 0.55, cy = r.top + r.height * 0.55;
+  const m = inOut(seg(t, 8.4, 9.0));
+  cursorAt(lerp(1500, cx, m), lerp(1000, cy, m), t >= 8.4);
+  clickRing(cx, cy, t, 9.0);
+}
+const KP = [[120, 110], [150, 300], [205, 105], [200, 180], [190, 255], [262, 330], [300, 120], [320, 250], [230, 300], [110, 220], [280, 190], [175, 335]];
+function renderS4(t) {
+  rise($("s4-title"), t, 9.6, 0.35);
+  markerSweep($("s4-title").querySelectorAll(".marker")[0], t, 9.75, 0.3);
+  markerSweep($("s4-title").querySelectorAll(".marker")[1], t, 10.25, 0.3);
+  const card = $("s4-card"); const p = outCubic(seg(t, 9.5, 9.5 + ENTER));
+  card.style.opacity = p; card.style.transform = `translateY(${(1 - p) * 30}px)`;
+  rise($("s4-site"), t, 10.0, 0.35, 0);
+  $("s4-site").style.transform = `scale(${lerp(0.94, 1, outCubic(seg(t, 10.0, 10.35)))})`;
+  // Keypoints of the reference meet their twins on the site image (crop + mirror), one by one.
+  const svg = $("s4-lines"); const box = svg.getBoundingClientRect();
+  const a = $("s4-ref").querySelector(".photo").getBoundingClientRect(), b = $("s4-site").querySelector(".photo").getBoundingClientRect();
+  let html = "";
+  KP.forEach(([x, y], i) => {
+    const u = 1 - (x - 60) / 280, v = (y - 40) / 280;
+    if (u < 0 || u > 1 || v < 0 || v > 0.84) return;
+    const q = seg(t, 10.5 + i * 0.125, 10.5 + i * 0.125 + 0.25); if (q <= 0) return;
+    const x1 = a.left - box.left + x / 400 * a.width, y1 = a.top - box.top + y / 400 * a.height;
+    const x2 = b.left - box.left + u * b.width, y2 = b.top - box.top + v * b.height;
+    const fade = 1 - seg(t, 12.2, 12.6);
+    html += `<line x1="${x1}" y1="${y1}" x2="${lerp(x1, x2, outCubic(q))}" y2="${lerp(y1, y2, outCubic(q))}" stroke="#f6e27f" stroke-width="3" opacity="${0.95 * fade}"/>`;
+    html += `<circle cx="${x1}" cy="${y1}" r="7" fill="none" stroke="#f6e27f" stroke-width="3" opacity="${fade}"/>`;
+    if (q >= 1) html += `<circle cx="${x2}" cy="${y2}" r="7" fill="none" stroke="#f6e27f" stroke-width="3" opacity="${fade}"/>`;
+  });
+  svg.innerHTML = html;
+  const c = outBack(seg(t, 11.5, 11.85)); const conf = $("s4-conf");
+  conf.style.opacity = clamp(c * 2); conf.style.transform = `translateY(${(1 - c) * 14}px)`;
+}
+function renderS5(t) {
+  rise($("s5-title"), t, 13.6);
+  markerSweep($("s5-title").querySelector(".marker"), t, 13.875, 0.35);
+  const app = $("s5-app"); const p = outCubic(seg(t, 13.5, 13.5 + ENTER));
+  app.style.opacity = p; app.style.transform = `translateY(${(1 - p) * 24}px) scale(1.21)`;
+  // Row 1 is confirmed by a click at 14.5 s, row 2 by the C key at 15.5 s, row 3 is selected at 16.0 s.
+  const decided = (t >= 14.5 ? 1 : 0) + (t >= 15.5 ? 1 : 0);
+  const selected = t < 15.0 ? 0 : t < 16.0 ? 1 : 2;
+  document.querySelectorAll("#s5-rows [data-row]").forEach((row, i) => {
+    row.className = "flex w-full items-center gap-3.5 rounded-[14px] border px-3 py-2.5 text-left " + (i === selected ? "border-focus bg-paper shadow-[0_0_0_3px_var(--color-peach-soft)]" : "border-transparent");
+    row.querySelector(".dec").innerHTML = i < decided ? DONE : PENDING;
+    const pop = i < decided ? outBack(seg(t, i === 0 ? 14.5 : 15.5, (i === 0 ? 14.5 : 15.5) + 0.25)) : 1;
+    row.querySelector(".dec").style.display = "inline-flex"; row.querySelector(".dec").style.transform = `scale(${0.8 + 0.2 * pop})`;
+  });
+  const row = ROWS[selected];
+  PHOTO_N = 1000;
+  $("s5-site").innerHTML = scenePhoto(row.photo);
+  $("s5-ref").innerHTML = scenePhoto(row.photo === "bottle-crop" ? "bottle" : row.photo);
+  $("s5-file").textContent = ["cuvee-xo-cave.jpg", "vignes-ete.jpg", "chai-futs.jpg"][selected];
+  $("s5-days").textContent = ["Expiré depuis 47 j", "Expiré depuis 12 j", "Expiré depuis 3 j"][selected];
+  const active = selected < decided;
+  const yes = $("s5-yes");
+  yes.className = "flex h-14 flex-col items-center justify-center gap-0.5 rounded-[14px] border text-[13.5px] font-medium " + (active || (t >= 15.4 && t < 15.5) ? "border-ink bg-ink text-paper" : "border-line-strong bg-paper text-ink");
+  yes.querySelector("span").className = "text-[11px] font-normal " + (active ? "text-paper/60" : "text-muted");
+  $("s5-badge").innerHTML = active ? DONE : PENDING;
+  const r = yes.getBoundingClientRect(); const tx = r.left + r.width * 0.5, ty = r.top + r.height * 0.45;
+  const m = inOut(seg(t, 13.8, 14.5));
+  cursorAt(lerp(1700, tx, m), lerp(1040, ty, m), t >= 13.8 && t < 16.8);
+  clickRing(tx, ty, t, 14.5);
+}
+function renderS6(t) {
+  const l = outBack(seg(t, 17.0, 17.4)); const logo = $("s6-logo");
+  logo.style.opacity = clamp(l * 2); logo.style.transform = `scale(${0.75 + 0.25 * l})`;
+  rise($("s6-text"), t, 17.3); markerSweep($("s6-text").querySelector(".marker"), t, 17.5, 0.4);
+  rise($("s6-sub"), t, 18.0, 0.35, 10);
+}
+const RENDER = { s1: renderS1, s2: renderS2, s3: renderS3, s4: renderS4, s5: renderS5, s6: renderS6 };
+
+window.renderAt = function (t) {
+  cursorAt(0, 0, false); $("click").style.display = "none";
+  for (const [id, a, b] of SCENES) {
+    const el = $(id);
+    const last = id === "s6";
+    const on = t >= a && (t < b || last);
+    el.style.display = on ? "block" : "none";
+    if (!on) continue;
+    el.style.opacity = last ? 1 : 1 - seg(t, b - EXIT, b);
+    RENDER[id](t);
+  }
+};
+setup();
+window.ready = document.fonts.ready.then(() => true);
+</script>
+</body>
+</html>
