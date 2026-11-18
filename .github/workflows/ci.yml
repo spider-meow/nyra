@@ -65,7 +65,13 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       # Fails on a high or critical advisory (lower ones are left to Dependabot, to keep the noise down).
-      - run: npm audit --audit-level=high
+      # GHSA-fc5q-39xc-vjpf (picomatch ReDoS) is ignored by name: no patched release exists (latest 4.0.7 is affected) and
+      # it only reaches the build tools (vite), never shipped code (`npm audit --omit=dev` is clean). Delete this
+      # filter and restore `npm audit --audit-level=high` once a picomatch newer than 4.0.7 is published.
+      - run: >-
+          npm audit --json | jq -e '[.vulnerabilities[].via[] | objects
+          | select(.severity == "high" or .severity == "critical")
+          | select(.url != "https://github.com/advisories/GHSA-fc5q-39xc-vjpf")] | length == 0'
       - run: npm run build
       # First-load JS budget (frontend/size-budget.json) and the browser-monitoring scrubbers.
       - run: npm run size
