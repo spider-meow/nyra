@@ -207,6 +207,7 @@ within 24 hours of a first send Resend treats the same key as the same mail and 
 4. **Authentication > Emails > Templates**: paste `supabase/templates/recovery.html`
    (*Reset password*) and `supabase/templates/invite.html` (*Invite user*) with
    the subjects « Nouveau mot de passe — Nyra » and « Votre accès à Nyra ». The
+   templates link to `{{ .SiteURL }}/set-password?token_hash=…` (not `{{ .ConfirmationURL }}`): the token is spent when the person clicks the button, so a mail scanner that opens the link cannot use it up. *Site URL* must therefore be the public address. The
    templates carry no image: mail clients block remote images from unknown senders.
    Supabase's own sender is limited to a few e-mails an hour and to your team's addresses, so a client's
    invitation would not arrive: set **Authentication > Emails > SMTP Settings** to Resend (host
