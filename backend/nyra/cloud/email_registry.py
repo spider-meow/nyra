@@ -17,7 +17,7 @@ from typing import Callable, Optional
 from . import digest
 
 EXAMPLE_URL = "https://example.com"
-_VARIABLES = {"ConfirmationURL": f"{EXAMPLE_URL}/auth/confirm?exemple", "Email": "prenom.nom@example.com"}
+_VARIABLES = {"SiteURL": EXAMPLE_URL, "TokenHash": "exemple", "Email": "prenom.nom@example.com"}
 
 
 @dataclass(frozen=True)

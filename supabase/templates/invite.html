@@ -30,11 +30,11 @@
       <h1 class="ink" style="margin:0 0 14px;font-family:'Bricolage Grotesque',Georgia,serif;font-size:28px;line-height:1.15;font-weight:800;color:#1a3300;">Vous êtes invité sur Nyra</h1>
       <p class="ink" style="margin:0 0 26px;font-family:Inter,'Segoe UI',Arial,sans-serif;font-size:15px;line-height:1.6;color:#1a3300;">Un administrateur vous a donné accès à Nyra avec l'adresse <strong>{{ .Email }}</strong>. Choisissez votre mot de passe pour activer votre compte.</p>
       <table role="presentation" cellpadding="0" cellspacing="0"><tr><td class="btn" style="background:#1a3300;border-radius:10px;">
-        <a href="{{ .ConfirmationURL }}" class="btn" style="display:inline-block;padding:13px 26px;font-family:Inter,'Segoe UI',Arial,sans-serif;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">Activer mon compte</a>
+        <a href="{{ .SiteURL }}/set-password?token_hash={{ .TokenHash }}&amp;type=invite" class="btn" style="display:inline-block;padding:13px 26px;font-family:Inter,'Segoe UI',Arial,sans-serif;font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">Activer mon compte</a>
       </td></tr></table>
       <p class="muted" style="margin:24px 0 0;font-family:Inter,'Segoe UI',Arial,sans-serif;font-size:13px;line-height:1.55;color:#5f6e50;">Ce lien est personnel. Si vous ne vous attendiez pas à cette invitation, vous pouvez ignorer cet e-mail : aucun compte ne sera activé.</p>
       <hr class="rule" style="margin:26px 0 18px;border:0;border-top:1px solid #ebe7db;">
-      <p class="muted" style="margin:0;font-family:Inter,'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.55;color:#8a9680;">Le bouton ne fonctionne pas ? Copiez ce lien dans votre navigateur :<br><a href="{{ .ConfirmationURL }}" style="color:#5f6e50;word-break:break-all;">{{ .ConfirmationURL }}</a></p>
+      <p class="muted" style="margin:0;font-family:Inter,'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.55;color:#8a9680;">Le bouton ne fonctionne pas ? Copiez ce lien dans votre navigateur :<br><a href="{{ .SiteURL }}/set-password?token_hash={{ .TokenHash }}&amp;type=invite" style="color:#5f6e50;word-break:break-all;">{{ .SiteURL }}/set-password?token_hash={{ .TokenHash }}&amp;type=invite</a></p>
     </td></tr>
     <tr><td align="center" class="muted" style="padding-top:22px;font-family:Inter,'Segoe UI',Arial,sans-serif;font-size:12px;line-height:1.5;color:#8a9680;">Nyra surveille l'usage de vos visuels et de leurs droits.</td></tr>
   </table>

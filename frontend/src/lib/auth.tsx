@@ -1,4 +1,4 @@
-import { createClient, type Session, type SupabaseClient } from "@supabase/supabase-js";
+import { createClient, type EmailOtpType, type Session, type SupabaseClient } from "@supabase/supabase-js";
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { bindSession } from "./api";
@@ -19,6 +19,8 @@ type AuthState = {
   signOut: () => Promise<void>;
   requestReset: (email: string) => Promise<void>;
   setPassword: (password: string) => Promise<void>;
+  /** Spends the one-time token of an e-mailed link (recovery or invitation), on the person's click. */
+  confirmLink: (tokenHash: string, type: EmailOtpType) => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -88,15 +90,16 @@ const AUTH_ERRORS: [RegExp, string][] = [
   [/Invalid login credentials/i, "Email ou mot de passe incorrect."],
   [/after \d+ seconds|rate limit/i, "Trop de demandes. Patientez une minute avant de réessayer."],
   [/different from the old/i, "Choisissez un mot de passe différent de l'ancien."],
+  [/expired|invalid/i, "Ce lien a expiré ou a déjà été utilisé. Certaines messageries l'ouvrent avant vous : demandez-en un nouveau."],
 ];
 
 function authError(message: string): Error {
   return new Error(AUTH_ERRORS.find(([pattern]) => pattern.test(message))?.[1] ?? message);
 }
 
-type Actions = Pick<AuthState, "signIn" | "signOut" | "requestReset" | "setPassword">;
+type Actions = Pick<AuthState, "signIn" | "signOut" | "requestReset" | "setPassword" | "confirmLink">;
 
-function authActions(client: SupabaseClient | null, onPasswordSet: () => void): Actions {
+function authActions(client: SupabaseClient | null, setMustSetPassword: (value: boolean) => void): Actions {
   return {
     async signIn(email, password, remember) {
       if (!client) return;
@@ -118,7 +121,13 @@ function authActions(client: SupabaseClient | null, onPasswordSet: () => void): 
       if (!client) return;
       const { error } = await client.auth.updateUser({ password });
       if (error) throw authError(error.message);
-      onPasswordSet();
+      setMustSetPassword(false);
+    },
+    async confirmLink(tokenHash, type) {
+      if (!client) return;
+      const { error } = await client.auth.verifyOtp({ token_hash: tokenHash, type });
+      if (error) throw authError(error.message);
+      setMustSetPassword(true);
     },
   };
 }
@@ -171,7 +180,7 @@ export function AuthProvider(props: { children: ReactNode }) {
       email: session?.user.email ?? "",
       mustSetPassword,
       problem,
-      ...authActions(client, () => setMustSetPassword(false)),
+      ...authActions(client, setMustSetPassword),
     }),
     [client, phase, session, mustSetPassword, problem],
   );

@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Suspense, createContext, lazy, useContext, useEffect, useState, type FormEvent, type ReactNode } from "react";
-import { Link, Navigate, Outlet, useLocation, useNavigate, useParams, useRouteError } from "react-router";
+import { Link, Navigate, Outlet, useLocation, useNavigate, useParams, useRouteError, useSearchParams } from "react-router";
 import { Layout } from "../components/Layout";
 import { Button, Card, Checkbox, FieldLabel, Input, PasswordInput, Spinner } from "../components/ui";
 import { ApiError, api, errorMessage } from "../lib/api";
@@ -159,8 +159,36 @@ export function SetPassword() {
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
+  const [params] = useSearchParams();
+  const tokenHash = params.get("token_hash");
+  const linkType = params.get("type");
 
   if (auth.phase === "loading") return <Centered title="Un instant"><div className="mt-4"><Spinner /></div></Centered>;
+  // The e-mailed link only carries a token: it is spent here, on a click, so a mail scanner that opens the link cannot use it up.
+  if (tokenHash && (linkType === "recovery" || linkType === "invite")) {
+    const type = linkType;
+    async function confirm() {
+      setPending(true);
+      setError("");
+      try {
+        await auth.confirmLink(tokenHash as string, type);
+        navigate("/set-password", { replace: true });
+      } catch (err) {
+        setError(errorMessage(err));
+        setPending(false);
+      }
+    }
+    return (
+      <Centered title={type === "invite" ? "Activer votre compte" : "Nouveau mot de passe"} body="Un clic pour continuer : ce lien ne peut servir qu'une seule fois.">
+        {error ? <p className="fade-in mt-4 text-sm text-expired" role="alert">{error}</p> : null}
+        {error ? (
+          <Button variant="primary" className="mt-5 w-full" onClick={() => navigate("/login")}>Demander un nouveau lien</Button>
+        ) : (
+          <Button variant="primary" size="lg" className="mt-5 w-full" disabled={pending} onClick={() => void confirm()}>{pending ? "Vérification…" : "Continuer"}</Button>
+        )}
+      </Centered>
+    );
+  }
   if (auth.phase !== "signed-in") {
     return (
       <Centered title="Lien expiré" body="Ce lien n'est plus valide. Demandez-en un nouveau depuis la page de connexion.">
