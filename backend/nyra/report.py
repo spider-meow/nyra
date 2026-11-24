@@ -296,6 +296,8 @@ def dashboard(match_rows: list[dict], unmatched_rows: list[dict], today: Optiona
         "expired_online": len(expired_online),
         "urgent_online": len(urgent_online),
         "pending_review": len(pending_review),
+        "pending_expired": sum(status_of(live[ref]) == STATUS_EXPIRED for ref in pending_review),
+        "pending_urgent": sum(status_of(live[ref]) == STATUS_URGENT for ref in pending_review),
         "references_online": len(live),
         "upcoming": upcoming[:12],
     }

@@ -8,14 +8,15 @@ import { Dropdown } from "../Dropdown";
 import { Icon, type IconName } from "../icons";
 import { cx } from "../ui";
 
-export type NavItem = { to: string; label: string; icon: IconName; count?: number; tone?: "alert" | "neutral" | "muted" | "warn"; newTab?: boolean };
+export type NavItem = { to: string; label: string; icon: IconName; count?: number; /** A second, red counter (expired), shown before `count`. */ expiredCount?: number; tone?: "alert" | "neutral" | "muted" | "warn"; newTab?: boolean };
 
 /** The main entries (with their counters) and the rarely needed ones that sit at the bottom, next to the account. */
 export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
   const { link, admin, platformAdmin } = useOrg();
   const me = useMe();
   const overview = useOverview();
-  const pending = overview.data?.dashboard.pending_review ?? 0;
+  const pendingExpired = overview.data?.dashboard.pending_expired ?? 0;
+  const pendingUrgent = overview.data?.dashboard.pending_urgent ?? 0;
   const expired = overview.data?.dashboard.expired_online ?? 0;
   const staffItems: NavItem[] = me.data?.staff ? [{ to: "/back-office", label: "Back office Nyra", icon: "backoffice", newTab: true }] : [];
   // Launching reads is the Nyra team's (AXE-682/683): « Sites et lectures » holds the launcher and the addresses.
@@ -24,7 +25,7 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
   return {
     items: [
       { to: link("dashboard"), label: "Tableau de bord", icon: "dashboard", count: expired, tone: "alert" },
-      { to: `${link("review")}?window=3650`, label: "À traiter", icon: "review", count: pending, tone: "neutral" },
+      { to: `${link("review")}?window=3650`, label: "À traiter", icon: "review", expiredCount: pendingExpired, count: pendingUrgent, tone: "warn" },
       { to: link("visuals"), label: "Visuels à remplacer", icon: "report" },
       { to: link("library"), label: "Bibliothèque", icon: "library", count: overview.data?.stats.reference_images, tone: "muted" },
       { to: link("online-images"), label: "Images en ligne", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
@@ -63,6 +64,11 @@ export function NavItems(props: { list: NavItem[]; onNavigate: () => void; end?:
           <>
             <Icon name={item.icon} className={cx("transition-colors", isPending || (isActive && !loading) ? "text-ink" : "text-muted group-hover:text-ink-soft")} />
             <span className="flex-1">{item.label}</span>
+            {item.expiredCount ? (
+              <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-expired-soft px-1.5 text-[11.5px] font-medium text-expired tabular" title="Expirés">
+                {item.expiredCount}
+              </span>
+            ) : null}
             {item.count ? (
               <span
                 className={cx(
