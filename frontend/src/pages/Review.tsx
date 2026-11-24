@@ -12,6 +12,7 @@ import { focusOn, useReviewView, type ReviewView } from "./review/view";
 
 /** The triage of matches: is this photo my visual? */
 export function Review() {
+  const { link } = useOrg();
   const view = useReviewView();
   const decide = useDecide(view);
   useShortcuts(view, decide);
@@ -30,7 +31,12 @@ export function Review() {
     <>
       <PageHeader
         title="À traiter"
-        actions={<span className="hidden items-center gap-1.5 text-xs text-muted md:flex"><Kbd>J</Kbd><Kbd>K</Kbd> naviguer · <Kbd>C</Kbd> confirmer · <Kbd>F</Kbd> faux positif</span>}
+        actions={
+          <>
+            <span className="hidden items-center gap-1.5 text-xs text-muted xl:flex"><Kbd>J</Kbd><Kbd>K</Kbd> naviguer · <Kbd>C</Kbd> confirmer · <Kbd>F</Kbd> faux positif</span>
+            <LinkButton to={link("visuals")} variant="primary">Visuels à remplacer →</LinkButton>
+          </>
+        }
       />
       <ReviewFilters view={view} />
       <ReviewTabs view={view} />
