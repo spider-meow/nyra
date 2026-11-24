@@ -76,6 +76,9 @@ export type Overview = {
     expired_online: number;
     urgent_online: number;
     pending_review: number;
+    /** Of the visuals to decide on: those whose rights have expired, and those expiring within 30 days. */
+    pending_expired: number;
+    pending_urgent: number;
     references_online: number;
     upcoming: Upcoming[];
     /** Images read on the sites that match nothing in the library (rights unknown). */
