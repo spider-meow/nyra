@@ -1,6 +1,7 @@
 import { NavLink, useLocation, useNavigate, useNavigation } from "react-router";
 import { useAuth } from "../../lib/auth";
 import { brandLink, useMe, useOrg } from "../../lib/org";
+import { useExpiredToReplace } from "../../lib/presence";
 import { useOverview } from "../../lib/queries";
 import type { Organization } from "../../types";
 import { BrandMark, initials } from "../BrandMark";
@@ -17,6 +18,7 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
   const overview = useOverview();
   const pendingExpired = overview.data?.dashboard.pending_expired ?? 0;
   const pendingUrgent = overview.data?.dashboard.pending_urgent ?? 0;
+  const toReplace = useExpiredToReplace();
   const expired = overview.data?.dashboard.expired_online ?? 0;
   const staffItems: NavItem[] = me.data?.staff ? [{ to: "/back-office", label: "Back office Nyra", icon: "backoffice", newTab: true }] : [];
   // Launching reads is the Nyra team's (AXE-682/683): « Sites et lectures » holds the launcher and the addresses.
@@ -26,7 +28,7 @@ export function useNavItems(): { items: NavItem[]; footerItems: NavItem[] } {
     items: [
       { to: link("dashboard"), label: "Tableau de bord", icon: "dashboard", count: expired, tone: "alert" },
       { to: link("review"), label: "À traiter", icon: "review", expiredCount: pendingExpired, count: pendingUrgent, tone: "warn" },
-      { to: link("visuals"), label: "Visuels à remplacer", icon: "report" },
+      { to: link("visuals"), label: "Visuels à remplacer", icon: "report", count: toReplace, tone: "alert" },
       { to: link("library"), label: "Bibliothèque", icon: "library", count: overview.data?.stats.reference_images, tone: "muted" },
       { to: link("online-images"), label: "Images en ligne", icon: "alert", count: overview.data?.dashboard.unreferenced_online, tone: "warn" },
       ...teamItems,
