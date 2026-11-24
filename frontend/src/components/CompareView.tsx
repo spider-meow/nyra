@@ -4,7 +4,7 @@ import { DecisionPanel } from "./compare/Decision";
 import { TechnicalDetails } from "./compare/Details";
 import { ExcludeModal } from "./compare/Exclude";
 import { Pictures, type Mode, type Zoom } from "./compare/Pictures";
-import { ConfidenceBadge, LinkButton, Segmented, StatusBadge } from "./ui";
+import { ConfidenceBadge, Segmented, StatusBadge } from "./ui";
 import { useOrg } from "../lib/org";
 import { confidenceHelp, formatDate, rightsText } from "../lib/format";
 import type { Decision, Hit, MatchGroup } from "../types";
@@ -56,8 +56,7 @@ export function CompareView({ group, hit, onDecide, related, busy }: Props) {
         <span>{confidenceHelp[hit.confidence]}</span>
       </div>
 
-      <LinkButton to={`${link("visuals")}/${group.reference_id}`} className="w-full">Voir où il est en ligne et le remplacer →</LinkButton>
-      <DecisionPanel hit={hit} others={group.hits.length - 1} related={related} busy={busy} onDecide={onDecide} />
+      <DecisionPanel replaceTo={`${link("visuals")}/${group.reference_id}`} hit={hit} others={group.hits.length - 1} related={related} busy={busy} onDecide={onDecide} />
 
       {admin ? (
         <p className="text-[13px] text-muted">

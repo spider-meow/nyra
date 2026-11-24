@@ -1,9 +1,9 @@
-import { DecisionBadge, cx } from "../ui";
+import { DecisionBadge, LinkButton, cx } from "../ui";
 import type { Decision, Hit } from "../../types";
 
 /** The two decisions: it is the visual (confirmed, and then it is to be replaced) or it is not (false positive). For the photo's other references too, when it has some; and "all occurrences of this visual" when there are others. */
-export function DecisionPanel(props: { hit: Hit; others: number; related?: number; busy?: boolean; onDecide: (decision: Decision | "", everywhere?: boolean) => void }) {
-  const { hit, others, related = 0, busy, onDecide } = props;
+export function DecisionPanel(props: { hit: Hit; others: number; related?: number; busy?: boolean; onDecide: (decision: Decision | "", everywhere?: boolean) => void; replaceTo: string }) {
+  const { hit, others, related = 0, busy, onDecide, replaceTo } = props;
   // A photo already marked replaced stays confirmed: that step is taken on the page of the visual.
   const confirmed = hit.decision === "retenu" || hit.decision === "traite";
   return (
@@ -16,6 +16,11 @@ export function DecisionPanel(props: { hit: Hit; others: number; related?: numbe
         <DecisionButton label="C'est bien lui" shortcut="C" active={confirmed} disabled={busy} onClick={() => onDecide(confirmed ? "" : "retenu")} />
         <DecisionButton label="Faux positif" shortcut="F" active={hit.decision === "ecarte"} disabled={busy} onClick={() => onDecide(hit.decision === "ecarte" ? "" : "ecarte")} />
       </div>
+      {confirmed ? (
+        <LinkButton to={replaceTo} variant="primary" className="mt-3 w-full">Il est à remplacer : voir où il est en ligne →</LinkButton>
+      ) : (
+        <p className="mt-3 text-[13px] text-muted">Si c'est bien lui, il passe dans « Visuels à remplacer ».</p>
+      )}
       {related > 0 ? <p className="mt-3 text-[13px] text-muted">S'applique aussi aux {related} autre{related > 1 ? "s" : ""} référence{related > 1 ? "s" : ""} de cette photo.</p> : null}
       {others > 0 ? (
         <div className="mt-3 flex flex-wrap items-center gap-2 text-[13px] text-muted">
