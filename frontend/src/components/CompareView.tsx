@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { Modal } from "./feedback";
 import { DecisionPanel } from "./compare/Decision";
 import { TechnicalDetails } from "./compare/Details";
@@ -56,7 +57,8 @@ export function CompareView({ group, hit, onDecide, related, busy }: Props) {
         <span>{confidenceHelp[hit.confidence]}</span>
       </div>
 
-      <DecisionPanel replaceTo={`${link("visuals")}/${group.reference_id}`} hit={hit} others={group.hits.length - 1} related={related} busy={busy} onDecide={onDecide} />
+      <Link to={`${link("visuals")}/${group.reference_id}`} className="text-[13px] font-medium underline underline-offset-2">Voir où il est en ligne</Link>
+      <DecisionPanel hit={hit} others={group.hits.length - 1} related={related} busy={busy} onDecide={onDecide} />
 
       {admin ? (
         <p className="text-[13px] text-muted">
