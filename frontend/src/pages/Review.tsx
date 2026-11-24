@@ -5,7 +5,7 @@ import { Modal } from "../components/feedback";
 import { Bar, Card, EmptyState, Kbd, LinkButton, PageHeader, Skeleton } from "../components/ui";
 import { plural } from "../lib/format";
 import { useOrg } from "../lib/org";
-import { useExpiredToReplace } from "../lib/presence";
+import { useOverview } from "../lib/queries";
 import { useDecide, useShortcuts } from "./review/decide";
 import { ReviewFilters, ReviewTabs } from "./review/Filters";
 import { MissingList, OccurrenceList, OccurrenceListSkeleton } from "./review/List";
@@ -51,15 +51,15 @@ export function Review() {
   );
 }
 
-/** Expired visuals still to replace: one gesture to the list (nothing when there are none). */
+/** Expired visuals still online (confirmed or not): one gesture to the list to replace (nothing when there are none). */
 function ExpiredBanner() {
   const { link } = useOrg();
-  const count = useExpiredToReplace();
+  const count = useOverview().data?.dashboard.expired_online ?? 0;
   if (!count) return null;
   return (
     <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-expired/25 bg-expired-soft px-4 py-3">
       <p className="min-w-0 flex-1 text-[13.5px]">
-        <strong className="font-semibold text-expired">{plural(count, "visuel expiré")}</strong> {count > 1 ? "sont" : "est"} encore à remplacer sur vos sites.
+        <strong className="font-semibold text-expired">{plural(count, "visuel expiré")}</strong> {count > 1 ? "sont" : "est"} encore en ligne sur vos sites.
       </p>
       <LinkButton to={link("visuals")} variant="primary" size="sm">Voir les visuels à remplacer →</LinkButton>
     </div>
