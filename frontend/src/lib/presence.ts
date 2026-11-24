@@ -79,6 +79,11 @@ export function useVisuals() {
   });
 }
 
+/** How many confirmed visuals are past their expiry and not replaced yet (what the menu and the banner of « À traiter » show). */
+export function useExpiredToReplace(): number {
+  return useVisuals().data?.visuals.filter((item) => !item.replaced && item.status === "expire").length ?? 0;
+}
+
 /** The most pages one check reads (the server refuses more). */
 export const MAX_CHECKED_PAGES = 50;
 
