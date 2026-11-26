@@ -4,9 +4,11 @@ import { Link } from "react-router";
 import { OrgHoldNotice, holdProps } from "../components/OrgHold";
 import { Bar, Button, EmptyState, PageHeader, Segmented, Skeleton, StatusBadge, Thumb } from "../components/ui";
 import { InfoTip } from "../components/SettingsBlock";
+import { useConfirm, useToast } from "../components/feedback";
+import { errorMessage } from "../lib/api";
 import { daysText, hostOf, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
-import { useVisuals, type VisualItem } from "../lib/presence";
+import { useUnconfirmVisual, useVisuals, type VisualItem } from "../lib/presence";
 import { SuspectReadNotice, useFullRead } from "./review/Removal";
 
 type Tab = "todo" | "done" | "all";
@@ -20,11 +22,18 @@ export function Visuals() {
   const visuals = useVisuals();
   const read = useFullRead();
   const [tab, setTab] = useState<Tab>("todo");
+  const [editing, setEditing] = useState(false);
+  const sendBack = useSendBack();
 
   const header = (
     <PageHeader
       title="Visuels à remplacer"
-      actions={platformAdmin ? <Button variant="primary" loading={read.busy} disabled={Boolean(read.hold)} {...holdProps(read.hold)} onClick={read.read}>Relire les sites</Button> : undefined}
+      actions={platformAdmin ? (
+        <>
+          <Button variant={editing ? "primary" : "secondary"} aria-pressed={editing} onClick={() => setEditing(!editing)}>{editing ? "Terminer" : "Retirer des visuels"}</Button>
+          <Button variant="primary" loading={read.busy} disabled={Boolean(read.hold)} {...holdProps(read.hold)} onClick={read.read}>Relire les sites</Button>
+        </>
+      ) : undefined}
     />
   );
   if (visuals.isLoading) return <div aria-busy="true">{header}<VisualsSkeleton /></div>;
@@ -53,7 +62,7 @@ export function Visuals() {
       </div>
       {shown.length ? (
         <ul className="divide-y divide-line rounded-xl border border-ink bg-paper">
-          {shown.map((item) => <VisualRow key={item.reference_id} item={item} concluded={Boolean(visuals.data.redirects_concluded)} to={`${link("visuals")}/${item.reference_id}`} />)}
+          {shown.map((item) => <VisualRow key={item.reference_id} item={item} concluded={Boolean(visuals.data.redirects_concluded)} to={`${link("visuals")}/${item.reference_id}`} onSendBack={platformAdmin && editing ? () => sendBack(item) : undefined} />)}
         </ul>
       ) : (
         <EmptyState
@@ -64,6 +73,26 @@ export function Visuals() {
       )}
     </Refreshing>
   );
+}
+
+/** Takes a visual off the list, once asked (the Nyra team only): its photos are undecided again, back in « À traiter ». */
+function useSendBack() {
+  const confirm = useConfirm();
+  const toast = useToast();
+  const unconfirm = useUnconfirmVisual();
+  return async (item: VisualItem) => {
+    const ok = await confirm({
+      title: "Renvoyer dans « À traiter » ?",
+      body: <p>« {item.filename} » sort des visuels à remplacer : ses photos confirmées redeviennent à décider dans « À traiter ». Les faux positifs restent écartés.</p>,
+      confirm: "Renvoyer",
+      danger: true,
+    });
+    if (!ok) return;
+    unconfirm.mutate(item.reference_id, {
+      onSuccess: () => toast.show({ tone: "success", message: "Visuel renvoyé dans « À traiter »" }),
+      onError: (error) => toast.show({ tone: "error", message: "Le visuel n'a pas été renvoyé", description: errorMessage(error) }),
+    });
+  };
 }
 
 /** What a visual's line says: the pages still showing it, and the ones not read again (never counted as gone). */
@@ -111,14 +140,14 @@ function VisualsSkeleton() {
   );
 }
 
-function VisualRow(props: { item: VisualItem; to: string; concluded: boolean }) {
+function VisualRow(props: { item: VisualItem; to: string; concluded: boolean; onSendBack?: () => void }) {
   const { item } = props;
   const [title, detail] = figures(item);
   const note = redirectNote(item, props.concluded);
   const share = (count: number) => `${item.pages ? (count / item.pages) * 100 : 0}%`;
   return (
-    <li>
-      <Link to={props.to} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 hover:bg-sunk">
+    <li className="flex items-center">
+      <Link to={props.to} className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2 px-4 py-3 hover:bg-sunk">
         <Thumb src={item.thumb} size={46} />
         <span className="min-w-0 flex-1 basis-40">
           <span className="block text-sm font-medium [overflow-wrap:anywhere] sm:truncate">{item.filename}</span>
@@ -134,6 +163,7 @@ function VisualRow(props: { item: VisualItem; to: string; concluded: boolean }) 
           </span>
         </span>
       </Link>
+      {props.onSendBack ? <Button variant="danger" size="sm" className="mr-4 shrink-0" onClick={props.onSendBack}>Renvoyer dans « À traiter »</Button> : null}
     </li>
   );
 }

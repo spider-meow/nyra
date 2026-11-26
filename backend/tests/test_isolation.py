@@ -70,7 +70,8 @@ USER_LEVEL = {
 OWN_REFUSED = {("POST", ORG + "/brands"), ("DELETE", BR), *((verb, BR + path) for verb, path in (
     ("GET", "/packshots/feedback"), ("PUT", "/packshots/feedback"), ("DELETE", "/packshots/feedback/{site_image_id}"),  # the Nyra team's calibration (AXE-668)
     ("GET", "/jobs/estimate"), ("POST", "/jobs/crawl"), ("POST", "/jobs/check"), ("POST", "/jobs/match"), ("POST", "/jobs/index"),
-    ("POST", "/jobs/{job_id}/cancel")))}  # launching and stopping a read by hand is the Nyra team's (AXE-682)
+    ("POST", "/jobs/{job_id}/cancel"),  # launching and stopping a read by hand is the Nyra team's (AXE-682)
+    ("POST", "/visuals/{reference_id}/unconfirm")))}  # taking a visual off the visuals to replace
 # The job a fresh organization starts with. The five routes that launch a job by hand answer 409 while a job but an
 # `index` waits in the organization, so their witness starts from an `index`. Every other route keeps the default
 # `check`, which does not stop the deletions (an address cannot be removed while a read, a comparison or an index waits).

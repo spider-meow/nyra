@@ -108,3 +108,13 @@ export function useMarkReplaced(referenceId: string) {
     onSettled: () => invalidate("occurrences"),
   });
 }
+
+/** The Nyra team takes a visual off the visuals to replace: its photos decided « à retirer » or « retiré » are undecided again, back in « À traiter ». */
+export function useUnconfirmVisual() {
+  const { apiPath } = useOrg();
+  const invalidate = useInvalidate();
+  return useMutation({
+    mutationFn: (referenceId: string) => api.post<{ updated: number }>(apiPath(`/visuals/${referenceId}/unconfirm`), {}),
+    onSettled: () => invalidate("occurrences", "matches", "overview"),
+  });
+}

@@ -14,7 +14,7 @@ from nyra import report as report_module
 from .. import db as cloud_db
 from .. import presence as cloud_presence
 from .. import storage as cloud_storage
-from .common import BRAND, BrandScope, Ctx, brand_member_dep, get_ctx
+from .common import BRAND, BrandScope, Ctx, brand_member_dep, brand_staff_dep, get_ctx
 
 router = APIRouter()
 
@@ -164,3 +164,18 @@ def mark_replaced(reference_id: uuid.UUID, body: ReplacedBody, scope: BrandScope
         cloud_presence.set_replaced(conn, scope.org_id, reference_id, list(pages.values()), replaced=body.replaced, user_id=scope.member.user_id)
         scope.audit(conn, "visual.replaced", "reference", reference_id, replaced=body.replaced, pages=len(pages))
     return {"ok": True, "pages": len(pages)}
+
+
+@router.post(f"{BRAND}/visuals/{{reference_id}}/unconfirm")
+def unconfirm(reference_id: uuid.UUID, scope: BrandScope = Depends(brand_staff_dep), ctx: Ctx = Depends(get_ctx)) -> dict:
+    """Take a visual off the visuals to replace (the Nyra team only): its photos decided « à retirer » or « retiré » go back
+    to undecided, so they are in « À traiter » again. Photos set aside as false positives stay set aside."""
+    with cloud_db.connect(ctx.settings.database_url) as conn:
+        if not conn.execute("SELECT 1 FROM reference_images WHERE id = %s AND brand_id = %s", (reference_id, scope.brand_id)).fetchone():
+            raise HTTPException(status_code=404, detail="Référence introuvable.")
+        confirmed = [row["site_image_id"] for row in conn.execute(
+            "SELECT site_image_id FROM reviews WHERE reference_id = %s AND decision IN ('retenu', 'traite')", (reference_id,)).fetchall()]
+        touched = cloud_db.set_reviews(conn, brand_id=scope.brand_id, reference_id=reference_id, site_image_ids=confirmed, decision="",
+                                       reviewed_by=scope.member.user_id)
+        scope.audit(conn, "review.set", "reference", reference_id, decision="cleared", count=touched)
+    return {"ok": True, "updated": touched}
