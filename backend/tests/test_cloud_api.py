@@ -1640,10 +1640,15 @@ def test_reports_are_queued_and_listed_with_signed_links(client, org_with_users,
         cloud_db.create_report(conn, org_id=org_id, brand_id=cloud_brand, within_days=90,
                                storage_path_html=f"{org_id}/r/report.html", storage_path_csv=f"{org_id}/r/matches.csv",
                                storage_path_not_found_csv=f"{org_id}/r/not_found.csv",
-                               stats={"expired_online": 2}, generated_by=admin_id)
+                               stats={"expired_online": 2, "files": {"report.pdf": f"{org_id}/r/report.pdf"}}, generated_by=admin_id)
     reports = client.get(f"{base}/reports", headers=_headers(client_id)).json()["reports"]
     assert reports[0]["files"]["report.html"].startswith("https://fake-storage.test/reports/")
-    assert reports[0]["stats"]["expired_online"] == 2
+    assert reports[0]["files"]["report.pdf"].startswith("https://fake-storage.test/reports/")
+    assert reports[0]["stats"] == {"expired_online": 2}  # the storage paths stay on the server
+    assert client.post(f"{base}/reports", headers=_headers(admin_id), json={"include": []}).status_code == 422
+    assert client.post(f"{base}/reports", headers=_headers(admin_id), json={"include": ["everything"]}).status_code == 422
+    unknown = client.post(f"{base}/reports", headers=_headers(admin_id), json={"site_ids": [str(uuid.uuid4())]})
+    assert unknown.status_code == 400 and "versions" in unknown.json()["detail"]
     assert reports[0]["stale"] is False  # no read of the sites since the report
     with cloud_db.connect(cloud_database_url) as conn:
         site = cloud_db.create_site(conn, org_id=org_id, brand_id=cloud_brand, url="https://stale.test/", label="")

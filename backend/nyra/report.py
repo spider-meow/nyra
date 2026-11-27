@@ -33,6 +33,7 @@ from markupsafe import Markup
 
 from nyra.config import Config
 from nyra.match import CONFIDENCE_HIGH, CONFIDENCE_TO_VERIFY, describe_signature
+from nyra.pdf import marker as pdf_marker
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -312,9 +313,95 @@ class ReportFiles:
     not_found_csv: bytes
     summary: dict[str, Any]
     site_read_on: str = ""  # when the sites were read ("" when no read is recorded), kept with the report for the list
+    print_html: bytes = b""  # the same report laid out for the PDF (`nyra.pdf`): page numbers to fill, markers to find them
+    unreferenced_csv: bytes = b""  # every image not in the library, page by page (the HTML shows a few per page)
 
 
-def _data_uri(data: Optional[bytes], max_size: int = 240) -> Optional[str]:
+# What a report can hold (`include`); the first three are sections of `page_rows`, the last the images of « À qualifier ».
+INCLUDE = {"expired": "remove", "soon": "soon", "check": "check", "unreferenced": None}
+UNREFERENCED_PER_PAGE = 4  # thumbnails of images not in the library shown on one page of the site; the CSV has them all
+EVERYWHERE_PAGES = 10  # an image not in the library on more pages than this (a banner, a footer) is shown once per version, not on each page
+EVERYWHERE_SHOWN = 12
+PRIORITY_SHOWN = 8  # rubriques in « À traiter d'abord »
+NO_PAGE = "Page inconnue"
+
+
+def rubric_of(page_url: str, site_url: str) -> str:
+    """The rubrique of a page: the first segment of its path below the path of its site version (`/fr/collections/x` on
+    `https://ex.com/fr` gives "/collections"), "/" for the version's home page. The same rule as `cloud.presence._rubric_path`."""
+    path = urlparse(page_url).path or "/"
+    base = urlparse(site_url).path.rstrip("/") if site_url else ""
+    if base and (path == base or path.startswith(base + "/")):
+        path = path[len(base):]
+    return "/" + path.strip("/").split("/")[0]
+
+
+def _rubric_key(name: str) -> tuple[int, str]:
+    return (0 if name == "/" else 2 if name == NO_PAGE else 1, name.lower())
+
+
+def by_place(rows: list[dict], unreferenced: Sequence[dict], sites: Sequence[dict]) -> list[dict]:
+    """The report's body: site versions (in the order of `sites`, then the unknown ones), each with its rubriques ("/" first,
+    then alphabetical) and their pages (alphabetical), each page with its rows (`page_rows`) and its images not in the library.
+    `unreferenced`: one dict per image and page (`site_id`, `page`, or no page for an image shown on many pages). A page's
+    version is its row's `site_id`; without one (the offline CLI), its host."""
+    known = {str(site["id"]): site for site in sites}
+    order = {key: i for i, key in enumerate(known)}
+    versions: dict[str, dict] = {}
+
+    def version(site_id: Any, page: str) -> dict:
+        site = known.get(str(site_id)) if site_id else None
+        if site is None:
+            host = urlparse(page).netloc if page else ""
+            site = {"id": host or "?", "label": host or "Site inconnu", "url": f"https://{host}/" if host else ""}
+        label = site.get("label") or (urlparse(site["url"]).netloc + urlparse(site["url"]).path).rstrip("/")
+        return versions.setdefault(str(site["id"]), {"key": str(site["id"]), "label": label, "url": site["url"], "rubrics": {}, "everywhere": []})
+
+    def entry(owner: dict, page: str) -> dict:
+        name = rubric_of(page, owner["url"]) if page else NO_PAGE
+        pages = owner["rubrics"].setdefault(name, {"name": name, "pages": {}})["pages"]
+        parsed = urlparse(page)
+        path = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
+        return pages.setdefault(page, {"url": page, "path": path if page else NO_PAGE, "rows": [], "unreferenced": [], "read_on": ""})
+
+    for row in rows:
+        target = entry(version(row.get("site_id"), row["page"]), row["page"])
+        target["rows"].append(row)
+        target["read_on"] = target["read_on"] or row["read_on"]
+    for item in unreferenced:
+        owner = version(item.get("site_id"), item.get("page") or "")
+        if item.get("page"):
+            entry(owner, item["page"])["unreferenced"].append(item)
+        else:
+            owner["everywhere"].append(item)
+    out = sorted(versions.values(), key=lambda v: (order.get(v["key"], len(order)), v["label"].lower()))
+    for i, owner in enumerate(out):
+        owner["anchor"] = f"v{i}"
+        rubrics = sorted(owner["rubrics"].values(), key=lambda r: _rubric_key(r["name"]))
+        for j, rubric in enumerate(rubrics):
+            rubric["anchor"] = f"v{i}-{j}"
+            rubric["pages"] = sorted(rubric["pages"].values(), key=lambda pg: pg["path"].lower())
+            for name in ("remove", "soon", "check"):
+                rubric[name] = sum(row["section"] == name for pg in rubric["pages"] for row in pg["rows"])
+            rubric["unreferenced"] = sum(len(pg["unreferenced"]) for pg in rubric["pages"])
+            for pg in rubric["pages"]:
+                order_of = {"remove": 0, "soon": 1, "check": 2}
+                pg["rows"].sort(key=lambda row: (order_of.get(row["section"], 3), _urgency_key(row["group"]["days_left"])))
+                pg["more"] = max(0, len(pg["unreferenced"]) - UNREFERENCED_PER_PAGE)
+                pg["unreferenced"] = pg["unreferenced"][:UNREFERENCED_PER_PAGE]
+        owner["rubrics"] = rubrics
+        owner["everywhere_more"] = max(0, len(owner["everywhere"]) - EVERYWHERE_SHOWN)
+        owner["everywhere"] = sorted(owner["everywhere"], key=lambda item: -item.get("page_count", 0))[:EVERYWHERE_SHOWN]
+    return out
+
+
+def priorities(versions: list[dict]) -> list[dict]:
+    """The rubriques with something expired or expiring, the most expired first: the first page of the report."""
+    found = [{"version": owner["label"], **rubric} for owner in versions for rubric in owner["rubrics"] if rubric["remove"] or rubric["soon"]]
+    return sorted(found, key=lambda r: (-r["remove"], -r["soon"]))[:PRIORITY_SHOWN]
+
+
+def _data_uri(data: Optional[bytes], max_size: int = 160) -> Optional[str]:
     if not data:
         return None
     try:
@@ -324,7 +411,7 @@ def _data_uri(data: Optional[bytes], max_size: int = 240) -> Optional[str]:
             img = img.convert("RGB")
             img.thumbnail((max_size, max_size))
             buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=80)
+            img.save(buf, format="JPEG", quality=75)  # 160 px: a thumbnail is about 22 mm wide on paper
         return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
     except Exception:  # noqa: BLE001 - an unreadable thumbnail leaves a gap in the report, not a failed report
         return None
@@ -377,21 +464,39 @@ def _csv_bytes(fieldnames: Sequence[str], rows: list[dict], stamp: dict[str, str
 MATCHES_COLUMNS = ("filename", "page", "site_url", "status", "expiry_date", "days_left", "presence", "read_on", "decision",
                    "confidence", "action", "credit", "notes", "score", "level")
 NOT_FOUND_COLUMNS = ("filename", "expiry_date", "days_left", "status", "credit", "notes", "verification")
+UNREFERENCED_COLUMNS = ("filename", "image_url", "version", "rubric", "page", "page_count")
 
 
-SECTIONS = ("remove", "soon", "check", "other")  # `done` rows (removed, replaced, gone) stay in the CSV only
+def _thumb_keys(versions: list[dict], loaded: Optional[dict] = None) -> list:
+    """The thumbnails the report shows, once each, in the order they appear: a visual's own (the library's), or the image
+    found on the site when the library's could not be read (`loaded`: the thumbnails read so far; None: not read yet)."""
+    keys = [item["thumb"] for owner in versions for item in owner["everywhere"]]
+    for owner in versions:
+        for rubric in owner["rubrics"]:
+            for pg in rubric["pages"]:
+                for row in pg["rows"]:
+                    own = row["group"].get("ref_thumb")
+                    keys.append(own if loaded is None or loaded.get(own) else row["hit"].get("site_thumb"))
+                keys += [item["thumb"] for item in pg["unreferenced"]]
+    return list(dict.fromkeys(key for key in keys if key))
 
 
-def _render_html(*, rows: list[dict], within_days: int, stats: dict, summary: dict, thumbs: dict,
-                 organization: str, stamp: dict[str, str], suspect_sites: Sequence[str]) -> str:
+def _render_html(*, versions: list[dict], within_days: int, stats: dict, summary: dict, thumbs: dict, organization: str,
+                 stamp: dict[str, str], suspect_sites: Sequence[str], include: Sequence[str], scope: Sequence[str]) -> tuple[str, str]:
+    """The report for the screen, and the same one for the PDF (`for_print`: markers on each rubrique and its page number
+    left to fill, see `nyra.pdf`)."""
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(["html", "j2"]))
     # each distinct thumbnail is written once, as a CSS class: a visual shown on 50 pages does not repeat its bytes 50 times
     # (numbered in the order they appear, so the same data gives the same bytes)
-    appearing = [key for row in rows for key in (row["group"].get("ref_thumb"), row["hit"].get("site_thumb"))]
-    thumb_class = {key: f"t{i}" for i, key in enumerate(dict.fromkeys(key for key in appearing if thumbs.get(key)))}
-    return env.get_template("report.html.j2").render(
+    thumb_class = {key: f"t{i}" for i, key in enumerate(key for key in _thumb_keys(versions, thumbs) if thumbs.get(key))}
+    values = dict(
         organization=organization,
-        sections={name: [row for row in rows if row["section"] == name] for name in SECTIONS},
+        versions=versions,
+        priorities=priorities(versions),
+        everywhere_pages=EVERYWHERE_PAGES,
+        marker=pdf_marker,
+        include=set(include),
+        scope=list(scope),
         suspect_sites=list(suspect_sites),
         presence_labels=PRESENCE_LABELS,
         within_days=within_days,
@@ -406,6 +511,8 @@ def _render_html(*, rows: list[dict], within_days: int, stats: dict, summary: di
         settings=stamp["detection_settings"],
         site_read_on=stamp["site_read_on"],
     )
+    template = env.get_template("report.html.j2")
+    return template.render(**values, for_print=False), template.render(**values, for_print=True)
 
 
 def page_rows(groups: list[dict], presence: dict, replaced: frozenset) -> list[dict]:
@@ -422,6 +529,7 @@ def page_rows(groups: list[dict], presence: dict, replaced: frozenset) -> list[d
                                             confidence=hit["confidence"], decision=hit.get("decision"), presence=state,
                                             replaced=group["reference_id"] in replaced)
                 rows.append({"group": group, "hit": hit, "page": page, "presence": state, "read_on": _day(seen.get("crawled_at")),
+                             "site_id": seen.get("site_id") or hit.get("site_id"),
                              "reason": REDIRECT_REASONS.get(seen.get("redirect_kind") or "") if state == PRESENCE_UNKNOWN else None,
                              "status": status, "action": action, "section": _section(action, hit.get("decision"), state,
                                                                                   group["reference_id"] in replaced)})
@@ -463,6 +571,17 @@ def _occurrence_rows(rows: list[dict]) -> list[dict]:
     ]
 
 
+def _unreferenced_rows(items: Sequence[dict], versions: dict) -> list[dict]:
+    rows = []
+    for item in items:
+        owner = versions.get(str(item.get("site_id")), {})
+        page = item.get("page") or ""
+        rows.append({"filename": item["name"], "image_url": item.get("image_url", ""), "version": owner.get("label") or owner.get("url", ""),
+                     "rubric": rubric_of(page, owner.get("url", "")) if page else "", "page": page or f"sur {item.get('page_count', 0)} pages",
+                     "page_count": item.get("page_count", 1)})
+    return sorted(rows, key=lambda row: (row["version"], _rubric_key(row["rubric"] or "~"), row["page"], row["filename"]))
+
+
 def _not_found_rows(missing: list[dict]) -> list[dict]:
     return [
         {
@@ -490,37 +609,53 @@ def build_report(
     provenance: Optional[dict[str, Any]] = None,
     replaced: frozenset = frozenset(),
     presence: Optional[dict] = None,
+    sites: Sequence[dict] = (),
+    include: Sequence[str] = tuple(INCLUDE),
+    unreferenced: Sequence[dict] = (),
 ) -> ReportFiles:
     """`provenance` is what the matches were produced with: `signature` (the one `run_matching` stored) and `read_at`
-    ((oldest, newest) of the last finished read of each site). Both are printed in the HTML footer and in two columns of each CSV."""
+    ((oldest, newest) of the last finished read of each site). Both are printed in the HTML footer and in two columns of each CSV.
+    `sites` (id, label, url) are the site versions the report covers, in their order; `include` what it shows (`INCLUDE`);
+    `unreferenced` the images not in the library, one dict per image and page (`by_place`), with `thumb` and `name`.
+    The caller narrows the rows to the versions asked for; the CSV of the matches keeps every row of those versions."""
     provenance = provenance or {}
     stamp = {"site_read_on": _read_on(provenance.get("read_at")),
              "detection_settings": describe_signature(provenance.get("signature"))}
     today = today or datetime.now(timezone.utc).date()
+    include = [name for name in INCLUDE if name in include]
     kept = [row for row in match_rows if row.get("decision") != DECISION_FALSE_POSITIVE]
     grouped = group_matches(kept, within_days, today)
     missing = not_found_items(unmatched_rows, within_days, today)
     groups = grouped["confirmed"] + grouped["to_verify"]
+    rows = page_rows(groups, presence or {}, replaced)
+    shown = {INCLUDE[name] for name in include if INCLUDE[name]}
+    unreferenced = list(unreferenced) if "unreferenced" in include else []
+    versions = by_place([row for row in rows if row["section"] in shown], unreferenced, sites)
 
-    keys = {group.get("ref_thumb") for group in groups}
-    keys |= {hit.get("site_thumb") for group in groups for hit in group["hits"]}
-    thumbs = _load_thumbs(keys, thumb_loader)
+    thumbs = _load_thumbs(set(_thumb_keys(versions)), thumb_loader)
+    thumbs |= _load_thumbs(set(_thumb_keys(versions, thumbs)) - thumbs.keys(), thumb_loader)  # the site's image where the library's failed
 
     summary = dashboard(kept, unmatched_rows, today, replaced)
     summary.update({
         "confirmed": len(grouped["confirmed"]),
         "to_verify": len(grouped["to_verify"]),
         "not_found": len(missing),
+        "soon_online": len({row["group"]["reference_id"] for row in rows if row["section"] == "soon"}),
+        "unreferenced": len({item.get("key", item["name"]) for item in unreferenced}),
+        "pages": sum(len(rubric["pages"]) for owner in versions for rubric in owner["rubrics"]),
     })
-    rows = page_rows(groups, presence or {}, replaced)
-    html = _render_html(rows=rows, within_days=within_days, stats=stats, summary=summary, thumbs=thumbs,
-                        organization=organization, stamp=stamp, suspect_sites=provenance.get("suspect_sites") or ())
+    scope = [site.get("label") or site["url"] for site in sites]
+    html, print_html = _render_html(versions=versions, within_days=within_days, stats=stats, summary=summary, thumbs=thumbs,
+                                    organization=organization, stamp=stamp, suspect_sites=provenance.get("suspect_sites") or (),
+                                    include=include, scope=scope)
     return ReportFiles(
         html=html.encode("utf-8"),
         matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(rows), stamp),
         not_found_csv=_csv_bytes(NOT_FOUND_COLUMNS, _not_found_rows(missing), stamp),
         summary=summary,
         site_read_on=stamp["site_read_on"],
+        print_html=print_html.encode("utf-8"),
+        unreferenced_csv=_csv_bytes(UNREFERENCED_COLUMNS, _unreferenced_rows(unreferenced, {str(site["id"]): site for site in sites}), stamp),
     )
 
 

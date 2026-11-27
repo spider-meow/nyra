@@ -254,7 +254,7 @@ EXPORTS: tuple[tuple[str, tuple[str, ...], str], ...] = (
 # Paths to copy, a batch at a time after the last one seen (a short transaction each: nothing stays open while files download).
 FILE_QUERIES = (
     (cloud_storage.BUCKET_REFS, "SELECT DISTINCT storage_path AS path FROM reference_images WHERE org_id = %(org)s AND storage_path > %(after)s ORDER BY 1 LIMIT %(n)s"),
-    (cloud_storage.BUCKET_REPORTS, """SELECT path FROM (SELECT DISTINCT unnest(ARRAY[storage_path_html, storage_path_csv, storage_path_not_found_csv]) AS path
+    (cloud_storage.BUCKET_REPORTS, f"""SELECT path FROM (SELECT DISTINCT {cloud_db.REPORT_PATHS} AS path
                                       FROM reports WHERE org_id = %(org)s) p WHERE path > %(after)s ORDER BY 1 LIMIT %(n)s"""),
 )
 

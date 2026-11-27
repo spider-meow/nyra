@@ -49,6 +49,7 @@ from nyra.crawl import BrowserUnavailable, CrawlStats, crawl_pages, crawl_site, 
 from nyra.estimate import remaining_seconds
 from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching, warm_clip
 from nyra.packshots import edge_uniformity
+from nyra.pdf import report_pdf
 
 from . import audit as cloud_audit
 from . import db as cloud_db
@@ -62,6 +63,8 @@ from . import schedule as cloud_schedule
 from . import storage as cloud_storage
 from . import usage as cloud_usage
 from .locate import NotSearchable, locate_reference
+from .routes.common import unreferenced_images
+from .routes.site_images import filename_from_url
 from .store import CloudCrawlStore, CloudMatchStore
 from .variants import update_variants
 
@@ -1052,56 +1055,105 @@ class Worker:
             ).fetchone()["e"]
 
     def _report(self, ctx: JobContext, org_id: uuid.UUID, brand_id: uuid.UUID, params: dict) -> tuple[str, dict]:
+        """The report of the site versions asked for (`site_ids`, all when none) and of what it should hold (`include`, see
+        `report.INCLUDE`): an HTML page, its PDF (`nyra.pdf`, printed by this worker's Chromium) and the CSV files."""
         config = self.config_for(org_id)
         storage = self.storage_client_factory()
         within_days = params.get("within_days")
         within_days = config.report.default_within_days if within_days is None else int(within_days)
+        include = [name for name in params.get("include") or report_module.INCLUDE if name in report_module.INCLUDE] or list(report_module.INCLUDE)
         ctx.report("Préparation du rapport…", {"phase": "report"}, force=True)
-        with cloud_db.connect(self.database_url) as conn:
-            org = cloud_db.get_organization(conn, org_id)
-            brand = cloud_db.get_brand(conn, org_id, brand_id)
-            matches = cloud_db.match_rows(conn, brand_id)
-            unmatched = cloud_db.unmatched_rows(conn, brand_id)
-            stats = asdict(cloud_db.get_stats(conn, brand_id))
-            provenance = cloud_db.report_provenance(conn, brand_id)
-            conclude = config.report.conclude_redirected_pages
-            replaced = cloud_presence.replaced_references(conn, brand_id, conclude=conclude)
-            presence = cloud_presence.page_states(conn, brand_id, conclude=conclude)
-            provenance["suspect_sites"] = [row["label"] or row["site_url"] for row in cloud_presence.suspect_sites(conn, brand_id)]
-        for row in matches:
-            row["ref_thumb"] = (cloud_storage.BUCKET_REFS, row["ref_thumb_path"] or row["ref_storage_path"])
-            row["site_thumb"] = (cloud_storage.BUCKET_SITE_IMAGES, row["site_thumb_path"] or row["site_storage_path"])
-        for row in unmatched:
-            row["ref_thumb"] = (cloud_storage.BUCKET_REFS, row["ref_thumb_path"] or row["ref_storage_path"])
+        inputs = self._report_inputs(org_id, brand_id, config, {str(i) for i in params.get("site_ids") or []}, "unreferenced" in include)
 
         def loader(key):
             bucket, path = key
             return cloud_storage.download(storage, bucket, path) if path else None
 
         files = report_module.build_report(
-            matches, unmatched, within_days=within_days, stats=stats, thumb_loader=loader,
-            organization=report_title(org, brand), provenance=provenance, replaced=replaced, presence=presence,
+            inputs["matches"], inputs["unmatched"], within_days=within_days, stats=inputs["stats"], thumb_loader=loader,
+            organization=inputs["title"], provenance=inputs["provenance"], replaced=inputs["replaced"], presence=inputs["presence"],
+            sites=inputs["sites"], include=include, unreferenced=inputs["unreferenced"],
         )
-        report_id = uuid.uuid4()
-        base = cloud_storage.path_for(org_id, str(report_id))
-        paths = {
-            "html": f"{base}/report.html", "csv": f"{base}/matches.csv", "not_found": f"{base}/not_found.csv",
-        }
-        cloud_storage.upload(storage, cloud_storage.BUCKET_REPORTS, paths["html"], files.html,
-                             content_type="text/html; charset=utf-8")
-        cloud_storage.upload(storage, cloud_storage.BUCKET_REPORTS, paths["csv"], files.matches_csv,
-                             content_type="text/csv; charset=utf-8")
-        cloud_storage.upload(storage, cloud_storage.BUCKET_REPORTS, paths["not_found"], files.not_found_csv,
-                             content_type="text/csv; charset=utf-8")
-        created_by = ctx.job.get("created_by")
+        ctx.report("Mise en page du PDF…", {"phase": "report"}, force=True)
+        pdf, pdf_problem = None, None
+        try:
+            pdf = report_pdf(files.print_html.decode("utf-8"), footer=f"{inputs['title']} · rapport du {datetime.now(timezone.utc):%d/%m/%Y}")
+        except Exception as exc:  # noqa: BLE001 - the HTML and the CSV are still worth having: the PDF's absence is said, not hidden
+            log.warning("report %s: the PDF could not be made", brand_id, exc_info=True)
+            pdf_problem = browser_problem(exc) or f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"
+        saved_id = self._store_report(ctx, storage, org_id, brand_id, within_days, files, pdf, inputs, include)
+        if pdf_problem:
+            return f"Rapport prêt, sans PDF ({pdf_problem}).", {"report_id": str(saved_id), "pdf": False}
+        return "Rapport prêt.", {"report_id": str(saved_id)}
+
+    def _report_inputs(self, org_id: uuid.UUID, brand_id: uuid.UUID, config: Config, site_ids: set[str], unreferenced: bool) -> dict:
+        """What the report is made of, narrowed to the site versions `site_ids` (all when empty)."""
         with cloud_db.connect(self.database_url) as conn:
-            saved_id = cloud_db.create_report(
+            org = cloud_db.get_organization(conn, org_id)
+            brand = cloud_db.get_brand(conn, org_id, brand_id)
+            sites = [{"id": str(row["id"]), "label": row["label"] or "", "url": row["url"]} for row in cloud_db.list_sites(conn, brand_id)]
+            sites = [site for site in sites if not site_ids or site["id"] in site_ids]
+            wanted = {site["id"] for site in sites}
+            matches = [row for row in cloud_db.match_rows(conn, brand_id) if str(row["site_id"]) in wanted]
+            unmatched = cloud_db.unmatched_rows(conn, brand_id)
+            stats = asdict(cloud_db.get_stats(conn, brand_id))
+            provenance = cloud_db.report_provenance(conn, brand_id)
+            conclude = config.report.conclude_redirected_pages
+            replaced = cloud_presence.replaced_references(conn, brand_id, conclude=conclude)
+            presence = cloud_presence.page_states(conn, brand_id, conclude=conclude)
+            provenance["suspect_sites"] = [row["label"] or row["site_url"] for row in cloud_presence.suspect_sites(conn, brand_id)
+                                           if str(row["site_id"]) in wanted]
+            groups = unreferenced_images(conn, brand_id, config) if unreferenced else []
+        for row in matches:
+            row["ref_thumb"] = (cloud_storage.BUCKET_REFS, row["ref_thumb_path"] or row["ref_storage_path"])
+            row["site_thumb"] = (cloud_storage.BUCKET_SITE_IMAGES, row["site_thumb_path"] or row["site_storage_path"])
+        for row in unmatched:
+            row["ref_thumb"] = (cloud_storage.BUCKET_REFS, row["ref_thumb_path"] or row["ref_storage_path"])
+        return {"title": report_title(org, brand), "sites": sites, "matches": matches, "unmatched": unmatched, "stats": stats,
+                "provenance": provenance, "replaced": replaced, "presence": presence, "unreferenced": unreferenced_items(groups, wanted)}
+
+    def _store_report(self, ctx: JobContext, storage, org_id: uuid.UUID, brand_id: uuid.UUID, within_days: int,
+                      files: "report_module.ReportFiles", pdf: Optional[bytes], inputs: dict, include: list[str]) -> uuid.UUID:
+        base = cloud_storage.path_for(org_id, str(uuid.uuid4()))
+        paths = {"html": f"{base}/report.html", "csv": f"{base}/matches.csv", "not_found": f"{base}/not_found.csv"}
+        extra = {"report.pdf": (pdf, "application/pdf"),
+                 "unreferenced.csv": (files.unreferenced_csv if "unreferenced" in include else None, "text/csv; charset=utf-8")}
+        uploads = [(paths["html"], files.html, "text/html; charset=utf-8"), (paths["csv"], files.matches_csv, "text/csv; charset=utf-8"),
+                   (paths["not_found"], files.not_found_csv, "text/csv; charset=utf-8")]
+        uploads += [(f"{base}/{name}", data, kind) for name, (data, kind) in extra.items() if data]
+        for path, data, kind in uploads:
+            cloud_storage.upload(storage, cloud_storage.BUCKET_REPORTS, path, data, content_type=kind)
+        created_by = ctx.job.get("created_by")
+        summary = {k: v for k, v in files.summary.items() if k != "upcoming"}
+        scope = {"sites": [site["label"] or site["url"] for site in inputs["sites"]], "include": include}
+        with cloud_db.connect(self.database_url) as conn:
+            return cloud_db.create_report(
                 conn, org_id=org_id, brand_id=brand_id, within_days=within_days, storage_path_html=paths["html"],
                 storage_path_csv=paths["csv"], storage_path_not_found_csv=paths["not_found"],
-                stats={**stats, **{k: v for k, v in files.summary.items() if k != "upcoming"}, "site_read_on": files.site_read_on},
+                stats={**inputs["stats"], **summary, "site_read_on": files.site_read_on, "scope": scope,
+                       "files": {name: f"{base}/{name}" for name, (data, _) in extra.items() if data}},
                 generated_by=uuid.UUID(created_by) if created_by else None,
             )
-        return "Rapport prêt.", {"report_id": str(saved_id)}
+
+
+def unreferenced_items(groups: list[dict], site_ids: set[str]) -> list[dict]:
+    """The images of « À qualifier » (`unreferenced_images`) as the report takes them: one per image and page of the versions
+    `site_ids`; an image on more pages than `report.EVERYWHERE_PAGES` comes once per version, with no page."""
+    items: dict[tuple, dict] = {}
+    for group in groups:
+        lead = group["lead"]
+        base = {"key": str(lead["id"]), "name": filename_from_url(lead["url"], lead["storage_path"] or ""), "image_url": lead["url"],
+                "thumb": (cloud_storage.BUCKET_SITE_IMAGES, lead["thumb_path"] or lead["storage_path"])}
+        for row in group["rows"]:
+            site = str(row["site_id"])
+            if site not in site_ids:
+                continue
+            if (row["page_count"] or 0) > report_module.EVERYWHERE_PAGES:
+                items.setdefault((site, None, base["key"]), {**base, "site_id": site, "page": None, "page_count": row["page_count"]})
+                continue
+            for page in row["pages"]:
+                items.setdefault((site, page, base["key"]), {**base, "site_id": site, "page": page, "page_count": row["page_count"]})
+    return list(items.values())
 
 
 def browser_problem(exc: Exception) -> Optional[str]:

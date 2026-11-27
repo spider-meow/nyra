@@ -51,9 +51,18 @@ def has_redirect_columns(conn: psycopg.Connection) -> bool:
     return bool(_REDIRECT_COLUMNS["seen"])
 
 
+def _rubric_path(page: str, site: str) -> str:
+    """SQL: the path of the page `page` below the path of its site version `site` (`/fr/collections/x` on `https://ex.com/fr` gives
+    `/collections/x`), without the query; the whole path when the page is outside it. The same rule as `report.rubric_of`."""
+    path = f"split_part(split_part(regexp_replace({page}, '^https?://[^/]+', ''), '?', 1), '#', 1)"
+    base = f"rtrim(split_part(regexp_replace({site}, '^https?://[^/]+', ''), '?', 1), '/')"
+    return f"(CASE WHEN {base} <> '' AND ({path} = {base} OR starts_with({path}, {base} || '/')) THEN substr({path}, length({base}) + 1) ELSE {path} END)"
+
+
 def _pages(only_reference: bool, redirects: bool) -> str:
     """One row per page and reference (the brand's every reference when `only_reference` is False, so the index on
-    `matches.reference_id` is used for one); `section` is the first segment of the path ("/blogs"), "/" for the home page.
+    `matches.reference_id` is used for one); `section` is the rubrique of the page: the first segment of its path below the path of its
+    site version ("/collections" for `/fr/collections/x` on `https://ex.com/fr`), "/" for the version's home page.
     `redirects`: the `pages.redirect_*` columns exist (`has_redirect_columns`). A page counts as read when its read succeeded, or (the rule is on:
     `%(conclude)s`) when it redirected `clear`ly, or when it was sent to the home page or a parent page (`home`: ambiguous) and a PERSON marked it
     replaced for this visual and it was read again after the mark: the person validates what the algorithm only proposes."""
@@ -63,7 +72,7 @@ def _pages(only_reference: bool, redirects: bool) -> str:
     return f"""
     SELECT m.reference_id, p.id AS page_id, p.url, p.crawled_at, s.id AS site_id, bool_or(pr.page_id IS NOT NULL) AS marked,
            COALESCE(bool_or(p.read_started_at > pr.marked_at), false) AS checked, COALESCE(p.http_status = {CONSENT_WALL}, false) AS walled,
-           '/' || split_part(split_part(regexp_replace(p.url, '^https?://[^/]+', ''), '?', 1), '/', 2) AS section,
+           '/' || split_part({_rubric_path('p.url', 's.url')}, '/', 2) AS section,
            {target},
            CASE WHEN p.status = 'done' AND {tracked} AND p.crawled_at >= rd.read_at AND COALESCE(bool_or(ip.last_seen >= p.read_started_at), false) THEN 'still'
                 WHEN p.status = 'done' AND ({tracked} OR p.http_status IN (404, 410)) AND p.crawled_at >= rd.read_at AND NOT rd.suspect
@@ -114,8 +123,8 @@ def pages(conn: psycopg.Connection, brand_id: uuid.UUID, reference_id: uuid.UUID
 
 def page_states(conn: psycopg.Connection, brand_id: uuid.UUID, *, conclude: bool = False) -> dict[tuple, Row]:
     """Every (reference, page address) of the brand with its state and when the page was last read, for the report: one
-    query, whatever the number of visuals. (state, crawled_at, redirect_kind)."""
-    rows = conn.execute(f"SELECT g.reference_id, g.url, g.state, g.crawled_at, g.redirect_kind FROM ({_pages(False, has_redirect_columns(conn))}) g",
+    query, whatever the number of visuals. (state, crawled_at, redirect_kind, site_id)."""
+    rows = conn.execute(f"SELECT g.reference_id, g.url, g.state, g.crawled_at, g.redirect_kind, g.site_id FROM ({_pages(False, has_redirect_columns(conn))}) g",
                         {"brand": brand_id, "conclude": conclude}).fetchall()
     return {(row["reference_id"], row["url"]): row for row in rows}
 
