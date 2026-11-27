@@ -34,6 +34,7 @@ from markupsafe import Markup
 from nyra.config import Config
 from nyra.match import CONFIDENCE_HIGH, CONFIDENCE_TO_VERIFY, describe_signature
 from nyra.pdf import marker as pdf_marker
+from nyra.report_text import LANGS, translator
 
 TEMPLATE_DIR = Path(__file__).resolve().parent / "templates"
 
@@ -449,13 +450,13 @@ def _day(value: Any) -> str:
     return (moment.astimezone(timezone.utc) if moment.tzinfo else moment).strftime("%d/%m/%Y")
 
 
-def _read_on(bounds: Optional[Sequence[Any]]) -> str:
+def _read_on(bounds: Optional[Sequence[Any]], lang: str = "fr") -> str:
     """When the sites were read, from (oldest, newest) of the last finished read of each site: one day, or
-    "du X au Y" when the sites were not read the same day. "" when no read is recorded."""
+    "du X au Y" ("from X to Y") when the sites were not read the same day. "" when no read is recorded."""
     days = list(dict.fromkeys(day for day in map(_day, bounds or ()) if day))
     if len(days) < 2:
         return "".join(days)
-    return f"du {days[0]} au {days[-1]}"
+    return translator(lang)("between", first=days[0], last=days[-1])
 
 
 def _csv_bytes(fieldnames: Sequence[str], rows: list[dict], stamp: dict[str, str]) -> bytes:
@@ -489,9 +490,10 @@ def _thumb_keys(versions: list[dict], loaded: Optional[dict] = None) -> list:
 
 
 def _render_html(*, versions: list[dict], within_days: int, stats: dict, summary: dict, thumbs: dict, organization: str,
-                 stamp: dict[str, str], suspect_sites: Sequence[str], include: Sequence[str], scope: Sequence[str]) -> tuple[str, str]:
+                 stamp: dict[str, str], suspect_sites: Sequence[str], include: Sequence[str], scope: Sequence[str],
+                 lang: str = "fr", read_at: Optional[Sequence[Any]] = None) -> tuple[str, str]:
     """The report for the screen, and the same one for the PDF (`for_print`: markers on each rubrique and its page number
-    left to fill, see `nyra.pdf`)."""
+    left to fill, see `nyra.pdf`), in `lang` (`report_text.LANGS`)."""
     env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=select_autoescape(["html", "j2"]))
     # each distinct thumbnail is written once, as a CSS class: a visual shown on 50 pages does not repeat its bytes 50 times
     # (numbered in the order they appear, so the same data gives the same bytes)
@@ -505,18 +507,17 @@ def _render_html(*, versions: list[dict], within_days: int, stats: dict, summary
         include=set(include),
         scope=list(scope),
         suspect_sites=list(suspect_sites),
-        presence_labels=PRESENCE_LABELS,
+        t=translator(lang),
+        lang=lang if lang in LANGS else "fr",
         within_days=within_days,
-        generated_at=datetime.now(timezone.utc).strftime("%d/%m/%Y à %H:%M UTC"),
+        generated_on=f"{datetime.now(timezone.utc):%d/%m/%Y}",
+        generated_time=f"{datetime.now(timezone.utc):%H:%M}",
         stats=stats,
         summary=summary,
         thumb_class=thumb_class,
         thumb_css=Markup("".join(f".{name}{{background-image:url({thumbs[key]})}}" for key, name in thumb_class.items())),
-        status_labels=STATUS_LABELS,
-        confidence_labels=CONFIDENCE_LABELS,
-        decision_labels=DECISION_LABELS,
         settings=stamp["detection_settings"],
-        site_read_on=stamp["site_read_on"],
+        site_read_on=_read_on(read_at, lang) if read_at else stamp["site_read_on"],
     )
     template = env.get_template("report.html.j2")
     return template.render(**values, for_print=False), template.render(**values, for_print=True)
@@ -608,11 +609,13 @@ def build_report(
     sites: Sequence[dict] = (),
     include: Sequence[str] = tuple(INCLUDE),
     unreferenced: Sequence[dict] = (),
+    lang: str = "fr",
 ) -> ReportFiles:
     """`provenance` is what the matches were produced with: `signature` (the one `run_matching` stored) and `read_at`
     ((oldest, newest) of the last finished read of each site). Both are printed in the HTML footer and in two columns of each CSV.
     `sites` (id, label, url) are the site versions the report covers, in their order; `include` what it shows (`INCLUDE`);
-    `unreferenced` the images not in the library, one dict per image and page (`by_place`), with `thumb` and `name`.
+    `unreferenced` the images not in the library, one dict per image and page (`by_place`), with `thumb` and `name`;
+    `lang` the language of the HTML and the PDF (`report_text.LANGS`; the CSV files stay in French).
     The caller narrows the rows to the versions asked for; the CSV of the matches keeps every row of those versions."""
     provenance = provenance or {}
     stamp = {"site_read_on": _read_on(provenance.get("read_at")),
@@ -643,7 +646,7 @@ def build_report(
     scope = [site.get("label") or site["url"] for site in sites]
     html, print_html = _render_html(versions=versions, within_days=within_days, stats=stats, summary=summary, thumbs=thumbs,
                                     organization=organization, stamp=stamp, suspect_sites=provenance.get("suspect_sites") or (),
-                                    include=include, scope=scope)
+                                    include=include, scope=scope, lang=lang, read_at=provenance.get("read_at"))
     return ReportFiles(
         html=html.encode("utf-8"),
         matches_csv=_csv_bytes(MATCHES_COLUMNS, _occurrence_rows(rows), stamp),

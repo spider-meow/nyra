@@ -1,40 +1,40 @@
 {%- macro days(group) -%}
-{%- if group.days_left is none -%}Date inconnue
-{%- elif group.days_left < 0 -%}Expiré depuis {{ -group.days_left }} j
-{%- elif group.days_left == 0 -%}Expire aujourd'hui
-{%- else -%}Expire dans {{ group.days_left }} j{%- endif -%}
+{%- if group.days_left is none -%}{{ t('date_unknown') }}
+{%- elif group.days_left < 0 -%}{{ t('expired_since', n=-group.days_left) }}
+{%- elif group.days_left == 0 -%}{{ t('expires_today') }}
+{%- else -%}{{ t('expires_in', n=group.days_left) }}{%- endif -%}
 {%- endmacro -%}
 {%- macro pic(key, label) -%}<div class="thumb {{ thumb_class.get(key, '') }}" role="img" aria-label="{{ label }}"></div>{%- endmacro -%}
 {%- macro tile(row) -%}
 {%- set group = row.group %}{% set hit = row.hit %}
 <figure class="tile k-{{ row.section }}">
   {{ pic(hit.site_thumb if thumb_class.get(hit.site_thumb) else group.ref_thumb, group.filename) }}
-  <figcaption><b>{{ group.filename }}</b>{% if row.also %}<span class="note">+ {{ row.also }} autre{{ 's' if row.also > 1 }} visuel{{ 's' if row.also > 1 }}</span>{% endif %}
-    <span class="st">{% if row.section == 'check' %}À vérifier · {{ (hit.score * 100)|round|int }} %{% else %}{{ days(group) }}{% endif %}</span>
-    {% if row.presence == 'unknown' %}<span class="note">{{ row.reason or 'Page non relue depuis' }}</span>{% endif %}
+  <figcaption><b>{{ group.filename }}</b>{% if row.also %}<span class="note">{{ t('also', n=row.also) }}</span>{% endif %}
+    <span class="st">{% if row.section == 'check' %}{{ t('to_check_score', n=(hit.score * 100)|round|int) }}{% else %}{{ days(group) }}{% endif %}</span>
+    {% if row.presence == 'unknown' %}<span class="note">{{ t(row.reason) if row.reason else t('not_read_again') }}</span>{% endif %}
     {% if group.credit %}<span class="note">{{ group.credit }}</span>{% endif %}
   </figcaption>
 </figure>
 {%- endmacro -%}
 {%- macro unref(item) -%}
-<figure class="tile k-unref">{{ pic(item.thumb, item.name) }}<figcaption><b>{{ item.name }}</b><span class="st">{% if item.page %}Pas dans la bibliothèque{% else %}Sur {{ item.page_count }} pages{% endif %}</span></figcaption></figure>
+<figure class="tile k-unref">{{ pic(item.thumb, item.name) }}<figcaption><b>{{ item.name }}</b><span class="st">{% if item.page %}{{ t('not_in_library') }}{% else %}{{ t('on_pages', n=item.page_count) }}{% endif %}</span></figcaption></figure>
 {%- endmacro -%}
 {%- macro counts(r) -%}
 {%- set parts = [] -%}
-{%- if r.remove %}{% set _ = parts.append(r.remove ~ ' à retirer') %}{% endif -%}
-{%- if r.soon %}{% set _ = parts.append(r.soon ~ ' bientôt') %}{% endif -%}
-{%- if r.check %}{% set _ = parts.append(r.check ~ ' à vérifier') %}{% endif -%}
-{%- if r.unreferenced %}{% set _ = parts.append(r.unreferenced ~ ' non référencée' ~ ('s' if r.unreferenced > 1 else '')) %}{% endif -%}
+{%- if r.remove %}{% set _ = parts.append(t('n_remove', n=r.remove)) %}{% endif -%}
+{%- if r.soon %}{% set _ = parts.append(t('n_soon', n=r.soon)) %}{% endif -%}
+{%- if r.check %}{% set _ = parts.append(t('n_check', n=r.check)) %}{% endif -%}
+{%- if r.unreferenced %}{% set _ = parts.append(t('n_unref', n=r.unreferenced)) %}{% endif -%}
 {{ parts|join(' · ') }}
 {%- endmacro -%}
-{%- macro place(name) -%}{{ '/ (accueil)' if name == '/' else name }}{%- endmacro -%}
+{%- macro place(name) -%}{{ t('home') if name == '/' else t(name) }}{%- endmacro -%}
 {%- macro pageno(anchor) -%}{% if for_print %}<td class="pn" data-page="{{ anchor }}">p. –</td>{% endif %}{%- endmacro -%}
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="{{ lang }}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Rapport Nyra{% if organization %} · {{ organization }}{% endif %}</title>
+<title>{{ t('title') }}{% if organization %} · {{ organization }}{% endif %}</title>
 <style>
   :root {
     --ink: #1a3300; --ink-soft: #3d5226; --muted: #5f6e50; --faint: #8a9680; --line: #ebe7db; --canvas: #fdfcf8; --sunk: #f7f4ec;
@@ -119,50 +119,50 @@
 <body>
   <div class="top">
     <div class="brand">Nyra<span>{{ organization }}</span></div>
-    <div>Généré le {{ generated_at }}{% if scope %} · {{ scope|join(', ') }}{% endif %}{% if within_days < 3650 %} · échéances sous {{ within_days }} jours{% endif %}</div>
+    <div>{{ t('generated', date=generated_on, time=generated_time) }}{% if scope %} · {{ scope|join(', ') }}{% endif %}{% if within_days < 3650 %} · {{ t('deadlines', n=within_days) }}{% endif %}</div>
   </div>
 
   <header class="verdict">
-    <h1>{% if 'expired' in include %}{% if summary.expired_online %}<mark>{{ summary.expired_online }} visuel{{ 's' if summary.expired_online != 1 }} expiré{{ 's' if summary.expired_online != 1 }}</mark> encore en ligne.{% else %}Aucun visuel expiré en ligne.{% endif %}
-      {%- elif 'unreferenced' in include and summary.unreferenced %}<mark>{{ summary.unreferenced }} image{{ 's' if summary.unreferenced != 1 }}</mark> absente{{ 's' if summary.unreferenced != 1 }} de la bibliothèque.
-      {%- else %}{{ summary.pages }} page{{ 's' if summary.pages != 1 }} à regarder.{% endif %}</h1>
-    <p>{{ summary.pages }} page{{ 's' if summary.pages != 1 }} concernée{{ 's' if summary.pages != 1 }}, classées par version du site puis par rubrique. {% if site_read_on %}Sites lus {{ site_read_on }}.{% else %}Date de lecture des sites inconnue.{% endif %}</p>
+    <h1>{% if 'expired' in include %}{% if summary.expired_online %}<mark>{{ t('expired_visuals', n=summary.expired_online) }}</mark> {{ t('still_online') }}{% else %}{{ t('no_expired') }}{% endif %}
+      {%- elif 'unreferenced' in include and summary.unreferenced %}<mark>{{ t('n_images', n=summary.unreferenced) }}</mark> {{ t('missing_from_library', n=summary.unreferenced) }}
+      {%- else %}{{ t('pages_to_look', n=summary.pages) }}{% endif %}</h1>
+    <p>{{ t('lead', n=summary.pages) }} {% if site_read_on %}{{ t('sites_read', when=site_read_on) }}{% else %}{{ t('read_unknown') }}{% endif %}</p>
   </header>
 
   <div class="figures">
-    {% if 'expired' in include %}<div class="fig{{ ' alert' if summary.expired_online }}"><strong>{{ summary.expired_online }}</strong><span>expiré{{ 's' if summary.expired_online != 1 }} en ligne</span></div>{% endif %}
-    {% if 'soon' in include %}<div class="fig"><strong>{{ summary.soon_online }}</strong><span>expire{{ 'nt' if summary.soon_online != 1 }} sous 90 jours</span></div>{% endif %}
-    {% if 'check' in include %}<div class="fig"><strong>{{ summary.to_verify }}</strong><span>à vérifier</span></div>{% endif %}
-    {% if 'unreferenced' in include %}<div class="fig unref"><strong>{{ summary.unreferenced }}</strong><span>non référencée{{ 's' if summary.unreferenced != 1 }}</span></div>{% endif %}
-    <div class="fig"><strong>{{ summary.pages }}</strong><span>page{{ 's' if summary.pages != 1 }} concernée{{ 's' if summary.pages != 1 }}</span></div>
+    {% if 'expired' in include %}<div class="fig{{ ' alert' if summary.expired_online }}"><strong>{{ summary.expired_online }}</strong><span>{{ t('fig_expired', n=summary.expired_online) }}</span></div>{% endif %}
+    {% if 'soon' in include %}<div class="fig"><strong>{{ summary.soon_online }}</strong><span>{{ t('fig_soon', n=summary.soon_online) }}</span></div>{% endif %}
+    {% if 'check' in include %}<div class="fig"><strong>{{ summary.to_verify }}</strong><span>{{ t('fig_check') }}</span></div>{% endif %}
+    {% if 'unreferenced' in include %}<div class="fig unref"><strong>{{ summary.unreferenced }}</strong><span>{{ t('fig_unref', n=summary.unreferenced) }}</span></div>{% endif %}
+    <div class="fig"><strong>{{ summary.pages }}</strong><span>{{ t('fig_pages', n=summary.pages) }}</span></div>
   </div>
-  <p class="scope">{{ stats.get('reference_images', 0) }} références comparées à {{ stats.get('site_images', 0) }} images lues sur {{ stats.get('pages_crawled', 0) }} pages. Les occurrences marquées « faux positif » ne figurent pas dans ce rapport.</p>
-  {% if suspect_sites %}<p class="warn">La dernière lecture de {{ suspect_sites|join(', ') }} semble incomplète : aucun visuel n'est marqué retiré.</p>{% endif %}
+  <p class="scope">{{ t('scope', refs=stats.get('reference_images', 0), images=stats.get('site_images', 0), pages=stats.get('pages_crawled', 0)) }}</p>
+  {% if suspect_sites %}<p class="warn">{{ t('suspect', sites=suspect_sites|join(', ')) }}</p>{% endif %}
 
   {% if priorities %}
-  <section class="toc"><h2>À traiter d'abord</h2>
-    <table><thead><tr><th>Version et rubrique</th><th class="n">À retirer</th><th class="n">Bientôt</th>{% if for_print %}<th class="n">Page</th>{% endif %}</tr></thead><tbody>
+  <section class="toc"><h2>{{ t('first') }}</h2>
+    <table><thead><tr><th>{{ t('col_place') }}</th><th class="n">{{ t('col_remove') }}</th><th class="n">{{ t('col_soon') }}</th>{% if for_print %}<th class="n">{{ t('col_page') }}</th>{% endif %}</tr></thead><tbody>
     {% for r in priorities %}<tr><td><a href="#{{ r.anchor }}"><span class="ver-tag">{{ r.version }}</span>{{ place(r.name) }}</a></td><td class="n{{ ' hot' if r.remove }}">{{ r.remove or '' }}{% if not r.remove %}<span class="zero">0</span>{% endif %}</td><td class="n">{{ r.soon or '' }}{% if not r.soon %}<span class="zero">0</span>{% endif %}</td>{{ pageno(r.anchor) }}</tr>{% endfor %}
     </tbody></table>
   </section>
   {% endif %}
 
   {% if versions %}
-  <section class="toc"><h2>Sommaire</h2>
-    <table><thead><tr><th>Version et rubrique</th>{% if 'expired' in include %}<th class="n">À retirer</th>{% endif %}{% if 'soon' in include %}<th class="n">Bientôt</th>{% endif %}{% if 'check' in include %}<th class="n">À vérifier</th>{% endif %}{% if 'unreferenced' in include %}<th class="n">Non réf.</th>{% endif %}{% if for_print %}<th class="n">Page</th>{% endif %}</tr></thead><tbody>
-    {% for owner in versions %}{% for r in owner.rubrics %}<tr><td><a href="#{{ r.anchor }}"><span class="ver-tag">{{ owner.label }}</span>{{ place(r.name) }}</a></td>
+  <section class="toc"><h2>{{ t('contents') }}</h2>
+    <table><thead><tr><th>{{ t('col_place') }}</th>{% if 'expired' in include %}<th class="n">{{ t('col_remove') }}</th>{% endif %}{% if 'soon' in include %}<th class="n">{{ t('col_soon') }}</th>{% endif %}{% if 'check' in include %}<th class="n">{{ t('col_check') }}</th>{% endif %}{% if 'unreferenced' in include %}<th class="n">{{ t('col_unref') }}</th>{% endif %}{% if for_print %}<th class="n">{{ t('col_page') }}</th>{% endif %}</tr></thead><tbody>
+    {% for owner in versions %}{% for r in owner.rubrics %}<tr><td><a href="#{{ r.anchor }}"><span class="ver-tag">{{ t(owner.label) }}</span>{{ place(r.name) }}</a></td>
       {%- for key, name in (('remove', 'expired'), ('soon', 'soon'), ('check', 'check'), ('unreferenced', 'unreferenced')) %}{% if name in include %}<td class="n{{ ' hot' if key == 'remove' and r[key] }}">{% if r[key] %}{{ r[key] }}{% else %}<span class="zero">0</span>{% endif %}</td>{% endif %}{% endfor %}{{ pageno(r.anchor) }}</tr>{% endfor %}{% endfor %}
     </tbody></table>
   </section>
   {% else %}
-  <p class="empty-note">Rien à signaler sur ce périmètre.</p>
+  <p class="empty-note">{{ t('nothing') }}</p>
   {% endif %}
 
   {% for owner in versions %}
   <section class="version" id="{{ owner.anchor }}">
-    <div class="vh"><h2>{{ owner.label }}</h2><span>{{ owner.url }}</span></div>
+    <div class="vh"><h2>{{ t(owner.label) }}</h2><span>{{ owner.url }}</span></div>
     {% if owner.everywhere %}
-    <div class="everywhere"><p><b>Sur de nombreuses pages</b> : images absentes de la bibliothèque vues sur plus de {{ everywhere_pages }} pages (bandeau, pied de page…), montrées une seule fois.</p>
+    <div class="everywhere"><p><b>{{ t('everywhere_title') }}</b>{{ t('everywhere', n=everywhere_pages) }}</p>
       <div class="tiles">{% for item in owner.everywhere %}{{ unref(item) }}{% endfor %}</div></div>
     {% endif %}
     {% for r in owner.rubrics %}
@@ -170,7 +170,7 @@
       <div class="rh"><h3>{{ place(r.name) }}</h3><span>{{ counts(r) }}</span>{% if for_print %}<span class="mk">{{ marker(r.anchor) }}</span>{% endif %}</div>
       {% for pg in r.pages %}
       <article class="pg">
-        <header>{% if pg.url %}<a href="{{ pg.url }}">{{ pg.path }}</a>{% else %}<em>{{ pg.path }}</em>{% endif %}<span>{% if pg.read_on %}lue le {{ pg.read_on }}{% endif %}</span></header>
+        <header>{% if pg.url %}<a href="{{ pg.url }}">{{ pg.path }}</a>{% else %}<em>{{ t(pg.path) }}</em>{% endif %}<span>{% if pg.read_on %}{{ t('read_on', date=pg.read_on) }}{% endif %}</span></header>
         <div class="tiles">{% for row in pg.rows %}{{ tile(row) }}{% endfor %}{% for item in pg.unreferenced %}{{ unref(item) }}{% endfor %}</div>
       </article>
       {% endfor %}
@@ -179,6 +179,6 @@
   </section>
   {% endfor %}
 
-  <footer>Réglages de détection : {{ settings }}. Sites lus : {{ site_read_on or "date inconnue" }}.<br>Rapport produit par Nyra. Détection automatique par empreinte perceptuelle et similarité visuelle ; les correspondances « à vérifier » demandent une confirmation humaine. Le détail complet, visuels en règle compris, est dans les CSV.</footer>
+  <footer>{{ t('footer_settings', settings=settings, when=site_read_on or t('unknown_date')) }}<br>{{ t('footer') }}</footer>
 </body>
 </html>

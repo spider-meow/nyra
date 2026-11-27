@@ -50,6 +50,7 @@ from nyra.estimate import remaining_seconds
 from nyra.match import MatchStopped, compute_clip_embeddings, compute_flip_hashes, run_matching, warm_clip
 from nyra.packshots import edge_uniformity
 from nyra.pdf import report_pdf
+from nyra.report_text import LANGS, translator
 
 from . import audit as cloud_audit
 from . import db as cloud_db
@@ -1062,6 +1063,7 @@ class Worker:
         within_days = params.get("within_days")
         within_days = config.report.default_within_days if within_days is None else int(within_days)
         include = [name for name in params.get("include") or report_module.INCLUDE if name in report_module.INCLUDE] or list(report_module.INCLUDE)
+        lang = params.get("lang") if params.get("lang") in LANGS else "fr"
         ctx.report("Préparation du rapport…", {"phase": "report"}, force=True)
         inputs = self._report_inputs(org_id, brand_id, config, {str(i) for i in params.get("site_ids") or []}, "unreferenced" in include)
 
@@ -1072,16 +1074,17 @@ class Worker:
         files = report_module.build_report(
             inputs["matches"], inputs["unmatched"], within_days=within_days, stats=inputs["stats"], thumb_loader=loader,
             organization=inputs["title"], provenance=inputs["provenance"], replaced=inputs["replaced"], presence=inputs["presence"],
-            sites=inputs["sites"], include=include, unreferenced=inputs["unreferenced"],
+            sites=inputs["sites"], include=include, unreferenced=inputs["unreferenced"], lang=lang,
         )
         ctx.report("Mise en page du PDF…", {"phase": "report"}, force=True)
         pdf, pdf_problem = None, None
         try:
-            pdf = report_pdf(files.print_html.decode("utf-8"), footer=f"{inputs['title']} · rapport du {datetime.now(timezone.utc):%d/%m/%Y}")
+            footer = translator(lang)("pdf_footer", title=inputs["title"], date=f"{datetime.now(timezone.utc):%d/%m/%Y}")
+            pdf = report_pdf(files.print_html.decode("utf-8"), footer=footer)
         except Exception as exc:  # noqa: BLE001 - the HTML and the CSV are still worth having: the PDF's absence is said, not hidden
             log.warning("report %s: the PDF could not be made", brand_id, exc_info=True)
             pdf_problem = browser_problem(exc) or f"{type(exc).__name__}: {str(exc).splitlines()[0][:200] if str(exc) else ''}"
-        saved_id = self._store_report(ctx, storage, org_id, brand_id, within_days, files, pdf, inputs, include)
+        saved_id = self._store_report(ctx, storage, org_id, brand_id, within_days, files, pdf, inputs, include, lang)
         if pdf_problem:
             return f"Rapport prêt, sans PDF ({pdf_problem}).", {"report_id": str(saved_id), "pdf": False}
         return "Rapport prêt.", {"report_id": str(saved_id)}
@@ -1113,7 +1116,7 @@ class Worker:
                 "provenance": provenance, "replaced": replaced, "presence": presence, "unreferenced": unreferenced_items(groups, wanted)}
 
     def _store_report(self, ctx: JobContext, storage, org_id: uuid.UUID, brand_id: uuid.UUID, within_days: int,
-                      files: "report_module.ReportFiles", pdf: Optional[bytes], inputs: dict, include: list[str]) -> uuid.UUID:
+                      files: "report_module.ReportFiles", pdf: Optional[bytes], inputs: dict, include: list[str], lang: str) -> uuid.UUID:
         base = cloud_storage.path_for(org_id, str(uuid.uuid4()))
         paths = {"html": f"{base}/report.html", "csv": f"{base}/matches.csv", "not_found": f"{base}/not_found.csv"}
         extra = {"report.pdf": (pdf, "application/pdf")}
@@ -1124,7 +1127,7 @@ class Worker:
             cloud_storage.upload(storage, cloud_storage.BUCKET_REPORTS, path, data, content_type=kind)
         created_by = ctx.job.get("created_by")
         summary = {k: v for k, v in files.summary.items() if k != "upcoming"}
-        scope = {"sites": [site["label"] or site["url"] for site in inputs["sites"]], "include": include}
+        scope = {"sites": [site["label"] or site["url"] for site in inputs["sites"]], "include": include, "lang": lang}
         with cloud_db.connect(self.database_url) as conn:
             return cloud_db.create_report(
                 conn, org_id=org_id, brand_id=brand_id, within_days=within_days, storage_path_html=paths["html"],

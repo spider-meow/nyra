@@ -414,7 +414,7 @@ EXPECTED_SUMMARY = {'confirmed': 4,
  'soon_online': 2,
  'unreferenced': 0}
 
-EXPECTED_HTML_SHA256 = '75bfe7db5c51ab77655615d400f689e373259602d10578854857031a19c788df'
+EXPECTED_HTML_SHA256 = '7722df563a17d34db5d01be72e29738207958fff33773ce8499c6bc63daa0423'
 
 EXPECTED_THUMBS = 4  # distinct thumbnails: each is written once, as a CSS class
 
@@ -503,3 +503,22 @@ def test_a_page_shows_each_image_of_the_site_once_under_its_most_urgent_visual()
     assert html.count('<figure class="tile') == 1  # one photo on the page: one thumbnail, whatever the files and visuals
     assert 'class="tile k-remove"' in html and "old.jpg" in html and "+ 1 autre visuel" in html
     assert len(list(csv.DictReader(io.StringIO(files.matches_csv.decode("utf-8-sig"))))) == 2  # the CSV keeps one row per visual
+
+
+def test_the_report_can_be_in_english():
+    from nyra.report_text import MESSAGES, translator
+
+    assert MESSAGES["fr"].keys() == MESSAGES["en"].keys()  # no message missing in one language
+    rows = [_row("old", _hit(1, pages=["https://ex.com/"]), expiry="2025-12-01"),
+            _row("soon", _hit(2, pages=["https://ex.com/news/a"]), expiry="2026-01-20")]
+    files = report.build_report(rows, [], within_days=3650, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1), lang="en",
+                                provenance={"read_at": ("2025-12-28T10:00:00", "2025-12-30T10:00:00")})
+    html = files.html.decode("utf-8")
+    assert '<html lang="en">' in html and "Generated on" in html and "1 expired visual</mark> still online." in html
+    assert "Expired 31 days ago" in html and "Expires in 19 days" in html and "/ (home)" in html and "Contents" in html
+    assert "Sites read from 28/12/2025 to 30/12/2025." in html
+    assert "Généré" not in html and "Sommaire" not in html and "expiré" not in html.lower()
+    assert "Expiré" in files.matches_csv.decode("utf-8")  # the CSV files stay in French
+    t = translator("en")
+    assert (t("expired_since", n=1), t("Redirection temporaire"), t("Page inconnue")) == ("Expired 1 day ago", "Temporary redirect", "Unknown page")
+    assert translator("fr")("n_unref", n=0) == "0 non référencée" and translator("xx")("home") == "/ (accueil)"
