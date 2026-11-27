@@ -8,6 +8,9 @@ updates:
     open-pull-requests-limit: 5
     groups:
       security: {applies-to: security-updates, patterns: ["*"]}
+    ignore:
+      # Pinned with the worker's base image (Dockerfile, pyproject.toml): a bump of the requirement alone breaks the image build.
+      - dependency-name: playwright
   - package-ecosystem: npm
     directory: /frontend
     schedule: {interval: weekly}
