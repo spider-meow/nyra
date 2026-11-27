@@ -33,7 +33,7 @@ worker = [
     # The worker image is mcr.microsoft.com/playwright/python:v1.64.1 and installs playwright==1.64.1 (Dockerfile): its Chromium
     # matches that version exactly. A higher floor here makes that install impossible; raise both together, by hand.
     "playwright>=1.64.1",
-    "pypdf>=6.17.0",  # reads the sheets of the report's first print, for the page numbers of its contents (`nyra.pdf`)
+    "pypdf>=7.1.1",  # reads the sheets of the report's first print, for the page numbers of its contents (`nyra.pdf`)
     "open_clip_torch>=4.2.2",
     "torch>=2.15.0",
     "opencv-python-headless>=4.8",
