@@ -204,7 +204,7 @@ export type Report = {
   within_days: number;
   generated_at: string;
   /** Counts per state, `site_read_on` (text): when the sites were read, and `scope`: the versions and contents it covers. */
-  stats: Record<string, number | string> & { scope?: { sites: string[]; include: ReportContent[] } };
+  stats: Record<string, number | string> & { scope?: { sites: string[]; include: ReportContent[]; lang?: ReportLang } };
   /** A read of the sites finished after the report was made. Absent from an older server. */
   stale?: boolean;
   files: { "report.html": string; "matches.csv": string; "not_found.csv": string; "report.pdf"?: string };
@@ -212,6 +212,9 @@ export type Report = {
 
 /** What a report can show (`include`): the same names as `report.INCLUDE` on the server. */
 export type ReportContent = "expired" | "soon" | "check" | "unreferenced";
+
+/** The language of a report's HTML and PDF (`report_text.LANGS` on the server). */
+export type ReportLang = "fr" | "en";
 
 export type SettingsSection = Record<string, number | boolean | string | string[]>;
 

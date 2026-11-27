@@ -1371,7 +1371,7 @@ def test_a_scheduled_read_chains_the_comparison_without_anyone_launching_it(work
 def test_report_job_covers_the_versions_and_contents_asked_and_stores_its_pdf(worker, cloud_database_url, cloud_org, cloud_brand,
                                                                                fake_storage_client, monkeypatch):
     printed = []
-    monkeypatch.setattr(worker_module, "report_pdf", lambda html, footer: printed.append(html) or b"%PDF-fake")
+    monkeypatch.setattr(worker_module, "report_pdf", lambda html, footer: printed.append(html) or printed.append(footer) or b"%PDF-fake")
     with cloud_db.connect(cloud_database_url) as conn:
         fr = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/fr", label="FR")
         us = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://u.test/", label="US")
@@ -1382,7 +1382,7 @@ def test_report_job_covers_the_versions_and_contents_asked_and_stores_its_pdf(wo
         _add_site_image(conn, fake_storage_client, cloud_org, fr, "https://t.test/fr/news/stray.jpg", _image_bytes(80))
         cloud_db.write_matches(conn, cloud_org, [(on_fr, img_fr, "phash", 1.0, "haut"), (on_us, img_us, "phash", 1.0, "haut")])
         job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="report",
-                                 params={"within_days": 3650, "site_ids": [str(fr)], "include": ["expired", "unreferenced"]})
+                                 params={"within_days": 3650, "site_ids": [str(fr)], "include": ["expired", "unreferenced"], "lang": "en"})
 
     assert worker.run_once()
     finished = _job(cloud_database_url, cloud_brand, job["id"])
@@ -1391,9 +1391,11 @@ def test_report_job_covers_the_versions_and_contents_asked_and_stores_its_pdf(wo
         saved = cloud_db.get_report(conn, cloud_brand, uuid.UUID(finished["result"]["report_id"]))
     html = fake_storage_client.store[("reports", saved["storage_path_html"])].decode("utf-8")
     assert "on-fr.jpg" in html and "on-us.jpg" not in html and "stray.jpg" in html and ">/news</h3>" in html
-    assert saved["stats"]["scope"] == {"sites": ["FR"], "include": ["expired", "unreferenced"]}
+    assert saved["stats"]["scope"] == {"sites": ["FR"], "include": ["expired", "unreferenced"], "lang": "en"}
+    assert '<html lang="en">' in html and "Contents" in html
     files = saved["stats"]["files"]
     assert fake_storage_client.store[("reports", files["report.pdf"])] == b"%PDF-fake" and "NYRAMARK" in printed[0]
+    assert " · report of " in printed[1]
     with cloud_db.connect(cloud_database_url) as conn:  # the new files leave with the brand
         orphans = cloud_db.delete_brand(conn, cloud_org, cloud_brand)
     assert {files["report.pdf"], saved["storage_path_html"]} <= set(orphans.reports)

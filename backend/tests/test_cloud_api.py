@@ -1647,6 +1647,7 @@ def test_reports_are_queued_and_listed_with_signed_links(client, org_with_users,
     assert reports[0]["stats"] == {"expired_online": 2}  # the storage paths stay on the server
     assert client.post(f"{base}/reports", headers=_headers(admin_id), json={"include": []}).status_code == 422
     assert client.post(f"{base}/reports", headers=_headers(admin_id), json={"include": ["everything"]}).status_code == 422
+    assert client.post(f"{base}/reports", headers=_headers(admin_id), json={"lang": "de"}).status_code == 422
     unknown = client.post(f"{base}/reports", headers=_headers(admin_id), json={"site_ids": [str(uuid.uuid4())]})
     assert unknown.status_code == 400 and "versions" in unknown.json()["detail"]
     assert reports[0]["stale"] is False  # no read of the sites since the report

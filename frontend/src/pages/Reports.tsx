@@ -2,12 +2,12 @@ import { LoadError, Refreshing } from "../components/busy";
 import { useState } from "react";
 import { useToast } from "../components/feedback";
 import { OrgHoldNotice, holdProps, useOrgHold } from "../components/OrgHold";
-import { Bar, Button, Card, Checkbox, EmptyState, PageHeader, Skeleton, StatusBadge } from "../components/ui";
+import { Bar, Button, Card, Checkbox, EmptyState, PageHeader, Segmented, Skeleton, StatusBadge } from "../components/ui";
 import { errorMessage } from "../lib/api";
 import { formatDateTime, hostOf, plural } from "../lib/format";
 import { useOrg } from "../lib/org";
 import { useJobs, useReports, useSites, useStartJob } from "../lib/queries";
-import type { Report, ReportContent } from "../types";
+import type { Report, ReportContent, ReportLang } from "../types";
 
 /** The report covers every deadline: its sections say what is urgent (AXE-865). The server still accepts a narrower `within_days`. */
 const ALL_DEADLINES = 3650;
@@ -29,6 +29,7 @@ export function Reports() {
   const sites = useSites();
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [include, setInclude] = useState<Set<ReportContent>>(new Set(CONTENTS.map(([name]) => name)));
+  const [lang, setLang] = useState<ReportLang>("fr");
   const generating = (jobs.data?.active ?? []).some((job) => job.kind === "report");
   const versions = sites.data?.sites ?? [];
   const chosen = versions.filter((site) => !skipped.has(site.id));
@@ -38,7 +39,7 @@ export function Reports() {
     // Every version ticked: no list, so a version added later is in the next report of « everything ».
     const site_ids = chosen.length < versions.length ? chosen.map((site) => site.id) : [];
     start.mutate(
-      { kind: "report", body: { within_days: ALL_DEADLINES, site_ids, include: CONTENTS.map(([name]) => name).filter((name) => include.has(name)) } },
+      { kind: "report", body: { within_days: ALL_DEADLINES, site_ids, include: CONTENTS.map(([name]) => name).filter((name) => include.has(name)), lang } },
       {
         onSuccess: () =>
           toast.show({ tone: "success", message: "Rapport en préparation", description: "Il apparaîtra dans la liste ci-dessous dans quelques instants, avec son PDF." }),
@@ -70,6 +71,11 @@ export function Reports() {
                 <Checkbox key={name} checked={include.has(name)} onChange={(on) => setInclude(toggle(include, name, !on))} label={label} hint={hint || undefined} />
               ))}
             </fieldset>
+            <div>
+              <p className="mb-2 font-semibold">Langue du rapport</p>
+              <Segmented label="Langue du rapport" value={lang} onChange={setLang} options={[{ value: "fr", label: "Français" }, { value: "en", label: "English" }]} />
+              <p className="mt-1.5 text-[13px] text-muted">Le rapport et son PDF ; les CSV restent en français.</p>
+            </div>
           </div>
           <p className="mt-4 text-[13px] text-muted">Le rapport est classé par version du site, puis par rubrique (/collections, /news…) dans l'ordre alphabétique ; la première page liste ce qui est à traiter d'abord. Il se télécharge en PDF.</p>
           <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -135,7 +141,7 @@ function ReportList(props: { generate: { onClick: () => void; loading: boolean; 
               <p className="text-[13px] text-muted">{report.stats.site_read_on ? `Sites lus ${report.stats.site_read_on}` : "Date de lecture des sites inconnue"}</p>
               {report.stats.scope ? (
                 <p className="mt-1.5 flex flex-wrap gap-1.5">
-                  {[...(report.stats.scope.sites.length ? report.stats.scope.sites : ["Tous les sites"]), ...report.stats.scope.include.map((name) => CONTENT_LABEL[name])].map((item) => (
+                  {[...(report.stats.scope.sites.length ? report.stats.scope.sites : ["Tous les sites"]), ...report.stats.scope.include.map((name) => CONTENT_LABEL[name]), ...(report.stats.scope.lang === "en" ? ["English"] : [])].map((item) => (
                     <span key={item} className="rounded-full border border-line px-2 py-px text-xs text-ink-soft">{item}</span>
                   ))}
                 </p>

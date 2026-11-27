@@ -36,6 +36,7 @@ class ReportBody(BaseModel):
     site_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)  # the site versions it covers; none: all of them
     include: list[Literal["expired", "soon", "check", "unreferenced"]] = Field(default_factory=lambda: list(report_module.INCLUDE),
                                                                               min_length=1, max_length=4)
+    lang: Literal["fr", "en"] = "fr"  # the language of the HTML and the PDF; the CSV files stay in French
 
 
 class SettingsBody(BaseModel):
@@ -50,7 +51,7 @@ def create_report(body: ReportBody, scope: BrandScope = Depends(brand_admin_dep)
             if len(cloud_db.get_sites(conn, scope.brand_id, site_ids)) != len(site_ids):
                 raise HTTPException(status_code=400, detail="Une des versions du site choisies n'existe pas.")
     return enqueue(ctx, scope, "report", {"within_days": body.within_days, "site_ids": [str(i) for i in site_ids],
-                                          "include": list(dict.fromkeys(body.include))})
+                                          "include": list(dict.fromkeys(body.include)), "lang": body.lang})
 
 
 @router.get(f"{BRAND}/reports")
