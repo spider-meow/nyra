@@ -308,6 +308,17 @@ def test_addresses_belong_to_one_brand_and_are_checked(client, org_with_users, m
     assert client.put(f"{base}/sites/{site['id']}", headers=_headers(admin_id), json={"label": "France"}).status_code == 200
     listed = client.get(f"{base}/sites", headers=_headers(client_id)).json()["sites"]
     assert [(s["url"], s["label"]) for s in listed] == [("https://www.louis-xiii.com/fr", "France")]
+
+    edit = f"{base}/sites/{site['id']}"
+    assert client.put(edit, headers=_headers(client_id), json={"url": "https://www.louis-xiii.com/fr-fr", "label": "FR"}).status_code == 403
+    assert client.put(edit, headers=_headers(admin_id), json={"url": "ftp://x"}).status_code == 400
+    moved = client.put(edit, headers=_headers(admin_id), json={"url": "https://www.Louis-XIII.com/fr-fr?utm_source=x", "label": "FR"})
+    assert moved.status_code == 200 and moved.json()["warning"] is None
+    listed = client.get(f"{base}/sites", headers=_headers(client_id)).json()["sites"]
+    assert [(s["id"], s["url"], s["label"]) for s in listed] == [(site["id"], "https://www.louis-xiii.com/fr-fr", "FR")]
+    in_other = client.post(f"/api/orgs/{org_id}/brands/{other['id']}/sites", headers=_headers(admin_id), json={"url": "https://autre.example.com"})
+    assert client.put(edit, headers=_headers(admin_id), json={"url": "https://autre.example.com", "label": ""}).status_code == 409
+    assert client.delete(f"/api/orgs/{org_id}/brands/{other['id']}/sites/{in_other.json()['site']['id']}", headers=_headers(admin_id)).status_code == 200
     assert client.delete(f"{base}/sites/{site['id']}", headers=_headers(admin_id)).status_code == 200
     assert client.get(f"{base}/sites", headers=_headers(client_id)).json()["sites"] == []
 
