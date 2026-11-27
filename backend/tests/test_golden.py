@@ -414,9 +414,9 @@ EXPECTED_SUMMARY = {'confirmed': 4,
  'soon_online': 2,
  'unreferenced': 0}
 
-EXPECTED_HTML_SHA256 = '2ffaaac0a55a65ee2082cbfd15b422d67576fbfa75fc201eac9e68f5d1f0c321'
+EXPECTED_HTML_SHA256 = '75bfe7db5c51ab77655615d400f689e373259602d10578854857031a19c788df'
 
-EXPECTED_THUMBS = 2  # distinct thumbnails: each is written once, as a CSS class
+EXPECTED_THUMBS = 4  # distinct thumbnails: each is written once, as a CSS class
 
 
 def test_report_reads_presence_page_by_page_and_never_asks_to_remove_what_is_gone_or_replaced():
@@ -470,9 +470,8 @@ def test_report_groups_pages_by_version_and_rubrique_and_shows_what_was_asked():
     order = [body.index(text) for text in (">/ (accueil)</h3>", ">/collections</h3>", ">/news</h3>", ">/fr/news/a</a>", ">/fr/news/b</a>",
                                            "ex.com/en-us/</span>", ">/shop</h3>")]
     assert order == sorted(order)  # versions in their order, "/" first, then rubriques and pages alphabetically
-    assert html.count('class="tile k-unref"') == 4 + 1 and "+ 2 non réf." in html  # 4 a page at most, the banner once for the version
+    assert html.count('class="tile k-unref"') == 6 + 1  # every image not in the library on its page, the banner once for the version
     assert "Sur 80 pages" in html and files.summary["unreferenced"] == 7 and files.summary["pages"] == 5
-    assert len(files.unreferenced_csv.decode("utf-8-sig").splitlines()) == 1 + 7  # the CSV has them all
     only = report.build_report(rows, [], within_days=3650, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1), sites=sites,
                                unreferenced=unref, include=["soon"]).html.decode("utf-8")
     assert "k-remove" not in only.split("<body>")[1] and "k-unref" not in only.split("<body>")[1]
@@ -490,3 +489,17 @@ def test_the_rubrique_of_a_page_is_below_its_site_version():
 
     assert [pdf.marker(a) for a in ("v0-0", "v1-27")] == ["NYRAMARKaQaZ", "NYRAMARKbQbbZ"]
     assert {f"v{pdf._number(a)}-{pdf._number(b)}" for a, b in pdf.MARKER.findall("xNYRAMARKbQbbZy")} == {"v1-27"}
+
+
+def test_a_page_shows_each_image_of_the_site_once_under_its_most_urgent_visual():
+    page = "https://ex.com/p"
+    rows = [_row("old", _hit(1, content_hash="same", pages=[page], thumb="site-a"), expiry="2025-12-01", thumb="lib-old"),
+            _row("old", _hit(2, content_hash="crop", pages=[page], thumb="site-b"), expiry="2025-12-01", thumb="lib-old"),
+            _row("soon", _hit(3, content_hash="same", pages=[page], thumb="site-a"), expiry="2026-01-20", thumb="lib-soon")]
+    for row in rows:
+        row["variant_group"] = "photo"  # the three files are one photo: the original and a crop
+    files = report.build_report(rows, [], within_days=3650, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1))
+    html = files.html.decode("utf-8")
+    assert html.count('<figure class="tile') == 1  # one photo on the page: one thumbnail, whatever the files and visuals
+    assert 'class="tile k-remove"' in html and "old.jpg" in html and "+ 1 autre visuel" in html
+    assert len(list(csv.DictReader(io.StringIO(files.matches_csv.decode("utf-8-sig"))))) == 2  # the CSV keeps one row per visual

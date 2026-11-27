@@ -16,7 +16,7 @@ const CONTENTS: [ReportContent, string, string][] = [
   ["expired", "Expirés encore en ligne", "Droits échus, image vue à la dernière lecture"],
   ["soon", "Expirent sous 90 jours", ""],
   ["check", "À vérifier", "Correspondances incertaines"],
-  ["unreferenced", "Images non référencées", "Celles de « Images en ligne › À qualifier », 4 vignettes par page, toutes dans le CSV"],
+  ["unreferenced", "Images non référencées", "Celles de « Images en ligne › À qualifier », toutes, sur leur page"],
 ];
 const CONTENT_LABEL: Record<ReportContent, string> = { expired: "Expirés", soon: "Sous 90 j", check: "À vérifier", unreferenced: "Non référencées" };
 
@@ -147,7 +147,6 @@ function ReportList(props: { generate: { onClick: () => void; loading: boolean; 
               <FileLink href={report.files["report.html"]} label={report.files["report.pdf"] ? "Ouvrir à l'écran" : "Ouvrir le rapport"} primary={!report.files["report.pdf"]} open />
               <FileLink href={report.files["matches.csv"]} label="CSV des occurrences" filename="occurrences.csv" />
               <FileLink href={report.files["not_found.csv"]} label="CSV des non trouvés" filename="non-trouves.csv" />
-              {report.files["unreferenced.csv"] ? <FileLink href={report.files["unreferenced.csv"]} label="CSV des non référencées" filename="non-referencees.csv" /> : null}
             </div>
           </li>
         ))}
