@@ -1394,10 +1394,9 @@ def test_report_job_covers_the_versions_and_contents_asked_and_stores_its_pdf(wo
     assert saved["stats"]["scope"] == {"sites": ["FR"], "include": ["expired", "unreferenced"]}
     files = saved["stats"]["files"]
     assert fake_storage_client.store[("reports", files["report.pdf"])] == b"%PDF-fake" and "NYRAMARK" in printed[0]
-    assert b"stray.jpg" in fake_storage_client.store[("reports", files["unreferenced.csv"])]
     with cloud_db.connect(cloud_database_url) as conn:  # the new files leave with the brand
         orphans = cloud_db.delete_brand(conn, cloud_org, cloud_brand)
-    assert {files["report.pdf"], files["unreferenced.csv"], saved["storage_path_html"]} <= set(orphans.reports)
+    assert {files["report.pdf"], saved["storage_path_html"]} <= set(orphans.reports)
 
 
 def test_a_report_whose_pdf_fails_is_kept_and_says_so(worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client, monkeypatch):

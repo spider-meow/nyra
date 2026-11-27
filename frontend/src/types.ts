@@ -207,7 +207,7 @@ export type Report = {
   stats: Record<string, number | string> & { scope?: { sites: string[]; include: ReportContent[] } };
   /** A read of the sites finished after the report was made. Absent from an older server. */
   stale?: boolean;
-  files: { "report.html": string; "matches.csv": string; "not_found.csv": string; "report.pdf"?: string; "unreferenced.csv"?: string };
+  files: { "report.html": string; "matches.csv": string; "not_found.csv": string; "report.pdf"?: string };
 };
 
 /** What a report can show (`include`): the same names as `report.INCLUDE` on the server. */

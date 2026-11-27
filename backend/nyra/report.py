@@ -314,14 +314,11 @@ class ReportFiles:
     summary: dict[str, Any]
     site_read_on: str = ""  # when the sites were read ("" when no read is recorded), kept with the report for the list
     print_html: bytes = b""  # the same report laid out for the PDF (`nyra.pdf`): page numbers to fill, markers to find them
-    unreferenced_csv: bytes = b""  # every image not in the library, page by page (the HTML shows a few per page)
 
 
 # What a report can hold (`include`); the first three are sections of `page_rows`, the last the images of « À qualifier ».
 INCLUDE = {"expired": "remove", "soon": "soon", "check": "check", "unreferenced": None}
-UNREFERENCED_PER_PAGE = 4  # thumbnails of images not in the library shown on one page of the site; the CSV has them all
 EVERYWHERE_PAGES = 10  # an image not in the library on more pages than this (a banner, a footer) is shown once per version, not on each page
-EVERYWHERE_SHOWN = 12
 PRIORITY_SHOWN = 8  # rubriques in « À traiter d'abord »
 NO_PAGE = "Page inconnue"
 
@@ -381,18 +378,29 @@ def by_place(rows: list[dict], unreferenced: Sequence[dict], sites: Sequence[dic
         for j, rubric in enumerate(rubrics):
             rubric["anchor"] = f"v{i}-{j}"
             rubric["pages"] = sorted(rubric["pages"].values(), key=lambda pg: pg["path"].lower())
+            for pg in rubric["pages"]:
+                pg["rows"] = _one_per_photo(pg["rows"])
             for name in ("remove", "soon", "check"):
                 rubric[name] = sum(row["section"] == name for pg in rubric["pages"] for row in pg["rows"])
             rubric["unreferenced"] = sum(len(pg["unreferenced"]) for pg in rubric["pages"])
-            for pg in rubric["pages"]:
-                order_of = {"remove": 0, "soon": 1, "check": 2}
-                pg["rows"].sort(key=lambda row: (order_of.get(row["section"], 3), _urgency_key(row["group"]["days_left"])))
-                pg["more"] = max(0, len(pg["unreferenced"]) - UNREFERENCED_PER_PAGE)
-                pg["unreferenced"] = pg["unreferenced"][:UNREFERENCED_PER_PAGE]
         owner["rubrics"] = rubrics
-        owner["everywhere_more"] = max(0, len(owner["everywhere"]) - EVERYWHERE_SHOWN)
-        owner["everywhere"] = sorted(owner["everywhere"], key=lambda item: -item.get("page_count", 0))[:EVERYWHERE_SHOWN]
+        owner["everywhere"] = sorted(owner["everywhere"], key=lambda item: -item.get("page_count", 0))
     return out
+
+
+def _one_per_photo(rows: list[dict]) -> list[dict]:
+    """The images of a page, each once: the image as the site shows it, under its most urgent visual (to remove, then
+    expiring, then to check; the nearest date first). `also`: how many other visuals of the library the same image matches."""
+    order_of = {"remove": 0, "soon": 1, "check": 2}
+    rows = sorted(rows, key=lambda row: (order_of.get(row["section"], 3), _urgency_key(row["group"]["days_left"])))
+    kept: dict[str, dict] = {}
+    for row in rows:
+        key = str(row["hit"].get("photo_key") or row["hit"].get("site_image_id"))
+        if key in kept:
+            kept[key]["also"] += row["group"]["reference_id"] != kept[key]["group"]["reference_id"]
+        else:
+            kept[key] = {**row, "also": 0}
+    return list(kept.values())
 
 
 def priorities(versions: list[dict]) -> list[dict]:
@@ -464,19 +472,18 @@ def _csv_bytes(fieldnames: Sequence[str], rows: list[dict], stamp: dict[str, str
 MATCHES_COLUMNS = ("filename", "page", "site_url", "status", "expiry_date", "days_left", "presence", "read_on", "decision",
                    "confidence", "action", "credit", "notes", "score", "level")
 NOT_FOUND_COLUMNS = ("filename", "expiry_date", "days_left", "status", "credit", "notes", "verification")
-UNREFERENCED_COLUMNS = ("filename", "image_url", "version", "rubric", "page", "page_count")
 
 
 def _thumb_keys(versions: list[dict], loaded: Optional[dict] = None) -> list:
-    """The thumbnails the report shows, once each, in the order they appear: a visual's own (the library's), or the image
-    found on the site when the library's could not be read (`loaded`: the thumbnails read so far; None: not read yet)."""
+    """The thumbnails the report shows, once each, in the order they appear: the image as the site shows it, or the visual's
+    own (the library's) when the site's could not be read (`loaded`: the thumbnails read so far; None: not read yet)."""
     keys = [item["thumb"] for owner in versions for item in owner["everywhere"]]
     for owner in versions:
         for rubric in owner["rubrics"]:
             for pg in rubric["pages"]:
                 for row in pg["rows"]:
-                    own = row["group"].get("ref_thumb")
-                    keys.append(own if loaded is None or loaded.get(own) else row["hit"].get("site_thumb"))
+                    seen = row["hit"].get("site_thumb")
+                    keys.append(seen if loaded is None or loaded.get(seen) else row["group"].get("ref_thumb"))
                 keys += [item["thumb"] for item in pg["unreferenced"]]
     return list(dict.fromkeys(key for key in keys if key))
 
@@ -571,17 +578,6 @@ def _occurrence_rows(rows: list[dict]) -> list[dict]:
     ]
 
 
-def _unreferenced_rows(items: Sequence[dict], versions: dict) -> list[dict]:
-    rows = []
-    for item in items:
-        owner = versions.get(str(item.get("site_id")), {})
-        page = item.get("page") or ""
-        rows.append({"filename": item["name"], "image_url": item.get("image_url", ""), "version": owner.get("label") or owner.get("url", ""),
-                     "rubric": rubric_of(page, owner.get("url", "")) if page else "", "page": page or f"sur {item.get('page_count', 0)} pages",
-                     "page_count": item.get("page_count", 1)})
-    return sorted(rows, key=lambda row: (row["version"], _rubric_key(row["rubric"] or "~"), row["page"], row["filename"]))
-
-
 def _not_found_rows(missing: list[dict]) -> list[dict]:
     return [
         {
@@ -633,7 +629,7 @@ def build_report(
     versions = by_place([row for row in rows if row["section"] in shown], unreferenced, sites)
 
     thumbs = _load_thumbs(set(_thumb_keys(versions)), thumb_loader)
-    thumbs |= _load_thumbs(set(_thumb_keys(versions, thumbs)) - thumbs.keys(), thumb_loader)  # the site's image where the library's failed
+    thumbs |= _load_thumbs(set(_thumb_keys(versions, thumbs)) - thumbs.keys(), thumb_loader)  # the library's image where the site's failed
 
     summary = dashboard(kept, unmatched_rows, today, replaced)
     summary.update({
@@ -655,7 +651,6 @@ def build_report(
         summary=summary,
         site_read_on=stamp["site_read_on"],
         print_html=print_html.encode("utf-8"),
-        unreferenced_csv=_csv_bytes(UNREFERENCED_COLUMNS, _unreferenced_rows(unreferenced, {str(site["id"]): site for site in sites}), stamp),
     )
 
 

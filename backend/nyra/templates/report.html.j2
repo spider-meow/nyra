@@ -8,8 +8,8 @@
 {%- macro tile(row) -%}
 {%- set group = row.group %}{% set hit = row.hit %}
 <figure class="tile k-{{ row.section }}">
-  {{ pic(group.ref_thumb if thumb_class.get(group.ref_thumb) else hit.site_thumb, group.filename) }}
-  <figcaption><b>{{ group.filename }}</b>
+  {{ pic(hit.site_thumb if thumb_class.get(hit.site_thumb) else group.ref_thumb, group.filename) }}
+  <figcaption><b>{{ group.filename }}</b>{% if row.also %}<span class="note">+ {{ row.also }} autre{{ 's' if row.also > 1 }} visuel{{ 's' if row.also > 1 }}</span>{% endif %}
     <span class="st">{% if row.section == 'check' %}À vérifier · {{ (hit.score * 100)|round|int }} %{% else %}{{ days(group) }}{% endif %}</span>
     {% if row.presence == 'unknown' %}<span class="note">{{ row.reason or 'Page non relue depuis' }}</span>{% endif %}
     {% if group.credit %}<span class="note">{{ group.credit }}</span>{% endif %}
@@ -94,7 +94,6 @@
   .k-soon .st { color: var(--urgent); font-weight: 600; }
   .k-check .thumb { box-shadow: inset 0 0 0 2px var(--soon); } .k-check .st { color: var(--soon); }
   .k-unref .thumb { outline: 2px dashed var(--unref); outline-offset: -2px; } .k-unref .st { color: var(--unref); }
-  .more { width: 104px; height: 104px; display: grid; place-items: center; text-align: center; border: 1px dashed var(--line); border-radius: 8px; font-size: 11px; color: var(--muted); padding: 6px; }
   .everywhere { margin-top: 20px; padding: 14px 16px; background: var(--sunk); border-radius: 12px; break-inside: avoid; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .everywhere p { margin: 0; font-size: 13px; color: var(--ink-soft); }
   .empty-note { margin: 28px 0 0; padding: 22px 0; color: var(--muted); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
@@ -103,7 +102,7 @@
 
   @media (max-width: 900px) {
     body { padding: 28px 18px; } .verdict h1 { font-size: 30px; }
-    .tile, .thumb, .more { width: 88px; } .thumb, .more { height: 88px; }
+    .tile, .thumb { width: 88px; } .thumb { height: 88px; }
   }
   @media print {
     body { padding: 0; font-size: 11px; background: #fff; max-width: none; }
@@ -112,7 +111,7 @@
     .toc tr { break-inside: avoid; }
     .version { margin-top: 0; break-before: page; }
     .rubric { margin-top: 18px; }
-    .tile { width: 84px; font-size: 9px; } .thumb, .more { width: 84px; height: 84px; }
+    .tile { width: 84px; font-size: 9px; } .thumb { width: 84px; height: 84px; }
   }
   {{ thumb_css }}
 </style>
@@ -164,7 +163,7 @@
     <div class="vh"><h2>{{ owner.label }}</h2><span>{{ owner.url }}</span></div>
     {% if owner.everywhere %}
     <div class="everywhere"><p><b>Sur de nombreuses pages</b> : images absentes de la bibliothèque vues sur plus de {{ everywhere_pages }} pages (bandeau, pied de page…), montrées une seule fois.</p>
-      <div class="tiles">{% for item in owner.everywhere %}{{ unref(item) }}{% endfor %}{% if owner.everywhere_more %}<div class="more">+ {{ owner.everywhere_more }}<br>dans le CSV</div>{% endif %}</div></div>
+      <div class="tiles">{% for item in owner.everywhere %}{{ unref(item) }}{% endfor %}</div></div>
     {% endif %}
     {% for r in owner.rubrics %}
     <div class="rubric" id="{{ r.anchor }}">
@@ -172,7 +171,7 @@
       {% for pg in r.pages %}
       <article class="pg">
         <header>{% if pg.url %}<a href="{{ pg.url }}">{{ pg.path }}</a>{% else %}<em>{{ pg.path }}</em>{% endif %}<span>{% if pg.read_on %}lue le {{ pg.read_on }}{% endif %}</span></header>
-        <div class="tiles">{% for row in pg.rows %}{{ tile(row) }}{% endfor %}{% for item in pg.unreferenced %}{{ unref(item) }}{% endfor %}{% if pg.more %}<div class="more">+ {{ pg.more }} non réf.<br>dans le CSV</div>{% endif %}</div>
+        <div class="tiles">{% for row in pg.rows %}{{ tile(row) }}{% endfor %}{% for item in pg.unreferenced %}{{ unref(item) }}{% endfor %}</div>
       </article>
       {% endfor %}
     </div>

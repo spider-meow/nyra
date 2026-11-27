@@ -1116,8 +1116,7 @@ class Worker:
                       files: "report_module.ReportFiles", pdf: Optional[bytes], inputs: dict, include: list[str]) -> uuid.UUID:
         base = cloud_storage.path_for(org_id, str(uuid.uuid4()))
         paths = {"html": f"{base}/report.html", "csv": f"{base}/matches.csv", "not_found": f"{base}/not_found.csv"}
-        extra = {"report.pdf": (pdf, "application/pdf"),
-                 "unreferenced.csv": (files.unreferenced_csv if "unreferenced" in include else None, "text/csv; charset=utf-8")}
+        extra = {"report.pdf": (pdf, "application/pdf")}
         uploads = [(paths["html"], files.html, "text/html; charset=utf-8"), (paths["csv"], files.matches_csv, "text/csv; charset=utf-8"),
                    (paths["not_found"], files.not_found_csv, "text/csv; charset=utf-8")]
         uploads += [(f"{base}/{name}", data, kind) for name, (data, kind) in extra.items() if data]
