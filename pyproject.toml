@@ -36,7 +36,7 @@ worker = [
     "pypdf>=6.17.0",  # reads the sheets of the report's first print, for the page numbers of its contents (`nyra.pdf`)
     "open_clip_torch>=4.2.2",
     "torch>=2.15.0",
-    "opencv-python-headless>=4.8",
+    "opencv-python-headless>=5.1.0.95",
 ]
 # Error reporting (Sentry), enabled by SENTRY_DSN. See docs/OBSERVABILITY.md.
 observability = [
