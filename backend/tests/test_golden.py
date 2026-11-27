@@ -409,11 +409,14 @@ EXPECTED_SUMMARY = {'confirmed': 4,
                'filename': 'c-verify.jpg',
                'online': True,
                'reference_id': 'c-verify'}],
- 'urgent_online': 2}
+ 'urgent_online': 2,
+ 'pages': 10,
+ 'soon_online': 2,
+ 'unreferenced': 0}
 
-EXPECTED_HTML_SHA256 = '45635eb54ff615478bbb7b104c51772051beaec01f3f6750d95bf73b640cda23'
+EXPECTED_HTML_SHA256 = '2ffaaac0a55a65ee2082cbfd15b422d67576fbfa75fc201eac9e68f5d1f0c321'
 
-EXPECTED_THUMBS = 4  # distinct thumbnails: each is written once, as a CSS class
+EXPECTED_THUMBS = 2  # distinct thumbnails: each is written once, as a CSS class
 
 
 def test_report_reads_presence_page_by_page_and_never_asks_to_remove_what_is_gone_or_replaced():
@@ -435,7 +438,7 @@ def test_report_reads_presence_page_by_page_and_never_asks_to_remove_what_is_gon
     assert {line["action"] for line in csv_rows(presence=seen, replaced=frozenset({ref})).values()} == {"Rien à faire"}
 
 
-def test_report_html_is_one_line_per_visual_and_page_most_urgent_first():
+def test_report_html_is_sorted_by_version_rubrique_and_page():
     rows = [r for r in REPORT_ROWS if r["filename"] == "a-expired.jpg" and r["confidence"] == "haut"]
     ref = rows[0]["reference_id"]
     seen = {(ref, "https://ex.com/p0"): {"state": "still", "crawled_at": "2025-12-30T10:00:00"},
@@ -443,12 +446,47 @@ def test_report_html_is_one_line_per_visual_and_page_most_urgent_first():
     files = report.build_report(rows, [], within_days=90, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1), presence=seen,
                                 provenance={"suspect_sites": ["US"]})
     html = files.html.decode("utf-8")
-    assert html.index("À retirer maintenant") < html.index("Expirent bientôt") < html.index("À vérifier")
-    assert html.count('class="line a-remove"') == 8  # the page gone from the site is not to remove, and not in the report
-    assert "Déjà retirés" not in html and "Non trouvés" not in html and 'class="line a-done"' not in html
+    assert html.count('class="tile k-remove"') == 8  # the page gone from the site is not to remove, and not in the report
+    assert html.count('<article class="pg">') == 8 and ">/p0</a>" in html  # one block per page, under the page's path
+    assert html.index(">/p0</a>") < html.index(">/p2</a>") < html.index(">/p7</a>")  # pages in alphabetical order
     assert "La dernière lecture de US semble incomplète" in html
-    assert html.count("Sur la page") == 8 and "ex.com/p0</a>" in html  # every line says which page the visual is on
-    assert "Rien d&#39;expiré en ligne" not in html and "Aucun visuel en ligne n&#39;expire" in html  # an empty section says why
+    assert "NYRAMARK" not in html and "NYRAMARK" in files.print_html.decode("utf-8")  # the PDF's markers stay out of the screen
     many = [dict(rows[0], site_image_id=f"x{i}", pages=[f"https://ex.com/q{i}"]) for i in range(1, 40)]
     big = report.build_report(many, [], within_days=90, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1)).html
     assert len(big) < 3 * len(files.html) + 20000  # a thumbnail is written once, not once per page
+
+
+def test_report_groups_pages_by_version_and_rubrique_and_shows_what_was_asked():
+    sites = [{"id": "fr", "label": "FR", "url": "https://ex.com/fr"}, {"id": "us", "label": "", "url": "https://ex.com/en-us/"}]
+    fr = [f"https://ex.com/fr/{path}" for path in ("news/b", "collections/x", "", "news/a")]
+    rows = [{**_row("old", _hit(1, pages=fr), expiry="2025-12-01"), "site_id": "fr"},
+            {**_row("soon", _hit(2, pages=["https://ex.com/en-us/shop/y"]), expiry="2026-01-20"), "site_id": "us"}]
+    unref = [{"site_id": "fr", "page": fr[1], "thumb": "u", "name": f"n{i}.webp", "key": str(i)} for i in range(6)]
+    unref.append({"site_id": "fr", "page": None, "page_count": 80, "thumb": "u", "name": "banner.jpg", "key": "b"})
+    files = report.build_report(rows, [], within_days=3650, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1), sites=sites,
+                                unreferenced=unref)
+    html = files.html.decode("utf-8")
+    body = html[html.index('class="version"'):]
+    order = [body.index(text) for text in (">/ (accueil)</h3>", ">/collections</h3>", ">/news</h3>", ">/fr/news/a</a>", ">/fr/news/b</a>",
+                                           "ex.com/en-us/</span>", ">/shop</h3>")]
+    assert order == sorted(order)  # versions in their order, "/" first, then rubriques and pages alphabetically
+    assert html.count('class="tile k-unref"') == 4 + 1 and "+ 2 non réf." in html  # 4 a page at most, the banner once for the version
+    assert "Sur 80 pages" in html and files.summary["unreferenced"] == 7 and files.summary["pages"] == 5
+    assert len(files.unreferenced_csv.decode("utf-8-sig").splitlines()) == 1 + 7  # the CSV has them all
+    only = report.build_report(rows, [], within_days=3650, stats={}, thumb_loader=_thumbs, today=date(2026, 1, 1), sites=sites,
+                               unreferenced=unref, include=["soon"]).html.decode("utf-8")
+    assert "k-remove" not in only.split("<body>")[1] and "k-unref" not in only.split("<body>")[1]
+    assert ">/shop</h3>" in only and ">/news</h3>" not in only
+    assert report.priorities(report.by_place([], [], sites)) == []
+
+
+def test_the_rubrique_of_a_page_is_below_its_site_version():
+    assert report.rubric_of("https://ex.com/fr/collections/x?a=1", "https://ex.com/fr") == "/collections"
+    assert report.rubric_of("https://ex.com/fr/", "https://ex.com/fr/") == "/"
+    assert report.rubric_of("https://ex.com/fr", "https://ex.com/fr") == "/"
+    assert report.rubric_of("https://ex.com/fra/x", "https://ex.com/fr") == "/fra"  # a segment, never a prefix of a word
+    assert report.rubric_of("https://ex.com/blogs/x", "https://ex.com") == "/blogs"
+    from nyra import pdf
+
+    assert [pdf.marker(a) for a in ("v0-0", "v1-27")] == ["NYRAMARKaQaZ", "NYRAMARKbQbbZ"]
+    assert {f"v{pdf._number(a)}-{pdf._number(b)}" for a, b in pdf.MARKER.findall("xNYRAMARKbQbbZy")} == {"v1-27"}

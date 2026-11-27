@@ -203,12 +203,15 @@ export type Report = {
   id: string;
   within_days: number;
   generated_at: string;
-  /** Counts per state, and `site_read_on` (text): when the sites were read. */
-  stats: Record<string, number | string>;
+  /** Counts per state, `site_read_on` (text): when the sites were read, and `scope`: the versions and contents it covers. */
+  stats: Record<string, number | string> & { scope?: { sites: string[]; include: ReportContent[] } };
   /** A read of the sites finished after the report was made. Absent from an older server. */
   stale?: boolean;
-  files: { "report.html": string; "matches.csv": string; "not_found.csv": string };
+  files: { "report.html": string; "matches.csv": string; "not_found.csv": string; "report.pdf"?: string; "unreferenced.csv"?: string };
 };
+
+/** What a report can show (`include`): the same names as `report.INCLUDE` on the server. */
+export type ReportContent = "expired" | "soon" | "check" | "unreferenced";
 
 export type SettingsSection = Record<string, number | boolean | string | string[]>;
 

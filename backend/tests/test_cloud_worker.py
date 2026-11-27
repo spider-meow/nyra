@@ -1366,3 +1366,50 @@ def test_a_scheduled_read_chains_the_comparison_without_anyone_launching_it(work
     assert worker.run_once()
     done = _job(cloud_database_url, cloud_brand, job["id"])
     assert done["status"] == "done" and done["result"]["matches"] == 3 and compared == [cloud_brand]
+
+
+def test_report_job_covers_the_versions_and_contents_asked_and_stores_its_pdf(worker, cloud_database_url, cloud_org, cloud_brand,
+                                                                               fake_storage_client, monkeypatch):
+    printed = []
+    monkeypatch.setattr(worker_module, "report_pdf", lambda html, footer: printed.append(html) or b"%PDF-fake")
+    with cloud_db.connect(cloud_database_url) as conn:
+        fr = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://t.test/fr", label="FR")
+        us = cloud_db.create_site(conn, org_id=cloud_org, brand_id=cloud_brand, url="https://u.test/", label="US")
+        on_fr = _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "on-fr.jpg", _image_bytes(1))
+        on_us = _add_reference(conn, fake_storage_client, cloud_org, cloud_brand, "on-us.jpg", _image_bytes(40))
+        img_fr = _add_site_image(conn, fake_storage_client, cloud_org, fr, "https://t.test/fr/news/a.jpg", _image_bytes(1))
+        img_us = _add_site_image(conn, fake_storage_client, cloud_org, us, "https://u.test/b.jpg", _image_bytes(40))
+        _add_site_image(conn, fake_storage_client, cloud_org, fr, "https://t.test/fr/news/stray.jpg", _image_bytes(80))
+        cloud_db.write_matches(conn, cloud_org, [(on_fr, img_fr, "phash", 1.0, "haut"), (on_us, img_us, "phash", 1.0, "haut")])
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="report",
+                                 params={"within_days": 3650, "site_ids": [str(fr)], "include": ["expired", "unreferenced"]})
+
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert finished["status"] == "done" and finished["message"] == "Rapport prêt.", finished
+    with cloud_db.connect(cloud_database_url) as conn:
+        saved = cloud_db.get_report(conn, cloud_brand, uuid.UUID(finished["result"]["report_id"]))
+    html = fake_storage_client.store[("reports", saved["storage_path_html"])].decode("utf-8")
+    assert "on-fr.jpg" in html and "on-us.jpg" not in html and "stray.jpg" in html and ">/news</h3>" in html
+    assert saved["stats"]["scope"] == {"sites": ["FR"], "include": ["expired", "unreferenced"]}
+    files = saved["stats"]["files"]
+    assert fake_storage_client.store[("reports", files["report.pdf"])] == b"%PDF-fake" and "NYRAMARK" in printed[0]
+    assert b"stray.jpg" in fake_storage_client.store[("reports", files["unreferenced.csv"])]
+    with cloud_db.connect(cloud_database_url) as conn:  # the new files leave with the brand
+        orphans = cloud_db.delete_brand(conn, cloud_org, cloud_brand)
+    assert {files["report.pdf"], files["unreferenced.csv"], saved["storage_path_html"]} <= set(orphans.reports)
+
+
+def test_a_report_whose_pdf_fails_is_kept_and_says_so(worker, cloud_database_url, cloud_org, cloud_brand, fake_storage_client, monkeypatch):
+    def broken(html, footer):
+        raise RuntimeError("no printer")
+
+    monkeypatch.setattr(worker_module, "report_pdf", broken)
+    with cloud_db.connect(cloud_database_url) as conn:
+        job = cloud_jobs.enqueue(conn, org_id=cloud_org, brand_id=cloud_brand, kind="report", params={"within_days": 3650})
+    assert worker.run_once()
+    finished = _job(cloud_database_url, cloud_brand, job["id"])
+    assert finished["status"] == "done" and finished["message"] == "Rapport prêt, sans PDF (RuntimeError: no printer).", finished
+    with cloud_db.connect(cloud_database_url) as conn:
+        saved = cloud_db.get_report(conn, cloud_brand, uuid.UUID(finished["result"]["report_id"]))
+    assert "report.pdf" not in saved["stats"]["files"]

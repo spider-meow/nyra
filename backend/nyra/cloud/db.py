@@ -393,10 +393,7 @@ def delete_brand(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUI
         (brand_id,),
     ).fetchall()
     exclusions = conn.execute("SELECT thumb_path FROM excluded_hashes WHERE brand_id = %s", (brand_id,)).fetchall()
-    reports = conn.execute(
-        "SELECT storage_path_html, storage_path_csv, storage_path_not_found_csv FROM reports WHERE brand_id = %s",
-        (brand_id,),
-    ).fetchall()
+    reports = conn.execute(f"SELECT {REPORT_PATHS} AS path FROM reports WHERE brand_id = %s", (brand_id,)).fetchall()
     if not conn.execute("DELETE FROM brands WHERE id = %s AND org_id = %s", (brand_id, org_id)).rowcount:
         return None
     return OrphanFiles(
@@ -406,7 +403,7 @@ def delete_brand(conn: psycopg.Connection, org_id: uuid.UUID, brand_id: uuid.UUI
             [p for row in images for p in (row["storage_path"], row["thumb_path"])]
             + [row["thumb_path"] for row in exclusions],
         ),
-        reports=[path for row in reports for path in row.values() if path],
+        reports=[row["path"] for row in reports if row["path"]],
     )
 
 
@@ -881,7 +878,7 @@ def match_rows(conn: psycopg.Connection, brand_id: uuid.UUID) -> list[Row]:
             m.level, m.score, m.confidence,
             r.id AS reference_id, r.filename, r.expiry_date, r.unlimited_rights, r.credit, r.notes,
             r.storage_path AS ref_storage_path, r.thumb_path AS ref_thumb_path, r.work_path AS ref_work_path,
-            s.id AS site_image_id, s.url AS site_url, s.content_hash, s.variant_group, COALESCE(st.label, '') AS site_label,
+            s.id AS site_image_id, s.url AS site_url, s.content_hash, s.variant_group, COALESCE(st.label, '') AS site_label, st.id AS site_id,
             s.storage_path AS site_storage_path, s.thumb_path AS site_thumb_path,
             v.decision,
             -- What the last finished read of the image's site says about a removal (`report._removal`).
@@ -1352,6 +1349,11 @@ def list_crawl_runs(conn: psycopg.Connection, brand_id: uuid.UUID, limit: int = 
 
 
 # --- reports ---------------------------------------------------------------
+
+# Every file of a report, one row each: the three of the columns, and those of `stats.files` (the PDF, the CSV of the images
+# not in the library: added later, so kept in the figures rather than in new columns).
+REPORT_PATHS = ("unnest(ARRAY[storage_path_html, storage_path_csv, storage_path_not_found_csv] || "
+                "ARRAY(SELECT value FROM jsonb_each_text(COALESCE(stats->'files', '{}'::jsonb))))")
 
 def create_report(
     conn: psycopg.Connection,
