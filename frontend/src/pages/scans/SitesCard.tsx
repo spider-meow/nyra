@@ -101,7 +101,7 @@ function useSiteStates(): (site: Site) => SiteState {
 }
 
 /** The row's actions behind one button: rare ones stay out of the way. */
-function RowMenu(props: { onRename: () => void; onRemove: () => void; busy: boolean }) {
+function RowMenu(props: { onEdit: () => void; onRemove: () => void; busy: boolean }) {
   const ref = useRef<HTMLDetailsElement>(null);
   const close = () => ref.current?.removeAttribute("open");
   useEffect(() => {
@@ -121,7 +121,7 @@ function RowMenu(props: { onRename: () => void; onRemove: () => void; busy: bool
         <Icon name="more" size={18} strokeWidth={2.4} />
       </summary>
       <div className="absolute right-0 z-10 mt-1 w-48 overflow-hidden rounded-lg border border-line-strong bg-paper py-1 shadow-lg">
-        <button type="button" className={item} onClick={() => { close(); props.onRename(); }}>Modifier le libellé</button>
+        <button type="button" className={item} onClick={() => { close(); props.onEdit(); }}>Modifier l'adresse</button>
         <button type="button" disabled={props.busy} className={cx(item, "text-expired")} onClick={() => { close(); props.onRemove(); }}>Retirer l'adresse</button>
       </div>
     </details>
@@ -164,22 +164,29 @@ function scopePath(url: string): string {
 function SiteRow(props: { site: Site; state: SiteState; selectable: boolean; selected: boolean; onSelect: (on: boolean) => void }) {
   const { site } = props;
   const { admin } = useOrg();
-  const { rename, remove } = useSiteMutations();
+  const { update, remove } = useSiteMutations();
   const del = useSiteRemoval(site, remove);
   const toast = useToast();
   const [editing, setEditing] = useState(false);
+  const [url, setUrl] = useState(site.url);
   const [label, setLabel] = useState(site.label);
+
+  function cancel() {
+    setUrl(site.url);
+    setLabel(site.label);
+    setEditing(false);
+  }
 
   function save(event: FormEvent) {
     event.preventDefault();
-    rename.mutate(
-      { id: site.id, label },
+    update.mutate(
+      { id: site.id, url, label },
       {
-        onSuccess: () => {
+        onSuccess: ({ warning }) => {
           setEditing(false);
-          toast.show({ tone: "success", message: label.trim() ? `Libellé enregistré : ${label.trim()}` : "Libellé retiré", duration: 2500 });
+          toast.show(warning ? { tone: "info", message: "Adresse enregistrée", description: warning, duration: 10000 } : { tone: "success", message: "Adresse enregistrée", duration: 2500 });
         },
-        onError: (error) => toast.show({ tone: "error", message: "Le libellé n'a pas été enregistré", description: errorMessage(error) }),
+        onError: (error) => toast.show({ tone: "error", message: "L'adresse n'a pas été enregistrée", description: errorMessage(error) }),
       },
     );
   }
@@ -191,18 +198,30 @@ function SiteRow(props: { site: Site; state: SiteState; selectable: boolean; sel
       ) : null}
       <div className="min-w-0 flex-1">
         {editing ? (
-          <form className="flex items-center gap-2" onSubmit={save}>
-            <Input aria-label="Libellé" autoFocus maxLength={60} placeholder="FR, US, INT…" value={label} onChange={(event) => setLabel(event.target.value)} className="max-w-40" />
-            <Button size="sm" type="submit" variant="primary" loading={rename.isPending}>OK</Button>
-            <Button size="sm" variant="ghost" onClick={() => { setLabel(site.label); setEditing(false); }}>Annuler</Button>
+          <form className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_auto] sm:items-end" onSubmit={save}>
+            <div>
+              <FieldLabel htmlFor={`site-url-${site.id}`}>Adresse</FieldLabel>
+              <Input id={`site-url-${site.id}`} autoFocus type="url" required value={url} onChange={(event) => setUrl(event.target.value)} />
+            </div>
+            <div>
+              <FieldLabel htmlFor={`site-label-${site.id}`} hint="facultatif">Libellé</FieldLabel>
+              <Input id={`site-label-${site.id}`} maxLength={60} placeholder="FR, US, INT…" value={label} onChange={(event) => setLabel(event.target.value)} />
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" type="submit" variant="primary" loading={update.isPending} disabled={!url.trim()}>Enregistrer</Button>
+              <Button size="sm" variant="ghost" onClick={cancel}>Annuler</Button>
+            </div>
+            {url.trim() !== site.url ? <p className="text-xs text-muted sm:col-span-3">Les pages et images déjà lues sont gardées. La prochaine lecture part de la nouvelle adresse.</p> : null}
           </form>
         ) : (
-          <p className="truncate font-medium">{site.label || hostOf(site.url)}</p>
+          <>
+            <p className="truncate font-medium">{site.label || hostOf(site.url)}</p>
+            <p className="truncate text-xs text-muted">
+              <a href={site.url} target="_blank" rel="noreferrer noopener" className="hover:underline">{site.url}</a>
+            </p>
+            {scopePath(site.url) ? <p className="text-xs text-muted">Limitée à {scopePath(site.url)}</p> : null}
+          </>
         )}
-        <p className="truncate text-xs text-muted">
-          <a href={site.url} target="_blank" rel="noreferrer noopener" className="hover:underline">{site.url}</a>
-        </p>
-        {scopePath(site.url) ? <p className="text-xs text-muted">Limitée à {scopePath(site.url)}</p> : null}
       </div>
       {site.last_crawled_at ? (
         <p className="hidden text-right text-xs text-muted sm:block">
@@ -211,7 +230,7 @@ function SiteRow(props: { site: Site; state: SiteState; selectable: boolean; sel
         </p>
       ) : null}
       <span className={cx("rounded-md px-2 py-px text-xs font-medium whitespace-nowrap", STATE_PILL[props.state].tone)}>{STATE_PILL[props.state].label}</span>
-      {admin && !editing ? <RowMenu busy={remove.isPending} onRename={() => setEditing(true)} onRemove={() => void del()} /> : null}
+      {admin && !editing ? <RowMenu busy={remove.isPending} onEdit={() => setEditing(true)} onRemove={() => void del()} /> : null}
     </li>
   );
 }

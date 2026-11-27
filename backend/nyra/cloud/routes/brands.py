@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import io
 import uuid
+from typing import Optional
 from urllib.parse import urlparse
 
 import psycopg
@@ -58,8 +59,9 @@ class SiteBody(BaseModel):
     label: str = Field(default="", max_length=60)
 
 
-class SiteLabelBody(BaseModel):
+class SiteUpdateBody(BaseModel):
     label: str = Field(default="", max_length=60)
+    url: Optional[str] = Field(default=None, max_length=2000)  # absent: the address does not change
 
 
 def _brand_name_and_slug(body: BrandBody) -> tuple[str, str]:
@@ -194,13 +196,24 @@ def add_site(body: SiteBody, scope: BrandScope = Depends(brand_admin_dep), ctx: 
 
 
 @router.put(f"{BRAND}/sites/{{site_id}}")
-def update_site(site_id: uuid.UUID, body: SiteLabelBody, scope: BrandScope = Depends(brand_admin_dep),
+def update_site(site_id: uuid.UUID, body: SiteUpdateBody, scope: BrandScope = Depends(brand_admin_dep),
                 ctx: Ctx = Depends(get_ctx)) -> dict:
-    with cloud_db.connect(ctx.settings.database_url) as conn:
-        if not cloud_db.update_site_label(conn, scope.brand_id, site_id, body.label.strip() or None):
-            raise HTTPException(status_code=404, detail="Adresse introuvable.")
-        scope.audit(conn, "site.update", "site", site_id)
-    return {"ok": True}
+    """The label, and the address itself when `url` is given (a typo, a path that changed). Its pages and images stay."""
+    url = _checked_site_url(body.url) if body.url is not None else None
+    try:
+        with cloud_db.connect(ctx.settings.database_url) as conn:
+            rows = cloud_db.list_sites(conn, scope.brand_id)
+            before = next((row["url"] for row in rows if row["id"] == site_id), None)
+            changed = url is not None and url != before
+            if changed and active_jobs(conn, scope.brand_id, ("crawl", "check")):
+                raise HTTPException(status_code=409, detail="Une lecture est en cours. Attendez sa fin pour changer l'adresse.")
+            if not cloud_db.update_site(conn, scope.brand_id, site_id, label=body.label.strip() or None, url=url if changed else None):
+                raise HTTPException(status_code=404, detail="Adresse introuvable.")
+            scope.audit(conn, "site.update", "site", site_id, **({"url_changed": True} if changed else {}))
+    except cloud_db.SiteTaken as exc:
+        raise HTTPException(status_code=409, detail="Cette adresse est déjà enregistrée, pour cette marque ou une autre.") from exc
+    others = [row["url"] for row in rows if row["id"] != site_id]
+    return {"ok": True, "warning": overlap_warning(url, others) if changed else None}
 
 
 @router.delete(f"{BRAND}/sites/{{site_id}}")

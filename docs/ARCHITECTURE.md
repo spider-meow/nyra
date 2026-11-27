@@ -215,6 +215,11 @@ read further (no image, no link) and the job says so (`pages_left_scope`). Nothi
 leaves the next reads. Adding an address that contains another address of the brand, or is contained by one, answers `warning` (not a
 refusal): the wider address still reads the narrower one's pages, so they are read, and counted in the month's pages, twice. The
 page « Sites et lectures » shows « Limitée à /en-us/ » on such an address. Out of scope: excluding paths, several paths per address.
+**Changing an address** (« Modifier l'adresse » in « Sites et lectures », `PUT .../sites/{site_id}` with `url` and `label`; without
+`url` only the label changes): the same checks as adding one (http(s), `netguard`, normalised), 409 when another address of the
+organization already has it, 409 while a `crawl` or `check` of the brand waits or runs, and the same `warning` on an overlap. The site keeps
+its identifier, pages, images, matches and decisions: the next read starts from the new address, and what it no longer covers is just not
+read again (« not read again », never « gone », like a path narrowed above). Traced `site.update` with `url_changed` (never the address).
 
 ## Pipeline
 

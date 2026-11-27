@@ -451,8 +451,16 @@ def get_sites(conn: psycopg.Connection, brand_id: uuid.UUID, site_ids: list[uuid
     ).fetchall()
 
 
-def update_site_label(conn: psycopg.Connection, brand_id: uuid.UUID, site_id: uuid.UUID, label: Optional[str]) -> bool:
-    result = conn.execute("UPDATE sites SET label = %s WHERE id = %s AND brand_id = %s", (label, site_id, brand_id))
+def update_site(conn: psycopg.Connection, brand_id: uuid.UUID, site_id: uuid.UUID, *, label: Optional[str],
+                url: Optional[str] = None) -> bool:
+    """The label, and the address when `url` is given. Its pages, images and matches stay: the pages the new address no longer
+    covers are simply not read again, so they stay « not read again » (never « gone »). Raises SiteTaken when another
+    address of the organization already has this one."""
+    if url is not None and conn.execute("SELECT 1 FROM sites WHERE org_id = (SELECT org_id FROM sites WHERE id = %s) AND url = %s AND id <> %s",
+                                        (site_id, url, site_id)).fetchone():
+        raise SiteTaken(url)
+    result = conn.execute("UPDATE sites SET label = %s, url = COALESCE(%s, url) WHERE id = %s AND brand_id = %s",
+                          (label, url, site_id, brand_id))
     return result.rowcount > 0
 
 
